@@ -1,0 +1,841 @@
+import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
+import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
+import type {
+  Assistant,
+  AssistantSummary,
+  Bootstrap,
+  Iso,
+  Item,
+  ItemsPage,
+  PageLive,
+  Profile,
+  SendMessageBody,
+} from "../../shared/types.ts";
+import type { HobRuntime } from "./runtime.ts";
+import { refreshSystemPrompt } from "./pi.ts";
+import { conversationPick, defaultWorkRef, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
+import { buildRouterTools } from "./router-tools.ts";
+import { MEMORY_WRITE_TOOLS, memoryNoteText } from "./memory.ts";
+import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
+import { availableSkills } from "./skills.ts";
+
+export const ITEM_TYPE = "hob.item";
+export const USER_TYPE = "hob.user";
+export const EVENT_TYPE = "hob.event";
+
+/** 会话条目的 id 和 at 由会话文件给出，写卡片时不用传。 */
+/** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
+export interface EventDetails {
+  routine?: { id: string; name: string };
+  cont?: true;
+  delegationId?: string;
+}
+
+export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
+
+interface RouterState {
+  assistantId: string;
+  session?: AgentSession;
+  manager?: SessionManager;
+  opening?: Promise<void>;
+  idleTimer?: NodeJS.Timeout;
+  /** 还有几轮在跑（事件那一轮也要算），用来判断忙闲和等空闲 */
+  running: number;
+  /** 正在流式的助手消息：条目 id 和 GET /items 推导出来的一致；shown 表示已经在对话里露过面 */
+  streaming?: { itemId: string; shown: boolean };
+  /** 这一轮最后一次有动静的时间，看门狗用它判断“没响应” */
+  lastEventAt: number;
+  stallTimer?: NodeJS.Timeout;
+  /** 已经因为没响应被叫停：这一轮的错误不再写一条重复的 note */
+  stalled: boolean;
+  /** 记忆提供者换了：跑着的这一轮结束就释放会话，下一轮按新提供者重新打开 */
+  releaseAfterTurn?: boolean;
+  /** 还在跑的记忆写入工具：参数只在 tool_execution_start 里有，按 toolCallId 存着给 note 用 */
+  memoryWriteArgs: Map<string, Record<string, unknown>>;
+  currentDelegationId?: string;
+  delegationReply?: string[];
+  terminatingTools?: Set<string>;
+}
+
+function readEntries(file: string): SessionEntry[] {
+  if (!existsSync(file)) return [];
+  const out: SessionEntry[] = [];
+  for (const line of readFileSync(file, "utf8").split("\n")) {
+    if (!line.trim()) continue;
+    try {
+      const entry = JSON.parse(line) as { type?: string };
+      if (entry.type && entry.type !== "session") out.push(entry as SessionEntry);
+    } catch {
+      // 半行忽略
+    }
+  }
+  return out;
+}
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content.trim();
+  if (!Array.isArray(content)) return "";
+  return content
+    .filter((block): block is { type: "text"; text: string } => Boolean(block) && block.type === "text")
+    .map((block) => block.text)
+    .join("")
+    .trim();
+}
+
+/** 模型服务的报错压成一句：「my-proxy API error (429): {"message":"…"}」→「模型服务返回 429：…」。 */
+export function briefModelError(raw: string | undefined): string {
+  if (!raw) return "模型服务出错";
+  const code = raw.match(/\((\d{3})\)/)?.[1];
+  const detail = raw.match(/"message"\s*:\s*"([^"]+)"/)?.[1] ?? raw.replace(/\s+/g, " ");
+  const short = detail.length > 120 ? `${detail.slice(0, 119)}…` : detail;
+  return code ? `模型服务返回 ${code}：${short}` : short;
+}
+
+/**
+ * 从会话条目按顺序推导对话条目：用户消息来自 hob.user 自定义条目（不走 pi 的 user 消息，
+ * 事件消息也是 user 角色但不该出气泡），助手文本来自 assistant 消息，卡片来自 hob.item。
+ *
+ * 事件之后的第一条标 lead（新一轮回复，前端拉开间距）；事件带 cont 表示任务的图片已经先开了这一组，回复接着图片走。
+ * 返回值里的 lead 是“下一条该不该标”，实时推送的条目用它，和刷新后推导的一致。
+ */
+function walk(entries: SessionEntry[]): { items: Item[]; lead: boolean } {
+  const items: Item[] = [];
+  let assistantIndex = 0;
+  let routine: { id: string; name: string } | undefined;
+  let lead = false;
+  const push = (item: Item) => {
+    items.push(lead ? { ...item, lead: true } : item);
+    lead = false;
+  };
+  for (const entry of entries) {
+    if (entry.type === "custom" && entry.customType === USER_TYPE) {
+      const data = (entry.data ?? {}) as { text?: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string } };
+      items.push({
+        kind: "user",
+        id: entry.id,
+        at: entry.timestamp,
+        text: data.text ?? "",
+        ...(data.quote ? { quote: data.quote } : {}),
+        ...(data.files?.length ? { files: data.files } : {}),
+        ...(data.from ? { from: data.from } : {}),
+      });
+      lead = false;
+      continue;
+    }
+    if (entry.type === "custom" && entry.customType === ITEM_TYPE) {
+      // 旧版本把别的助手的审批转述进主助手的对话（relay）；现在审批只在提问的助手那里，历史里的转述卡不再显示
+      if ((entry.data as { kind?: string; relay?: boolean } | undefined)?.relay) continue;
+      push({ ...(entry.data as object), id: entry.id, at: entry.timestamp } as Item);
+      continue;
+    }
+    if (entry.type === "custom_message" && entry.customType === EVENT_TYPE) {
+      const details = entry.details as EventDetails | undefined;
+      routine = details?.routine;
+      lead = !details?.cont;
+      continue;
+    }
+    if (entry.type === "message" && entry.message.role === "assistant") {
+      assistantIndex += 1;
+      const text = messageText(entry.message.content);
+      if (!text) continue;
+      push({
+        kind: "assistant",
+        id: `a-${assistantIndex}`,
+        at: entry.timestamp,
+        text,
+        ...(routine ? { routine } : {}),
+      });
+      routine = undefined;
+    }
+  }
+  return { items, lead };
+}
+
+export function deriveItems(entries: SessionEntry[]): Item[] {
+  return walk(entries).items;
+}
+
+export class RouterManager {
+  private routers = new Map<string, RouterState>();
+  private livePages = new Map<string, Map<string, { page: PageLive; timer?: NodeJS.Timeout; last: number }>>();
+  private liveJson = new Map<string, string>();
+
+  private liveUpdate(assistantId: string, callId: string, args: Record<string, unknown>, flush = false): void {
+    let pages = this.livePages.get(assistantId);
+    if (!pages) this.livePages.set(assistantId, pages = new Map());
+    let live = pages.get(callId);
+    if (!live) {
+      live = { page: { assistantId, callId, html: "", state: "writing" }, last: 0 };
+      pages.set(callId, live);
+    }
+    live.page = { ...live.page, ...(typeof args.title === "string" ? { title: args.title } : {}), ...(typeof args.summary === "string" ? { summary: args.summary } : {}), ...(typeof args.html === "string" ? { html: args.html } : {}) };
+    const emit = () => { live!.timer = undefined; live!.last = Date.now(); this.bus.emit({ type: "page-live", ...live!.page }); };
+    if (flush || Date.now() - live.last >= 200) {
+      if (live.timer) clearTimeout(live.timer);
+      emit();
+    } else if (!live.timer) live.timer = setTimeout(emit, 200 - (Date.now() - live.last));
+  }
+
+  private liveFinish(assistantId: string, callId: string, path?: string, error?: string): void {
+    const pages = this.livePages.get(assistantId);
+    const live = pages?.get(callId);
+    if (!live) return;
+    this.liveUpdate(assistantId, callId, {}, true);
+    live.page = { ...live.page, state: path ? "done" : "failed", ...(path ? { path } : { error: error || "页面生成中断" }) };
+    this.bus.emit({ type: "page-live", ...live.page });
+    this.liveJson.delete(callId);
+    // 失败也不留：模型拿到错误通常会重写一页，留着的失败占位卡会一直钉在对话底部
+    pages!.delete(callId);
+  }
+  /** 测试可改小：不给就看设置里的“回复多久无响应视为受阻” */
+  stallOverrideMs?: number;
+
+  constructor(private readonly runtime: HobRuntime) {}
+
+  private get store() {
+    return this.runtime.store;
+  }
+
+  private get bus() {
+    return this.runtime.bus;
+  }
+
+  private assistant(assistantId: string): Assistant {
+    const assistant = this.store.assistant(assistantId);
+    if (!assistant) throw new Error(`助手不存在：${assistantId}`);
+    return assistant;
+  }
+
+  private entries(assistantId: string): SessionEntry[] {
+    const state = this.routers.get(assistantId);
+    if (state?.manager) return state.manager.getEntries();
+    return readEntries(this.store.routerFile(assistantId));
+  }
+
+  async ensure(assistantId: string): Promise<RouterState> {
+    const assistant = this.assistant(assistantId);
+    let state = this.routers.get(assistantId);
+    if (!state) {
+      state = { assistantId, running: 0, lastEventAt: Date.now(), stalled: false, memoryWriteArgs: new Map() };
+      this.routers.set(assistantId, state);
+    }
+    if (state.session) return state;
+    state.opening ??= this.openSession(state, assistant).catch((error: unknown) => {
+      state!.opening = undefined;
+      throw error;
+    });
+    await state.opening;
+    return state;
+  }
+
+  private async openSession(state: RouterState, assistant: Assistant): Promise<void> {
+    // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
+    await this.runtime.models.get();
+    const pick = conversationPick(this.runtime.settings.settings.models, assistant);
+    const opened = await this.runtime.pi.open({
+      file: this.store.routerFile(assistant.id),
+      cwd: this.store.home,
+      model: pick.ref,
+      thinking: thinkingForPick(pick, this.runtime.models),
+      memory: this.runtime.settings.memory().provider,
+      systemPrompt: () => {
+        const { timezone, aboutYou } = this.runtime.settings.settings.general;
+        return buildSystemPrompt(this.store, assistant.id, {
+          timezone,
+          aboutYou,
+          memory: this.runtime.settings.memory().provider,
+          models: this.promptModels(assistant.id),
+          skills: availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled, this.runtime.settings.memory().provider === "lore" ? this.runtime.pi.loreSkillPaths : []),
+          thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
+        });
+      },
+      tools: buildRouterTools(this.runtime, assistant.id).map((tool) => tool.name),
+      customTools: buildRouterTools(this.runtime, assistant.id),
+    });
+    state.session = opened.session;
+    state.manager = opened.manager;
+    state.opening = undefined;
+    opened.session.subscribe((event) => this.onSessionEvent(state, assistant.id, event));
+    this.touch(assistant.id);
+  }
+
+  /** 这个助手能派、当前可用的模型（提示词里那一节）。 */
+  private promptModels(assistantId: string): PromptModel[] {
+    const assistant = this.store.assistant(assistantId);
+    if (!assistant) return [];
+    const settings = this.runtime.settings.settings.models;
+    const catalog = this.runtime.models;
+    const def = defaultWorkRef(settings, assistant, catalog);
+    return usableRefs(settings, assistant, catalog).map((ref) => {
+      const entry = settings.roster.find((item) => item.ref === ref);
+      return {
+        name: nameOf(ref, catalog),
+        ref,
+        note: entry ? noteOf(entry, catalog) : "",
+        thinking: jobModel({ settings, assistant, catalog, requested: { model: ref } }).model.thinking,
+        levels: thinkingLevelsOf(catalog.find(ref)),
+        isDefault: ref === def,
+      };
+    });
+  }
+
+  /** 换了对话模型或思考档：下一轮生效，不重建会话（上下文保留）。 */
+  private async applyConversationModel(state: RouterState): Promise<void> {
+    if (!state.session) return;
+    const assistant = this.assistant(state.assistantId);
+    const pick = conversationPick(this.runtime.settings.settings.models, assistant);
+    const model = await this.runtime.pi.model(pick.ref);
+    // 用拿到的模型本身算档：换服务商后名单缓存是空的，按缓存查会把思考档收成 off
+    const thinking = fitThinking(getSupportedThinkingLevels(model), pick.thinking);
+    const current = state.session.model;
+    if (current?.provider !== model.provider || current?.id !== model.id) {
+      await state.session.setModel(model);
+    }
+    if (state.session.thinkingLevel !== thinking) state.session.setThinkingLevel(thinking);
+  }
+
+  /**
+   * 实时条目：助手消息在 message_start 就定好 id（会话条目还没落盘，它是第 assistantCount()+1 条），
+   * 第一段文字到了才露面，message_end 之后等条目落盘再按条目发一次最终版。
+   * 这样前端拿到的 id、时间、内容和 GET /items 推导出来的一样。
+   */
+  private onSessionEvent(state: RouterState, assistantId: string, event: AgentSessionEvent): void {
+    this.progress(state);
+    if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
+      const details = event.message.details as EventDetails | undefined;
+      if (details?.delegationId) {
+        state.currentDelegationId = details.delegationId;
+        state.delegationReply = [];
+        state.terminatingTools = new Set();
+      }
+    }
+    if (event.type === "turn_end" && event.message.role === "assistant" && state.currentDelegationId) {
+      const text = messageText(event.message.content);
+      if (text) state.delegationReply?.push(text);
+      const failed = event.message.stopReason === "error" || event.message.stopReason === "aborted";
+      if (failed || !event.toolResults.length || event.toolResults.every((tool) => state.terminatingTools?.has(tool.toolCallId))) {
+        const id = state.currentDelegationId;
+        const reply = state.delegationReply?.join("\n") || (failed ? event.message.errorMessage || "目标助手处理失败" : "（没有回复）");
+        state.currentDelegationId = undefined;
+        state.delegationReply = undefined;
+        state.terminatingTools = undefined;
+        this.runtime.delegations.turnEnded(id, reply, failed);
+      }
+    }
+    if (event.type === "tool_execution_start") {
+      if (MEMORY_WRITE_TOOLS.has(event.toolName)) state.memoryWriteArgs.set(event.toolCallId, event.args ?? {});
+      return;
+    }
+    if (event.type === "tool_execution_end") {
+      if (event.toolName === "show_page") {
+        const result = event.result as { details?: { path?: string }; content?: { text?: string }[] } | undefined;
+        this.liveFinish(assistantId, event.toolCallId, event.isError ? undefined : result?.details?.path, result?.content?.[0]?.text);
+      }
+      if (state.currentDelegationId && (event.result as { terminate?: boolean } | undefined)?.terminate) state.terminatingTools?.add(event.toolCallId);
+      const args = state.memoryWriteArgs.get(event.toolCallId);
+      state.memoryWriteArgs.delete(event.toolCallId);
+      void this.onMemoryWrite(assistantId, event, args);
+      return;
+    }
+    if (event.type === "message_start" && event.message.role === "assistant") {
+      state.streaming = { itemId: `a-${this.assistantCount(assistantId) + 1}`, shown: false };
+      return;
+    }
+    if (event.type === "message_update" && (event.assistantMessageEvent.type === "toolcall_start" || event.assistantMessageEvent.type === "toolcall_delta" || event.assistantMessageEvent.type === "toolcall_end")) {
+      const update = event.assistantMessageEvent;
+      const part = update.partial.content[update.contentIndex];
+      if (part?.type === "toolCall" && part.name === "show_page") {
+        if (update.type === "toolcall_start") this.liveJson.set(part.id, "");
+        if (update.type === "toolcall_delta") this.liveJson.set(part.id, (this.liveJson.get(part.id) ?? "") + update.delta);
+        const args = Object.keys(part.arguments).length ? part.arguments : parseStreamingJson(this.liveJson.get(part.id));
+        this.liveUpdate(assistantId, part.id, args);
+      }
+    }
+    if ((event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted", "length"].includes(event.message.stopReason)) || event.type === "agent_end") {
+      const reason = event.type === "message_end" && event.message.role === "assistant" ? event.message.errorMessage : undefined;
+      for (const [id, live] of this.livePages.get(assistantId) ?? []) if (live.page.state === "writing") this.liveFinish(assistantId, id, undefined, reason || "页面生成中断");
+    }
+    if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      state.streaming ??= { itemId: `a-${this.assistantCount(assistantId) + 1}`, shown: false };
+      const streaming = state.streaming;
+      if (!streaming.shown) {
+        streaming.shown = true;
+        this.bus.emit({
+          type: "item",
+          assistantId,
+          item: {
+            kind: "assistant",
+            id: streaming.itemId,
+            at: new Date().toISOString(),
+            text: "",
+            streaming: true,
+            ...(walk(this.entries(assistantId)).lead ? { lead: true } : {}),
+          },
+        });
+      }
+      this.bus.emit({ type: "delta", assistantId, itemId: streaming.itemId, text: event.assistantMessageEvent.delta });
+      return;
+    }
+    if (event.type === "message_end" && event.message.role === "assistant") {
+      const streaming = state.streaming;
+      state.streaming = undefined;
+      const text = messageText(event.message.content).trim();
+      if (!text) return;
+      // pi 在 message_end 之后才把消息写进会话文件，等一拍再按条目发，内容和 id 才和刷新后一致
+      setTimeout(() => this.emitSettledAssistant(assistantId, text, streaming?.itemId), 0);
+    }
+  }
+
+  /** 记忆插件写成功了 → 对话里出一行「记忆已更新 · …」。 */
+  private async onMemoryWrite(
+    assistantId: string,
+    event: { toolName: string; result?: unknown; isError?: boolean },
+    args: Record<string, unknown> | undefined,
+  ): Promise<void> {
+    if (!MEMORY_WRITE_TOOLS.has(event.toolName) || event.isError) return;
+    const details = (event.result as { details?: { ok?: boolean } } | undefined)?.details;
+    if (details?.ok === false) return;
+    const text = memoryNoteText(args);
+    await this.addItem(assistantId, { kind: "note", icon: "memory", text: text ? `记忆已更新 · ${text}` : "记忆已更新" });
+  }
+
+  private emitSettledAssistant(assistantId: string, text: string, expectedId?: string): void {
+    const list = deriveItems(this.entries(assistantId)).filter((item) => item.kind === "assistant");
+    const item = list.find((entry) => entry.id === expectedId) ?? list.filter((entry) => entry.text === text).pop();
+    if (item) this.bus.emit({ type: "item", assistantId, item });
+    this.touch(assistantId);
+  }
+
+  private assistantCount(assistantId: string): number {
+    return this.entries(assistantId).filter(
+      (entry) => entry.type === "message" && entry.message.role === "assistant",
+    ).length;
+  }
+
+  /** 一轮开始了：清掉上一轮的“已停”标记并起看门狗。 */
+  private armStall(state: RouterState): void {
+    state.stalled = false;
+    this.progress(state);
+  }
+
+  /** 这一轮还有动静：重置看门狗。没有事件就说明模型憋住了。 */
+  private stallMs(): number {
+    return this.stallOverrideMs ?? this.runtime.settings.settings.work.routerStallMinutes * 60_000;
+  }
+
+  private progress(state: RouterState): void {
+    state.lastEventAt = Date.now();
+    if (state.stallTimer) clearTimeout(state.stallTimer);
+    state.stallTimer = setTimeout(() => void this.onStall(state), this.stallMs());
+    state.stallTimer.unref?.();
+  }
+
+  private clearStall(state: RouterState): void {
+    if (state.stallTimer) clearTimeout(state.stallTimer);
+    state.stallTimer = undefined;
+  }
+
+  /** 一轮里长时间没有事件（模型憋着不出字）：停下这一轮，并明说可以再发一次。 */
+  private async onStall(state: RouterState): Promise<void> {
+    state.stallTimer = undefined;
+    if (Date.now() - state.lastEventAt < this.stallMs()) {
+      this.progress(state);
+      return;
+    }
+    if (state.running === 0 && !state.session?.isStreaming) return;
+    state.stalled = true;
+    // 不 await：模型的那次请求可能收不了尾，但这行提示必须先出来
+    void state.session?.abort().catch(() => undefined);
+    const assistant = this.store.assistant(state.assistantId);
+    await this.addItem(state.assistantId, {
+      kind: "note",
+      icon: "info",
+      text: `${assistant?.name ?? state.assistantId} 无响应，已停止，可重新发送`,
+    });
+  }
+
+  /** 空闲 30 分钟释放 Router 内存，下次用再打开 router.jsonl。 */
+  private touch(assistantId: string): void {
+    const state = this.routers.get(assistantId);
+    if (!state?.session) return;
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    state.idleTimer = setTimeout(() => {
+      if (!state.session || state.session.isStreaming) return;
+      this.close(state);
+    }, 30 * 60 * 1000);
+    state.idleTimer.unref?.();
+  }
+
+  private close(state: RouterState): void {
+    if (state.idleTimer) clearTimeout(state.idleTimer);
+    state.idleTimer = undefined;
+    state.session?.dispose();
+    state.session = undefined;
+    state.manager = undefined;
+  }
+
+  /**
+   * 记忆提供者或能派的模型换了：空闲的 Router 立刻释放，下一轮从 router.jsonl 重新打开
+   * （上下文还在，插件和 start_job 的模型说明按新设置来）；正在回复的等这一轮跑完再释放。
+   */
+  releaseSessions(): void {
+    for (const state of this.routers.values()) {
+      state.releaseAfterTurn = true;
+      this.maybeRelease(state);
+    }
+  }
+
+  /** 助手没了（并回 Hob）：关掉它的会话，内存里也不留 —— 它的目录随后会被移进归档。 */
+  forget(assistantId: string): void {
+    const state = this.routers.get(assistantId);
+    if (!state) return;
+    this.close(state);
+    this.routers.delete(assistantId);
+  }
+
+  private maybeRelease(state: RouterState): void {
+    if (!state.releaseAfterTurn) return;
+    if (state.running > 0 || state.session?.isStreaming) return;
+    state.releaseAfterTurn = false;
+    this.close(state);
+  }
+
+  /** 新条目的时间取会话条目自己的时间，和 GET /items 推导出来的一致。 */
+  private entryAt(state: RouterState, id: string): string {
+    return state.manager?.getEntries().find((entry) => entry.id === id)?.timestamp ?? new Date().toISOString();
+  }
+
+  // ---------- 事件与条目 ----------
+  async addItem(assistantId: string, item: NewItem): Promise<Item> {
+    const state = await this.ensure(assistantId);
+    const lead = walk(this.entries(assistantId)).lead;
+    const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
+    const full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
+    this.bus.emit({ type: "item", assistantId, item: full });
+    return full;
+  }
+
+  currentDelegation(assistantId: string): string | undefined {
+    return this.routers.get(assistantId)?.currentDelegationId;
+  }
+
+  async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob"): Promise<Item> {
+    const state = await this.ensure(assistantId);
+    const from = { assistantId: sourceId, name: this.store.assistant(sourceId)?.name ?? sourceId, delegationId };
+    const id = state.manager!.appendCustomEntry(USER_TYPE, { text, from });
+    const item: Item = { kind: "user", id, at: this.entryAt(state, id), text, from };
+    this.bus.emit({ type: "item", assistantId, item });
+    return item;
+  }
+
+  async event(assistantId: string, text: string, details?: EventDetails): Promise<void> {
+    await this.ensure(assistantId);
+    void this.pushEvent(assistantId, text, details).catch(() => undefined);
+  }
+
+  /** 事件进 Router 上下文（custom message，不进气泡）；这一轮跑完才返回。 */
+  private async pushEvent(
+    assistantId: string,
+    text: string,
+    details: EventDetails | undefined,
+  ): Promise<boolean> {
+    const state = await this.ensure(assistantId);
+    const session = state.session!;
+    const message = { customType: EVENT_TYPE, content: `[hob-event] ${text}`, display: false, details };
+    this.touch(assistantId);
+    state.running += 1;
+    this.armStall(state);
+    this.publishBusy(state);
+    refreshSystemPrompt(session);
+    try {
+      await this.applyConversationModel(state);
+      if (session.isStreaming) {
+        await session.sendCustomMessage(message, { deliverAs: "followUp" });
+        await session.waitForIdle();
+      } else {
+        await session.sendCustomMessage(message, { triggerTurn: true });
+        await this.reportTurnError(state);
+      }
+      return true;
+    } catch (error) {
+      await this.fail(state, error);
+      return false;
+    } finally {
+      state.running = Math.max(0, state.running - 1);
+      this.clearStall(state);
+      this.publishBusy(state);
+      this.maybeRelease(state);
+      this.touch(assistantId);
+    }
+  }
+
+  /** 忙闲变了告诉前端（“正在想”要看它）。 */
+  private publishBusy(state: RouterState): void {
+    const assistant = this.store.assistant(state.assistantId);
+    if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
+  }
+
+  /**
+   * 模型出错（限流、额度、网络）引擎不抛异常，只在最后一条助手消息上记 stopReason=error，重试完就停。
+   * 不说一声的话对话里什么都没有，看着像助手不理人：这里补一行灰字。
+   */
+  private async reportTurnError(state: RouterState): Promise<void> {
+    const last = state.session?.messages.findLast((message) => message.role === "assistant");
+    if (!last || last.role !== "assistant" || last.stopReason !== "error") return;
+    await this.addItem(state.assistantId, { kind: "note", icon: "info", text: `回复失败：${briefModelError(last.errorMessage)}。发送任意消息即可重试。` });
+  }
+
+  private async fail(state: RouterState, error: unknown): Promise<void> {
+    if (state.stalled) return;
+    const message = error instanceof Error ? error.message : String(error);
+    await this.addItem(state.assistantId, { kind: "note", icon: "info", text: `发生错误：${message}` });
+  }
+
+  // ---------- 对话操作 ----------
+
+  /**
+   * 现在能不能开对话会话：没有服务商 / 没有勾模型时返回一句人话，
+   * 让 send 重出一条说明而不是报错崩掉。
+   */
+  private async modelGap(assistantId: string): Promise<string | undefined> {
+    const assistant = this.store.assistant(assistantId);
+    if (!assistant) return NO_MODEL_NOTE;
+    let ref: string;
+    try {
+      ref = conversationPick(this.runtime.settings.settings.models, assistant).ref;
+    } catch (error) {
+      if (error instanceof NoModelError) return NO_MODEL_NOTE;
+      throw error;
+    }
+    await this.runtime.models.get();
+    return this.runtime.models.find(ref) ? undefined : NO_MODEL_NOTE;
+  }
+
+  /**
+   * 没有模型时也要把话完整接住：用户那句和一条说明都进对话（不需要模型，只开会话文件）。
+   * 配好模型之后再发话就接着聊。
+   */
+  private sendWithoutModel(assistantId: string, body: SendMessageBody, note: string): Item {
+    const file = this.store.routerFile(assistantId);
+    mkdirSync(dirname(file), { recursive: true });
+    // 会话文件先建空：引擎看到空文件会马上写头，之后的条目才落盘（不然只存在内存里，刷新就没了）
+    if (!existsSync(file)) writeFileSync(file, "");
+    const manager = SessionManagerImpl.open(file, dirname(file), this.store.home);
+    const data = {
+      text: body.text,
+      ...(body.quote ? { quote: body.quote } : {}),
+      ...(body.files?.length ? { files: body.files } : {}),
+    };
+    const id = manager.appendCustomEntry(USER_TYPE, data);
+    const item: Item = { kind: "user", id, at: new Date().toISOString(), ...data };
+    this.bus.emit({ type: "item", assistantId, item });
+    const noteId = manager.appendCustomEntry(ITEM_TYPE, { kind: "note", icon: "info", text: note });
+    this.bus.emit({
+      type: "item",
+      assistantId,
+      item: { kind: "note", id: noteId, at: new Date().toISOString(), icon: "info", text: note },
+    });
+    return item;
+  }
+
+  async send(assistantId: string, body: SendMessageBody): Promise<Item> {
+    const gap = await this.modelGap(assistantId);
+    if (gap) return this.sendWithoutModel(assistantId, body, gap);
+    const state = await this.ensure(assistantId);
+    const data = {
+      text: body.text,
+      ...(body.quote ? { quote: body.quote } : {}),
+      ...(body.files?.length ? { files: body.files } : {}),
+    };
+    const id = state.manager!.appendCustomEntry(USER_TYPE, data);
+    const item: Item = {
+      kind: "user",
+      id,
+      at: this.entryAt(state, id),
+      text: body.text,
+      ...(body.quote ? { quote: body.quote } : {}),
+      ...(body.files?.length ? { files: body.files } : {}),
+    };
+    this.bus.emit({ type: "item", assistantId, item });
+
+    const lines = [body.text];
+    if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
+    if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
+    const promptText = lines.join("\n");
+
+    this.touch(assistantId);
+    state.running += 1;
+    this.armStall(state);
+    this.publishBusy(state);
+    void (async () => {
+      try {
+        await this.applyConversationModel(state);
+        refreshSystemPrompt(state.session!);
+        if (state.session!.isStreaming) await state.session!.steer(promptText);
+        else {
+          await state.session!.prompt(promptText);
+          await this.reportTurnError(state);
+        }
+      } catch (error) {
+        await this.fail(state, error);
+      } finally {
+        state.running = Math.max(0, state.running - 1);
+        this.clearStall(state);
+        this.publishBusy(state);
+        this.maybeRelease(state);
+        this.touch(assistantId);
+      }
+    })();
+    return item;
+  }
+
+  async stop(assistantId: string): Promise<void> {
+    const state = this.routers.get(assistantId);
+    if (state?.session) await state.session.abort();
+  }
+
+  isBusy(assistantId: string): boolean {
+    const state = this.routers.get(assistantId);
+    // 只看助手自己在不在回复：任务不阻塞对话，任务的进度在任务卡上，不再算进来（不然任务跑多久「…」就挂多久）
+    return (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
+  }
+
+  /** 等到这个助手没有在跑的回复，并且会话条目已经落定（测试和冒烟用）。 */
+  async waitIdle(assistantId: string, timeoutMs = 15_000): Promise<void> {
+    const started = Date.now();
+    let stable = 0;
+    let lastCount = -1;
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    while (Date.now() - started < timeoutMs) {
+      const state = this.routers.get(assistantId);
+      const busy = (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
+      const count = state?.manager?.getEntryCount() ?? -1;
+      if (!busy) {
+        stable = count === lastCount ? stable + 1 : 0;
+        if (stable >= 2) return;
+      } else {
+        stable = 0;
+      }
+      lastCount = count;
+      await new Promise((resolve) => setTimeout(resolve, 25));
+    }
+  }
+
+  items(assistantId: string, options: { before?: string; limit?: number } = {}): ItemsPage {
+    const all = deriveItems(this.entries(assistantId));
+    const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
+    let list = all;
+    if (options.before) {
+      const index = all.findIndex((item) => item.id === options.before);
+      if (index !== -1) list = all.slice(0, index);
+    }
+    const page = list.slice(-limit);
+    const jobIds = new Set(page.filter((item) => item.kind === "job").map((item) => (item as { jobId: string }).jobId));
+    const draftIds = new Set(
+      page.filter((item) => item.kind === "draft").map((item) => (item as { draftId: string }).draftId),
+    );
+    const approvalIds = new Set(
+      page.filter((item) => item.kind === "question").map((item) => (item as { approvalId: string }).approvalId),
+    );
+    const ids = new Set(page.filter((item) => item.kind === "delegation").map((item) => (item as { delegationId: string }).delegationId));
+    const delegations = this.store.delegations().filter((item) => ids.has(item.id));
+    for (const delegation of delegations) {
+      for (const id of delegation.jobIds) jobIds.add(id);
+      for (const id of delegation.approvalIds ?? []) approvalIds.add(id);
+    }
+    for (const approval of this.store.approvals()) if (approval.jobId && jobIds.has(approval.jobId)) approvalIds.add(approval.id);
+    return {
+      ...(!options.before ? { pageLive: [...(this.livePages.get(assistantId)?.values() ?? [])].map((live) => live.page) } : {}),
+      items: page,
+      approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
+      jobs: this.store.jobs().filter((job) => jobIds.has(job.id)),
+      drafts: this.store.drafts().filter((draft) => draftIds.has(draft.id)),
+      delegations,
+      hasMore: list.length > page.length,
+    };
+  }
+
+  read(assistantId: string): void {
+    this.store.saveState(assistantId, { readAt: new Date().toISOString() });
+  }
+
+  unread(assistantId: string): number {
+    const readAt = this.store.state(assistantId).readAt;
+    if (!readAt) return 0;
+    return deriveItems(this.entries(assistantId)).filter(
+      (item) => item.kind === "assistant" && item.at > readAt,
+    ).length;
+  }
+
+  last(assistantId: string): { text: string; at: Iso } | undefined {
+    const items = deriveItems(this.entries(assistantId));
+    for (let i = items.length - 1; i >= 0; i -= 1) {
+      const item = items[i];
+      if (item.kind === "user" || item.kind === "assistant" || item.kind === "note") {
+        return { text: item.text, at: item.at };
+      }
+    }
+    return undefined;
+  }
+
+  summary(assistant: Assistant): AssistantSummary {
+    const last = this.last(assistant.id);
+    return {
+      ...assistant,
+      ...(last ? { last } : {}),
+      unread: this.unread(assistant.id),
+      busy: this.isBusy(assistant.id),
+    };
+  }
+
+  profile(assistantId: string): Profile {
+    const assistant = this.assistant(assistantId);
+    return {
+      assistant: this.summary(assistant),
+      rules: this.store.rules(assistantId),
+      routines: this.store.routines().filter((routine) => routine.assistantId === assistantId),
+      worklog: this.store.worklog(assistantId),
+    };
+  }
+
+  bootstrap(): Bootstrap {
+    const jobCutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    return {
+      assistants: this.store.assistants().map((assistant) => this.summary(assistant)),
+      jobs: this.store
+        .jobs()
+        .filter((job) => job.status === "running" || job.status === "queued" || job.status === "waiting" || (job.endedAt ?? job.createdAt) > jobCutoff),
+      routines: this.store.routines(),
+      approvals: this.store.approvals().filter((approval) => approval.status === "pending"),
+      delegations: this.store.delegations(),
+      settings: this.runtime.settings.get(),
+    };
+  }
+
+  /** 进程退出或测试收尾：释放所有 Router 会话。 */
+  disposeAll(): void {
+    for (const state of this.routers.values()) {
+      if (state.idleTimer) clearTimeout(state.idleTimer);
+      state.session?.dispose();
+    }
+    this.routers.clear();
+  }
+
+  /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
+  async relay(targetAssistantId: string, text: string, delegationId: string): Promise<void> {
+    const success = await this.pushEvent(targetAssistantId, `转自 Hob：${text}`, { delegationId });
+    if (!success || !this.store.delegation(delegationId)?.turnFinished) {
+      this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
+    }
+  }
+
+  /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文）。 */
+  async answerEvent(assistantId: string, text: string): Promise<void> {
+    await this.event(assistantId, text);
+  }
+}

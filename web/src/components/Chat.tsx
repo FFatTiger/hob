@@ -1,0 +1,304 @@
+// 中间一栏：头部 + 消息区 + 输入框。
+import { useEffect, useLayoutEffect, useRef } from "react";
+import type { AssistantSummary } from "../../../shared/types.ts";
+import { Icon } from "../icons.tsx";
+import { Avatar } from "../sprites.tsx";
+import {
+  expandPanel,
+  focusComposer,
+  openSettings,
+  openSheet,
+  removeFile,
+  send,
+  setMobile,
+  setQuote,
+  setSection,
+  setText,
+  upload,
+  useApp,
+} from "../store.ts";
+import { useLeave } from "../motion.ts";
+import { isStreamingTail } from "../merge.ts";
+import { ItemList } from "./Items.tsx";
+
+/** 忙、但字还没出来时底部的三个点。紧跟用户那句时它是回复的开头，和回复一样拉开间距。 */
+function Thinking({ leaving, gap }: { leaving: boolean; gap: boolean }) {
+  return (
+    <>
+      {gap ? <div className="g" /> : null}
+      <div className={`hov think${leaving ? " leaving" : ""}`}>
+        <div className="b thinking" title="正在生成回复…">
+          <span className="dot" />
+          <span className="dot" />
+          <span className="dot" />
+        </div>
+      </div>
+    </>
+  );
+}
+
+/**
+ * 贴底滚动：内容变高（新条目、流式文字、卡片数据晚到、字体加载）时，若原本就在底部附近就保持在底部。
+ * 新到一条时平滑滚过去；首次加载、切换助手、重新拉整批对话时瞬间到底。
+ */
+function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number) {
+  const pinned = useRef(true);
+  const seen = useRef({ key: "", len: 0 });
+
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onScroll = () => {
+      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+    };
+    const ro = new ResizeObserver(() => {
+      if (pinned.current) el.scrollTop = el.scrollHeight;
+    });
+    el.addEventListener("scroll", onScroll);
+    for (const child of Array.from(el.children)) ro.observe(child);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+    };
+  }, [ref]);
+
+  // 在绘制前定位：进对话页时先画出顶部、下一帧再跳到底，就是那一下闪
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const last = seen.current;
+    seen.current = { key: resetKey, len };
+    if (last.key !== resetKey || len < last.len) {
+      pinned.current = true;
+      el.scrollTop = el.scrollHeight;
+    } else if (len > last.len && pinned.current) {
+      el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
+    }
+  }, [ref, resetKey, len]);
+}
+
+/** 交给主助手的几类事，点一下填进输入框（不直接发送）。 */
+const EXAMPLES = ["查看这台电脑的磁盘和内存占用", "每天早上 9 点给我一份科技新闻简报", "把附件里的会议记录整理成要点"];
+
+/**
+ * 还没有任何消息时：说明这个助手做什么。还没配模型就先引导去设置，否则发出去只会得到一行报错。
+ */
+function EmptyChat({ a }: { a: AssistantSummary }) {
+  const s = useApp();
+  const models = s.settings.settings.models;
+  const ready = models.roster.length > 0 && models.conversation.ref !== "";
+  return (
+    <div className="hello">
+      <Avatar sprite={a.sprite} prop={a.prop} size={56} />
+      <div className="t">{`我是${sendName(a.name, false)}${a.primary ? "，你的主助手" : ""}`}</div>
+      <div className="d">
+        {a.primary
+          ? "交给我的事，我会分派给后台任务执行，完成、受阻或需要你确认时再告诉你；也可以让我定时执行。同类工作多了，我会建议创建专属助手。"
+          : `负责${a.duty}。`}
+      </div>
+      {ready ? (
+        a.primary ? (
+          <div className="ex">
+            {EXAMPLES.map((text) => (
+              <button
+                key={text}
+                className="btn"
+                onClick={() => {
+                  setText(text);
+                  focusComposer();
+                }}
+              >
+                {text}
+              </button>
+            ))}
+          </div>
+        ) : null
+      ) : (
+        <div className="setup">
+          <div>开始使用前，请先添加模型服务商并选择模型。</div>
+          <button
+            className="btn solid"
+            onClick={() => {
+              openSettings();
+              setSection("providers");
+            }}
+          >
+            前往设置
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 名字嵌进中文句子：中文名直接连着写，英文名和前后的汉字之间留一个空格（「给 Hob 发消息」「给服务器发消息」）。
+ * tail=false：后面紧跟标点或句子结束，不留后空格。
+ */
+function sendName(name: string, tail = true): string {
+  const latin = (c: string | undefined) => Boolean(c && /[A-Za-z0-9]/.test(c));
+  return `${latin(name[0]) ? " " : ""}${name}${tail && latin(name.at(-1)) ? " " : ""}`;
+}
+
+/** 当前对话整体的版本号：换了助手或重新拉了对话就变，用来判断该不该平滑滚动。 */
+function chatKey(sel: string | null, gen: number | undefined): string {
+  return `${sel ?? ""}|${gen ?? 0}`;
+}
+
+export function Chat() {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === s.sel);
+  const items = s.sel ? (s.items[s.sel] ?? []) : [];
+  // 对话读回来了、确实一条都没有（还在读的时候不算）
+  const empty = Boolean(a && s.sel && s.items[s.sel]?.length === 0 && !a.busy);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
+  const thinking = Boolean(a?.busy) && !isStreamingTail(items);
+  const think = useLeave(thinking, 180);
+
+  useStickToBottom(scrollRef, key, items.length);
+
+  return (
+    <main className="chat">
+      <div className="head">
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={24} /> : null}
+        <span className="nm">{a?.name ?? ""}</span>
+        <span className="sp" />
+        {s.collapsed ? (
+          <button className="ib" title="展开右栏" onClick={expandPanel}>
+            <Icon name="panel" size={18} />
+          </button>
+        ) : null}
+      </div>
+      <div className="msgs" ref={scrollRef}>
+        <div className={`col${empty ? " mid" : ""}`}>
+          {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
+          {think.mounted ? <Thinking leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+        </div>
+      </div>
+      <Composer />
+    </main>
+  );
+}
+
+export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobile" }) {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === s.sel);
+  const ta = useRef<HTMLTextAreaElement>(null);
+  const has = s.text.trim().length > 0;
+  const quote = useLeave(s.quote !== null, 180);
+
+  useLayoutEffect(() => {
+    const el = ta.current;
+    if (!el) return;
+    el.style.height = "auto";
+    const max = variant === "mobile" ? 120 : 180;
+    el.style.height = `${Math.min(el.scrollHeight, max)}px`;
+  }, [s.text, s.nonce, variant]);
+
+  useEffect(() => {
+    if (s.nonce) ta.current?.focus();
+  }, [s.nonce]);
+
+  const body = (
+    <div className={variant === "mobile" ? "mcomp" : "comp"}>
+      {quote.mounted ? (
+        <div className={`comp-quote${quote.leaving ? " leaving" : ""}`}>
+          <div className="quote">{s.quote?.text}</div>
+          <button className="ib" style={{ width: 20, height: 20 }} onClick={() => setQuote(null)} title="取消引用">
+            <Icon name="close" size={13} />
+          </button>
+        </div>
+      ) : null}
+      {s.files.length ? (
+        <div className="comp-files">
+          {s.files.map((f) => (
+            <span className="filechip" key={f}>
+              <Icon name="doc" size={12} />
+              {f.split("/").pop()}
+              <button onClick={() => removeFile(f)} title="移除">
+                <Icon name="close" size={11} />
+              </button>
+            </span>
+          ))}
+        </div>
+      ) : null}
+      <div className="comp-main">
+        <label className="pl" title="加文件">
+          <Icon name="plus" size={19} />
+          <input
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              const files = Array.from(e.target.files ?? []);
+              e.target.value = "";
+              if (files.length) void upload(files);
+            }}
+          />
+        </label>
+        <textarea
+          ref={ta}
+          className="ta"
+          rows={1}
+          value={s.text}
+          placeholder={`给${sendName(a?.name ?? "")}发消息`}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+              e.preventDefault();
+              void send();
+            }
+          }}
+        />
+        <button className="sendbtn" title="发送" disabled={!has} onClick={() => void send()}>
+          <Icon name="send" size={17} />
+        </button>
+      </div>
+    </div>
+  );
+
+  if (variant === "mobile") return <div className="mcomp-wrap">{body}</div>;
+  return (
+    <div className="compwrap">
+      <div className="col">{body}</div>
+    </div>
+  );
+}
+
+/** 手机上点助手行／顶部“写新消息”后切到对话页。 */
+export function ChatPage() {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === s.sel);
+  const items = s.sel ? (s.items[s.sel] ?? []) : [];
+  const empty = Boolean(a && s.sel && s.items[s.sel]?.length === 0 && !a.busy);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const thinking = Boolean(a?.busy) && !isStreamingTail(items);
+  const think = useLeave(thinking, 180);
+  const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
+
+  useStickToBottom(scrollRef, key, items.length);
+
+  return (
+    <>
+      <div className="mchat-head">
+        <button className="ib" style={{ marginLeft: -8 }} title="返回" onClick={() => setMobile("list")}>
+          <Icon name="left" size={22} />
+        </button>
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} /> : null}
+        <span className="nm">{a?.name ?? ""}</span>
+        <span className="sp" />
+        <button className="ib" title="助手信息" onClick={openSheet}>
+          <Icon name="more" size={20} />
+        </button>
+      </div>
+      <div className="mmsgs" ref={scrollRef}>
+        <div className={`col${empty ? " mid" : ""}`}>
+          {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
+          {think.mounted ? <Thinking leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+        </div>
+      </div>
+      <Composer variant="mobile" />
+    </>
+  );
+}

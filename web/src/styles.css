@@ -451,10 +451,12 @@ svg.i {
 .head .sp {
   flex: 1;
 }
+/* 消息区和输入框都预留滚动条的位置：Windows 上滚动条占宽，不预留的话消息列会比输入框往左偏半个滚动条 */
 .msgs {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
+  scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
   padding-bottom: 6px;
@@ -1008,6 +1010,8 @@ svg.i {
 .compwrap {
   flex: none;
   padding: 8px 0 20px;
+  overflow-y: hidden;
+  scrollbar-gutter: stable;
 }
 .comp {
   display: flex;
@@ -3915,13 +3919,16 @@ button.screen,
   font-size: 12.5px;
   color: var(--text3);
 }
+/* 所有行共用一套列（subgrid），状态、时间、用时上下对齐 */
 .jd-rows {
-  display: flex;
-  flex-direction: column;
-}
-.jd-row {
   display: grid;
   grid-template-columns: 26px minmax(0, 1fr) auto auto auto;
+  column-gap: 10px;
+}
+.jd-row {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: subgrid;
   align-items: center;
   gap: 10px;
   padding: 9px 8px;
@@ -4211,8 +4218,10 @@ button.screen,
   .jd-foot {
     padding: 10px 14px calc(16px + env(safe-area-inset-bottom, 0px));
   }
-  .jd-row {
+  .jd-rows {
     grid-template-columns: 26px minmax(0, 1fr) auto;
+  }
+  .jd-row {
     row-gap: 2px;
   }
   .jd-row .tm,
@@ -4252,9 +4261,14 @@ button.screen,
 /* 委派卡与任务卡共用结构，审批仍是原来的问题组件。 */
 .delegation-card .delegation-text { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; color: var(--text2); margin-top: 10px; line-height: 1.55; overflow-wrap: anywhere; width: 100%; }
 .delegation-card .delegation-text.expanded { display: block; white-space: pre-wrap; }
-.delegation-card .delegation-job { display: flex; justify-content: space-between; gap: 12px; width: 100%; padding: 8px 0; color: var(--text2); font-size: 13px; border-bottom: 1px solid var(--line); }
-.delegation-card .delegation-job span:last-child { flex-shrink: 0; }
-.delegation-card .b.q { width: 100%; margin-top: 12px; padding: 12px; background: var(--card); }
+.delegation-card .delegation-job { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 10px; padding: 9px 12px; border-radius: 10px; background: var(--card); color: var(--text); font-size: 13.5px; text-align: left; }
+.delegation-card .delegation-job > span { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.delegation-card .delegation-job > svg { flex: none; color: var(--text3); }
+.delegation-card .delegation-job.running > svg:first-child { color: var(--accent); }
+.delegation-card .delegation-job.done > svg:first-child { color: var(--ok); }
+.delegation-card .delegation-job.waiting > svg:first-child { color: var(--accent); }
+.delegation-card .delegation-job:is(.stuck, .failed) > svg:first-child { color: var(--danger); }
+.delegation-card .b.q { width: 100%; margin-top: 10px; padding: 12px; background: var(--card); }
 .delegation-actions { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 12px; color: var(--accent); font-size: 13px; }
 .delegation-card .st.bad { color: var(--danger); }
 .forward-label { display: flex; align-items: center; gap: 5px; color: var(--accent); font-size: 12px; font-weight: 600; margin-bottom: 5px; }

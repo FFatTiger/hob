@@ -384,8 +384,8 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
     <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`}>
       <div className="b jobcard delegation-card">
         <div className="tt">
-          {target ? <Avatar sprite={target.sprite} prop={target.prop} size={20} /> : null}
-          <span>交给「{name}」</span>
+          {target ? <span className="jav"><Avatar sprite={target.sprite} prop={target.prop} size={28} /></span> : null}
+          <span className="jt">交给「{name}」</span>
           <span className={`st${delegation.status === "done" ? " done" : ""}${delegation.status === "stuck" || delegation.status === "interrupted" || delegation.status === "returned" ? " bad" : ""}`}>
             <Icon name={delegation.status === "running" ? "spin" : delegation.status === "done" ? "check" : delegation.status === "waiting" ? "pause" : "close"} className={delegation.status === "running" ? "spin" : ""} size={14} />
             {labels[delegation.status]}
@@ -395,7 +395,14 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
         {delegation.status === "returned" && delegation.reply ? <div className="note">{delegation.reply}</div> : null}
         {delegation.jobIds.map((id) => {
           const job = s.jobs[id];
-          return job ? <button className="delegation-job" key={id} onClick={() => openJob(id)}><span>{job.title}</span><span>{STATUS[job.status].text}</span></button> : null;
+          // 卡头已经写了总状态，这里每个任务只给图标（悬停看文字），不再重复「待确认」这类字
+          return job ? (
+            <button className={`delegation-job ${job.status}`} key={id} onClick={() => openJob(id)} title={STATUS[job.status].text}>
+              <Icon name={STATUS[job.status].icon} size={14} w={2} className={STATUS[job.status].cls} />
+              <span>{job.title}</span>
+              <Icon name="chev" size={14} className="go" />
+            </button>
+          ) : null;
         })}
         {approvals.map((approval) => <QuestionCard key={approval.id} approval={approval} fresh={false} />)}
         <div className="delegation-actions">

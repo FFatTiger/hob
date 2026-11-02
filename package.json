@@ -1,6 +1,6 @@
 {
   "name": "hob",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "A self-hosted personal assistant that runs real work as background jobs.",
   "license": "MIT",
   "repository": {

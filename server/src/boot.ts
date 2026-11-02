@@ -66,8 +66,8 @@ export function applyEngineEnv(env: NodeJS.ProcessEnv, home: string): LocalConfi
   return { piDir, loreHome };
 }
 
-const isMain = process.argv[1]?.endsWith("boot.ts") || process.argv[1]?.endsWith("boot.js");
-if (isMain) {
+/** 命令行入口：`tsx server/src/boot.ts` 和 npm 包的 `hob` 命令都走这里。 */
+export function boot(): void {
   const home = resolveHome();
   applyEngineEnv(process.env, home);
   import("./main.ts")
@@ -80,3 +80,6 @@ if (isMain) {
       process.exit(1);
     });
 }
+
+const isMain = process.argv[1]?.endsWith("boot.ts") || process.argv[1]?.endsWith("boot.js");
+if (isMain) boot();

@@ -143,7 +143,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 记忆是所有助手共用的一份（关于用户的事实、偏好、约定），不属于某个助手；助手自己的做法放在它的规矩和补充说明里。
 
-- 设置 → 记忆三选一：**本地记忆**（捆绑 `pi-memory` 0.4.2）/ **Lore**（捆绑 `@local/lore-pi-extension` 1.12.4）/ **关闭**。两个插件随 Hob 捆绑（`vendor/*.tgz` + `file:` 依赖），绝不安装任何东西，**绝不同时加载**（加载时断言）。
+- 设置 → 记忆三选一：**本地记忆**（捆绑 `pi-memory` 0.4.2）/ **Lore**（捆绑 `@local/lore-pi-extension` 1.12.4）/ **关闭**。两个插件随 Hob 固定版本（`pi-memory` 在 package.json 钉死版本；Lore 插件不在 npm 上，源码放在 `vendor/lore-pi-extension/` 按路径加载），绝不安装任何东西，**绝不同时加载**（加载时断言）。
 - 加载方式：Router 和 Worker 会话各开一份 pi 会话时，`PiHost` 用 `DefaultResourceLoader` 只挂当前提供者的那一个插件入口（`noExtensions: true`，用户自己装的扩展一份都不加载），工具放行按插件工具名（`memory_*` / `scratchpad` / `lore_*`）。本地记忆强制 `PI_MEMORY_EXIT_SUMMARY=0`，`memory_search` 在注册前过滤掉（没带 qmd，只会报错）。本地记忆目录是 `HOB_HOME/memory`（插件在模块加载时就读 `PI_MEMORY_DIR`，所以 `createRuntime` 在打开任何会话之前把它指好）。
 - 缺省解析：从没选过时，看 Hob 自己的 `HOB_HOME/lore/config.json`（启动时 `LORE_HOME` 指到这里，插件读的也是它）——地址和 Token 都有 → Lore，否则本地记忆；选过就按选过的。存在 `settings.json` 的顶层 `memory.provider`。
 - Lore 连接只读写 `HOB_HOME/lore/config.json`（0600、原子写、保留不认识的键），不读环境变量、不碰其他 Lore 客户端的配置；函数显式收 `home`。Token 只写不读，接口只报 `tokenConfigured`；换地址不换 Token 时旧 Token 清掉。明文 http 只允许本机 / 局域网 / Tailscale / IPv6 ULA 与 link-local / `.local`，公网必须 https。

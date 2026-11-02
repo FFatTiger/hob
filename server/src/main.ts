@@ -1,4 +1,5 @@
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { engineDir, loadConfig, resolveHome } from "./config.ts";
 import { createApp } from "./http.ts";
@@ -39,7 +40,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.routines.start();
   runtime.jobs.startWatchdog();
 
-  const app = createApp(runtime, { webDir: join(process.cwd(), "dist", "web"), home });
+  const app = createApp(runtime, { webDir: fileURLToPath(new URL("../../dist/web", import.meta.url)), home });
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);
   const server = serve({ fetch: app.fetch, port, hostname: config.host });
 

@@ -53,12 +53,11 @@
 You need Node.js 22 or newer and an API key for at least one model provider.
 
 ```bash
-git clone https://github.com/FFatTiger/hob.git
-cd hob
-npm install
-npm run build
-HOB_PASSWORD='choose-a-password' npm start
+npm install -g hob-bot
+HOB_PASSWORD='choose-a-password' hob
 ```
+
+Or run it once without installing: `HOB_PASSWORD='choose-a-password' npx hob-bot`.
 
 Open <http://127.0.0.1:30148> and sign in with that password. Then:
 
@@ -83,15 +82,21 @@ Hob is self-contained. Conversations, jobs, memory, skills, keys and its engine 
 
 ## Deploy
 
-Hob is a single Node process. Run it with any process manager and put a reverse proxy with TLS in front. Push notifications and installing as an app both need HTTPS. A PM2 example is included:
+Hob is a single Node process. Run it with any process manager and put a reverse proxy with TLS in front. Push notifications and installing as an app both need HTTPS. With PM2:
 
 ```bash
-pm2 start deploy/pm2.config.cjs   # process "hob", port 30148, data in ~/.hob
+pm2 start hob --name hob           # after npm install -g hob-bot
+pm2 start deploy/pm2.config.cjs   # or from a source checkout: process "hob", port 30148, data in ~/.hob
 ```
 
 ## Development
 
 ```bash
+git clone https://github.com/FFatTiger/hob.git
+cd hob
+npm install
+npm run build
+npm start            # same as the `hob` command, from source
 npm run dev:server   # API server with reload, port 30148
 npm run dev:web      # Vite dev server; proxies /api to 30148
 npm test             # vitest

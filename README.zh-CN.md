@@ -53,12 +53,11 @@
 需要 Node.js 22 或更高版本，以及至少一个模型服务商的 API Key。
 
 ```bash
-git clone https://github.com/FFatTiger/hob.git
-cd hob
-npm install
-npm run build
-HOB_PASSWORD='设一个密码' npm start
+npm install -g hob-bot
+HOB_PASSWORD='设一个密码' hob
 ```
+
+不想全局安装，也可以直接运行一次：`HOB_PASSWORD='设一个密码' npx hob-bot`。
 
 打开 <http://127.0.0.1:30148>，用这个密码登录，然后：
 
@@ -83,15 +82,21 @@ Hob 是独立的：对话、任务、记忆、技能、Key 和引擎数据都在
 
 ## 部署
 
-Hob 是单个 Node 进程。用任意进程管理器运行，前面加一层带 TLS 的反向代理即可。推送通知和安装成应用都需要 HTTPS。仓库里带一个 PM2 示例：
+Hob 是单个 Node 进程。用任意进程管理器运行，前面加一层带 TLS 的反向代理即可。推送通知和安装成应用都需要 HTTPS。用 PM2 的话：
 
 ```bash
-pm2 start deploy/pm2.config.cjs   # 进程名 hob，端口 30148，数据在 ~/.hob
+pm2 start hob --name hob           # npm install -g hob-bot 之后
+pm2 start deploy/pm2.config.cjs   # 或者在源码目录里：进程名 hob，端口 30148，数据在 ~/.hob
 ```
 
 ## 开发
 
 ```bash
+git clone https://github.com/FFatTiger/hob.git
+cd hob
+npm install
+npm run build
+npm start            # 从源码运行，等同于 hob 命令
 npm run dev:server   # 后端，改动自动重载，端口 30148
 npm run dev:web      # Vite 开发服务器，/api 代理到 30148
 npm test             # vitest

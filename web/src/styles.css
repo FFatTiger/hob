@@ -2627,6 +2627,17 @@ button:not(:disabled):active {
   font-size: 12.5px;
   color: var(--accent);
 }
+.savetoast {
+  position: fixed;
+  top: calc(14px + env(safe-area-inset-top, 0px));
+  right: 18px;
+  z-index: 60;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--card);
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  animation: enter-fade var(--t-fast) var(--ease-in);
+}
 .setpage.narrow .setintro .h {
   display: none;
 }
@@ -2974,6 +2985,50 @@ select.pick {
 }
 a.lbl-aside {
   color: var(--accent);
+}
+/* 模型用途的三条滑块：上面名字和当前值，下面一排档位字按档位值摆在滑块对应位置，点了直接跳过去 */
+.score-row {
+  margin-top: 6px;
+}
+.score-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 14px;
+}
+.score-head span {
+  color: var(--text2);
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.score-range {
+  display: block;
+  width: 100%;
+  margin: 8px 0 0;
+  accent-color: var(--accent);
+}
+.score-ticks {
+  position: relative;
+  height: 26px;
+  margin: 0 8px;
+}
+.score-ticks button {
+  position: absolute;
+  top: 2px;
+  transform: translateX(-50%);
+  font-size: 12px;
+  color: var(--text3);
+  white-space: nowrap;
+  padding: 2px 4px;
+}
+.score-ticks button.first {
+  transform: translateX(-8px);
+}
+.score-ticks button.last {
+  transform: translateX(calc(-100% + 8px));
+}
+.score-ticks button[aria-pressed="true"] {
+  color: var(--accent);
+  font-weight: 600;
 }
 .skill-doc h1,
 .skill-doc h2 {

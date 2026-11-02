@@ -13,7 +13,7 @@ import type { AgentSession, Skill, ToolDefinition } from "@earendil-works/pi-cod
 import { mkdirSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import type { MemoryProvider } from "../../shared/types.ts";
 import type { ThinkingLevel } from "./config.ts";
 import { MEMORY_TOOL_PATTERNS } from "./memory.ts";
@@ -59,15 +59,23 @@ export function refreshSystemPrompt(session: AgentSession): void {
 
 const requireFromHere = createRequire(import.meta.url);
 
-/** 捆绑的记忆插件包名（版本固定在 package.json 的 file: 依赖里）。 */
+/** 捆绑的记忆插件包名（pi-memory 在 package.json 里钉死版本）。 */
 const MEMORY_PACKAGES = { local: "pi-memory", lore: "@local/lore-pi-extension" } as const;
+
+/**
+ * 不在 npm 上的插件：源码（固定版本）直接放在 vendor/ 下随包发布，按路径加载。
+ * 不用 bundleDependencies：npm 全局安装带捆绑依赖的包会去编译 macOS 才有的 fsevents，直接装失败。
+ */
+const VENDORED_PLUGINS: Record<string, string> = {
+  "@local/lore-pi-extension": fileURLToPath(new URL("../../vendor/lore-pi-extension/package.json", import.meta.url)),
+};
 
 /** 每个插件注册的工具都属于自己那一家：用来做互斥断言。 */
 const PI_MEMORY_TOOLS = /^memory_(?:write|read|forget|restore|search|status)$|^scratchpad$/;
 
 /** 捆绑插件的入口文件（包 manifest 里 `pi.extensions` 的第一项）。 */
 export function bundledPluginEntry(packageName: string): string {
-  const manifest = requireFromHere.resolve(`${packageName}/package.json`);
+  const manifest = VENDORED_PLUGINS[packageName] ?? requireFromHere.resolve(`${packageName}/package.json`);
   const pkg = JSON.parse(readFileSync(manifest, "utf8")) as { pi?: { extensions?: unknown } };
   const declared = Array.isArray(pkg.pi?.extensions) ? pkg.pi?.extensions[0] : undefined;
   const entry = typeof declared === "string" && declared ? declared : "./index.ts";

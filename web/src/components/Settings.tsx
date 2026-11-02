@@ -161,8 +161,9 @@ function useSaveFeedback() {
   return { save, busy, message };
 }
 
-function SaveFeedback({ message }: { message: string | null }) {
-  return message ? <span className={message === "已保存" ? "okline" : "badline"} role="status">{message}</span> : null;
+/** toast：整页级的保存提示浮在右上角，出现和消失都不把页面内容顶下去。 */
+function SaveFeedback({ message, toast = false }: { message: string | null; toast?: boolean }) {
+  return message ? <span className={`${message === "已保存" ? "okline" : "badline"}${toast ? " savetoast" : ""}`} role="status">{message}</span> : null;
 }
 
 function AutoField({ value, placeholder, multiline, onSave }: { value: string; placeholder?: string; multiline?: boolean; onSave: (value: string) => Promise<boolean> }) {
@@ -1648,22 +1649,41 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
   const [expanded, setExpanded] = useState(!collapsible || initial.unconfirmed);
   const [scores, setScores] = useState(initial.scores);
   const [note, setNote] = useState(entry.note);
-  useEffect(() => setScores(modelUseState(entry, info).scores), [entry.scores, info]);
+  // 拖动中只改本地，松手才保存；拖动时不让服务端回来的旧值把滑块拽回去（否则会来回闪）
+  const dragging = useRef(false);
+  const latest = useRef(scores);
+  latest.current = scores;
+  useEffect(() => { if (!dragging.current) setScores(modelUseState(entry, info).scores); }, [entry.scores, info]);
   useEffect(() => setNote(entry.note), [entry.note]);
+  const save = (next: typeof scores) => update({ scores: next, scoresConfirmed: true });
+  const release = () => {
+    if (!dragging.current) return;
+    dragging.current = false;
+    const saved = entry.scores;
+    const next = latest.current;
+    if (!saved || entry.scoresConfirmed !== true || saved.smart !== next.smart || saved.cost !== next.cost || saved.speed !== next.speed) save(next);
+  };
   if (!expanded) return <div className="ctl"><span className="note">{scoreSummary(entry.scores ?? scores)}</span><button className="pbtn" onClick={() => setExpanded(true)}>修改</button></div>;
   const names = { smart: "聪明程度", cost: "成本", speed: "速度" } as const;
   return (
     <div className="group">
       <div className="note">Hob 按用途选择分派任务的模型。{initial.unconfirmed ? "数值按模型名称推测，请确认。" : ""}</div>
       {(Object.keys(names) as (keyof typeof names)[]).map((kind) => (
-        <div key={kind}>
-          <div className="ctl">
+        <div className="score-row" key={kind}>
+          <div className="score-head">
             <label htmlFor={`${entry.ref}-${kind}`}>{names[kind]}</label>
-            <input id={`${entry.ref}-${kind}`} type="range" min="0" max="100" step="5" value={scores[kind]} style={{ flex: 1, minWidth: 0 }}
-              onChange={(e) => { const next = { ...scores, [kind]: Number(e.target.value) }; setScores(next); update({ scores: next, scoresConfirmed: true }); }} />
-            <span className="note">{scoreLabel(kind, scores[kind])} · {scores[kind]}%</span>
+            <span>{scoreLabel(kind, scores[kind])} · {scores[kind]}%</span>
           </div>
-          <div className="ctl" style={{ flexWrap: "wrap" }}>{SCORE_STAGES[kind].map((stage) => <button key={stage.value} className="pbtn" aria-pressed={stage.label === scoreLabel(kind, scores[kind])} onClick={() => { const next = { ...scores, [kind]: stage.value }; setScores(next); update({ scores: next, scoresConfirmed: true }); }}>{stage.label}</button>)}</div>
+          <input id={`${entry.ref}-${kind}`} className="score-range" type="range" min="0" max="100" step="5" value={scores[kind]}
+            onChange={(e) => { dragging.current = true; setScores({ ...latest.current, [kind]: Number(e.target.value) }); }}
+            onPointerUp={release} onTouchEnd={release} onKeyUp={release} onBlur={release} />
+          <div className="score-ticks">
+            {SCORE_STAGES[kind].map((stage) => (
+              <button key={stage.value} style={{ left: `${stage.value}%` }} className={stage.value === 0 ? "first" : stage.value === 100 ? "last" : undefined}
+                aria-pressed={stage.label === scoreLabel(kind, scores[kind])}
+                onClick={() => { const next = { ...latest.current, [kind]: stage.value }; setScores(next); save(next); }}>{stage.label}</button>
+            ))}
+          </div>
         </div>
       ))}
       <div className="field"><input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note !== entry.note) update({ note }); }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} placeholder="补充说明（选填），如「中文写作特别好」" /></div>
@@ -1730,7 +1750,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
   return (
     <>
       <PageHead title="模型" desc="可用模型来自「服务商」，默认模型从可用模型中选择。" />
-      <SaveFeedback message={feedback.message} />
+      <SaveFeedback message={feedback.message} toast />
 
       <Group>
         <div className="lbl">默认模型</div>
@@ -1802,7 +1822,7 @@ function ModelDetail({ view, modelRef }: { view: ModelsView; modelRef: string })
     <>
       <SubBack />
       <PageHead title={info?.name ?? modelRef} desc={<span className="mono">{modelRef}</span>} />
-      <SaveFeedback message={feedback.message} />
+      <SaveFeedback message={feedback.message} toast />
 
       <Group>
         <div className="lbl">用途说明</div>
@@ -1896,7 +1916,7 @@ function AddModels({ view }: { view: ModelsView }) {
     <>
       <SubBack />
       <PageHead title="添加模型" desc="「服务商」提供的全部模型，打勾的已在可用模型中。" />
-      <SaveFeedback message={feedback.message} />
+      <SaveFeedback message={feedback.message} toast />
       {view.models.length === 0 ? (
         <Group>
           <div className="empty">尚无可用模型。请先在「服务商」中配置服务商并填写 API Key。</div>

@@ -12,25 +12,15 @@
 
 **One conversation, real work.** Ask in plain language; Hob turns it into a job that runs in the background with its own shell, files and tools. A job card shows progress and elapsed time. Open it to follow every step live, add instructions mid-way, or stop it.
 
-![Job detail panel with the step-by-step transcript](docs/screenshots/job.png)
-
 **Assistants that grow out of your habits.** When the same kind of request repeats, Hob suggests a dedicated assistant ("写作", "服务器", "记账" …). Each one keeps its own conversation, duties, approval rules, schedules and work log, and you configure all of it in one panel.
 
-![Assistant settings: duties, notes and approval rules](docs/screenshots/assistant.png)
-
 **Delegation you can see.** Hob hands work to the right assistant and keeps a delegation card in its own chat: status, linked jobs, and any pending question, which you can answer right on the card. When everything finishes, the result comes back to Hob, so you keep talking in one place.
-
-![A delegation card waiting for confirmation](docs/screenshots/delegation.png)
 
 **Asks first, then remembers.** Each assistant has "confirm before running" rules. Pick "always allow" once and it becomes a rule, so you won't be asked about that again.
 
 **Schedules.** Daily briefs, weekly reports, month-end checks: routines run on cron-style schedules and post results into the assistant's conversation.
 
-![A routine with its schedule and run history](docs/screenshots/routine.png)
-
 **Pages instead of walls of text.** For processes, comparisons or research, an assistant can answer with a single-page visual document. It opens in the side panel and renders live while the model is still writing.
-
-![A page written by the model: TCP handshake explained with a diagram and steps](docs/screenshots/page.png)
 
 **Tools that come with it:**
 
@@ -40,13 +30,9 @@
 - **Image generation** through any OpenAI-compatible image API.
 - **Push notifications** when an assistant needs your decision or a job finishes.
 
-![Web search settings](docs/screenshots/settings.png)
-
 **Made for the phone too.** Hob is an installable web app with a mobile layout and Telegram-style gestures: swipe a message to reply, long-press for actions. Light and dark themes follow your system.
 
 ![Hob on a phone: assistant list, a delegation card, an approval question](docs/screenshots/mobile.png)
-
-![Dark theme](docs/screenshots/dark.png)
 
 ## Quick start
 

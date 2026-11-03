@@ -75,6 +75,18 @@ pm2 start hob --name hob           # after npm install -g hob-bot
 pm2 start deploy/pm2.config.cjs   # or from a source checkout: process "hob", port 30148, data in ~/.hob
 ```
 
+### Docker
+
+```bash
+curl -O https://raw.githubusercontent.com/FFatTiger/hob/main/compose.yaml
+echo "HOB_PASSWORD=change-me" > .env   # only needed on first start
+docker compose up -d
+```
+
+This pulls `ghcr.io/ffattiger/hob` (amd64 and arm64, built for every release). From a source checkout, `docker compose up -d --build` builds the image locally instead. Open `http://127.0.0.1:30148`. Data lives in the `hob-data` volume (`/data` in the container), and the password is stored there as a hash, so you can delete `.env` afterwards. The port is bound to localhost for a reverse proxy; change it to `"30148:30148"` in `compose.yaml` for direct LAN access.
+
+Jobs run inside the container (git, curl, python3, ripgrep and fd are installed). To let them work on projects on the host, create `workspace/` (the container runs as uid 1000), uncomment the `./workspace:/workspace` mount and give jobs that directory.
+
 ## Development
 
 ```bash

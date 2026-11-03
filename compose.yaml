@@ -1,0 +1,21 @@
+# docker compose up -d 拉取发布的镜像（加 --build 则用本目录源码构建），然后打开 http://127.0.0.1:30148
+# 首次启动前在同目录 .env 里写 HOB_PASSWORD=...；密码会以哈希存进数据卷，之后不再需要这个变量。
+services:
+  hob:
+    image: ghcr.io/ffattiger/hob:latest
+    build: .
+    restart: unless-stopped
+    environment:
+      HOB_PASSWORD: ${HOB_PASSWORD:-}
+      TZ: ${TZ:-UTC}
+    ports:
+      # 只监听本机，前面接带 HTTPS 的反向代理；要局域网直连改成 "30148:30148"
+      - "127.0.0.1:30148:30148"
+    volumes:
+      - hob-data:/data
+      # 让任务改宿主机上的项目：挂进来，任务里用这个路径当工作目录
+      # - ./workspace:/workspace
+    stop_grace_period: 15s
+
+volumes:
+  hob-data:

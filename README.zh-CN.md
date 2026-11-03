@@ -75,6 +75,18 @@ pm2 start hob --name hob           # npm install -g hob-bot 之后
 pm2 start deploy/pm2.config.cjs   # 或者在源码目录里：进程名 hob，端口 30148，数据在 ~/.hob
 ```
 
+### Docker
+
+```bash
+curl -O https://raw.githubusercontent.com/FFatTiger/hob/main/compose.yaml
+echo "HOB_PASSWORD=change-me" > .env   # 只有首次启动需要
+docker compose up -d
+```
+
+这会拉取 `ghcr.io/ffattiger/hob`（amd64 和 arm64，每次发版自动构建）。在源码目录里用 `docker compose up -d --build` 则在本地构建镜像。打开 `http://127.0.0.1:30148`。数据在 `hob-data` 卷里（容器内 `/data`），密码以哈希存在这里，之后可以删掉 `.env`。端口默认只绑本机，方便接反向代理；要局域网直连，把 `compose.yaml` 里的端口改成 `"30148:30148"`。
+
+任务在容器里运行（装好了 git、curl、python3、ripgrep 和 fd）。要让任务处理宿主机上的项目，先建好 `workspace/` 目录（容器以 uid 1000 运行），取消注释 `./workspace:/workspace` 挂载，把任务的工作目录设在这里。
+
 ## 开发
 
 ```bash

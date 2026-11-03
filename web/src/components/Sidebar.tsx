@@ -4,7 +4,7 @@ import type { AssistantSummary } from "../../../shared/types.ts";
 import { matches } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
-import { focusComposer, newAssistant, openSettings, setQuery, useApp } from "../store.ts";
+import { newAssistant, openSettings, setQuery, useApp } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 
 const assistantKey = (a: AssistantSummary) => a.id;
@@ -24,9 +24,6 @@ export function Sidebar() {
         </div>
         <button className="ib" title="创建专属助手" onClick={newAssistant}>
           <Icon name="plus" size={18} />
-        </button>
-        <button className="ib" title="写新消息" onClick={focusComposer}>
-          <Icon name="edit" size={17} />
         </button>
       </div>
       <div className="side-scroll">

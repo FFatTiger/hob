@@ -4,7 +4,9 @@ import { createPortal } from "react-dom";
 import type { Approval, ApprovalOption, Delegation, Draft, Item, Job } from "../../../shared/types.ts";
 import { isImagePath } from "../../../shared/media.ts";
 import { visibleLiveCards } from "../page-live.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { Markdown } from "./Markdown.tsx";
+import { splitTables } from "../markdown.ts";
+import { MediaCard } from "./MediaCard.tsx";
 import { Avatar } from "../sprites.tsx";
 import { Icon, type IconName } from "../icons.tsx";
 import { fileIcon } from "../file-icons.ts";
@@ -604,10 +606,7 @@ function ItemView({
           {item.text}
           {item.files?.length
             ? item.files.map((f) => (
-                <button className="ufile" key={f} onClick={() => openFilePreview(f)}>
-                  <Icon name="doc" size={13} />
-                  {f.split("/").pop()}
-                </button>
+                <MediaCard key={f} path={f} name={f.split("/").pop() ?? f} fallback={<button className="ufile" onClick={() => openFilePreview(f)}><Icon name="doc" size={13} />{f.split("/").pop()}</button>} />
               ))
             : null}
         </div>
@@ -630,14 +629,19 @@ function ItemView({
         <div className="message-row" data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
           {swipeIcon}
           <div className={`hov msg${enter}`}>
-          <div className={`b${inlineDraft ? " wide" : ""}`} ref={bubble} style={swipeStyle}>
-            <div
-              dangerouslySetInnerHTML={{
-                __html: renderMarkdown(item.text) + (item.streaming ? '<span class="cur"></span>' : ""),
-              }}
-            />
-            {inlineDraft ? <DraftCard draft={inlineDraft} /> : null}
-          </div>
+          {/* 表格单独成卡片（框内左右滑），前后的文字照旧是气泡；第一块接住滑动回复和菜单定位 */}
+          {splitTables(item.text).map((part, i, parts) =>
+            part.table ? (
+              <div key={i} className="tablecard" ref={i === 0 ? bubble : undefined} style={i === 0 ? swipeStyle : undefined}>
+                <Markdown text={part.md} />
+              </div>
+            ) : (
+              <div key={i} className={`b${inlineDraft && i === parts.length - 1 ? " wide" : ""}`} ref={i === 0 ? bubble : undefined} style={i === 0 ? swipeStyle : undefined}>
+                <Markdown text={part.md} streaming={item.streaming && i === parts.length - 1} />
+                {inlineDraft && i === parts.length - 1 ? <DraftCard draft={inlineDraft} /> : null}
+              </div>
+            ),
+          )}
           <Tools text={item.text} itemId={item.id} />
           </div>
           {tools.open ? <MessagePopup anchor={bubble} text={item.text} itemId={item.id} close={tools.close} /> : null}
@@ -682,7 +686,7 @@ function ItemView({
   return isImagePath(item.path) ? (
     <ImageCard path={item.path} name={item.name} fresh={fresh} />
   ) : (
-    <FileCard path={item.path} name={item.name} meta={item.meta} fresh={fresh} />
+    <MediaCard path={item.path} name={item.name} fallback={<FileCard path={item.path} name={item.name} meta={item.meta} fresh={fresh} />} />
   );
 }
 

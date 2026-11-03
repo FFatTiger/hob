@@ -1,7 +1,30 @@
 import { describe, expect, it } from "vitest";
-import { renderMarkdown } from "../src/markdown.ts";
+import { hasMath, loadMath, renderMarkdown, splitTables } from "../src/markdown.ts";
 
 describe("renderMarkdown", () => {
+  it("公式异步加载后渲染，代码和钱数不受影响", async () => {
+    expect(hasMath("$5 和 $10，以及 `$x$`" )).toBe(false);
+    expect(hasMath("$x^2$")).toBe(true);
+    await loadMath();
+    for (const input of ["$x^2$", "$$x^2$$", "\\(x^2\\)", "\\[x^2\\]"]) {
+      expect(renderMarkdown(input)).toContain('class="katex');
+    }
+    expect(renderMarkdown("$5 和 $10")).toContain("$5 和 $10");
+    expect(renderMarkdown("`$x$`\n\n```\n$x$\n```")).not.toContain('class="katex');
+    expect(renderMarkdown("$\\notacommand$ ")).toContain("$\\notacommand$");
+    expect(renderMarkdown("$\\href{javascript:alert(1)}{bad}$")).not.toContain("<a ");
+  });
+
+  it("代码块显示语言和复制按钮且保留代码原文", () => {
+    const result = renderMarkdown('```js\nconst x = "<&";\n```');
+    expect(result).toContain('class="code-copy"');
+    expect(result).toContain('<div class="code-head">js</div>');
+    expect(result).toContain('const x = &quot;&lt;&amp;&quot;;');
+    // 没写语言就不出语言那一行，复制按钮照样有
+    const bare = renderMarkdown("```\nls\n```");
+    expect(bare).not.toContain("code-head");
+    expect(bare).toContain('class="code-copy"');
+  });
   it("行内代码和代码块里的引号、尖括号原样显示，不双重转义", () => {
     expect(renderMarkdown('看 `sprite: "wifi"` 这段')).toContain('<code>sprite: &quot;wifi&quot;</code>');
     expect(renderMarkdown('看 `sprite: "wifi"` 这段')).not.toContain("&amp;quot;");
@@ -36,5 +59,12 @@ describe("renderMarkdown", () => {
       expect(html).toContain("<a>x</a>");
     }
     expect(renderMarkdown("[信](mailto:a@b.c)")).toContain('href="mailto:a@b.c"');
+  });
+  it("表格从回复里切出来单独成卡片，前后文字各成一段；代码块里的 | 不算", () => {
+    const parts = splitTables("看这张：\n\n| 方式 | 适合 |\n| --- | --- |\n| 聊天 | 简单 |\n\n还有别的。");
+    expect(parts.map((p) => p.table)).toEqual([false, true, false]);
+    expect(parts[1].md).toContain("| 聊天 | 简单 |");
+    expect(splitTables("```\n| a | b |\n| - | - |\n```").map((p) => p.table)).toEqual([false]);
+    expect(splitTables("没有表格")).toEqual([{ table: false, md: "没有表格" }]);
   });
 });

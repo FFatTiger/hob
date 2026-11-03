@@ -140,7 +140,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
+const SCENES: SceneId[] = ["act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const api: HobApi = MOCK ? createMock(scene) : realApi;
@@ -668,6 +668,7 @@ export async function start() {
   started = true;
   applyTheme(state.theme);
   if (MOCK) {
+    if (scene === "boot") return;
     await loadBootstrap();
     return;
   }
@@ -775,6 +776,9 @@ function applyEvent(ev: HobEvent) {
       }));
       break;
     }
+    case "router-activity":
+      set((s) => ({ assistants: s.assistants.map((a) => a.id === ev.assistantId ? { ...a, activity: ev.activity } : a) }));
+      break;
     case "assistant_removed":
       set((s) => ({
         assistants: s.assistants.filter((a) => a.id !== ev.id),

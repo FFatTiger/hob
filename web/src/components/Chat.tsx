@@ -1,6 +1,6 @@
 // 中间一栏：头部 + 消息区 + 输入框。
 import { useEffect, useLayoutEffect, useRef } from "react";
-import type { AssistantSummary } from "../../../shared/types.ts";
+import type { AssistantSummary, Item } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
 import {
@@ -21,16 +21,15 @@ import { useLeave } from "../motion.ts";
 import { isStreamingTail } from "../merge.ts";
 import { ItemList } from "./Items.tsx";
 
-/** 忙、但字还没出来时底部的三个点。紧跟用户那句时它是回复的开头，和回复一样拉开间距。 */
-function Thinking({ leaving, gap }: { leaving: boolean; gap: boolean }) {
+/** 忙、但字还没出来时显示当前活动。 */
+function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: AssistantSummary }) {
   return (
     <>
       {gap ? <div className="g" /> : null}
       <div className={`hov think${leaving ? " leaving" : ""}`}>
-        <div className="b thinking" title="正在生成回复…">
-          <span className="dot" />
-          <span className="dot" />
-          <span className="dot" />
+        <div className="activity-line" role="status">
+          <Avatar sprite={a.sprite} prop={a.prop} size={28} motion={a.activity?.state === "tool" ? "work" : "think"} />
+          <span className="activity-shimmer">{a.activity?.label ?? "正在想…"}</span>
         </div>
       </div>
     </>
@@ -38,23 +37,30 @@ function Thinking({ leaving, gap }: { leaving: boolean; gap: boolean }) {
 }
 
 /**
- * 贴底滚动：内容变高（新条目、流式文字、卡片数据晚到、字体加载）时，若原本就在底部附近就保持在底部。
- * 新到一条时平滑滚过去；首次加载、切换助手、重新拉整批对话时瞬间到底。
+ * 贴底滚动：内容变高（新条目、流式文字、卡片数据晚到、字体加载）或容器变矮（手机键盘弹出）时，若原本就在底部附近就保持在底部。
+ * 只有用户往上滚才算离开底部：平滑滚动途中的滚动事件、内容变高都不会误判（iPhone 上发完消息不跟着往上顶就是这个）。
+ * 新到一条时平滑滚过去；自己刚发的那条无论在哪都滚到底；首次加载、切换助手、重新拉整批对话时瞬间到底。
  */
-function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number) {
+function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number, mineLast: boolean) {
   const pinned = useRef(true);
   const seen = useRef({ key: "", len: 0 });
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
+    let lastTop = el.scrollTop;
     const onScroll = () => {
-      pinned.current = el.scrollHeight - el.scrollTop - el.clientHeight < 80;
+      if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) pinned.current = true;
+      else if (el.scrollTop < lastTop - 2) pinned.current = false;
+      lastTop = el.scrollTop;
     };
     const ro = new ResizeObserver(() => {
-      if (pinned.current) el.scrollTop = el.scrollHeight;
+      if (!pinned.current) return;
+      el.scrollTop = el.scrollHeight;
+      lastTop = el.scrollTop;
     });
-    el.addEventListener("scroll", onScroll);
+    el.addEventListener("scroll", onScroll, { passive: true });
+    ro.observe(el);
     for (const child of Array.from(el.children)) ro.observe(child);
     return () => {
       el.removeEventListener("scroll", onScroll);
@@ -71,10 +77,16 @@ function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey:
     if (last.key !== resetKey || len < last.len) {
       pinned.current = true;
       el.scrollTop = el.scrollHeight;
-    } else if (len > last.len && pinned.current) {
+    } else if (len > last.len && (pinned.current || mineLast)) {
+      pinned.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [ref, resetKey, len]);
+  }, [ref, resetKey, len, mineLast]);
+}
+
+/** 最后一条是不是自己刚发的（转自别的助手的不算）。 */
+function isMine(item: Item | undefined): boolean {
+  return item?.kind === "user" && !item.from;
 }
 
 /** 交给主助手的几类事，点一下填进输入框（不直接发送）。 */
@@ -156,12 +168,12 @@ export function Chat() {
   const thinking = Boolean(a?.busy) && !isStreamingTail(items);
   const think = useLeave(thinking, 180);
 
-  useStickToBottom(scrollRef, key, items.length);
+  useStickToBottom(scrollRef, key, items.length, isMine(items.at(-1)));
 
   return (
     <main className="chat">
       <div className="head">
-        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={24} /> : null}
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={24} motion={a.busy ? (a.activity?.state === "tool" ? "work" : "think") : undefined} busyDot={a.busy} /> : null}
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
         {s.collapsed ? (
@@ -173,7 +185,7 @@ export function Chat() {
       <div className="msgs" ref={scrollRef}>
         <div className={`col${empty ? " mid" : ""}`}>
           {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
-          {think.mounted ? <Thinking leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+          {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>
       </div>
       <Composer />
@@ -199,6 +211,17 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
   useEffect(() => {
     if (s.nonce) ta.current?.focus();
   }, [s.nonce]);
+
+  // 输入框浮在消息上：量出它的高度写到 .chat 上，消息区底部照这个留白
+  const wrap = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = wrap.current;
+    const host = el?.closest<HTMLElement>(".chat");
+    if (!el || !host) return;
+    const ro = new ResizeObserver(() => host.style.setProperty("--comp-h", `${el.offsetHeight}px`));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [variant]);
 
   const body = (
     <div className={variant === "mobile" ? "mcomp" : "comp"}>
@@ -258,15 +281,15 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
     </div>
   );
 
-  if (variant === "mobile") return <div className="mcomp-wrap">{body}</div>;
+  if (variant === "mobile") return <div className="mcomp-wrap" ref={wrap}>{body}</div>;
   return (
-    <div className="compwrap">
+    <div className="compwrap" ref={wrap}>
       <div className="col">{body}</div>
     </div>
   );
 }
 
-/** 手机上点助手行／顶部“写新消息”后切到对话页。 */
+/** 手机上点助手行后切到对话页。 */
 export function ChatPage() {
   const s = useApp();
   const a = s.assistants.find((x) => x.id === s.sel);
@@ -277,7 +300,7 @@ export function ChatPage() {
   const think = useLeave(thinking, 180);
   const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
 
-  useStickToBottom(scrollRef, key, items.length);
+  useStickToBottom(scrollRef, key, items.length, isMine(items.at(-1)));
 
   return (
     <>
@@ -285,7 +308,7 @@ export function ChatPage() {
         <button className="ib" style={{ marginLeft: -8 }} title="返回" onClick={() => setMobile("list")}>
           <Icon name="left" size={22} />
         </button>
-        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} /> : null}
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} motion={a.busy ? (a.activity?.state === "tool" ? "work" : "think") : undefined} busyDot={a.busy} /> : null}
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
         <button className="ib" title="助手信息" onClick={openSheet}>
@@ -295,7 +318,7 @@ export function ChatPage() {
       <div className="mmsgs" ref={scrollRef}>
         <div className={`col${empty ? " mid" : ""}`}>
           {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
-          {think.mounted ? <Thinking leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+          {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>
       </div>
       <Composer variant="mobile" />

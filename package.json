@@ -1,6 +1,6 @@
 {
   "name": "hob-bot",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "A self-hosted personal assistant that runs real work as background jobs.",
   "license": "MIT",
   "repository": {
@@ -38,6 +38,7 @@
     "@juicesharp/rpiv-web-tools": "2.15.0",
     "croner": "^9.0.0",
     "hono": "^4.6.0",
+    "katex": "^0.19.1",
     "marked": "^15.0.0",
     "pi-memory": "0.4.2",
     "react": "^19.0.0",
@@ -47,6 +48,7 @@
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@types/katex": "^0.16.8",
     "@types/node": "^22.0.0",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",

@@ -407,6 +407,23 @@ export function spriteArt(
   };
 }
 
+/**
+ * 动画用：把眼睛从画里拿出来单独动（看方向、眨眼），身体只整体浮动，不换帧。
+ * 眼睛就是画里的 e 像素：道具不能用 e（validateCustomProp 拦着，内置道具也没用），也盖不住眼睛，所以任何头像都拆得出来。
+ * body 是挖掉眼睛、补上内焰色的画；eyes 是眼睛像素的 [x, y]。
+ */
+export function spriteEyes(art: { rows: string[] }): { body: string[]; eyes: [number, number][] } {
+  const eyes: [number, number][] = [];
+  const body = art.rows.map((row, y) =>
+    [...row].map((ch, x) => {
+      if (ch !== "e") return ch;
+      eyes.push([x, y]);
+      return "y";
+    }).join(""),
+  );
+  return { body, eyes };
+}
+
 /** 新建助手时：已有助手用着同一个头像就换成这件道具还没人用的颜色（橙色留给 Hob）；自画的图案各不相同，不算撞。 */
 export function distinctSprite(sprite: string, taken: string[]): string {
   const want = parseSprite(sprite);

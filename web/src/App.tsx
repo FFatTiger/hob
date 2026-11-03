@@ -12,6 +12,7 @@ import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { clearNotice, start, tick, useApp } from "./store.ts";
 import { updateStatusColor } from "./theme.ts";
+import { Avatar } from "./sprites.tsx";
 
 /** 页面已经写了「无法连接 Hob」，原始错误里重复的前缀去掉。 */
 function rawError(text: string): string {
@@ -32,6 +33,12 @@ export function App() {
   useEffect(() => {
     void start();
   }, []);
+
+  // 设置 → 通用 → 头像底色：关掉时整页的头像去掉彩色圆底（类名挂在 html 上，头像组件不用跟着重渲染）
+  const plainAvatars = s.settings.settings.general.avatarBackground === false;
+  useLayoutEffect(() => {
+    document.documentElement.classList.toggle("av-plain", plainAvatars);
+  }, [plainAvatars]);
 
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 768);
@@ -73,7 +80,7 @@ export function App() {
     );
   }
 
-  if (s.phase === "loading") return <div className="boot">正在连接 Hob…</div>;
+  if (s.phase === "loading") return <div className="boot"><div className="boot-loading"><Avatar sprite="hob" size={92} motion="think" /><span className="activity-shimmer">正在连接 Hob…</span></div></div>;
 
   const toast = s.notice ? (
     <div className="toast">{s.notice}</div>

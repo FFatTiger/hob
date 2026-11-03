@@ -15,6 +15,7 @@ import type {
   PageLive,
   Profile,
   SendMessageBody,
+  RouterActivity,
 } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
@@ -23,6 +24,7 @@ import { buildRouterTools } from "./router-tools.ts";
 import { MEMORY_WRITE_TOOLS, memoryNoteText } from "./memory.ts";
 import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
 import { availableSkills } from "./skills.ts";
+import { activityLabel, thinkingLine } from "./router-activity.ts";
 
 export const ITEM_TYPE = "hob.item";
 export const USER_TYPE = "hob.user";
@@ -46,6 +48,11 @@ interface RouterState {
   idleTimer?: NodeJS.Timeout;
   /** 还有几轮在跑（事件那一轮也要算），用来判断忙闲和等空闲 */
   running: number;
+  activity?: RouterActivity | null;
+  activityJson?: string;
+  activityLast?: number;
+  /** 这次思考到目前为止的原文：只用来取最后一段给状态行 */
+  thinkingText?: string;
   /** 正在流式的助手消息：条目 id 和 GET /items 推导出来的一致；shown 表示已经在对话里露过面 */
   streaming?: { itemId: string; shown: boolean };
   /** 这一轮最后一次有动静的时间，看门狗用它判断“没响应” */
@@ -306,6 +313,19 @@ export class RouterManager {
    */
   private onSessionEvent(state: RouterState, assistantId: string, event: AgentSessionEvent): void {
     this.progress(state);
+    if (event.type === "agent_start" || (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_start")) {
+      state.thinkingText = "";
+      this.setActivity(state, { state: "thinking", label: "正在想…" });
+    }
+    if (event.type === "message_update" && (event.assistantMessageEvent.type === "thinking_delta" || event.assistantMessageEvent.type === "thinking_end")) {
+      if (event.assistantMessageEvent.type === "thinking_delta") state.thinkingText = (state.thinkingText ?? "") + event.assistantMessageEvent.delta;
+      // 节流；思考结束时补发一次完整的最后一段
+      if (event.assistantMessageEvent.type === "thinking_end" || Date.now() - (state.activityLast ?? 0) >= 200) {
+        this.setActivity(state, { state: "thinking", label: thinkingLine(state.thinkingText ?? "") ?? "正在想…" });
+        state.activityLast = Date.now();
+      }
+    }
+    if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       const details = event.message.details as EventDetails | undefined;
       if (details?.delegationId) {
@@ -349,6 +369,15 @@ export class RouterManager {
     if (event.type === "message_update" && (event.assistantMessageEvent.type === "toolcall_start" || event.assistantMessageEvent.type === "toolcall_delta" || event.assistantMessageEvent.type === "toolcall_end")) {
       const update = event.assistantMessageEvent;
       const part = update.partial.content[update.contentIndex];
+      if (part?.type === "toolCall") {
+        if (update.type === "toolcall_start") state.activityJson = "";
+        if (update.type === "toolcall_delta") state.activityJson = (state.activityJson ?? "") + update.delta;
+        if (update.type !== "toolcall_delta" || Date.now() - (state.activityLast ?? 0) >= 200) {
+          const args = Object.keys(part.arguments).length ? part.arguments : parseStreamingJson(state.activityJson);
+          this.setActivity(state, { state: "tool", label: activityLabel(part.name, args, (id) => this.store.assistant(id)?.name) });
+          state.activityLast = Date.now();
+        }
+      }
       if (part?.type === "toolCall" && part.name === "show_page") {
         if (update.type === "toolcall_start") this.liveJson.set(part.id, "");
         if (update.type === "toolcall_delta") this.liveJson.set(part.id, (this.liveJson.get(part.id) ?? "") + update.delta);
@@ -361,6 +390,7 @@ export class RouterManager {
       for (const [id, live] of this.livePages.get(assistantId) ?? []) if (live.page.state === "writing") this.liveFinish(assistantId, id, undefined, reason || "页面生成中断");
     }
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
+      this.setActivity(state, null);
       state.streaming ??= { itemId: `a-${this.assistantCount(assistantId) + 1}`, shown: false };
       const streaming = state.streaming;
       if (!streaming.shown) {
@@ -417,9 +447,16 @@ export class RouterManager {
     ).length;
   }
 
+  private setActivity(state: RouterState, activity: RouterActivity | null): void {
+    if (state.activity?.state === activity?.state && state.activity?.label === activity?.label) return;
+    state.activity = activity;
+    this.bus.emit({ type: "router-activity", assistantId: state.assistantId, activity });
+  }
+
   /** 一轮开始了：清掉上一轮的“已停”标记并起看门狗。 */
   private armStall(state: RouterState): void {
     state.stalled = false;
+    if (state.running === 1 && !state.session?.isStreaming) this.setActivity(state, { state: "thinking", label: "正在想…" });
     this.progress(state);
   }
 
@@ -449,6 +486,7 @@ export class RouterManager {
     }
     if (state.running === 0 && !state.session?.isStreaming) return;
     state.stalled = true;
+    this.setActivity(state, null);
     // 不 await：模型的那次请求可能收不了尾，但这行提示必须先出来
     void state.session?.abort().catch(() => undefined);
     const assistant = this.store.assistant(state.assistantId);
@@ -567,6 +605,7 @@ export class RouterManager {
       return false;
     } finally {
       state.running = Math.max(0, state.running - 1);
+      if (!state.running) this.setActivity(state, null);
       this.clearStall(state);
       this.publishBusy(state);
       this.maybeRelease(state);
@@ -685,6 +724,7 @@ export class RouterManager {
         await this.fail(state, error);
       } finally {
         state.running = Math.max(0, state.running - 1);
+        if (!state.running) this.setActivity(state, null);
         this.clearStall(state);
         this.publishBusy(state);
         this.maybeRelease(state);
@@ -696,6 +736,7 @@ export class RouterManager {
 
   async stop(assistantId: string): Promise<void> {
     const state = this.routers.get(assistantId);
+    if (state) this.setActivity(state, null);
     if (state?.session) await state.session.abort();
   }
 
@@ -790,6 +831,7 @@ export class RouterManager {
       ...(last ? { last } : {}),
       unread: this.unread(assistant.id),
       busy: this.isBusy(assistant.id),
+      activity: this.routers.get(assistant.id)?.activity ?? null,
     };
   }
 

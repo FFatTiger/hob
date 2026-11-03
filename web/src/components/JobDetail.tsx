@@ -21,7 +21,7 @@ import {
   useApp,
 } from "../store.ts";
 import { fmtBytes, fmtDuration, fmtElapsed, fmtTokens, fmtWhen } from "../util.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { Markdown } from "./Markdown.tsx";
 
 const STATUS: Record<JobStatus, { text: string; icon: IconName; spin?: boolean; bad?: boolean }> = {
   queued: { text: "排队中", icon: "clock" },
@@ -265,7 +265,7 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
     return (
       <div className="jd-textrow">
         {step.thinking ? <ThinkingBlock text={step.thinking} open={false} /> : null}
-        <div className="jd-text" dangerouslySetInnerHTML={{ __html: renderMarkdown(step.text ?? "") }} />
+        <Markdown className="jd-text" text={step.text ?? ""} />
       </div>
     );
   }
@@ -455,7 +455,7 @@ function Report({ job }: { job: Job }) {
   return (
     <>
       <div className="lbl">报告</div>
-      <div className="jd-report" dangerouslySetInnerHTML={{ __html: renderMarkdown(job.summary) }} />
+      <Markdown className="jd-report" text={job.summary} />
     </>
   );
 }

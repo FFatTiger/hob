@@ -1,6 +1,6 @@
 // 首页各组：待确认、进行中、日常、收起的助手、最近任务、定时任务。
 // 手机首页（Mobile）和桌面左栏（Sidebar）共用这一份，筛选规则在 ../home.ts，
-// 两边的头部（我的 / 搜索框 / 新建、写新消息）各自保留。
+// 两边的头部（我的 / 搜索框 / 新建）各自保留。
 import { useState, type ReactNode } from "react";
 import type { AssistantSummary, Job } from "../../../shared/types.ts";
 import { homeGroups } from "../home.ts";
@@ -12,8 +12,14 @@ import { useAssistantMenu } from "./AssistantMenu.tsx";
 import { StatusTag } from "./JobDetail.tsx";
 import { activityParts, STATUS_TEXT } from "./Panel.tsx";
 
+function useHomeBusy(a: AssistantSummary | undefined): boolean {
+  const s = useApp();
+  return Boolean(a && (a.busy || Object.values(s.jobs).some((j) => j.assistantId === a.id && ["running", "queued", "waiting"].includes(j.status)) || Object.values(s.delegations).some((d) => (d.from === a.id || d.to === a.id) && ["running", "waiting"].includes(d.status))));
+}
+
 export function Pin({ a, sel, size = 52 }: { a: AssistantSummary; sel?: boolean; size?: number }) {
   const menu = useAssistantMenu(a);
+  const busy = useHomeBusy(a);
   return (
     <button
       className={`pin${sel ? " sel" : ""}`}
@@ -22,7 +28,7 @@ export function Pin({ a, sel, size = 52 }: { a: AssistantSummary; sel?: boolean;
         if (!menu.takeHeld()) void select(a.id);
       }}
     >
-      <Avatar sprite={a.sprite} prop={a.prop} size={size} />
+      <Avatar sprite={a.sprite} prop={a.prop} size={size} motion={busy ? "home" : undefined} />
       {a.unread > 0 ? <span className="badge" /> : null}
       <div className="nm">{a.name}</div>
       <div className="sub">{a.duty}</div>
@@ -49,6 +55,7 @@ export function AssistantRow({
   onClick?: () => void;
 }) {
   const menu = useAssistantMenu(a);
+  const busy = useHomeBusy(a);
   return (
     <button
       className={`row${sel ? " sel" : ""}`}
@@ -59,7 +66,7 @@ export function AssistantRow({
         else void select(a.id);
       }}
     >
-      <Avatar sprite={a.sprite} prop={a.prop} size={size} />
+      <Avatar sprite={a.sprite} prop={a.prop} size={size} motion={busy ? "home" : undefined} />
       <div className="main">
         <div className="l1">
           <span className="nm">{a.name}</span>
@@ -129,8 +136,9 @@ function Section({ title, more, children }: { title: string; more?: ReactNode; c
 }
 
 function Face({ owner, size }: { owner: AssistantSummary | undefined; size: number }) {
+  const busy = useHomeBusy(owner);
   if (!owner) return <span style={{ width: size, flex: "none" }} />;
-  return <Avatar sprite={owner.sprite} prop={owner.prop} size={size} />;
+  return <Avatar sprite={owner.sprite} prop={owner.prop} size={size} motion={busy ? "home" : undefined} />;
 }
 
 /** 空的那一组：虚线框占住位置，框里写这里会出现什么。 */

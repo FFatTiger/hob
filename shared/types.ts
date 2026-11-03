@@ -218,10 +218,13 @@ export interface Assistant {
   splitFrom?: { from: string; at: Iso; conversations: number };
 }
 
+export type RouterActivity = { state: "thinking" | "tool"; label: string };
+
 export interface AssistantSummary extends Assistant {
   last?: { text: string; at: Iso }; // 对话最后一条（列表第二行）
   unread: number; // 未读条数（>0 时大头像右上角橙点）
   busy: boolean; // Router 正在回复（在跑的任务不算，任务状态看任务卡）
+  activity?: RouterActivity | null;
 }
 
 export interface Rule {
@@ -476,6 +479,8 @@ export type Theme = "system" | "light" | "dark";
 export interface GeneralSettings {
   /** 是否允许助手生成展示页面；旧设置缺省为开启。 */
   showPage?: boolean;
+  /** 头像带不带彩色圆底；旧设置缺省为带。 */
+  avatarBackground?: boolean;
   theme: Theme;
   timezone: string; // IANA 时区名，默认系统时区
   aboutYou: { name: string; language: string; notes: string }; // 空字符串 = 没填，提示词里就不出这一节
@@ -610,6 +615,7 @@ export type HobEvent =
   | { type: "job"; job: Job }
   | { type: "delegation"; delegation: Delegation }
   | { type: "job_step"; jobId: string; step: JobStep } // 新的一步，或按 id 替换（输出流式更新、跑完补结果）
+  | { type: "router-activity"; assistantId: string; activity: RouterActivity | null }
   | { type: "activity"; jobId: string; line: ActivityLine; stats: Job["stats"] }
   | { type: "approval"; approval: Approval }
   | { type: "draft"; draft: Draft }

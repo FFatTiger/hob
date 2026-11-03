@@ -9,7 +9,7 @@ import { useLeave } from "../motion.ts";
 import { copyText } from "../clipboard.ts";
 import { closeFilePreview, fetchFileMeta, fileUrl, setNotice, togglePreviewFull, useApp } from "../store.ts";
 import { fmtBytes, fmtWhen } from "../util.ts";
-import { renderMarkdown } from "../markdown.ts";
+import { Markdown } from "./Markdown.tsx";
 
 /** 文本预览最多显示这么多（服务端也按这个截）。 */
 const MAX_TEXT = 1024 * 1024;
@@ -295,7 +295,7 @@ function TextBody({ meta }: { meta: FileMeta }) {
     return (
       <>
         {notice}
-        <div className="fp-md" dangerouslySetInnerHTML={{ __html: renderMarkdown(text) }} />
+        <Markdown className="fp-md" text={text} />
       </>
     );
   }

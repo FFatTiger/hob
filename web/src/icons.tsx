@@ -43,6 +43,11 @@ const I = {
 
 export type IconName = keyof typeof I;
 
+/** 同一套图标的字符串形式：给 innerHTML 拼出来的地方（markdown 代码块的复制按钮）用。 */
+export function iconSvg(name: IconName, size = 16): string {
+  return `<svg class="i" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[name]}</svg>`;
+}
+
 export function Icon({
   name,
   size = 16,

@@ -36,13 +36,21 @@ import { defaultSearch } from "../../shared/search.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
+export type SceneId = "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
 
 /** 每个截图场景对应的界面状态（选中哪个助手、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
   { sel: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat" }
 > = {
+  "act-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "act-think": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "act-tool": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "act-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "act-home": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  boot: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  bubbles: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "bubbles-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   s1: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   s2: { sel: "bird", panel: "routine:r-daily", collapsed: false, dark: false, mobile: "list" },
   s3: { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "list" },
@@ -560,6 +568,17 @@ function buildDb(scene: SceneId): Db {
     leaf: small("i-lf", "本周三次训练已记录。", "下周增加到四次。", "好的，下周安排四次。"),
   };
 
+  if (scene === "bubbles" || scene === "bubbles-dark") {
+    items.hob = [
+      { kind: "user", id: "bubble-user", at: minsAgo(3), text: "给我看看公式、代码和媒体。" },
+      asst("bubble-text", minsAgo(2), "行内公式 $E=mc^2$，整行公式：\n\n$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$\n\n```js\nconst answer = 42;\n```\n\n```sh\necho hello\n```\n\n价格是 $5 和 $10。"),
+      { kind: "file", id: "bubble-audio", at: minsAgo(1), path: "/mock/audio.mp3", name: "语音样本.mp3" },
+      { kind: "file", id: "bubble-video", at: minsAgo(1), path: "/mock/video.mp4", name: "视频样本.mp4" },
+      { kind: "user", id: "bubble-user-2", at: minsAgo(1), text: "画个简单的表格给我，有几种方式？" },
+      asst("bubble-table", minsAgo(0), "主要有四种：\n\n| 方式 | 适合什么情况 | 能不能改 |\n| --- | --- | --- |\n| 聊天里直接画 | 简单的表，看一眼就行 | 让我重画 |\n| 发 Excel 或 CSV 文件 | 要下载、自己改或者算 | 能 |\n| 做成页面 | 能排序、筛选，以后还要更新 | 能 |\n| 做成图片 | 要转发给别人或者发朋友圈 | 不能 |\n\n想要哪种？告诉我放什么内容。"),
+    ];
+  }
+
   const delegations: Record<string, Delegation> = {};
   const jobs: Record<string, Job> = { "t-0931": jobRunning, "t-0927": jobDone, "t-0929": jobBackup };
   if (scene.startsWith("d-")) {
@@ -585,6 +604,14 @@ function buildDb(scene: SceneId): Db {
       { kind: "note", id: "h-note", at: minsAgo(8), icon: "info", text: "已交回 Hob：代理配置不属于我的职责。", handbackId: "hb-demo" },
       { kind: "user", id: "h-delegation-forward", at: minsAgo(4), text: "检查代理节点为什么无法连接。", from: { assistantId: "hob", name: "Hob", delegationId: "dg-returned" } },
     ];
+  }
+
+  if (scene.startsWith("act-")) {
+    const hob = assistants.find((a) => a.id === "hob")!;
+    hob.busy = true;
+    hob.activity = scene === "act-think" || scene === "act-demo" ? { state: "thinking", label: "正在想…" } : { state: "tool", label: "搜索：最新 AI 动态" };
+    items.hob = [{ kind: "user", id: "act-user", at: minsAgo(1), text: "帮我搜索最新 AI 动态。" }];
+    if (scene === "act-home") assistants.find((a) => a.id === "page")!.busy = true;
   }
 
   return {
@@ -634,7 +661,7 @@ function buildDb(scene: SceneId): Db {
       revision: 1,
       settings: {
         general: {
-          theme: scene === "d-dark" || scene === "h-dark" ? "dark" : "system",
+          theme: scene === "d-dark" || scene === "h-dark" || scene === "act-dark" ? "dark" : "system",
           timezone: "Asia/Tokyo",
           aboutYou: { name: "小林", language: "中文", notes: "" },
         },
@@ -1388,7 +1415,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     upload: async (file) => `mock://uploads/${encodeURIComponent(file.name)}`,
     fileUrl: (path, opts) =>
-      `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`,
+      path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`,
     fileMeta: async (path) => {
       const name = path.split("/").pop() ?? path;
       const dot = name.lastIndexOf(".");
@@ -1429,7 +1456,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     visibility: async () => {},
     events: (handlers) => {
       listeners.add(handlers.onEvent);
+      const timers: ReturnType<typeof setTimeout>[] = [];
+      if (scene === "act-demo") {
+        timers.push(setTimeout(() => emit({ type: "router-activity", assistantId: "hob", activity: { state: "tool", label: "搜索：最新 AI 动态" } }), 2500));
+        timers.push(setTimeout(() => {
+          emit({ type: "router-activity", assistantId: "hob", activity: null });
+          emit({ type: "item", assistantId: "hob", item: { kind: "assistant", id: "act-answer", at: new Date().toISOString(), text: "正在整理搜索结果…", streaming: true } });
+        }, 5500));
+        timers.push(setTimeout(() => {
+          emit({ type: "item", assistantId: "hob", item: { kind: "assistant", id: "act-answer", at: new Date().toISOString(), text: "已整理好最新动态。" } });
+          emit({ type: "assistant", assistant: { ...db.assistants.find((a) => a.id === "hob")!, busy: false, activity: null } });
+        }, 7500));
+      }
       return () => {
+        timers.forEach(clearTimeout);
         listeners.delete(handlers.onEvent);
       };
     },

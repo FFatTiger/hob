@@ -1,7 +1,7 @@
 // 手机（宽 < 768px）：列表页 + 右栏内容的整页。
 import { matches } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { focusComposer, newAssistant, openSettings, setQuery, setSearch, useApp } from "../store.ts";
+import { newAssistant, openSettings, setQuery, setSearch, useApp } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { Panel } from "./Panel.tsx";
 
@@ -32,9 +32,6 @@ export function MobileList() {
             </button>
             <button className="ib" title="创建专属助手" onClick={newAssistant}>
               <Icon name="plus" size={21} />
-            </button>
-            <button className="ib" title="写新消息" onClick={focusComposer}>
-              <Icon name="edit" size={19} />
             </button>
           </>
         )}

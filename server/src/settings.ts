@@ -84,7 +84,7 @@ export function systemTimezone(): string {
 
 export function defaultSettings(timezone = systemTimezone(), models: ModelSettings = seedModels()): Settings {
   return {
-    general: { theme: "system", timezone, showPage: true, aboutYou: { name: "", language: "", notes: "" } },
+    general: { theme: "system", timezone, showPage: true, avatarBackground: true, aboutYou: { name: "", language: "", notes: "" } },
     providers: [],
     models,
     image: { source: "off" },
@@ -201,6 +201,7 @@ function normalize(raw: unknown, base: Settings): Settings {
       theme: THEMES.includes(theme) ? theme : base.general.theme,
       timezone: checkTimezone(text(general.timezone, "") || base.general.timezone),
       showPage: typeof general.showPage === "boolean" ? general.showPage : base.general.showPage !== false,
+      avatarBackground: typeof general.avatarBackground === "boolean" ? general.avatarBackground : base.general.avatarBackground !== false,
       aboutYou: {
         name: text(about.name, base.general.aboutYou.name),
         language: text(about.language, base.general.aboutYou.language),

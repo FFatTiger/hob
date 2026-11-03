@@ -1,4 +1,5 @@
 // 一个小的外部 store：bootstrap + 当前对话 + jobs/approvals/drafts 按 id 存，SSE 事件合并进来。
+import { parseRoute, type SettingsSection } from "./route.ts";
 import { useSyncExternalStore } from "react";
 import type {
   AnswerApprovalBody,
@@ -41,6 +42,8 @@ import { ApiError, realApi, type HobApi } from "./api.ts";
 import { applyDelta, mergeItems } from "./merge.ts";
 import { shouldOpenLive } from "./page-live.ts";
 import { clearFresh, markFresh } from "./motion.ts";
+import { isSentAs, localPath, pendingItem, type Attachment, type PendingMessage } from "./outbox.ts";
+import { isImagePath } from "../../shared/media.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
@@ -70,7 +73,7 @@ export interface WorklogState {
   loading: boolean;
 }
 export type MobilePage = "list" | "chat";
-export type SettingsSection = "general" | "providers" | "models" | "memory" | "image" | "search" | "skills" | "work" | "push" | "about";
+export type { SettingsSection } from "./route.ts";
 
 /** 设置分栏下的一层：手机标题栏显示 title，返回回到分栏。 */
 export type SettingsSub =
@@ -127,7 +130,8 @@ export interface State {
   query: string;
   quote: { itemId: string; text: string } | null;
   text: string;
-  files: string[];
+  attachments: Attachment[]; // 输入框里待发的附件（选了就出现，后台在传）
+  pending: Record<string, PendingMessage[]>; // 发件箱：点了发送还没被服务端那条顶替的消息
   nonce: number; // 让输入框重新聚焦／重新量高度
   mobile: MobilePage;
   sheet: boolean; // 手机上右栏内容的全屏页
@@ -162,6 +166,9 @@ function storedTheme(): Theme | null {
 
 const themeFromUrl = params.get("dark") === "1";
 
+/** 打开页面时地址里的 hash；读一次，后面 history 会改写地址。 */
+const bootRoute = parseRoute(location.hash);
+
 function initial(): State {
   const ui = SCENE_UI[MOCK ? scene : "s1"];
   const state: State = {
@@ -194,7 +201,8 @@ function initial(): State {
     query: "",
     quote: null,
     text: "",
-    files: [],
+    attachments: [],
+    pending: {},
     nonce: 0,
     mobile: "list",
     sheet: false,
@@ -213,6 +221,11 @@ function initial(): State {
   }
   const aParam = params.get("a");
   if (aParam) state.sel = aParam;
+  if (bootRoute.sel) state.sel = bootRoute.sel;
+  if (bootRoute.settings) {
+    state.page = "settings";
+    state.section = bootRoute.section;
+  }
   const pParam = params.get("panel");
   if (pParam) state.panel = parsePanel(pParam);
   if (params.get("collapsed") === "1") state.collapsed = true;
@@ -224,6 +237,7 @@ let state: State = initial();
 
 /** 启动时要不要直接进对话页：手机默认停在列表，只有 URL/场景指定了才进对话。 */
 function mobileWantsChat(): boolean {
+  if (bootRoute.sel) return true;
   if (MOCK) return SCENE_UI[scene].mobile === "chat";
   return !!params.get("a") || window.innerWidth >= 768;
 }
@@ -788,8 +802,13 @@ function applyEvent(ev: HobEvent) {
     case "item": {
       const list = state.items[ev.assistantId];
       if (!list) break;
-      if (!list.some((x) => x.id === ev.item.id)) markFresh([ev.item.id]);
-      set((s) => ({ items: { ...s.items, [ev.assistantId]: mergeItems(list, ev.item) } }));
+      const outbox = state.pending[ev.assistantId] ?? [];
+      const mine = outbox.find((p) => isSentAs(p, ev.item));
+      if (!mine && !list.some((x) => x.id === ev.item.id)) markFresh([ev.item.id]);
+      set((s) => ({
+        items: { ...s.items, [ev.assistantId]: mergeItems(list, ev.item) },
+        ...(mine ? { pending: { ...s.pending, [ev.assistantId]: outbox.filter((p) => p !== mine) } } : {}),
+      }));
       break;
     }
     case "delta": {
@@ -929,50 +948,128 @@ export function setQuote(quote: { itemId: string; text: string } | null) {
   set({ quote, nonce: state.nonce + 1 });
 }
 
-export function addFiles(files: string[]) {
-  set((s) => ({ files: [...s.files, ...files] }));
+/* ---------------- 附件和发件箱 ---------------- */
+
+const uploadFiles = new Map<string, File>(); // 附件 id → 选中的文件（失败了重传用）
+const uploads = new Map<string, Promise<string>>(); // 附件 id → 正在传 / 传好的服务器路径
+const previews = new Map<string, string>(); // 图片的本地地址：占位路径和传好后的真路径都指向它，换过去不闪
+
+/** 图片显示用的地址：自己刚发的图用本地那份（不等下载），别的走服务器。 */
+export function photoUrl(path: string): string {
+  return previews.get(path) ?? api.fileUrl(path, { thumb: true });
 }
 
-export function removeFile(path: string) {
-  set((s) => ({ files: s.files.filter((f) => f !== path) }));
+function patchAttachment(id: string, patch: Partial<Attachment>) {
+  const fix = (list: Attachment[]) => (list.some((a) => a.id === id) ? list.map((a) => (a.id === id ? { ...a, ...patch } : a)) : list);
+  set((s) => ({
+    attachments: fix(s.attachments),
+    pending: Object.fromEntries(Object.entries(s.pending).map(([k, list]) => [k, list.map((p) => ({ ...p, attachments: fix(p.attachments) }))])),
+  }));
 }
 
-export async function upload(files: FileList | File[]) {
-  for (const f of Array.from(files)) {
-    try {
-      const path = await api.upload(f);
-      addFiles([path]);
-    } catch (e) {
-      set({ notice: `上传失败：${errText(e)}` });
-    }
+function startUpload(att: Attachment): Promise<string> {
+  const file = uploadFiles.get(att.id)!;
+  const job = api.upload(file).then(
+    (path) => {
+      const preview = previews.get(localPath(att));
+      if (preview) previews.set(path, preview);
+      patchAttachment(att.id, { status: "done", path });
+      return path;
+    },
+    (e: unknown) => {
+      uploads.delete(att.id);
+      patchAttachment(att.id, { status: "failed" });
+      throw e;
+    },
+  );
+  job.catch(() => {}); // 失败在发送时再报，这里只防未处理的 rejection
+  uploads.set(att.id, job);
+  return job;
+}
+
+/** 选了文件：立刻出现在输入框里（图片用本地缩略图），后台开始传。 */
+export function attach(files: FileList | File[]) {
+  const added: Attachment[] = Array.from(files).map((file) => {
+    const att: Attachment = { id: `att-${Math.random().toString(36).slice(2, 10)}`, name: file.name, status: "uploading" };
+    uploadFiles.set(att.id, file);
+    if (isImagePath(file.name)) previews.set(localPath(att), URL.createObjectURL(file));
+    return att;
+  });
+  set((s) => ({ attachments: [...s.attachments, ...added] }));
+  added.forEach((att) => void startUpload(att));
+}
+
+export function removeAttachment(id: string) {
+  set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) }));
+}
+
+/** 等这条消息的附件都传好（失败过的重传），拿到服务器路径。 */
+async function uploadedPaths(p: PendingMessage): Promise<string[]> {
+  return Promise.all(p.attachments.map((a) => uploads.get(a.id) ?? startUpload(a)));
+}
+
+function setPending(assistantId: string, localId: string, patch: Partial<PendingMessage> | null) {
+  set((s) => {
+    const list = s.pending[assistantId] ?? [];
+    const next = patch ? list.map((p) => (p.localId === localId ? { ...p, ...patch } : p)) : list.filter((p) => p.localId !== localId);
+    return { pending: { ...s.pending, [assistantId]: next } };
+  });
+}
+
+async function deliver(p: PendingMessage) {
+  setPending(p.assistantId, p.localId, { status: "sending", error: undefined });
+  try {
+    const files = await uploadedPaths(p);
+    const sent = await api.sendMessage(p.assistantId, { text: p.text, quote: p.quote, files: files.length ? files : undefined });
+    // 服务端那条顶替待发的这条：不再播入场动画（已经在屏幕上了）
+    set((s) => ({
+      pending: { ...s.pending, [p.assistantId]: (s.pending[p.assistantId] ?? []).filter((x) => x.localId !== p.localId) },
+      ...(sent?.item ? { items: { ...s.items, [p.assistantId]: mergeItems(s.items[p.assistantId] ?? [], sent.item) } } : {}),
+    }));
+  } catch (e) {
+    setPending(p.assistantId, p.localId, { status: "failed", error: errText(e) });
   }
 }
 
 export async function send() {
   const id = state.sel;
   const text = state.text.trim();
-  if (!id || !text) return;
-  const body: SendMessageBody = {
+  // 只发图片 / 文件不写字也行（和 Telegram 一样）
+  if (!id || (!text && !state.attachments.length)) return;
+  const p: PendingMessage = {
+    localId: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
+    assistantId: id,
+    at: new Date().toISOString(),
     text,
-    quote: state.quote ?? undefined,
-    files: state.files.length ? state.files : undefined,
+    ...(state.quote ? { quote: state.quote } : {}),
+    attachments: state.attachments,
+    status: "sending",
   };
-  set({ text: "", quote: null, files: [], nonce: state.nonce + 1 });
-  try {
-    const sent = await api.sendMessage(id, body);
-    // 用户消息自己先落进列表（后端也会推同一条事件，按 id 合并不会重复）
-    if (sent?.item) {
-      markFresh([sent.item.id]);
-      set((s) => ({ items: { ...s.items, [id]: mergeItems(s.items[id] ?? [], sent.item) } }));
-    }
-  } catch (e) {
-    set({
-      notice: `发送失败：${errText(e)}`,
-      text,
-      quote: body.quote ?? null,
-      files: body.files ?? [],
-    });
-  }
+  markFresh([p.localId]);
+  set((s) => ({ text: "", quote: null, attachments: [], nonce: s.nonce + 1, pending: { ...s.pending, [id]: [...(s.pending[id] ?? []), p] } }));
+  await deliver(p);
+}
+
+/** 点了「未送达」的重试。 */
+export function retryPending(assistantId: string, localId: string) {
+  const p = state.pending[assistantId]?.find((x) => x.localId === localId);
+  if (p) void deliver(p);
+}
+
+export function discardPending(assistantId: string, localId: string) {
+  setPending(assistantId, localId, null);
+}
+
+/** 对话里要画的条目：服务端的列表 + 还没顶替掉的待发消息。 */
+export function chatItems(s: State, assistantId: string | null): Item[] {
+  if (!assistantId) return [];
+  const pending = s.pending[assistantId] ?? [];
+  const items = s.items[assistantId] ?? [];
+  return pending.length ? [...items, ...pending.map(pendingItem)] : items;
+}
+
+export function pendingOf(s: State, assistantId: string | null, localId: string): PendingMessage | undefined {
+  return assistantId ? s.pending[assistantId]?.find((p) => p.localId === localId) : undefined;
 }
 
 export async function stopAssistant(id: string) {
@@ -1065,11 +1162,13 @@ async function jumpToLink(assistantId: string, id: string, kind: "forward" | "de
   } catch (e) { set({ notice: `无法定位转交消息：${errText(e)}` }); }
 }
 
-export async function replyJob(jobId: string, text: string) {
+export async function replyJob(jobId: string, text: string): Promise<boolean> {
   try {
     await api.replyJob(jobId, text);
+    return true;
   } catch (e) {
     set({ notice: `发送失败：${errText(e)}` });
+    return false;
   }
 }
 
@@ -1391,7 +1490,7 @@ export function tick() {
   set({ tick: state.tick + 1 });
 }
 
-export function fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean }): string {
+export function fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean; thumb?: boolean }): string {
   return api.fileUrl(path, opts);
 }
 

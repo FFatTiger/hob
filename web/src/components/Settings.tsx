@@ -296,7 +296,6 @@ function GeneralSection() {
   const feedback = useSaveFeedback();
   const timezoneFeedback = useSaveFeedback();
   const aboutFeedback = useSaveFeedback();
-  const avatarFeedback = useSaveFeedback();
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -307,18 +306,11 @@ function GeneralSection() {
 
   return (
     <>
-      <PageHead title="通用" desc="主题、头像、时区、个人信息、登录密码。" />
+      <PageHead title="通用" desc="主题、时区、个人信息、登录密码。" />
       <Group>
         <div className="lbl">主题</div>
         <Seg items={THEMES} value={s.theme} disabled={feedback.busy} onChange={(theme) => void feedback.save({ general: { theme } })} />
         <SaveFeedback message={feedback.message} />
-      </Group>
-
-      <Group>
-        <div className="lbl">头像底色</div>
-        <button className={`tog${s.settings.settings.general.avatarBackground === false ? " off" : ""}`} aria-label="头像底色" aria-pressed={s.settings.settings.general.avatarBackground !== false} disabled={avatarFeedback.busy} onClick={() => void avatarFeedback.save({ general: { avatarBackground: s.settings.settings.general.avatarBackground === false } })} />
-        <SaveFeedback message={avatarFeedback.message} />
-        <div className="note">关掉后头像只显示像素小人，不带彩色圆底。</div>
       </Group>
 
       <Group>
@@ -2785,7 +2777,7 @@ function SkillDetail({ skill, onDeleted }: { skill: SkillView | undefined; onDel
       <SubBack label="技能" />
       <PageHead title={skill.name} desc={skill.description} />
       <div className="sline">{SKILL_SOURCE_LABEL[skill.source]}{skill.overridden ? " · 被优先级更高的同名技能覆盖" : ""}{skill.enabled ? "" : " · 已停用"}</div>
-      <Markdown className="skill-doc fp-md" text={skill.content} />
+      <Markdown className="skill-doc fp-md markdown-body" text={skill.content} />
       {skill.source === "hob" ? (
         <SaveRow saved={false} error={error}>
           <button className="pbtn danger" onClick={() => void remove()}>删除技能</button>

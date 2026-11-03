@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, extname } from "node:path";
 import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
@@ -50,13 +50,17 @@ export function hasImageFiles(files: string[] | undefined): boolean {
   return (files ?? []).some((file) => isImagePath(file));
 }
 
-/** 附件里的图片读成 pi 的图片块（读不出来就跳过，不把整个任务拖死）。 */
-function imageContents(files: string[] | undefined): ImageContent[] {
+/** 一张图超过这个大小就不当图片给模型（只留路径），免得把会话撑得太大。 */
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024;
+
+/** 附件里的图片读成 pi 的图片块（读不出来、太大就跳过，不把整个回合拖死）。任务和对话共用。 */
+export function imageContents(files: string[] | undefined): ImageContent[] {
   const out: ImageContent[] = [];
   for (const file of files ?? []) {
     const mimeType = IMAGE_TYPES[extname(file).toLowerCase()];
     if (!mimeType) continue;
     try {
+      if (statSync(file).size > MAX_IMAGE_BYTES) continue;
       out.push({ type: "image", data: readFileSync(file).toString("base64"), mimeType });
     } catch {
       // 文件没了或读不了：不带图片，靠任务说明的路径自己去读
@@ -91,6 +95,8 @@ interface WorkerState {
   stopped?: boolean;
   /** 正在跑的工具步骤，按 toolCallId 存：输出更新、跑完都按同一个步骤 id 替换 */
   steps: Map<string, JobStep>;
+  /** 你补的话已交给任务、还没被读到（任务做完当前这一步才读）；读到时换成正式的一行 */
+  queued: JobStep[];
 }
 
 /** 推给助手的任务结果最多带这么多字的报告。 */
@@ -166,10 +172,11 @@ export class JobManager {
   transcript(jobId: string): JobStep[] {
     const job = this.store.job(jobId);
     if (!job) return [];
-    return deriveSteps(this.store.workerFile(jobId), {
+    const steps = deriveSteps(this.store.workerFile(jobId), {
       cwd: job.cwd ?? "",
       save: (stepId, text) => this.store.writeStepOutput(jobId, stepId, text),
     });
+    return [...steps, ...(this.workers.get(jobId)?.queued ?? [])];
   }
 
   async start(assistantId: string, input: StartJobInput): Promise<Job> {
@@ -297,6 +304,7 @@ export class JobManager {
       askedFollowUp: false,
       lastActivityAt: Date.now(),
       steps: new Map(),
+      queued: [],
     };
     this.workers.set(running.id, worker);
     const images = imageContents(running.inputs);
@@ -345,6 +353,15 @@ export class JobManager {
       }
       if (event.type === "message_start" || event.type === "agent_start") {
         worker.lastActivityAt = Date.now();
+        if (event.type === "message_start" && event.message.role === "user") {
+          // 补的那句被任务读到了：id 和 transcript 推导出来的一样，前端拿它换掉「等待读取」那行
+          const text = textOfContent(event.message.content).trim();
+          const index = worker.queued.findIndex((step) => step.text === text);
+          if (index >= 0) {
+            worker.queued.splice(index, 1);
+            this.emitStep(worker, { id: `u${event.message.timestamp}`, kind: "text", at: new Date(event.message.timestamp).toISOString(), from: "user", text });
+          }
+        }
         return;
       }
       if (event.type === "agent_settled") void this.onSettled(worker);
@@ -535,6 +552,8 @@ export class JobManager {
       ...(options.files?.length ? { files: options.files } : {}),
     };
     this.store.saveJob(next);
+    // 转交里的任务：先把转交重新打开，结果由目标助手接着处理完才回流 Hob（见 DelegationManager.resume）
+    const delegationId = !job.routineId && job.delegationId && this.runtime.delegations.resume(job.delegationId) ? job.delegationId : undefined;
     this.bus.emit({ type: "job", job: next });
     pushJobEnd({ push: this.runtime.push, store: this.store }, next);
     this.publishBusy(job.assistantId);
@@ -565,13 +584,9 @@ export class JobManager {
           .catch(() => undefined);
       }
     } else if (assistant) {
-      await this.runtime.router
-        .event(
-          job.assistantId,
-          `任务「${job.title}」${statusText}${eventSummary ? `：${eventSummary}` : options.reason ? `：${options.reason}` : ""}${filesNote}`,
-          cont,
-        )
-        .catch(() => undefined);
+      const text = `任务「${job.title}」${statusText}${eventSummary ? `：${eventSummary}` : options.reason ? `：${options.reason}` : ""}${filesNote}`;
+      if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId, cont).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
+      else await this.runtime.router.event(job.assistantId, text, cont).catch(() => undefined);
     }
   }
 
@@ -605,8 +620,17 @@ export class JobManager {
   async reply(jobId: string, text: string): Promise<void> {
     const worker = this.workers.get(jobId);
     if (!worker?.session) throw new Error("这个任务当前未在运行。");
-    if (worker.session.isStreaming) await worker.session.steer(text);
-    else await worker.session.prompt(text);
+    // 先显示出来：任务在跑命令时要等这一步做完才读到，界面上标着「等待读取」
+    const step: JobStep = { id: `q${Date.now()}-${worker.queued.length}`, kind: "text", at: new Date().toISOString(), from: "user", text, queued: true };
+    worker.queued.push(step);
+    this.emitStep(worker, step);
+    try {
+      if (worker.session.isStreaming) await worker.session.steer(text);
+      else void worker.session.prompt(text).catch(() => { worker.queued = worker.queued.filter((item) => item !== step); });
+    } catch (error) {
+      worker.queued = worker.queued.filter((item) => item !== step);
+      throw error;
+    }
   }
 
   async stop(jobId: string): Promise<void> {
@@ -670,21 +694,29 @@ export class JobManager {
       if (worker) worker.job = next;
     }
     worker?.ask?.(answer);
-    if (worker) worker.ask = undefined;
+    if (worker) {
+      worker.ask = undefined;
+      worker.lastActivityAt = Date.now();
+    }
   }
 
   startWatchdog(): void {
     this.watchdog ??= setInterval(() => {
-      const idleMs = this.runtime.settings.settings.work.jobStallMinutes * 60_000;
-      for (const [jobId, worker] of this.workers) {
-        if (Date.now() - worker.lastActivityAt > idleMs) {
-          void this.finish(jobId, "stuck", undefined, `${Math.round(idleMs / 60_000)} 分钟无响应`);
-        }
-      }
+      this.checkStalls();
       // 并发小了以后（设置里改的），排队的任务还在等，这里补一次泵
       this.pump();
     }, 30_000);
     this.watchdog.unref?.();
+  }
+
+  checkStalls(now = Date.now()): void {
+    const idleMs = this.runtime.settings.settings.work.jobStallMinutes * 60_000;
+    for (const [jobId, worker] of this.workers) {
+      // 在等用户答提问不算没响应：等多久都是用户的事
+      if (!worker.ask && now - worker.lastActivityAt > idleMs) {
+        void this.finish(jobId, "stuck", undefined, `${Math.round(idleMs / 60_000)} 分钟无响应`);
+      }
+    }
   }
 
   stopWatchdog(): void {

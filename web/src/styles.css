@@ -259,15 +259,22 @@ svg.i {
   font-size: 11.5px;
   color: var(--text3);
 }
+/* 未读条数（不用点：点留给头像右下角的状态符号） */
 .badge {
   position: absolute;
-  top: 11px;
-  left: calc(50% + 15px);
-  width: 11px;
-  height: 11px;
-  border-radius: 50%;
+  top: 6px;
+  left: calc(50% + 12px);
+  min-width: 19px;
+  height: 19px;
+  padding: 0 5px;
+  border-radius: 10px;
   background: var(--accent);
   border: 2px solid var(--side);
+  color: #fff;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 15px;
+  text-align: center;
 }
 .pin.sel .badge {
   border-color: var(--sel);
@@ -417,8 +424,15 @@ svg.i {
 }
 
 /* avatars */
-/* 头像：彩色圆底 + 像素小人；设置 → 通用 → 头像底色关掉时（html.av-plain）只剩小人，图案放大填满格子 */
+/*
+ * 头像不让用户选样式：
+ * - 列表、卡片、头部一律圆底（.av），形状一致。在忙就是眼睛在动，闲了就停；同一个助手一屏只动一处（见 HomeSections）。
+ * - 不带圆底的小人（.av-free）只用在单独一个的地方：对话底部状态行、空对话、资料页、登录，至少是旁边圆底头像的 1.6 倍，不进列表。
+ * 关了系统动画的人看不到眼睛动，才退回显示绿点。
+ */
 .av {
+  width: var(--av-size);
+  height: var(--av-size);
   display: grid;
   place-items: center;
   flex: none;
@@ -429,48 +443,122 @@ svg.i {
   width: 78%;
   height: 78%;
 }
-.av-plain .av {
-  background: none;
+.av-free { background: none; border-radius: 0; }
+.av-free svg { width: 96%; height: 96%; }
+/* 右下角状态符号：淡蓝 ··· 正在工作，? 等你确认，红 ! 受阻；外圈和所在列表的底色一样，像从头像上挖出来 */
+.av-marked { position: relative; }
+.av-mark {
+  --m: max(15px, calc(var(--av-size) * 0.36));
+  position: absolute;
+  right: -2px;
+  bottom: -2px;
+  width: var(--m);
+  height: var(--m);
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  box-shadow: 0 0 0 2px var(--mark-ring, var(--bg));
+  color: #fff;
+  font: 800 calc(var(--m) * 0.7) / 1 system-ui, sans-serif;
 }
-.av-plain .av svg {
-  width: 90%;
-  height: 90%;
-}
-.av-busy { position: relative; }
-.av-busy::after { content: ""; position: absolute; right: 0; bottom: 0; width: 8px; height: 8px; background: #2fbf71; border: 2px solid var(--bg, white); border-radius: 50%; }
+.av-mark.busy { background: #5aaeff; }
+.av-mark svg { width: 70%; fill: currentColor; }
+.av-mark.ask { background: #f5a524; }
+.av-mark.stuck { background: var(--danger); }
+.side { --mark-ring: var(--side); }
+.row.sel, .pin.sel { --mark-ring: var(--sel); }
 /*
- * 动画：身体不动，只有眼睛。像人环视：停一下、很快转过去（约 0.15 秒）、再停。
- * 眼睛只在内焰里动：平视或往下看时左右约 1.3 格；往上看时内焰变窄，左右只到 0.9 格，不压到外焰。每个助手的起点错开（--eye-delay），一屏好几个不会同步。
+ * 动画：身体不动，只有眼睛。像人环视：有长停、有很快的一瞥（约 0.1 秒）、有慢慢挪过去的，还有斜着看、眯眼、睁大、眨两下。
+ * 视线（.av-eyes）和眼皮（.av-blink）两条动画周期互质，叠在一起很久才重复；每个助手的起点再错开（--eye-delay），一屏好几个不会同步。
+ * 眼睛只在内焰里动：平视或往下看时左右最多约 1.4 格；往上看时内焰变窄，左右只到 1 格，不压到外焰。
+ * 关键帧里写的 animation-timing-function 只管从这一帧到下一帧那段：默认是快速一瞥，慢慢挪的段落单独写。
  */
-.av-motion .av-eyes, .av-motion .av-blink { transform-box: fill-box; transform-origin: center; animation-delay: var(--eye-delay, 0s); animation-iteration-count: infinite; animation-timing-function: cubic-bezier(0.3, 0, 0.15, 1); }
-.av-motion .av-blink { animation-name: eye-blink; animation-duration: 4.3s; }
-.av-think .av-eyes { animation-name: eye-think; animation-duration: 3.6s; }
-.av-work .av-eyes { animation-name: eye-work; animation-duration: 2.4s; }
-.av-home .av-eyes { animation-name: eye-home; animation-duration: 5.2s; }
-@keyframes eye-blink { 0%, 92%, 100% { transform: scaleY(1); } 95% { transform: scaleY(0.1); } }
-/* 思考：往上方左右看 */
+.av-motion .av-eyes, .av-motion .av-blink { transform-box: fill-box; transform-origin: center; animation-delay: var(--eye-delay, 0s); animation-iteration-count: infinite; animation-timing-function: cubic-bezier(0.25, 0.8, 0.25, 1); }
+.av-think .av-eyes { animation-name: eye-think; animation-duration: 11s; }
+.av-think .av-blink { animation-name: lid-think; animation-duration: 6.1s; }
+.av-work .av-eyes { animation-name: eye-work; animation-duration: 6s; }
+.av-work .av-blink { animation-name: lid-work; animation-duration: 4.7s; }
+.av-home .av-eyes { animation-name: eye-home; animation-duration: 14s; }
+.av-home .av-blink { animation-name: lid-home; animation-duration: 7.3s; }
+/* 思考：往上看着出神，慢慢挪到另一边，偶尔低头想一下，想到了就回正 */
 @keyframes eye-think {
-  0%, 18% { transform: translate(0, 0); }
-  22%, 44% { transform: translate(0.9px, -0.9px); }
-  48%, 64% { transform: translate(-0.9px, -0.9px); }
-  68%, 82% { transform: translate(0.3px, -0.9px); }
-  86%, 100% { transform: translate(0, 0); }
+  0%, 10.9% { transform: translate(0, 0); }
+  12.3%, 30.9% { transform: translate(1px, -0.9px); }
+  31.8% { transform: translate(0.7px, -1px); }
+  38.2% { transform: translate(0.7px, -1px); animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1); }
+  47.3%, 58.2% { transform: translate(-1px, -0.9px); }
+  59.3%, 62.7% { transform: translate(0, 0); }
+  63.6%, 71.8% { transform: translate(-1.3px, 0.7px); }
+  73.2%, 87.3% { transform: translate(0.4px, -0.9px); }
+  88.6%, 100% { transform: translate(0, 0); }
 }
-/* 干活：盯着下面快速扫 */
+@keyframes lid-think {
+  0%, 38% { transform: scaleY(1); }
+  40% { transform: scaleY(0.1); }
+  42%, 70% { transform: scaleY(1); }
+  73%, 80% { transform: scaleY(0.6); }
+  83%, 100% { transform: scaleY(1); }
+}
+/* 干活：盯着下面一行行看过去（慢慢往右挪、一下跳回左边），中间抬头核一眼 */
 @keyframes eye-work {
-  0%, 16% { transform: translate(-1.3px, 0.8px); }
-  21%, 40% { transform: translate(1.3px, 0.8px); }
-  45%, 58% { transform: translate(0, 0.8px); }
-  63%, 80% { transform: translate(1.2px, 0.5px); }
-  85%, 100% { transform: translate(-1.3px, 0.8px); }
+  0% { transform: translate(-1.4px, 0.8px); }
+  5% { transform: translate(-1.4px, 0.8px); animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); }
+  20%, 23.3% { transform: translate(1.3px, 0.8px); }
+  25% { transform: translate(-1.4px, 1px); }
+  28.3% { transform: translate(-1.4px, 1px); animation-timing-function: cubic-bezier(0.4, 0, 0.6, 1); }
+  43.3%, 48.3% { transform: translate(1.3px, 1px); }
+  50%, 60% { transform: translate(0, -0.3px); }
+  61.7%, 71.7% { transform: translate(1.2px, 0.6px); }
+  73.3%, 80% { transform: translate(-1px, 0.9px); }
+  81.7%, 100% { transform: translate(-1.4px, 0.8px); }
 }
-/* 首页忙着：慢慢左右环视 */
+@keyframes lid-work {
+  0%, 30% { transform: scaleY(1); }
+  33%, 52% { transform: scaleY(0.6); }
+  55%, 84% { transform: scaleY(1); }
+  86% { transform: scaleY(0.1); }
+  88%, 100% { transform: scaleY(1); }
+}
+/* 首页忙着：大多时候平视，偶尔往旁边瞥、往上看看，左右来回扫一下 */
 @keyframes eye-home {
-  0%, 20% { transform: translate(0, 0); }
-  23%, 42% { transform: translate(-1.3px, 0); }
-  45%, 58% { transform: translate(0, 0); }
-  61%, 80% { transform: translate(1.3px, 0); }
-  83%, 100% { transform: translate(0, 0); }
+  0%, 22% { transform: translate(0, 0); }
+  23%, 36% { transform: translate(-1.3px, 0); }
+  37.5% { transform: translate(0, 0); }
+  50% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1); }
+  55%, 62% { transform: translate(1px, -0.8px); }
+  63%, 75% { transform: translate(0, 0); }
+  76%, 79% { transform: translate(1.3px, 0.3px); }
+  80%, 84% { transform: translate(-1.3px, 0.3px); }
+  85.5%, 100% { transform: translate(0, 0); }
+}
+@keyframes lid-home {
+  0%, 46% { transform: scaleY(1); }
+  48% { transform: scaleY(0.1); }
+  50%, 88% { transform: scaleY(1); }
+  89.5% { transform: scaleY(0.1); }
+  91% { transform: scaleY(1); }
+  92.5% { transform: scaleY(0.1); }
+  94%, 100% { transform: scaleY(1); }
+}
+/* 首页在忙的助手：进页面时看一圈（约 3.6 秒），之后每 30 秒一圈；开始时间由 --eye-delay 按轮次错开（sprites.tsx 的 PEEK_GAP_S） */
+.av-peek .av-eyes { animation-name: eye-peek; animation-duration: 30s; }
+.av-peek .av-blink { animation-name: lid-peek; animation-duration: 30s; }
+@keyframes eye-peek {
+  0% { transform: translate(0, 0); }
+  1%, 4% { transform: translate(-1.3px, 0); }
+  5% { transform: translate(0, 0); }
+  6.5% { transform: translate(0, 0); animation-timing-function: cubic-bezier(0.45, 0, 0.55, 1); }
+  8%, 10.5% { transform: translate(1px, -0.8px); }
+  12%, 100% { transform: translate(0, 0); }
+}
+@keyframes lid-peek {
+  0%, 5% { transform: scaleY(1); }
+  5.6% { transform: scaleY(0.1); }
+  6.2%, 12.4% { transform: scaleY(1); }
+  12.9% { transform: scaleY(0.1); }
+  13.4% { transform: scaleY(1); }
+  13.9% { transform: scaleY(0.1); }
+  14.4%, 100% { transform: scaleY(1); }
 }
 .activity-line { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: var(--text2); font-size: 14px; }
 .activity-line .activity-shimmer { min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
@@ -602,6 +690,8 @@ svg.i {
   padding: 0 34px;
   display: flex;
   flex-direction: column;
+  /* 小卡片（任务、文件、页面、音视频、图片）统一一个宽度；提问、委派、草稿、表格这类内容卡走气泡上限 */
+  --card-w: 380px;
 }
 .div {
   align-self: center;
@@ -643,87 +733,75 @@ svg.i {
 .g {
   height: 12px;
 }
-.b ul,
-.fp-md ul {
+.b ul {
   list-style: none;
 }
-.b li,
-.fp-md li {
-  display: flex;
-  gap: 8px;
-  align-items: flex-start;
+/* 列表项是普通的块，记号挂在左边留白里：项里混着粗体、代码、链接时照常换行，不会被拆成好几列 */
+.b li {
+  position: relative;
+  padding-left: 22px;
 }
-.b li::before,
-.fp-md li::before {
+.b li::before {
   content: "✓";
+  position: absolute;
+  left: 0;
+  top: 0;
   color: var(--text2);
   font-size: 13px;
   line-height: 1.85;
-  flex: none;
 }
-.b ol,
-.fp-md ol {
+.b ol {
   list-style: none;
   counter-reset: n;
 }
-.b ol li,
-.fp-md ol li {
+.b ol > li {
   counter-increment: n;
+  padding-left: 26px;
 }
-.b ol li::before,
-.fp-md ol li::before {
+.b ol > li::before {
   content: counter(n) ".";
-  color: var(--text2);
+  width: 20px;
+  text-align: right;
   font-size: 14px;
   line-height: 1.75;
-  width: 14px;
-  flex: none;
+}
+.b ul > li::before {
+  content: "✓";
 }
 .b p + p,
 .b ul + p,
 .b ol + p,
-.b pre + p,
-.fp-md p + p,
-.fp-md ul + p,
-.fp-md ol + p,
-.fp-md pre + p {
+.b pre + p {
   margin-top: 6px;
 }
 .b p + ul,
-.b p + ol,
-.fp-md p + ul,
-.fp-md p + ol {
+.b p + ol {
   margin-top: 4px;
 }
-.b strong,
-.fp-md strong {
+.b strong {
   font-weight: 600;
 }
-.b code,
-.fp-md code {
+.b code {
   font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
   font-size: 13px;
   background: var(--field);
   border-radius: 5px;
   padding: 1px 5px;
 }
-.b pre,
-.fp-md pre {
+.b pre {
   background: var(--field);
   border-radius: 10px;
   padding: 9px 11px;
   overflow-x: auto;
   margin-top: 6px;
 }
-.b pre code,
-.fp-md pre code {
+.b pre code {
   background: none;
   padding: 0;
   font-size: 12.5px;
   line-height: 1.6;
 }
-.b a,
-.fp-md a {
+.b a {
   color: var(--text);
   text-decoration: underline;
   text-decoration-color: var(--text3);
@@ -924,16 +1002,51 @@ svg.i {
   margin-top: 4px;
 }
 .filecard.bad .ico, .filecard.bad .m { color: var(--danger); }
-.mmsgs .filecard {
-  width: 100%;
-  max-width: 300px;
-}
-/* 对话里的文件卡、图片卡跟气泡同一节奏：上 8px，下不留（任务详情里的文件列表照旧） */
+/*
+ * 对话里的小卡片一个样子：同宽（--card-w）、圆角和气泡一样 18px、左边 40px 的图标位（头像 / 文件图标 / 播放键），
+ * 标题 14.5px、下面一行灰字；和气泡同一节奏，上 8px、下不留。任务详情里的文件列表不受影响。
+ */
 .col > .filecard,
-.col > .imgcard {
+.col > .imgcard,
+.col > .media-audio,
+.col > .media-video {
+  width: var(--card-w);
+  max-width: 100%;
   margin: 8px 0 0;
 }
-.col > .media-audio, .col > .media-video { margin: 8px 0 0; }
+/* 提问卡和小卡片同样的内边距 */
+.col > .b.q {
+  padding: 12px 14px;
+}
+/* 任务卡外面包着 .hov：宽度给外层，上间距还是卡片自己的 8px */
+.col > .hov:has(> .b.jobcard:not(.delegation-card)) {
+  width: var(--card-w);
+  max-width: 100%;
+}
+.col > .filecard {
+  gap: 12px;
+  padding: 12px 14px;
+  border-radius: 18px;
+  text-align: left;
+}
+.col > .filecard .ico {
+  width: 40px;
+  height: 40px;
+  border-radius: 12px;
+}
+.col > .filecard > span:last-child {
+  min-width: 0;
+}
+.col > .filecard .n {
+  font-size: 14.5px;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.col > .filecard .m {
+  display: block;
+  margin-top: 1px;
+  line-height: 1.45;
+}
 /* 代码块：右上角复制，有语言标记时左上角小字 */
 .code-block { position: relative; margin-top: 6px; border-radius: 10px; background: var(--field); }
 .code-block + p { margin-top: 6px; }
@@ -946,8 +1059,8 @@ svg.i {
 @media (hover: none) { .code-copy { opacity: 1; } }
 .math-display { overflow-x: auto; overflow-y: hidden; margin: 6px 0; }
 /* 音频：播放键 + 波形 + 时长 + 倍速 */
-.media-audio { display: flex; align-items: center; gap: 10px; width: 320px; max-width: 100%; padding: 10px 12px; border-radius: 18px; background: var(--bubble); color: var(--text); }
-.audio-play { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
+.media-audio { display: flex; align-items: center; gap: 12px; width: 320px; max-width: 100%; padding: 12px 14px; border-radius: 18px; background: var(--bubble); color: var(--text); }
+.audio-play { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
 .audio-main { flex: 1; min-width: 0; }
 .audio-name { display: block; max-width: 100%; padding: 0; border: 0; background: none; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 11px; color: var(--text2); cursor: pointer; }
 .audio-track { position: relative; height: 26px; display: flex; align-items: center; }
@@ -972,7 +1085,7 @@ svg.i {
   border: 0;
   background: none;
   cursor: zoom-in;
-  border-radius: 12px;
+  border-radius: 18px;
   overflow: hidden;
 }
 .imgcard img {
@@ -980,7 +1093,7 @@ svg.i {
   width: 100%;
   max-height: 320px;
   object-fit: cover;
-  border-radius: 12px;
+  border-radius: 18px;
   background: var(--bubble);
 }
 .imgcard.testshot {
@@ -988,9 +1101,8 @@ svg.i {
   max-width: 100%;
   margin: 0;
 }
-.mmsgs .imgcard {
-  width: 100%;
-  max-width: 300px;
+.mmsgs .col {
+  --card-w: 88%;
 }
 .lightbox {
   position: fixed;
@@ -1045,9 +1157,8 @@ svg.i {
 .tablecard {
   max-width: 100%;
   overflow-x: auto;
-  border: 1px solid var(--line);
   border-radius: 18px;
-  background: var(--card);
+  background: var(--bubble);
   -webkit-overflow-scrolling: touch;
 }
 .hov.msg > .tablecard + .b,
@@ -1077,14 +1188,13 @@ svg.i {
 .tablecard thead + tbody tr td {
   border-top: 1px solid var(--line);
 }
-/* 气泡下方一行工具：回复 / 复制。高度从一开始就占着，出现消失不会把对话顶动 */
-.hov.msg {
-  padding-bottom: 26px;
-}
+/* 回复 / 复制挂在气泡外侧、贴着底边（助手在右边，用户在左边），不占竖向空间：
+   气泡和卡片之间统一 8px，悬停出现也不会把对话顶动。触屏不显示，用长按菜单 */
 .tools {
   position: absolute;
-  left: 0;
+  left: 100%;
   bottom: 0;
+  padding-left: 4px;
   display: flex;
   gap: 2px;
   opacity: 0;
@@ -1095,7 +1205,8 @@ svg.i {
 /* 用户消息靠气泡右边 */
 .hov.right .tools {
   left: auto;
-  right: 0;
+  right: 100%;
+  padding: 0 4px 0 0;
 }
 .hov.msg:focus-within .tools:not(.menu),
 .tools.menu {
@@ -1140,8 +1251,12 @@ svg.i {
   /* 卡片占满上限，和换了行的文字气泡一样宽 */
   .col > .b.q,
   .col > .b.wide,
-  .hov:has(> .b.wide) {
+  .hov:has(> .b.wide),
+  .hov:has(> .delegation-card) {
     width: min(80%, 46em);
+  }
+  .delegation-card {
+    width: 100%;
   }
 }
 @media (hover: hover) {
@@ -1217,21 +1332,79 @@ svg.i {
   max-height: 3em;
   overflow: hidden;
 }
+/* 输入框里待发的附件：一行横着排，多了左右滑；图片是 64px 圆角缩略图，文件是图标 + 名字的小卡，右上角 × 移除 */
 .comp-files {
   display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-  padding: 2px 4px 0 8px;
+  gap: 8px;
+  padding: 6px 6px 2px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+.comp-files::-webkit-scrollbar { display: none; }
+.comp-thumb {
+  position: relative;
+  flex: none;
+  width: 64px;
+  height: 64px;
+}
+.comp-thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  border-radius: 12px;
+  background: var(--field);
+}
+.comp-thumb button {
+  position: absolute;
+  top: -5px;
+  right: -5px;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--text) 78%, transparent);
+  color: var(--bg);
+  border: 2px solid var(--field);
 }
 .filechip {
+  flex: none;
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
+  max-width: 220px;
+  height: 64px;
+  padding: 0 8px 0 10px;
+  border-radius: 12px;
   background: var(--bg);
-  border-radius: 7px;
-  padding: 4px 7px;
-  font-size: 12.5px;
+  font-size: 13px;
+  color: var(--text);
+}
+.filechip .fi {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: var(--field);
   color: var(--text2);
+}
+.filechip .fn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.filechip button {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  color: var(--text3);
 }
 .cur {
   display: inline-block;
@@ -2089,13 +2262,173 @@ svg.i {
 }
 
 /* 交互补充：气泡里的附件、任务回复框、定时时间编辑器、启动/提示 */
+/* 用户气泡里的文件：一行文件卡（图标块 + 名字），点开预览 */
 .u .ufile {
   display: flex;
   align-items: center;
-  gap: 6px;
-  font-size: 13px;
-  opacity: 0.78;
+  gap: 10px;
+  width: 100%;
+  margin-top: 6px;
+  font-size: 14px;
+  color: inherit;
+  text-align: left;
+}
+.u .ufile:first-child { margin-top: 0; }
+.u .ufile .fi {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+.u .ufile .fn {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 单张照片：气泡外单独一张圆角图（和展开后的相册一样），右对齐 */
+.u-solo {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
+}
+/*
+ * 几张图片（微信的做法）：默认叠成一摞，第一张在上，后两张往右错开、略转；左边一颗「展开 N」。
+ * 展开后一张张竖着排，每张单独圆角；文字另起一个普通气泡放在下面。
+ */
+.u-album {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+}
+/* 发件箱：没发出去的消息左边红色感叹号（iMessage），下面一行「未送达 · 重试 · 删除」；带附件发送中左边转圈 */
+.send-failed,
+.send-progress {
+  flex: none;
+  align-self: center;
+  width: 22px;
+  height: 22px;
+  margin-right: 8px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+}
+.send-failed {
+  background: var(--danger);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1;
+}
+.send-progress { color: var(--text3); }
+.send-status {
+  display: flex;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 10px;
   margin-top: 4px;
+  font-size: 12px;
+  color: var(--danger);
+}
+.send-status button {
+  font-size: 12px;
+  color: var(--text2);
+}
+.send-status button:first-of-type { color: var(--accent); }
+/* 输入框里还在传的附件：图片上一层淡罩加转圈；传失败了红色感叹号（发送时会自动重传） */
+.comp-thumb .att-spin,
+.comp-thumb .att-bad {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 12px;
+  background: rgba(0, 0, 0, 0.32);
+  color: #fff;
+}
+.comp-thumb .att-bad {
+  background: color-mix(in srgb, var(--danger) 55%, transparent);
+  font-weight: 700;
+}
+/* 相册下面的文字气泡照常按字数收窄、靠右 */
+.u-album + .u,
+.u-solo + .u {
+  width: fit-content;
+  margin: 4px 0 0 auto;
+}
+.album-pill {
+  flex: none;
+  padding: 6px 14px;
+  border-radius: 999px;
+  background: var(--bubble);
+  color: var(--text2);
+  font-size: 13.5px;
+}
+/* --d 是这张在第几层（拖动时后面的会小于整数，往上浮）；--dx / --rot 只给最上面那张，跟着手指 */
+.album-stack {
+  --w: 180px;
+  position: relative;
+  /* 每张图有自己的 z-index 排层次，关在这一摞里，不然会压到浮在上面的输入框 */
+  isolation: isolate;
+  width: calc(var(--w) + 24px);
+  height: calc(var(--w) * 4 / 3 + 14px);
+  cursor: pointer;
+  touch-action: pan-y;
+  user-select: none;
+  -webkit-user-select: none;
+}
+.album-stack img {
+  position: absolute;
+  left: 0;
+  top: 2px;
+  width: var(--w);
+  aspect-ratio: 3 / 4;
+  object-fit: cover;
+  border-radius: 14px;
+  border: 2px solid var(--bg);
+  background: var(--bubble);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.14);
+  transform-origin: 30% 100%;
+  transform: translate(calc(var(--d) * 11px + var(--dx)), calc(var(--d) * 4px)) rotate(calc(var(--d) * 3.5deg + var(--rot))) scale(calc(1 - var(--d) * 0.04));
+  transition: transform 0.32s cubic-bezier(0.2, 0.8, 0.2, 1);
+  -webkit-user-drag: none;
+}
+.album-stack.dragging img {
+  transition: none;
+}
+.album-list {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.album-item {
+  display: block;
+  padding: 0;
+  cursor: zoom-in;
+  width: 220px;
+  border-radius: 18px;
+  overflow: hidden;
+}
+.album-item img {
+  display: block;
+  width: 100%;
+  max-height: 340px;
+  object-fit: cover;
+}
+.u-album.open {
+  align-items: flex-start;
+}
+@media (min-width: 768px) {
+  .album-stack { --w: 200px; }
+  .album-item { width: 260px; }
+}
+.mmsgs .album-item img {
+  max-height: 300px;
 }
 .replybox {
   display: flex;
@@ -2465,7 +2798,6 @@ svg.i {
   }
   .swipe-reply.ready .swipe-reply-inner { animation: swipe-pop 240ms var(--ease-out); }
   /* 触屏只用长按菜单，气泡下面不留工具行的空位：气泡、卡片统一 8px 间距，换人说话时另有 .g 隔开 */
-  .hov.msg { padding-bottom: 0; }
   .hov.msg > .tools:not(.menu) { display: none; }
   .message-popup { position: fixed; inset: 0; z-index: 1000; pointer-events: none; }
   .message-shade { position: fixed; background: rgba(0, 0, 0, 0.48); pointer-events: auto; }
@@ -2573,6 +2905,7 @@ svg.i {
 .mcomp .sendbtn {
   transition: transform var(--t-mid) var(--ease-in), opacity var(--t-fast) var(--ease-in);
 }
+.sendbtn.stop svg { fill: currentColor; }
 .comp .sendbtn:disabled,
 .mcomp .sendbtn:disabled {
   background: var(--sel);
@@ -3597,7 +3930,7 @@ a.lbl-aside {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
   grid-template-areas: "av title" "av st";
-  column-gap: 10px;
+  column-gap: 12px;
   row-gap: 2px;
   align-items: center;
 }
@@ -3615,9 +3948,10 @@ a.lbl-aside {
   justify-self: start;
   font-size: 12.5px;
 }
-/* 任务卡：整张可点，默认只有标题和状态；宽度随内容，太短时也留出卡片的样子 */
+/* 任务卡：整张可点，默认只有标题和状态；和文件卡同宽同内边距（宽度由外面的 .hov 定） */
 .b.jobcard {
-  min-width: min(20em, 100%);
+  width: 100%;
+  padding: 12px 14px;
   cursor: pointer;
   transition: transform var(--t-mid) var(--ease-in);
 }
@@ -3821,6 +4155,8 @@ button.screen,
   line-height: 1.62;
   overflow-wrap: anywhere;
 }
+.jd-mine.queued { opacity: 0.75; }
+.jd-mine-note { margin-top: 2px; font-size: 12px; color: var(--text2); }
 .jd-mine {
   align-self: flex-end;
   max-width: 86%;
@@ -4260,7 +4596,12 @@ button.screen,
   justify-content: center;
 }
 .fp-img button {
+  position: relative;
   max-width: 100%;
+}
+/* 原图还在路上：先铺缩略图（放大到同样宽度），原图加载好再换 */
+.fp-img-loading .fp-img-thumb {
+  width: 100vw;
 }
 .fp-img img {
   display: block;
@@ -4275,11 +4616,25 @@ button.screen,
   border-radius: 10px;
   background: var(--panel);
 }
-.fp-md {
-  font-size: 14px;
-  line-height: 1.65;
+/* 文档预览：GitHub 的排版（github-markdown-css），颜色跟着 Hob 的明暗 */
+.fp-md.markdown-body {
+  --fgColor-default: var(--text);
+  --fgColor-muted: var(--text2);
+  --fgColor-accent: var(--text);
+  --bgColor-default: transparent;
+  --bgColor-muted: var(--field);
+  --bgColor-neutral-muted: var(--field);
+  --borderColor-default: var(--line);
+  --borderColor-muted: var(--line);
+  --borderColor-neutral-muted: var(--line);
+  color-scheme: inherit;
+  font-family: inherit;
+  font-size: 15px;
+  line-height: 1.7;
   overflow-wrap: anywhere;
 }
+.fp-md.markdown-body a { text-decoration-color: var(--text3); }
+.fp-md.markdown-body hr { height: 1px; }
 .fp-codebar {
   flex: none;
   display: flex;

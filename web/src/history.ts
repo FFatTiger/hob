@@ -1,6 +1,7 @@
 // 手机上的返回：每打开一层页面（对话、助手信息、设置的各级、任务、文件预览）就压一条浏览器历史。
 // iPhone 侧滑、安卓返回键、浏览器后退都走 popstate，关掉最上面一层；
 // 点页面里的返回按钮关掉的，同步退掉多出来的历史，免得之后侧滑多退一次。桌面不压历史。
+// 地址 hash 跟着当前页面走（#/chat/<助手>、#/settings/<分栏>），桌面手机都一样，刷新回到原来那页。
 import {
   backToJobs,
   closeDetail,
@@ -14,6 +15,7 @@ import {
   subscribe,
   type State,
 } from "./store.ts";
+import { routeHash } from "./route.ts";
 
 type Layer = "chat" | "sheet" | "settings" | "section" | "sub" | "jobs" | "job" | "file";
 
@@ -50,22 +52,27 @@ export function startHistory(narrow: () => boolean = () => window.innerWidth < 7
   let pushed = 0;
   let skipPops = 0;
   let popping = false;
-  history.replaceState({ hobDepth: 0 }, "");
+  const url = () => location.pathname + location.search + routeHash(getState(), narrow());
+  history.replaceState({ hobDepth: 0 }, "", url());
 
   const sync = () => {
-    if (popping) return;
+    // 退历史（history.go）是异步的，等它落地再改地址，免得改到正要离开的那条
+    if (popping || skipPops > 0) return;
     const n = layers(getState(), narrow()).length;
-    while (pushed < n) history.pushState({ hobDepth: ++pushed }, "");
     if (pushed > n) {
       skipPops++;
       history.go(n - pushed);
       pushed = n;
+      return;
     }
+    while (pushed < n) history.pushState({ hobDepth: ++pushed }, "", url());
+    if (url() !== location.pathname + location.search + location.hash) history.replaceState(history.state, "", url());
   };
 
   window.addEventListener("popstate", (event) => {
     if (skipPops > 0) {
       skipPops--;
+      sync();
       return;
     }
     const depth = Number((event.state as { hobDepth?: number } | null)?.hobDepth ?? 0);

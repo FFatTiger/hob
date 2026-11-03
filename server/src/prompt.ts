@@ -169,6 +169,8 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
         .join("，")}；hob 那个火苗是主助手专用的，不要用。`,
       "- 库里没有贴合职责的道具时，可以自己画一件：sprite 填 custom，prop_art 给出 art、pal、dx 画一件 16×16 的像素道具；画得不合适会返回原因，照着改好重发就行。",
       "- 有更合适的助手时用 message_assistant 把任务转过去。",
+      "- 转交时把用户原话转过去，只补充对方需要的背景。不要替用户加验收标准、测试方案或额外要求，把小事写成大工程。",
+      "- 转交出去的事由对方负责到底。结果回来之前，不要自己 start_job 做同一件事。结果回来后如果没办完，转回同一个助手接着办，或者如实告诉用户。",
     );
   }
   lines.push("- 用户问你在做什么、有什么在运行，可依据任务事件回答，不要编造进度。");

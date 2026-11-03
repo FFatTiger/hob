@@ -141,7 +141,8 @@ export interface HobApi {
   transcript(jobId: string): Promise<JobTranscript>;
   jobs(query?: { assistantId?: string; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
   upload(file: File): Promise<string>;
-  fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean }): string;
+  /** thumb：对话里显示的缩略图（长边 720），点开预览才拉原图 */
+  fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean; thumb?: boolean }): string;
   fileMeta(path: string): Promise<FileMeta>;
   jobFiles(jobId: string): Promise<JobFilesView>;
   push(): Promise<PushView>;
@@ -266,7 +267,7 @@ export const realApi: HobApi = {
     return out.file.path;
   },
   fileUrl: (path, opts) =>
-    `/api/files?path=${encodeURIComponent(path)}${opts?.inline ? "&inline=1" : ""}${opts?.truncate ? "&truncate=1" : ""}`,
+    `/api/files?path=${encodeURIComponent(path)}${opts?.inline ? "&inline=1" : ""}${opts?.truncate ? "&truncate=1" : ""}${opts?.thumb ? "&thumb=1" : ""}`,
   fileMeta: (path) => req<FileMeta>(`/api/files/meta?path=${encodeURIComponent(path)}`),
   jobFiles: (jobId) => req<JobFilesView>(`/api/jobs/${encodeURIComponent(jobId)}/files`),
   push: () => req<PushView>("/api/push"),

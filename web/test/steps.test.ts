@@ -11,6 +11,18 @@ function tool(id: string, extra: Partial<JobStep> = {}): JobStep {
 }
 
 describe("任务过程合并", () => {
+  it("补充先显示为等待读取；被任务读到后换成正式的一行，重新拉 transcript 也不重复", () => {
+    const mine = (id: string, extra: Partial<JobStep> = {}): JobStep => ({ id, kind: "text", at: "2026-11-01T01:00:00.000Z", from: "user", text: "改成只关私聊", ...extra });
+    const waiting = mergeStep([tool("call-1", { running: true })], mine("q1", { queued: true }));
+    expect(waiting.map((step) => step.id)).toEqual(["call-1", "q1"]);
+    const read = mergeStep(mergeStep(waiting, tool("call-1")), mine("u123"));
+    expect(read.map((step) => step.id)).toEqual(["call-1", "u123"]);
+    // 服务端那份里已经没有 q1（读到了），本地残留的等待行不能再接回去
+    expect(mergeSteps(waiting, [tool("call-1"), mine("u123")]).map((step) => step.id)).toEqual(["call-1", "u123"]);
+    // 还在等的，服务端那份里带着，照常显示一行
+    expect(mergeSteps(waiting, [tool("call-1"), mine("q1", { queued: true })]).map((step) => step.id)).toEqual(["call-1", "q1"]);
+  });
+
   it("同一个 id 替换，不新增一行", () => {
     const started = mergeStep([], tool("call-1", { running: true }));
     const done = mergeStep(started, tool("call-1", { output: "a.ts" }));

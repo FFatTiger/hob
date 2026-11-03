@@ -34,6 +34,9 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
     answeredAt: new Date().toISOString(),
   };
   store.saveApproval(answered);
+  // 转交里 Router 问的：答案回到目标助手接着办，办完才算转交结束（任务里的提问由任务自己接着跑）
+  const delegation = approval.source === "job" ? undefined : store.delegations().find((item) => item.approvalIds?.includes(approval.id));
+  const delegationId = delegation && runtime.delegations.resume(delegation.id) ? delegation.id : undefined;
   bus.emit({ type: "approval", approval: answered });
 
   if (option?.always) {
@@ -59,7 +62,11 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   // 回给模型：自己写的那句要说明是用户写的、没选给出的选项
   const answer = option ? `用户选择了：${option.label}` : `用户没有选给出的选项，而是回复：${text}`;
   if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, answer);
-  else await router.answerEvent(approval.assistantId, option ? `用户选择了 ${option.key}：${option.label}` : answer);
+  else {
+    const reply = option ? `用户选择了 ${option.key}：${option.label}` : answer;
+    if (delegationId) void router.relay(approval.assistantId, reply, delegationId).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
+    else await router.answerEvent(approval.assistantId, reply);
+  }
 
   return { status: 200, body: { approval: answered } };
 }

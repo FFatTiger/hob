@@ -60,6 +60,13 @@ describe("renderMarkdown", () => {
     }
     expect(renderMarkdown("[信](mailto:a@b.c)")).toContain('href="mailto:a@b.c"');
   });
+  it("中文标点紧挨 ** 时照样加粗（marked 15 在这里漏掉，原样显示两个星号）", () => {
+    const reply = renderMarkdown("好的，**目前稳定可用的是 `node-a`、`node b`、`node c` 这三个。** `backup` 也有成功记录");
+    expect(reply).toContain("<strong>目前稳定可用的是 <code>node-a</code>、<code>node b</code>、<code>node c</code> 这三个。</strong>");
+    expect(renderMarkdown("- 结果：**明确 token 被拒**（401）")).toContain("<strong>明确 token 被拒</strong>");
+    expect(renderMarkdown("**两层架构。**Router 长期在线")).toContain("<strong>两层架构。</strong>");
+  });
+
   it("表格从回复里切出来单独成卡片，前后文字各成一段；代码块里的 | 不算", () => {
     const parts = splitTables("看这张：\n\n| 方式 | 适合 |\n| --- | --- |\n| 聊天 | 简单 |\n\n还有别的。");
     expect(parts.map((p) => p.table)).toEqual([false, true, false]);

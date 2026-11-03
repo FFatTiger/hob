@@ -23,7 +23,17 @@ function SpritePixels({ art }: { art: ReturnType<typeof spriteArt> }) {
   );
 }
 
-/** 圆形头像。sprite 是 custom / custom:* 时传 prop（自画的画法）；没传或数据坏了画空手火苗。 */
+export type AvatarMark = "busy" | "ask" | "stuck";
+const MARK_LABEL: Record<AvatarMark, string> = { busy: "正在工作", ask: "等你确认", stuck: "受阻" };
+
+/** peek：每 30 秒看一圈（约 3.6 秒，见 styles.css 的 eye-peek）；第 n 个在忙的助手晚 n×4 秒开始，一个看完下一个才看。 */
+const PEEK_GAP_S = 4;
+const PEEK_TURNS = 7;
+
+/**
+ * 头像。默认是圆底（列表、卡片、头部都是它，形状一致）；free 是不带圆底的小人，只用在单独一个的地方（对话底部状态行、空对话、资料页、登录），不进列表。
+ * motion：眼睛动起来，表示在忙。sprite 是 custom / custom:* 时传 prop（自画的画法）；没传或数据坏了画空手火苗。
+ */
 export function Avatar({
   sprite,
   prop,
@@ -31,23 +41,31 @@ export function Avatar({
   title,
   onClick,
   motion,
-  busyDot,
+  mark,
+  free,
+  slot,
 }: {
   sprite: SpriteId;
   prop?: CustomProp;
   size: number;
   title?: string;
   onClick?: () => void;
-  motion?: "think" | "work" | "home";
-  busyDot?: boolean;
+  motion?: "think" | "work" | "home" | "peek";
+  /** 右下角状态符号：busy 正在工作（淡蓝 ···）、ask 等你确认（?）、stuck 受阻（红 !） */
+  mark?: AvatarMark;
+  free?: boolean;
+  /** peek 的轮次：第几个在忙的助手，按顺序轮流看一圈，不同时动 */
+  slot?: number;
 }) {
   const art = spriteArt(sprite, prop);
   // 动起来时眼睛单独一层：外层管看的方向，内层管眨眼，两个 transform 互不覆盖
   const split = motion ? spriteEyes(art) : undefined;
   // 同一个助手在各处一样，不同助手错开起点
-  const eyeDelay = motion ? `${-([...sprite].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9973, 7) % 4000) / 1000}s` : undefined;
+  const eyeDelay = motion === "peek"
+    ? `${((slot ?? 0) % PEEK_TURNS) * PEEK_GAP_S}s`
+    : motion ? `${-([...sprite].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9973, 7) % 4000) / 1000}s` : undefined;
   return (
-    <div className={`av${motion ? ` av-motion av-${motion}` : ""}${busyDot ? " av-busy" : ""}`} title={title} onClick={onClick} style={{ width: size, height: size, "--av-bg": art.bg } as React.CSSProperties}>
+    <div className={`av${free ? " av-free" : ""}${motion ? ` av-motion av-${motion}` : ""}${mark ? " av-marked" : ""}`} title={title} onClick={onClick} style={{ "--av-size": `${size}px`, "--av-bg": art.bg } as React.CSSProperties}>
       <svg viewBox={`${art.offset[0]} ${art.offset[1]} 16 16`} shapeRendering="crispEdges" aria-hidden="true" style={eyeDelay ? ({ "--eye-delay": eyeDelay } as React.CSSProperties) : undefined}>
         {split ? (
           <>
@@ -64,6 +82,7 @@ export function Avatar({
           <SpritePixels art={art} />
         )}
       </svg>
+      {mark ? <span className={`av-mark ${mark}`} aria-label={MARK_LABEL[mark]}>{mark === "busy" ? <svg viewBox="0 0 13 5"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="6.5" cy="2.5" r="1.5" /><circle cx="10.5" cy="2.5" r="1.5" /></svg> : mark === "ask" ? "?" : "!"}</span> : null}
     </div>
   );
 }

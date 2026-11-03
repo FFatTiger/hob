@@ -142,7 +142,12 @@ function JobDetail({ id }: { id: string }) {
 
   useEffect(() => {
     const el = body.current;
-    if (el && pinned.current) el.scrollTop = el.scrollHeight;
+    // 刚补了一句（最后一行是等待读取的补充）：不管翻到哪都拉到底，让人看到它发出去了
+    const sent = steps?.[steps.length - 1]?.queued;
+    if (el && (pinned.current || sent)) {
+      el.scrollTop = el.scrollHeight;
+      pinned.current = true;
+    }
   }, [steps?.length, steps?.[steps.length - 1]?.id]);
 
   if (!job) {
@@ -231,8 +236,10 @@ function ReplyBox({ job }: { job: Job }) {
   const sendable = text.trim().length > 0;
   const submit = () => {
     if (!sendable) return;
-    void replyJob(job.id, text.trim());
+    const value = text.trim();
     setText("");
+    // 发不出去就把字还回输入框，不让它悄悄丢掉
+    void replyJob(job.id, value).then((ok) => { if (!ok) setText((current) => current || value); });
   };
   return (
     <div className="jd-foot">
@@ -261,7 +268,14 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
   const content = useLeave(open, 180);
 
   if (step.kind === "text") {
-    if (step.from === "user") return <div className="jd-mine">{step.text}</div>;
+    if (step.from === "user") {
+      return (
+        <div className={`jd-mine${step.queued ? " queued" : ""}`}>
+          {step.text}
+          {step.queued ? <div className="jd-mine-note">已送达，当前这一步做完后读取</div> : null}
+        </div>
+      );
+    }
     return (
       <div className="jd-textrow">
         {step.thinking ? <ThinkingBlock text={step.thinking} open={false} /> : null}

@@ -118,6 +118,34 @@ describe("任务", () => {
     }
   });
 
+  it("跑着时补一句：立刻出现「等待读取」一行，任务读到后换成正式的一行", async () => {
+    const hob = makeHob();
+    let release = () => {};
+    try {
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const steps: { id: string; queued?: boolean; text?: string }[] = [];
+      hob.runtime.bus.subscribe((event) => { if (event.type === "job_step" && event.step.from === "user") steps.push(event.step); });
+      hob.faux.setResponses([
+        async () => { await gate; return call("bash", { command: "true" }); },
+        call("report", { outcome: "done", summary: "按补充改了" }),
+        text("好"),
+      ]);
+      const job = await hob.runtime.jobs.start("hob", { title: "改配置", instruction: "改配置" });
+      await waitFor(() => hob.faux.state.callCount >= 1);
+      await hob.runtime.jobs.reply(job.id, "只改私聊");
+      expect(steps).toEqual([expect.objectContaining({ queued: true, text: "只改私聊" })]);
+      expect(hob.runtime.jobs.transcript(job.id)).toContainEqual(expect.objectContaining({ queued: true, text: "只改私聊" }));
+      release();
+      await hob.runtime.jobs.waitIdle();
+      expect(steps[1]).toMatchObject({ id: expect.stringMatching(/^u/), text: "只改私聊" });
+      expect(steps[1].queued).toBeUndefined();
+      expect(hob.runtime.jobs.transcript(job.id).filter((step) => step.text === "只改私聊")).toEqual([expect.objectContaining({ id: steps[1].id })]);
+    } finally {
+      release();
+      hob.close();
+    }
+  });
+
   it("ask_user 阻塞等答复，答完继续跑并 report", async () => {
     const hob = makeHob();
     try {
@@ -133,6 +161,9 @@ describe("任务", () => {
       expect(approval).toMatchObject({ source: "job", jobId: job.id, status: "pending" });
       // 任务半路来问是单独的一组
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "question")).toMatchObject({ lead: true });
+      // 等用户答多久都不算「无响应」（以前 15 分钟后被看门狗标成受阻，审批卡跟着作废）
+      hob.runtime.jobs.checkStalls(Date.now() + 24 * 3600_000);
+      expect(hob.runtime.store.job(job.id)?.status).toBe("waiting");
 
       const result = await answerApproval(hob.runtime, approval.id, { key: "A" });
       expect(result.status).toBe(200);

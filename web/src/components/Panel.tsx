@@ -1,4 +1,5 @@
 // 右栏：进行中的任务 + 定时任务列表 / 定时任务编辑 / 助手设置 / 应用设置。
+import { plainText } from "../../../shared/plain-text.ts";
 import { useEffect, useRef, useState } from "react";
 import { commandSummary } from "../../../shared/command.ts";
 import type { ActivityLine, Assistant, CustomProp, Job, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
@@ -216,7 +217,7 @@ function PanelNow() {
           {worklog.slice(0, 6).map((w, i) => (
             <div className="wl" key={`${w.at}-${i}`}>
               <span className="t">{fmtWhen(w.at)}</span>
-              <span>{w.text}</span>
+              <span>{plainText(w.text)}</span>
             </div>
           ))}
         </div>
@@ -785,7 +786,7 @@ function AssistantSettings() {
           <span>基本信息</span>
         </div>
         <div className="bigav">
-          <Avatar sprite={a.sprite} prop={a.prop} size={68} onClick={() => setPicking((v) => !v)} title="换头像" />
+          <Avatar sprite={a.sprite} prop={a.prop} size={96} free motion="home" onClick={() => setPicking((v) => !v)} title="换头像" />
         </div>
         {picking ? <SpritePicker aid={aid} sprite={a.sprite} prop={a.prop} onDone={() => setPicking(false)} /> : null}
 

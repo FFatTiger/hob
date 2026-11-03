@@ -22,7 +22,7 @@ export function Login() {
   return (
     <div className="login">
       <div className="card">
-        <Avatar sprite="hob" size={56} />
+        <Avatar sprite="hob" size={88} free motion="home" />
         <div className="nm">Hob</div>
         <div className="ds">请输入密码</div>
         <label className={`field${shake ? " shake" : ""}`}>

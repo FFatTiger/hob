@@ -1,6 +1,9 @@
 // 中间一栏：头部 + 消息区 + 输入框。
 import { useEffect, useLayoutEffect, useRef } from "react";
 import type { AssistantSummary, Item } from "../../../shared/types.ts";
+import { isImagePath } from "../../../shared/media.ts";
+import { localPath } from "../outbox.ts";
+import { fileIcon } from "../file-icons.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
 import {
@@ -8,13 +11,16 @@ import {
   focusComposer,
   openSettings,
   openSheet,
-  removeFile,
+  removeAttachment,
   send,
   setMobile,
   setQuote,
   setSection,
   setText,
-  upload,
+  stopAssistant,
+  attach,
+  chatItems,
+  photoUrl,
   useApp,
 } from "../store.ts";
 import { useLeave } from "../motion.ts";
@@ -28,7 +34,7 @@ function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: Assi
       {gap ? <div className="g" /> : null}
       <div className={`hov think${leaving ? " leaving" : ""}`}>
         <div className="activity-line" role="status">
-          <Avatar sprite={a.sprite} prop={a.prop} size={28} motion={a.activity?.state === "tool" ? "work" : "think"} />
+          <Avatar sprite={a.sprite} prop={a.prop} size={46} free motion={a.activity?.state === "tool" ? "work" : "think"} />
           <span className="activity-shimmer">{a.activity?.label ?? "正在想…"}</span>
         </div>
       </div>
@@ -101,7 +107,7 @@ function EmptyChat({ a }: { a: AssistantSummary }) {
   const ready = models.roster.length > 0 && models.conversation.ref !== "";
   return (
     <div className="hello">
-      <Avatar sprite={a.sprite} prop={a.prop} size={56} />
+      <Avatar sprite={a.sprite} prop={a.prop} size={88} free motion="home" />
       <div className="t">{`我是${sendName(a.name, false)}${a.primary ? "，你的主助手" : ""}`}</div>
       <div className="d">
         {a.primary
@@ -160,9 +166,9 @@ function chatKey(sel: string | null, gen: number | undefined): string {
 export function Chat() {
   const s = useApp();
   const a = s.assistants.find((x) => x.id === s.sel);
-  const items = s.sel ? (s.items[s.sel] ?? []) : [];
+  const items = chatItems(s, s.sel);
   // 对话读回来了、确实一条都没有（还在读的时候不算）
-  const empty = Boolean(a && s.sel && s.items[s.sel]?.length === 0 && !a.busy);
+  const empty = Boolean(a && s.sel && items.length === 0 && s.items[s.sel] !== undefined && !a.busy);
   const scrollRef = useRef<HTMLDivElement>(null);
   const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
   const thinking = Boolean(a?.busy) && !isStreamingTail(items);
@@ -173,7 +179,7 @@ export function Chat() {
   return (
     <main className="chat">
       <div className="head">
-        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={24} motion={a.busy ? (a.activity?.state === "tool" ? "work" : "think") : undefined} busyDot={a.busy} /> : null}
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={24} /> : null}
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
         {s.collapsed ? (
@@ -197,7 +203,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
   const s = useApp();
   const a = s.assistants.find((x) => x.id === s.sel);
   const ta = useRef<HTMLTextAreaElement>(null);
-  const has = s.text.trim().length > 0;
+  const has = s.text.trim().length > 0 || s.attachments.length > 0;
   const quote = useLeave(s.quote !== null, 180);
 
   useLayoutEffect(() => {
@@ -233,17 +239,33 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
           </button>
         </div>
       ) : null}
-      {s.files.length ? (
+      {/* 附件：图片是带 × 的缩略图，其他文件是一张小卡（图标 + 名字），和 Telegram 一样 */}
+      {s.attachments.length ? (
         <div className="comp-files">
-          {s.files.map((f) => (
-            <span className="filechip" key={f}>
-              <Icon name="doc" size={12} />
-              {f.split("/").pop()}
-              <button onClick={() => removeFile(f)} title="移除">
-                <Icon name="close" size={11} />
-              </button>
-            </span>
-          ))}
+          {s.attachments.map((att) => {
+            const path = att.path ?? localPath(att);
+            const state = att.status === "uploading" ? " uploading" : att.status === "failed" ? " failed" : "";
+            return isImagePath(att.name) ? (
+              <span className={`comp-thumb${state}`} key={att.id}>
+                <img src={photoUrl(path)} alt={att.name} />
+                {att.status === "uploading" ? <span className="att-spin"><Icon name="spin" size={18} w={2.2} className="spin" /></span> : null}
+                {att.status === "failed" ? <span className="att-bad">!</span> : null}
+                <button onClick={() => removeAttachment(att.id)} title="移除" aria-label="移除">
+                  <Icon name="close" size={11} w={2.2} />
+                </button>
+              </span>
+            ) : (
+              <span className={`filechip${state}`} key={att.id}>
+                <span className="fi">
+                  {att.status === "uploading" ? <Icon name="spin" size={16} w={2.2} className="spin" /> : <Icon name={fileIcon(att.name)} size={16} />}
+                </span>
+                <span className="fn">{att.name}</span>
+                <button onClick={() => removeAttachment(att.id)} title="移除" aria-label="移除">
+                  <Icon name="close" size={12} />
+                </button>
+              </span>
+            );
+          })}
         </div>
       ) : null}
       <div className="comp-main">
@@ -256,7 +278,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
             onChange={(e) => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = "";
-              if (files.length) void upload(files);
+              if (files.length) attach(files);
             }}
           />
         </label>
@@ -274,9 +296,16 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
             }
           }}
         />
-        <button className="sendbtn" title="发送" disabled={!has} onClick={() => void send()}>
-          <Icon name="send" size={17} />
-        </button>
+        {/* 助手在回复、输入框又是空的：发送键换成停止；写了字照样能发（插进正在跑的这一轮） */}
+        {a?.busy && !has ? (
+          <button className="sendbtn stop" title="停止" onClick={() => void stopAssistant(a.id)}>
+            <Icon name="stop" size={18} />
+          </button>
+        ) : (
+          <button className="sendbtn" title="发送" disabled={!has} onClick={() => void send()}>
+            <Icon name="send" size={17} />
+          </button>
+        )}
       </div>
     </div>
   );
@@ -293,8 +322,8 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
 export function ChatPage() {
   const s = useApp();
   const a = s.assistants.find((x) => x.id === s.sel);
-  const items = s.sel ? (s.items[s.sel] ?? []) : [];
-  const empty = Boolean(a && s.sel && s.items[s.sel]?.length === 0 && !a.busy);
+  const items = chatItems(s, s.sel);
+  const empty = Boolean(a && s.sel && items.length === 0 && s.items[s.sel] !== undefined && !a.busy);
   const scrollRef = useRef<HTMLDivElement>(null);
   const thinking = Boolean(a?.busy) && !isStreamingTail(items);
   const think = useLeave(thinking, 180);
@@ -308,7 +337,7 @@ export function ChatPage() {
         <button className="ib" style={{ marginLeft: -8 }} title="返回" onClick={() => setMobile("list")}>
           <Icon name="left" size={22} />
         </button>
-        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} motion={a.busy ? (a.activity?.state === "tool" ? "work" : "think") : undefined} busyDot={a.busy} /> : null}
+        {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} /> : null}
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
         <button className="ib" title="助手信息" onClick={openSheet}>

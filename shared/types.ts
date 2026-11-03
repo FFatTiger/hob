@@ -323,6 +323,8 @@ export interface JobStep {
   durationMs?: number;
   /** tool：还在跑 */
   running?: boolean;
+  /** 你补的那句已经交给任务，但任务还在做当前这一步，做完才会读到 */
+  queued?: boolean;
 }
 
 /** GET /api/jobs/:id/transcript */

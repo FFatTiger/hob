@@ -34,12 +34,6 @@ export function App() {
     void start();
   }, []);
 
-  // 设置 → 通用 → 头像底色：关掉时整页的头像去掉彩色圆底（类名挂在 html 上，头像组件不用跟着重渲染）
-  const plainAvatars = s.settings.settings.general.avatarBackground === false;
-  useLayoutEffect(() => {
-    document.documentElement.classList.toggle("av-plain", plainAvatars);
-  }, [plainAvatars]);
-
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 768);
     window.addEventListener("resize", onResize);

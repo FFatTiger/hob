@@ -26,6 +26,7 @@ import { answerApproval, createFromDraft, dismissDraft, mergeAssistant } from ".
 import { setPassword } from "./config.ts";
 import { newId } from "./ids.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
+import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
 import { checkImageSettings, generateImage, imageConfigured, imageKey, IMAGE_KEY_SECRET } from "./image.ts";
 import { checkAssistantModels, checkModelsPatch } from "./models.ts";
@@ -494,7 +495,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       files?: string[];
     };
     const text = (body.text ?? "").trim();
-    if (!text) return c.json({ error: "消息内容为空" }, 400);
+    // 和 Telegram 一样，只发图片 / 文件不写字也行
+    if (!text && !body.files?.length) return c.json({ error: "消息内容为空" }, 400);
     const item = await router.send(id, {
       text,
       ...(body.quote ? { quote: body.quote } : {}),
@@ -709,7 +711,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json({ files: saved.map((item) => item.path), file: saved[0] });
   });
 
-  app.get("/api/files", (c) => {
+  app.get("/api/files", async (c) => {
     const requested = c.req.query("path");
     const lookup = requested ? lookupFile(options.home, requested) : null;
     const nosniff = { "x-content-type-options": "nosniff" };
@@ -727,6 +729,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
         : "sandbox";
       const name = encodeURIComponent(info.name);
       headers["content-disposition"] = `${c.req.query("inline") === "1" ? "inline" : "attachment"}; filename*=UTF-8''${name}`;
+    }
+    // 对话里的图片只要缩略图（?thumb=1）；缩不了 / 不值得缩就给原图
+    if (c.req.query("thumb") === "1" && info.kind === "image") {
+      const thumb = await thumbnail(options.home, info);
+      if (thumb) return c.body(new Uint8Array(thumb.data), 200, { ...nosniff, "content-type": thumb.mime, "cache-control": "private, max-age=604800" });
     }
     // 文本只拉 1 MB：预览面板对超大文件只显示前 1 MB，剩下的走下载
     const whole = readFileSync(info.path);

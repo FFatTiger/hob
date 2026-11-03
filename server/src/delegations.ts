@@ -32,7 +32,7 @@ export class DelegationManager {
       throw error;
     }
     this.runtime.bus.emit({ type: "delegation", delegation });
-    void this.runtime.router.relay(to, text, delegation.id).catch((error: unknown) => {
+    void this.runtime.router.relay(to, `转自 Hob：${text}`, delegation.id).catch((error: unknown) => {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
     });
     return delegation;
@@ -54,8 +54,24 @@ export class DelegationManager {
   turnEnded(id: string, reply: string, failed = false): void {
     const record = this.runtime.store.delegation(id);
     if (!record || record.turnFinished) return;
-    this.runtime.store.saveDelegation({ ...record, reply, turnFinished: true, ...(failed ? { turnFailed: true } : {}) });
+    const replies = [record.reply, reply].filter(Boolean).join("\n");
+    this.runtime.store.saveDelegation({ ...record, reply: replies, turnFinished: true, ...(failed ? { turnFailed: true } : {}) });
     this.update(id);
+  }
+
+  /**
+   * 转交里派的任务结束了、或用户答了转交里的提问：结果先回到目标助手，它这一轮可能接着再派任务、再问用户。
+   * 这一轮跑完、名下没有在跑的任务，转交才算结束，Hob 才收到结果；
+   * 否则目标助手还在处理时 Hob 就会收到「已结束」，另开任务和它冲突。
+   * 调用方要在发出 job/approval 事件之前调用，再用 router.relay 把结果送给目标助手。
+   * 返回 false 表示转交已经回流过（或已退回），结果按普通事件处理。
+   */
+  resume(id: string): boolean {
+    const record = this.runtime.store.delegation(id);
+    if (!record || record.reportedAt || record.status === "returned" || record.status === "interrupted") return false;
+    const { turnFailed: _failed, ...rest } = record;
+    this.runtime.store.saveDelegation({ ...rest, turnFinished: false });
+    return true;
   }
 
   returnToHob(id: string, text: string, reason: string): void {
@@ -102,6 +118,8 @@ export class DelegationManager {
     for (const record of this.runtime.store.delegations()) {
       if (record.reportedAt || !["running", "waiting", "returned"].includes(record.status)) continue;
       if (record.jobIds.some((id) => { const job = this.runtime.store.job(id); return job && ["running", "queued", "waiting"].includes(job.status); })) continue;
+      // 目标助手在等用户选：审批卡重启后还在，答了照常继续，不算中断
+      if (record.approvalIds?.some((id) => this.runtime.store.approval(id)?.status === "pending")) continue;
       const now = new Date().toISOString();
       const next: Delegation = { ...record, status: "interrupted", endedAt: now, reportedAt: now };
       this.runtime.store.saveDelegation(next);

@@ -68,6 +68,10 @@ describe("委派", () => {
       expect(prompt).toContain("## 转来的事");
       expect(prompt).toContain("带「转自 Hob」的消息是主助手替用户转来的，等同于用户本人的要求：照着去做，需要执行就直接 start_job，不要只回复计划；做完不用另外给 Hob 发消息，结果会自动回到 Hob。");
       expect(prompt).toContain("说要做的事，就在同一条消息里调用对应工具去做");
+      const primary = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
+      expect(primary).toContain("转交时把用户原话转过去");
+      expect(primary).toContain("结果回来之前，不要自己 start_job 做同一件事");
+      expect(prompt).not.toContain("转交时把用户原话转过去");
     } finally { hob.close(); }
   });
 
@@ -159,6 +163,64 @@ describe("委派", () => {
     } finally { hob.close(); }
   });
 
+  it("任务结束后目标助手接着派的任务也算这次转交，全部办完才回流 Hob 一次", async () => {
+    const hob = setup();
+    try {
+      const originalEvent = hob.runtime.router.event.bind(hob.runtime.router);
+      const event = vi.spyOn(hob.runtime.router, "event").mockImplementation((id, value, details) => id === "hob" ? Promise.resolve() : originalEvent(id, value, details));
+      hob.faux.setResponses([
+        call("start_job", { title: "先查配置", instruction: "查配置" }),
+        call("report", { outcome: "stuck", summary: "后台入口还能绕过" }),
+        text("报告了"),
+        // 任务结果回到目标助手：它接着再派一个，这时 Hob 不能收到「已结束」
+        () => {
+          expect(event.mock.calls.filter(([id]) => id === "hob")).toHaveLength(0);
+          return call("start_job", { title: "封后台入口", instruction: "修后台入口" });
+        },
+        call("report", { outcome: "done", summary: "后台入口已封" }),
+        text("报告了"),
+        text("两处都改好了"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("ops", "关掉主动语音");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("ops");
+      const saved = hob.runtime.store.delegation(delegation.id)!;
+      expect(saved.jobIds).toHaveLength(2);
+      expect(saved.jobIds.map((id) => hob.runtime.store.job(id)?.delegationId)).toEqual([delegation.id, delegation.id]);
+      expect(saved).toMatchObject({ status: "stuck", reply: "两处都改好了" });
+      const toHob = event.mock.calls.filter(([id]) => id === "hob");
+      expect(toHob).toHaveLength(1);
+      expect(toHob[0][1]).toContain("两处都改好了");
+      expect(toHob[0][1]).toContain("后台入口已封");
+    } finally { hob.close(); }
+  });
+
+  it("用户答了转交里的提问：目标助手接着办完才回流", async () => {
+    const hob = setup();
+    try {
+      const originalEvent = hob.runtime.router.event.bind(hob.runtime.router);
+      const event = vi.spyOn(hob.runtime.router, "event").mockImplementation((id, value, details) => id === "hob" ? Promise.resolve() : originalEvent(id, value, details));
+      hob.faux.setResponses([
+        call("ask_user", { title: "允许重载吗", options: [{ label: "允许" }, { label: "不允许" }] }),
+        call("start_job", { title: "重载插件", instruction: "重载" }),
+        call("report", { outcome: "done", summary: "已重载" }),
+        text("报告了"),
+        text("重载好了"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("ops", "改完上线");
+      await waitFor(() => hob.runtime.store.delegation(delegation.id)?.status === "waiting");
+      const approval = hob.runtime.store.approvals()[0];
+      expect((await answerApproval(hob.runtime, approval.id, { key: "A" })).status).toBe(200);
+      expect(hob.runtime.store.delegation(delegation.id)?.reportedAt).toBeUndefined();
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("ops");
+      expect(hob.runtime.store.delegation(delegation.id)).toMatchObject({ status: "done", jobIds: [expect.any(String)] });
+      const toHob = event.mock.calls.filter(([id]) => id === "hob");
+      expect(toHob).toHaveLength(1);
+      expect(toHob[0][1]).toContain("重载好了");
+    } finally { hob.close(); }
+  });
+
   it("目标模型报错时委派受阻而非假报成功", async () => {
     const hob = setup();
     try {
@@ -243,9 +305,13 @@ describe("委派", () => {
       hob.runtime.store.saveDelegation(record());
       hob.runtime.store.saveDelegation({ ...record(), id: "dg-active", jobIds: ["active"] });
       hob.runtime.store.saveJob(job("active", "running"));
+      // 在等用户选的：审批卡重启后还在，不算中断
+      hob.runtime.store.saveApproval({ id: "q-wait", assistantId: "ops", title: "允许吗", options: [], status: "pending", source: "router", createdAt: new Date().toISOString() });
+      hob.runtime.store.saveDelegation({ ...record(), id: "dg-asking", status: "waiting", turnFinished: true, approvalIds: ["q-wait"] });
       hob.runtime.delegations.recover();
       expect(hob.runtime.store.delegation("dg-test")?.status).toBe("interrupted");
       expect(hob.runtime.store.delegation("dg-active")?.status).toBe("running");
+      expect(hob.runtime.store.delegation("dg-asking")?.status).toBe("waiting");
       expect(event).toHaveBeenCalledTimes(1);
       expect(event.mock.calls[0][1]).toContain("因服务重启中断");
     } finally { hob.close(); }

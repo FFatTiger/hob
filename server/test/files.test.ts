@@ -1,6 +1,9 @@
-import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { deflateSync } from "node:zlib";
+import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/http.ts";
 import type { HobRuntime } from "../src/runtime.ts";
@@ -116,6 +119,122 @@ describe("GET /api/files 的安全规则", () => {
       expect(response.headers.get("content-type")).toBe("image/png");
       expect(response.headers.get("x-content-type-options")).toBe("nosniff");
       expect(response.headers.get("content-disposition")).toBeNull();
+    } finally {
+      hob.close();
+    }
+  });
+});
+
+describe("POST /api/assistants/:id/messages 带附件", () => {
+  it("只发图片不写字也行；字和附件都没有才报空", async () => {
+    const hob = makeHob();
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const png = join(hob.home, "uploads", "u-abc-图.png");
+      mkdirSync(join(hob.home, "uploads"), { recursive: true });
+      writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
+      hob.faux.setResponses([fauxAssistantMessage("收到图片。")]);
+      const post = (body: unknown) => app.request("/api/assistants/hob/messages", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+
+      const sent = await post({ text: "", files: [png] });
+      expect(sent.status).toBe(202);
+      expect(((await sent.json()) as { item: unknown }).item).toMatchObject({ kind: "user", text: "", files: [png] });
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.router.items("hob").items.at(-1)).toMatchObject({ kind: "assistant", text: "收到图片。" });
+
+      expect((await post({ text: "  " })).status).toBe(400);
+      expect((await post({ text: "", files: [] })).status).toBe(400);
+    } finally {
+      hob.close();
+    }
+  });
+});
+
+describe("对话里发图片", () => {
+  for (const [label, input, expected] of [["能看图的对话模型直接收到图片", ["text", "image"], 1], ["看不了图的只收到路径", ["text"], 0]] as const) {
+    it(label, async () => {
+      const hob = makeHob({}, { models: [{ id: "faux-1", input: [...input] }] });
+      try {
+        const png = join(hob.home, "uploads", "u-abc123-饭.png");
+        mkdirSync(join(hob.home, "uploads"), { recursive: true });
+        // 真的 1×1 PNG：引擎会检查 / 缩放图片，坏图会被丢掉
+        writeFileSync(png, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
+        let seen: unknown[] = [];
+        hob.faux.setResponses([
+          (context) => {
+            const last = context.messages.at(-1) as { content: unknown };
+            seen = Array.isArray(last.content) ? last.content : [];
+            return fauxAssistantMessage("是红烧肉。");
+          },
+        ]);
+        await hob.runtime.router.send("hob", { text: "我吃的啥", files: [png] });
+        await hob.runtime.router.waitIdle("hob");
+        const images = seen.filter((part) => (part as { type: string }).type === "image") as { mimeType: string; data: string }[];
+        expect(images).toHaveLength(expected);
+        if (expected) expect(images[0].mimeType).toMatch(/^image\//);
+        // 路径总在文字里，派任务时还能交出去
+        expect(JSON.stringify(seen)).toContain(png);
+      } finally {
+        hob.close();
+      }
+    });
+  }
+});
+
+/** 纯色 PNG（不靠图片库）：IHDR + 一整块 deflate 的扫描行。 */
+function solidPng(width: number, height: number): Buffer {
+  const crcTable = Array.from({ length: 256 }, (_, n) => {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    return c >>> 0;
+  });
+  const crc = (buf: Buffer) => {
+    let c = 0xffffffff;
+    for (const byte of buf) c = crcTable[(c ^ byte) & 0xff] ^ (c >>> 8);
+    return (c ^ 0xffffffff) >>> 0;
+  };
+  const chunk = (type: string, data: Buffer) => {
+    const body = Buffer.concat([Buffer.from(type), data]);
+    const out = Buffer.alloc(8 + data.length + 4);
+    out.writeUInt32BE(data.length, 0);
+    body.copy(out, 4);
+    out.writeUInt32BE(crc(body), 8 + data.length);
+    return out;
+  };
+  const ihdr = Buffer.alloc(13);
+  ihdr.writeUInt32BE(width, 0);
+  ihdr.writeUInt32BE(height, 4);
+  ihdr[8] = 8; // 8 位
+  ihdr[9] = 2; // RGB
+  const row = Buffer.concat([Buffer.from([0]), Buffer.alloc(width * 3, 0x80)]);
+  const raw = Buffer.concat(Array.from({ length: height }, () => row));
+  return Buffer.concat([Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]), chunk("IHDR", ihdr), chunk("IDAT", deflateSync(raw)), chunk("IEND", Buffer.alloc(0))]);
+}
+
+describe("对话里的缩略图", () => {
+  it("大图 ?thumb=1 给长边不超过 720 的小图，并缓存；小图直接给原图", async () => {
+    const hob = makeHob();
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      mkdirSync(join(hob.home, "uploads"), { recursive: true });
+      const big = join(hob.home, "uploads", "u-abc123-大.png");
+      const small = join(hob.home, "uploads", "u-abc123-小.png");
+      writeFileSync(big, solidPng(2000, 1500));
+      writeFileSync(small, solidPng(200, 150));
+
+      const thumb = await app.request(`/api/files?path=${encodeURIComponent(big)}&thumb=1`, { headers: { cookie } });
+      expect(thumb.status).toBe(200);
+      expect(thumb.headers.get("content-type")).toMatch(/^image\/(jpeg|png)$/);
+      const bytes = Buffer.from(await thumb.arrayBuffer());
+      const resized = await resizeImage(bytes, thumb.headers.get("content-type")!, { maxWidth: 10_000, maxHeight: 10_000 });
+      expect(Math.max(resized!.originalWidth, resized!.originalHeight)).toBe(720);
+      expect(readdirSync(join(hob.home, "cache", "thumbs")).filter((name) => !name.endsWith(".orig"))).toHaveLength(1);
+
+      const original = await app.request(`/api/files?path=${encodeURIComponent(small)}&thumb=1`, { headers: { cookie } });
+      expect(Buffer.from(await original.arrayBuffer()).equals(readFileSync(small))).toBe(true);
+      // 不带 thumb 的还是原图
+      const full = await app.request(`/api/files?path=${encodeURIComponent(big)}`, { headers: { cookie } });
+      expect(Buffer.from(await full.arrayBuffer()).equals(readFileSync(big))).toBe(true);
     } finally {
       hob.close();
     }

@@ -572,8 +572,18 @@ function buildDb(scene: SceneId): Db {
     items.hob = [
       { kind: "user", id: "bubble-user", at: minsAgo(3), text: "给我看看公式、代码和媒体。" },
       asst("bubble-text", minsAgo(2), "行内公式 $E=mc^2$，整行公式：\n\n$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$\n\n```js\nconst answer = 42;\n```\n\n```sh\necho hello\n```\n\n价格是 $5 和 $10。"),
+      asst("bubble-md", minsAgo(2), "我把刚才的示意图整理成 `.md` 文件，图用 Mermaid 写，方便你看源码或直接预览。"),
+      { kind: "job", id: "bubble-job", at: minsAgo(2), jobId: "t-0927" },
+      { kind: "file", id: "bubble-file", at: minsAgo(2), path: "/mock/火星日落示意图.md", name: "火星日落示意图.md", meta: "349 字" },
+      asst("bubble-after-file", minsAgo(2), "《火星日落示意图.md》已发给你。直接打开能看 Markdown 源码，用支持 Mermaid 的预览器可以看到光路图。"),
+      { kind: "file", id: "bubble-page", at: minsAgo(2), path: "/mock/sunset.html", name: "如果在地球和火星同时看日落", meta: "两幅同视角示意图：看太阳周围，再看远离太阳的天空。" },
+      asst("bubble-list", minsAgo(2), "五个模块：\n\n1. **两层架构。** Router 长期在线，只负责人机交互、全局协调和派发，**故意不执行任务，甚至可以没有 Bash 工具**；Worker 上下文隔离，**但从不直接对人说话**，只向 Router 报告。\n2. **全双工。** 把同步 `run()` 换成异步 `start()` / `stop()`，立刻回一句\"已开始\"。\n   - 工具跑完再作为新事件送回来\n   - **这个机制默认没开。**\n3. 普通的一行\n4. 第四\n5. 第五\n6. 第六\n7. 第七\n8. 第八\n9. 第九\n10. 第十项，两位数的序号也要对齐"),
       { kind: "file", id: "bubble-audio", at: minsAgo(1), path: "/mock/audio.mp3", name: "语音样本.mp3" },
       { kind: "file", id: "bubble-video", at: minsAgo(1), path: "/mock/video.mp4", name: "视频样本.mp4" },
+      { kind: "user", id: "bubble-photo", at: minsAgo(1), text: "这个是什么", files: ["/mock/photo.jpg"] },
+      { kind: "user", id: "bubble-photo-only", at: minsAgo(1), text: "", files: ["/mock/photo2.jpg"] },
+      { kind: "user", id: "bubble-photos", at: minsAgo(1), text: "两张对比一下", files: ["/mock/photo.jpg", "/mock/photo2.jpg"] },
+      { kind: "user", id: "bubble-user-file", at: minsAgo(1), text: "帮我看看这份报告", files: ["/mock/u-k2m9xq-季度报告.pdf"] },
       { kind: "user", id: "bubble-user-2", at: minsAgo(1), text: "画个简单的表格给我，有几种方式？" },
       asst("bubble-table", minsAgo(0), "主要有四种：\n\n| 方式 | 适合什么情况 | 能不能改 |\n| --- | --- | --- |\n| 聊天里直接画 | 简单的表，看一眼就行 | 让我重画 |\n| 发 Excel 或 CSV 文件 | 要下载、自己改或者算 | 能 |\n| 做成页面 | 能排序、筛选，以后还要更新 | 能 |\n| 做成图片 | 要转发给别人或者发朋友圈 | 不能 |\n\n想要哪种？告诉我放什么内容。"),
     ];
@@ -876,6 +886,8 @@ const MOCK_IMPORTED_PROVIDERS: Record<string, ProviderSettings> = {
 };
 
 /** 假后端：和 realApi 同一套接口，操作真的改内存里的状态并发事件。 */
+const mockUploads = new Map<string, string>();
+
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
   const listeners = new Set<(ev: HobEvent) => void>();
@@ -1189,6 +1201,8 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       return p;
     },
     sendMessage: async (assistantId, body) => {
+      // 演示「未送达」：发这句就当网络断了
+      if (body.text === "模拟发送失败") throw new Error("网络连接已断开");
       const time = new Date().toISOString();
       const item: Item = {
         kind: "user",
@@ -1388,6 +1402,10 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!job) return;
       job.activity = [...job.activity, { at: new Date().toISOString(), verb: "说", text }];
       emit({ type: "activity", jobId, line: job.activity[job.activity.length - 1], stats: clone(job.stats) });
+      // 和真服务器一样：先出「等待读取」，当前这一步做完（这里等 4 秒）再换成正式的一行
+      const at = new Date().toISOString();
+      emit({ type: "job_step", jobId, step: { id: `q${Date.now()}`, kind: "text", at, from: "user", text, queued: true } });
+      setTimeout(() => emit({ type: "job_step", jobId, step: { id: `u${Date.now()}`, kind: "text", at: new Date().toISOString(), from: "user", text } }), 4000);
     },
     transcript: async (jobId) => {
       const job = db.jobs[jobId];
@@ -1413,9 +1431,15 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       job.endedAt = new Date().toISOString();
       emit({ type: "job", job: clone(job) });
     },
-    upload: async (file) => `mock://uploads/${encodeURIComponent(file.name)}`,
+    upload: async (file) => {
+      // 和真服务器一样存成 u-xxxxxx-原名；图片在浏览器里直接用本地地址显示
+      await new Promise((resolve) => setTimeout(resolve, 1200)); // 像真的上传一样要等一会儿
+      const path = `/mock/uploads/u-${Math.random().toString(36).slice(2, 8).padEnd(6, "0")}-${file.name}`;
+      mockUploads.set(path, URL.createObjectURL(file));
+      return path;
+    },
     fileUrl: (path, opts) =>
-      path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`,
+      mockUploads.get(path) ?? (path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`),
     fileMeta: async (path) => {
       const name = path.split("/").pop() ?? path;
       const dot = name.lastIndexOf(".");

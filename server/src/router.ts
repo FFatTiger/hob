@@ -25,6 +25,7 @@ import { MEMORY_WRITE_TOOLS, memoryNoteText } from "./memory.ts";
 import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
 import { availableSkills } from "./skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
+import { imageContents } from "./jobs.ts";
 
 export const ITEM_TYPE = "hob.item";
 export const USER_TYPE = "hob.user";
@@ -328,7 +329,7 @@ export class RouterManager {
     if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       const details = event.message.details as EventDetails | undefined;
-      if (details?.delegationId) {
+      if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
         state.currentDelegationId = details.delegationId;
         state.delegationReply = [];
         state.terminatingTools = new Set();
@@ -340,7 +341,7 @@ export class RouterManager {
       const failed = event.message.stopReason === "error" || event.message.stopReason === "aborted";
       if (failed || !event.toolResults.length || event.toolResults.every((tool) => state.terminatingTools?.has(tool.toolCallId))) {
         const id = state.currentDelegationId;
-        const reply = state.delegationReply?.join("\n") || (failed ? event.message.errorMessage || "目标助手处理失败" : "（没有回复）");
+        const reply = state.delegationReply?.join("\n") || (failed ? event.message.errorMessage || "目标助手处理失败" : "");
         state.currentDelegationId = undefined;
         state.delegationReply = undefined;
         state.terminatingTools = undefined;
@@ -705,7 +706,7 @@ export class RouterManager {
     const lines = [body.text];
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
-    const promptText = lines.join("\n");
+    const promptText = lines.filter(Boolean).join("\n");
 
     this.touch(assistantId);
     state.running += 1;
@@ -715,9 +716,11 @@ export class RouterManager {
       try {
         await this.applyConversationModel(state);
         refreshSystemPrompt(state.session!);
-        if (state.session!.isStreaming) await state.session!.steer(promptText);
+        // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
+        const images = state.session!.model?.input.includes("image") ? imageContents(body.files) : [];
+        if (state.session!.isStreaming) await state.session!.steer(promptText, images.length ? images : undefined);
         else {
-          await state.session!.prompt(promptText);
+          await state.session!.prompt(promptText, images.length ? { images } : undefined);
           await this.reportTurnError(state);
         }
       } catch (error) {
@@ -869,8 +872,9 @@ export class RouterManager {
   }
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
-  async relay(targetAssistantId: string, text: string, delegationId: string): Promise<void> {
-    const success = await this.pushEvent(targetAssistantId, `转自 Hob：${text}`, { delegationId });
+  /** 把事件当作转交的一轮送给目标助手；这一轮没正常收尾就把转交记为受阻，不会一直挂着。 */
+  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails): Promise<void> {
+    const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId });
     if (!success || !this.store.delegation(delegationId)?.turnFinished) {
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }

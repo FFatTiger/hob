@@ -2,11 +2,13 @@
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Approval, ApprovalOption, Delegation, Draft, Item, Job } from "../../../shared/types.ts";
-import { isImagePath } from "../../../shared/media.ts";
+import { attachmentName, isImagePath } from "../../../shared/media.ts";
+import { plainText as plain } from "../../../shared/plain-text.ts";
 import { visibleLiveCards } from "../page-live.ts";
 import { Markdown } from "./Markdown.tsx";
 import { splitTables } from "../markdown.ts";
 import { MediaCard } from "./MediaCard.tsx";
+import { PhotoStack } from "./PhotoStack.tsx";
 import { Avatar } from "../sprites.tsx";
 import { Icon, type IconName } from "../icons.tsx";
 import { fileIcon } from "../file-icons.ts";
@@ -16,6 +18,10 @@ import {
   answer,
   createDraft,
   fileUrl,
+  discardPending,
+  pendingOf,
+  photoUrl,
+  retryPending,
   focusComposer,
   jumpToDelegation,
   jumpToHandback,
@@ -47,12 +53,6 @@ const NOTE_ICON: Record<"memory" | "rule" | "routine" | "split" | "info", IconNa
   info: "info",
 };
 
-function plain(text: string): string {
-  return text
-    .replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
-    .replace(/[*_`#>]/g, "")
-    .trim();
-}
 
 /** 触屏没有悬停：用长按菜单代替悬停工具行。 */
 function useNoHover(): boolean {
@@ -212,7 +212,7 @@ function JobCard({ job, fresh }: { job: Job; fresh: boolean }) {
         }}
       >
         <div className="tt">
-          {owner ? <span className="jav"><Avatar sprite={owner.sprite} prop={owner.prop} size={28} /></span> : null}
+          {owner ? <span className="jav"><Avatar sprite={owner.sprite} prop={owner.prop} size={40} /></span> : null}
           <span className="jt">{job.title}</span>
           <span className={`st${done ? " done" : ""}`}>
             <span className="stico">
@@ -386,7 +386,7 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
     <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`}>
       <div className="b jobcard delegation-card">
         <div className="tt">
-          {target ? <span className="jav"><Avatar sprite={target.sprite} prop={target.prop} size={28} /></span> : null}
+          {target ? <span className="jav"><Avatar sprite={target.sprite} prop={target.prop} size={40} /></span> : null}
           <span className="jt">交给「{name}」</span>
           <span className={`st${delegation.status === "done" ? " done" : ""}${delegation.status === "stuck" || delegation.status === "interrupted" || delegation.status === "returned" ? " bad" : ""}`}>
             <Icon name={delegation.status === "running" ? "spin" : delegation.status === "done" ? "check" : delegation.status === "waiting" ? "pause" : "close"} className={delegation.status === "running" ? "spin" : ""} size={14} />
@@ -523,7 +523,7 @@ function FileCard({ name, path, meta, fresh }: { name: string; path: string; met
 function ImageCard({ name, path, fresh }: { name: string; path: string; fresh: boolean }) {
   return (
     <button className={`imgcard${fresh ? " enter" : ""}`} onClick={() => openFilePreview(path)} title={name}>
-      <img src={fileUrl(path)} alt={name} loading="lazy" />
+      <img src={photoUrl(path)} alt={name} loading="lazy" />
     </button>
   );
 }
@@ -589,28 +589,75 @@ function ItemView({
   const s = useApp();
   const enter = fresh ? " enter" : "";
   // 只收用户气泡：助手这边折行的气泡要和任务卡、提问卡一样宽，右边缘才齐
-  const bubble = useFit<HTMLDivElement>(item.kind === "user" ? item.text : undefined);
+  // 几张图片的消息：叠成一摞，点「展开」才一张张排开（微信的做法）
+  const [albumOpen, setAlbumOpen] = useState(false);
+  // 带附件的不收：照片是定宽的，按文字收会把照片裁掉
+  const bubble = useFit<HTMLDivElement>(item.kind === "user" && !item.files?.length ? item.text : undefined);
   const preventMenu = tools.touch ? (event: React.MouseEvent) => event.preventDefault() : undefined;
   const swipeStyle = tools.distance ? { transform: `translateX(-${Math.min(64, tools.distance * 0.8)}px)`, transition: "none" } : undefined;
   const progress = Math.min(1, tools.distance / 48);
   const swipeIcon = tools.distance > 0 ? <span className={`swipe-reply${tools.ready ? " ready" : ""}`} style={{ opacity: progress, transform: `scale(${progress})` }}><span className="swipe-reply-inner"><Icon name="reply" size={18} /></span></span> : null;
 
   if (item.kind === "user") {
+    const photos = item.files?.filter(isImagePath) ?? [];
+    const others = item.files?.filter((f) => !isImagePath(f)) ?? [];
+    const single = photos.length === 1;
+    const album = photos.length > 1;
+    // 照片单独成块（一张就是一张圆角图，几张是一摞），文字另起一个气泡放在下面，不挤在一起
+    const hasBubble = Boolean(item.from || item.quote || item.text || others.length);
+    // 还在发件箱里的（刚点了发送）：附件可能还没传完，传完前点不开
+    const pend = pendingOf(s, s.sel, item.id);
+    const open = (f: string) => {
+      if (!f.startsWith("pending/")) openFilePreview(f, attachmentName(f));
+    };
+    const photo = (f: string, cls: string) => (
+      <button key={f} className={cls} onClick={() => open(f)} title={attachmentName(f)}>
+        <img src={photoUrl(f)} alt={attachmentName(f)} loading="lazy" />
+      </button>
+    );
+    const fileRow = (f: string) => <button className="ufile" onClick={() => open(f)}><span className="fi"><Icon name={fileIcon(f)} size={16} /></span><span className="fn">{attachmentName(f)}</span></button>;
     return (
       <div className="message-row right" id={item.from ? `forward-${item.from.delegationId}` : undefined} data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
         {swipeIcon}
-        <div className={`hov right msg${fresh ? " enter-right" : ""}`}>
+        {/* iMessage：没发出去时气泡左边一个红色感叹号，点了重试；有附件在传时那里转圈 */}
+        {pend?.status === "failed" ? (
+          <button className="send-failed" title="重试" aria-label="未送达，重试" onClick={() => retryPending(pend.assistantId, pend.localId)}>!</button>
+        ) : pend && item.files?.length ? (
+          <span className="send-progress" aria-label="正在发送"><Icon name="spin" size={16} w={2.2} className="spin" /></span>
+        ) : null}
+        <div className={`hov right msg${fresh ? " enter-right" : ""}${pend ? " pending" : ""}`}>
+        {album ? (
+          <div className={`u-album${albumOpen ? " open" : ""}`} ref={hasBubble ? undefined : bubble} style={hasBubble ? undefined : swipeStyle}>
+            <button className="album-pill" onClick={() => setAlbumOpen(!albumOpen)}>{albumOpen ? "收起" : `展开 ${photos.length}`}</button>
+            {albumOpen ? (
+              <div className="album-list">{photos.map((f) => photo(f, "u-photo album-item"))}</div>
+            ) : (
+              <PhotoStack photos={photos} onOpen={open} />
+            )}
+          </div>
+        ) : null}
+        {single ? (
+          <div className="u-solo" ref={hasBubble ? undefined : bubble} style={hasBubble ? undefined : swipeStyle}>
+            {photo(photos[0], "u-photo album-item")}
+          </div>
+        ) : null}
+        {hasBubble ? (
         <div className="u" ref={bubble} style={swipeStyle}>
           {item.from ? <button className="forward-label" onClick={() => void (item.from!.assistantId === "hob" ? jumpToDelegation(item.from!.assistantId, item.from!.delegationId, false) : jumpToHandback(item.from!.assistantId, item.from!.delegationId, false))}>{(() => { const sender = s.assistants.find((a) => a.id === item.from!.assistantId); return sender ? <Avatar sprite={sender.sprite} prop={sender.prop} size={16} /> : null; })()}转自 {item.from.assistantId === "hob" ? item.from.name : `「${item.from.name}」`}</button> : null}
           {item.quote ? <button className="quote" onClick={(event) => jumpToQuote(event, item.quote!.itemId)}>{item.quote.text}</button> : null}
-          {item.text}
-          {item.files?.length
-            ? item.files.map((f) => (
-                <MediaCard key={f} path={f} name={f.split("/").pop() ?? f} fallback={<button className="ufile" onClick={() => openFilePreview(f)}><Icon name="doc" size={13} />{f.split("/").pop()}</button>} />
-              ))
-            : null}
+          {/* 其他附件是气泡里的一行文件卡 */}
+          {item.text ? <span className="u-text">{item.text}</span> : null}
+          {others.map((f) => (f.startsWith("pending/") ? <Fragment key={f}>{fileRow(f)}</Fragment> : <MediaCard key={f} path={f} name={attachmentName(f)} fallback={fileRow(f)} />))}
         </div>
-        <Tools text={item.text} itemId={item.id} />
+        ) : null}
+        {pend?.status === "failed" ? (
+          <div className="send-status">
+            未送达
+            <button onClick={() => retryPending(pend.assistantId, pend.localId)}>重试</button>
+            <button onClick={() => discardPending(pend.assistantId, pend.localId)}>删除</button>
+          </div>
+        ) : null}
+        {pend ? null : <Tools text={item.text} itemId={item.id} />}
         </div>
         {tools.open ? <MessagePopup anchor={bubble} text={item.text} itemId={item.id} close={tools.close} /> : null}
       </div>
@@ -777,7 +824,7 @@ export function ItemList({ items }: { items: Item[] }) {
       ready: swipe?.id === item.id && swipe.ready,
       close: () => dispatchMenu({ type: "close" }),
       start: touch ? (event) => {
-        if (event.pointerType !== "touch" || (item.kind !== "user" && item.kind !== "assistant") || (event.target as Element).closest("a,button,input,textarea,select,[contenteditable],.draft")) return;
+        if (event.pointerType !== "touch" || (item.kind !== "user" && item.kind !== "assistant") || (event.target as Element).closest("a,button,input,textarea,select,[contenteditable],.draft,.album-stack")) return;
         if (press.current) window.clearTimeout(press.current.timer);
         const { clientX: x, clientY: y, pointerId } = event;
         const timer = window.setTimeout(() => {

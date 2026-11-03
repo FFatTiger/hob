@@ -7,7 +7,7 @@ import { fileIcon } from "../file-icons.ts";
 import { numericColumns } from "../csv-columns.ts";
 import { useLeave } from "../motion.ts";
 import { copyText } from "../clipboard.ts";
-import { closeFilePreview, fetchFileMeta, fileUrl, setNotice, togglePreviewFull, useApp } from "../store.ts";
+import { closeFilePreview, fetchFileMeta, fileUrl, photoUrl, setNotice, togglePreviewFull, useApp } from "../store.ts";
 import { fmtBytes, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
 
@@ -231,6 +231,8 @@ function Body({ meta }: { meta: FileMeta }) {
 function ImageBody({ path, name, svg }: { path: string; name: string; svg: boolean }) {
   const [open, setOpen] = useState(false);
   const src = fileUrl(path, svg ? { inline: true } : undefined);
+  // 先铺对话里已经加载过的缩略图，原图到了再盖上去：点开不用对着空白等
+  const [loaded, setLoaded] = useState(svg);
 
   useEffect(() => {
     if (!open) return;
@@ -247,8 +249,9 @@ function ImageBody({ path, name, svg }: { path: string; name: string; svg: boole
   return (
     <>
       <div className="fp-img">
-        <button onClick={() => setOpen(true)} title="放大">
-          <img src={src} alt={name} />
+        <button onClick={() => setOpen(true)} title="放大" className={loaded ? undefined : "fp-img-loading"}>
+          {loaded ? null : <img className="fp-img-thumb" src={photoUrl(path)} alt="" aria-hidden="true" />}
+          <img src={src} alt={name} onLoad={() => setLoaded(true)} onError={() => setLoaded(true)} style={loaded ? undefined : { position: "absolute", opacity: 0 }} />
         </button>
       </div>
       {open ? (
@@ -295,7 +298,7 @@ function TextBody({ meta }: { meta: FileMeta }) {
     return (
       <>
         {notice}
-        <Markdown className="fp-md" text={text} />
+        <Markdown className="fp-md markdown-body" text={text} />
       </>
     );
   }

@@ -1,5 +1,6 @@
 // 对话里的 markdown 渲染；原始 HTML 不进入 DOM。
 import { Marked } from "marked";
+import markedCjkFriendly from "marked-cjk-friendly";
 import type katex from "katex";
 import { iconSvg } from "./icons.tsx";
 
@@ -64,6 +65,8 @@ const markdown = new Marked({
     },
   },
 });
+// 「**结论。**后面的字」这种标点紧贴星号的写法，CommonMark 原规则不认作加粗
+markdown.use(markedCjkFriendly());
 
 const SAFE_HREF = /^(https?:|mailto:|\/|#|\.)/i;
 export function renderMarkdown(text: string): string {

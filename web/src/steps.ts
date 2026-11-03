@@ -1,8 +1,14 @@
 // 任务过程的纯函数：步骤合并、edit 的 diff 行。
+import { plainText } from "../../shared/plain-text.ts";
 import type { JobStep } from "../../shared/types.ts";
 
 /** 同一个 id 到了就替换（工具输出流式更新、跑完补结果），否则接在末尾。 */
 export function mergeStep(list: JobStep[], step: JobStep): JobStep[] {
+  // 补的那句被任务读到了：去掉「等待读取」那行，正式的一行接在读到它的位置
+  if (step.from === "user" && !step.queued) {
+    const waiting = list.findIndex((item) => item.queued && item.text === step.text);
+    if (waiting >= 0) list = list.filter((_, i) => i !== waiting);
+  }
   const index = list.findIndex((item) => item.id === step.id);
   if (index < 0) return [...list, step];
   const next = list.slice();
@@ -14,7 +20,8 @@ export function mergeStep(list: JobStep[], step: JobStep): JobStep[] {
 export function mergeSteps(current: JobStep[], incoming: JobStep[]): JobStep[] {
   const seen = new Set(incoming.map((step) => step.id));
   const out = incoming.slice();
-  for (const step of current) if (!seen.has(step.id)) out.push(step);
+  // 还在等待读取的补充，服务端那份里都有；不在里面的就是已经读到了
+  for (const step of current) if (!seen.has(step.id) && !step.queued) out.push(step);
   return out;
 }
 
@@ -147,7 +154,7 @@ const STATUS_WORDS = new Set(["排队中", "进行中", "待确认", "已完成"
  * 以前的版本把 outcome 存成了「受阻」「待确认」，那不是原因，不能往卡片上再写一遍。
  */
 export function jobReason(job: { statusReason?: string }): string | undefined {
-  const reason = job.statusReason?.trim();
+  const reason = job.statusReason ? plainText(job.statusReason) : "";
   if (!reason || STATUS_WORDS.has(reason)) return undefined;
   return reason;
 }

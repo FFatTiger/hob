@@ -1,4 +1,5 @@
 // HOB_HOME/push.json：VAPID 密钥 + 订阅设备（0600、原子写）。推送走 web-push。
+import { plainText } from "../../shared/plain-text.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -269,7 +270,7 @@ export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   const assistant = deps.store.assistant(approval.assistantId);
   if (!assistant?.notify) return;
   // 推送失败不能影响审批本身（也不能变成未处理的 rejection 把进程带走）
-  void deps.push.send({ title: assistant.name, body: approval.title, url: openUrl(approval.assistantId) }).catch(() => undefined);
+  void deps.push.send({ title: assistant.name, body: plainText(approval.title), url: openUrl(approval.assistantId) }).catch(() => undefined);
 }
 
 /** 任务受阻或失败：所属助手开了通知才推送。 */
@@ -278,7 +279,7 @@ export function pushJobEnd(deps: NotifyDeps, job: Job): void {
   const assistant = deps.store.assistant(job.assistantId);
   if (!assistant?.notify) return;
   const what = job.status === "stuck" ? "受阻" : "失败";
-  const reason = job.statusReason ? `：${job.statusReason}` : "";
+  const reason = job.statusReason ? `：${plainText(job.statusReason)}` : "";
   void deps.push
     .send({ title: assistant.name, body: `任务「${job.title}」${what}${reason}`, url: openUrl(job.assistantId) })
     .catch(() => undefined);

@@ -45,6 +45,14 @@ HOB_PASSWORD='设一个密码' hob
 
 不想全局安装，也可以直接运行一次：`HOB_PASSWORD='设一个密码' npx hob-bot`。
 
+也可以用 Docker（不需要 Node.js，详见 [Docker](#docker)）：
+
+```bash
+curl -O https://raw.githubusercontent.com/FFatTiger/hob/main/compose.yaml
+echo "HOB_PASSWORD=设一个密码" > .env
+docker compose up -d
+```
+
 打开 <http://127.0.0.1:30148>，用这个密码登录，然后：
 
 1. 到 **设置 → 服务商** 添加服务商。内置服务商（Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等）只需填 API Key；OpenAI 或 Anthropic 兼容接口也可以用。

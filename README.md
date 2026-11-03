@@ -45,6 +45,14 @@ HOB_PASSWORD='choose-a-password' hob
 
 Or run it once without installing: `HOB_PASSWORD='choose-a-password' npx hob-bot`.
 
+With Docker instead (no Node.js needed; details in [Docker](#docker)):
+
+```bash
+curl -O https://raw.githubusercontent.com/FFatTiger/hob/main/compose.yaml
+echo "HOB_PASSWORD=choose-a-password" > .env
+docker compose up -d
+```
+
 Open <http://127.0.0.1:30148> and sign in with that password. Then:
 
 1. Go to **设置 → 服务商** (Settings → Providers) and add a provider. Built-in ones (Anthropic, OpenAI, Google, DeepSeek, OpenRouter, …) only need an API key; any OpenAI- or Anthropic-compatible endpoint works too.

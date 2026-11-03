@@ -116,3 +116,7 @@ Stack: Node 22 + TypeScript, Hono with SSE, Vite + React with hand-written CSS. 
 ## License
 
 [MIT](LICENSE)
+
+## Community
+
+This open-source project is linked with and endorses the [LINUX DO community](https://linux.do).

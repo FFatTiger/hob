@@ -476,10 +476,11 @@ function Report({ job }: { job: Job }) {
 
 /**
  * 产出文件：任务报告里交回的文件在前，工作目录里的其余文件跟在后面（修改时间倒序，同路径只一条）。
- * 点击进文件预览。
+ * 点击进文件预览。标题一行可折叠，默认展开（和以前一样先看到文件列表）。
  */
 function Outputs({ job }: { job: Job }) {
   const [dirFiles, setDirFiles] = useState<JobFileEntry[] | null>(null);
+  const [open, setOpen] = useState(true);
 
   useEffect(() => {
     let live = true;
@@ -507,25 +508,38 @@ function Outputs({ job }: { job: Job }) {
   if (!rows.length) return null;
 
   return (
-    <>
-      <div className="lbl">产出文件</div>
-      {rows.map((row) => (
-        <button className="att plain filecard" key={row.path} onClick={() => openFilePreview(row.path)}>
-          <span className="ico">
-            <Icon name={fileIcon(row.path)} size={18} />
-          </span>
-          <span>
-            <span className="n" style={{ display: "block" }}>
-              {row.rel.split("/").pop()}
-            </span>
-            <span className="m">
-              {row.rel}
-              {row.size !== undefined ? ` · ${fmtBytes(row.size)}` : ""}
-            </span>
-          </span>
-        </button>
-      ))}
-    </>
+    <div className="jd-outputs">
+      <button
+        className="jd-out-head"
+        aria-expanded={open}
+        title={open ? "收起产出文件" : "展开产出文件"}
+        onClick={() => setOpen((value) => !value)}
+      >
+        <span className="lbl">产出文件</span>
+        <span className="jd-out-num">{rows.length}</span>
+        <Icon name={open ? "down" : "chev"} size={13} />
+      </button>
+      <div className={`expand${open ? " open" : ""}`} inert={!open}>
+        <div>
+          {rows.map((row) => (
+            <button className="att plain filecard" key={row.path} onClick={() => openFilePreview(row.path)}>
+              <span className="ico">
+                <Icon name={fileIcon(row.path)} size={18} />
+              </span>
+              <span>
+                <span className="n" style={{ display: "block" }}>
+                  {row.rel.split("/").pop()}
+                </span>
+                <span className="m">
+                  {row.rel}
+                  {row.size !== undefined ? ` · ${fmtBytes(row.size)}` : ""}
+                </span>
+              </span>
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
   );
 }
 

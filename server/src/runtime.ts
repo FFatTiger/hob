@@ -1,4 +1,9 @@
 import type { Bus } from "./bus.ts";
+import { DesktopService } from "./desktop.ts";
+import { KnowledgeStore } from "./knowledge.ts";
+import { DesktopControl } from "./desktop-control.ts";
+import { DesktopEvents } from "./desktop-events.ts";
+import { DesktopPublicLock } from "./desktop-public.ts";
 import { DelegationManager } from "./delegations.ts";
 import type { HobConfig } from "./config.ts";
 import { memoryDir } from "./config.ts";
@@ -30,9 +35,14 @@ export interface HobRuntime {
   config: HobConfig;
   store: Store;
   bus: Bus;
+  knowledge: KnowledgeStore;
   pi: PiHost;
   /** 界面可改的设置（settings.json），每次现读所以改完立即生效 */
   settings: SettingsStore;
+  desktop: DesktopService;
+  desktopControl: DesktopControl;
+  desktopEvents: DesktopEvents;
+  desktopPublic: DesktopPublicLock;
   /** 服务商：设置里存不敏感的，Key 存 secrets.json，变动套进引擎 */
   providers: ProviderService;
   /** 引擎注册表里现在能用的模型（设置页、派任务时看） */
@@ -86,11 +96,16 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     config: options.config,
     store,
     bus,
+    knowledge: new KnowledgeStore(options.home, bus, store, undefined, () => settings.settings.knowledge?.embedding ?? { source: "off" }),
     pi: options.pi,
     settings,
+    desktop: new DesktopService(options.home, settings),
     providers,
     models,
   } as HobRuntime;
+  runtime.desktopControl = new DesktopControl(runtime);
+  runtime.desktopEvents = new DesktopEvents(runtime);
+  runtime.desktopPublic = new DesktopPublicLock();
   runtime.router = new RouterManagerImpl(runtime);
   runtime.jobs = new JobManagerImpl(runtime);
   runtime.delegations = new DelegationManager(runtime);

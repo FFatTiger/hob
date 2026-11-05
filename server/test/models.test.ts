@@ -277,15 +277,14 @@ describe("提示词", () => {
       ];
       for (const list of [models, models.slice(0, 1)]) {
         const text = buildSystemPrompt(hob.runtime.store, "hob", { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off", models: list, thinkingChoice: "fixed" });
-        const section = text.split("## 可以派的模型")[1].split("\n\n")[0];
-        expect(section).toContain("思考档 high");
-        expect(section).not.toContain("可选");
-        expect(section).not.toContain("填 thinking");
+        expect(text).not.toContain("## 可以派的模型");
+        expect(text).not.toContain("思考档 high");
+        expect(text).not.toContain("填 thinking");
       }
       const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "start_job")!;
       expect(tool.parameters.properties.thinking.description).toBe("当前设置为固定思考档，此参数会被忽略，不要填。");
-      expect(tool.description).toContain("hob-faux/smart（默认）");
-      expect(tool.description).toContain("思考档 high");
+      expect(tool.parameters.properties.model.description).toContain("hob-faux/smart（默认）");
+      expect(tool.parameters.properties.model.description).toContain("思考档 high");
       hob.runtime.settings.patch(hob.runtime.settings.get().revision, { models: { thinkingChoice: "auto" } });
       const autoTool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "start_job")!;
       expect(autoTool.parameters.properties.thinking.description).toContain("可选");
@@ -314,7 +313,7 @@ describe("提示词", () => {
     const hob = makeHob({}, { models: MODELS, settings: { models: { roster: [{ ref: "hob-faux/fast", note: "轻活", scores: { smart: 40, cost: 10, speed: 95 }, scoresConfirmed: true }, { ref: "hob-faux/eyes", note: "" }] } } });
     try {
       await hob.runtime.models.get();
-      const text = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "start_job")!.description;
+      const text = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "start_job")!.parameters.properties.model.description;
       expect(text).toContain("hob-faux/fast（默认） · 聪明 40% · 成本 10% · 速度 95% · 上下文 200K · 补充：轻活 · 思考档 off");
       expect(text).toContain("\nhob-faux/eyes · 聪明 50% · 成本 50% · 速度 60% · 能看图 · 上下文 200K · 思考档 off");
     } finally { hob.close(); }
@@ -330,11 +329,11 @@ describe("提示词", () => {
           { name: "Smart", ref: "p/smart", note: "最聪明但慢，难题用", thinking: "high", isDefault: false },
         ],
       });
-      expect(text).toContain("## 可以派的模型");
-      expect(text).toContain("- p/fast（默认） · 快，日常用 · 思考档默认 low，可选 low");
-      expect(text).toContain("- p/smart · 最聪明但慢，难题用 · 思考档默认 high，可选 high");
-      expect(text).toContain("聪明、成本、速度都是 0–100");
-      expect(text).toContain("不确定就不填，使用默认值");
+      expect(text).not.toContain("## 可以派的模型");
+      expect(text).not.toContain("p/fast");
+      expect(text).not.toContain("p/smart");
+      expect(text).not.toContain("聪明、成本、速度都是 0–100");
+      expect(text).not.toContain("不确定就不填，使用默认值");
     } finally {
       hob.close();
     }
@@ -348,10 +347,9 @@ describe("提示词", () => {
         aboutYou: { name: "", language: "", notes: "" },
         models: [{ name: "Only", ref: "p/only", note: "就它了", thinking: "low", isDefault: true }],
       });
-      const section = text.slice(text.indexOf("## 可以派的模型")).split("\n\n")[0].trim().split("\n");
-      expect(section).toHaveLength(3); // 标题、评分说明、模型
-      expect(section[2]).toContain("p/only（默认） · 就它了 · 思考档默认 low，可选 low");
-      expect(section[2]).toContain("不用填 model");
+      expect(text).not.toContain("## 可以派的模型");
+      expect(text).not.toContain("p/only");
+      expect(text).not.toContain("不用填 model");
     } finally {
       hob.close();
     }
@@ -377,9 +375,9 @@ describe("提示词", () => {
         aboutYou: { name: "", language: "", notes: "" },
         abilities: { exec: false, write: true, image: false },
       });
-      expect(text).toContain("## 你能做什么");
-      expect(text).toContain("- 能做：读文件（read、grep、find、ls）、改文件（edit、write）");
-      expect(text).toContain("- 不能做：执行命令（bash）、生图");
+      expect(text).not.toContain("## 你能做什么");
+      expect(text).not.toContain("- 能做：");
+      expect(text).toContain("不能做：执行命令（bash）、生图");
     } finally {
       hob.close();
     }
@@ -732,7 +730,7 @@ describe("助手能力", () => {
       hob.faux.setResponses([
         () => ({
           role: "assistant",
-          content: [{ type: "toolCall", id: "c1", name: "report", arguments: { outcome: "done", summary: "好了" } }],
+          content: [{ type: "toolCall", id: "c1", name: "report", arguments: { outcome: "done", result: "好了" } }],
           stopReason: "toolUse",
         }) as never,
         () => ({ role: "assistant", content: [{ type: "text", text: "好" }], stopReason: "stop" }) as never,
@@ -745,7 +743,7 @@ describe("助手能力", () => {
       expect(worker.tools).not.toContain("edit");
       expect(worker.tools).not.toContain("write");
       expect(worker.tools).toContain("read");
-      expect(worker.prompt).toContain("- 不能做：执行命令（bash）、改文件（edit、write）");
+      expect(worker.prompt).toContain("不能做：执行命令（bash）、改文件（edit、write）");
       expect(hob.runtime.store.job(job.id)?.status).toBe("done");
     } finally {
       hob.close();

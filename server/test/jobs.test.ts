@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { tmpdir } from "node:os";
+import { describe, expect, it, vi } from "vitest";
 import { answerApproval } from "../src/actions.ts";
-import { JobManager } from "../src/jobs.ts";
+import { JobManager, jobResultEvent } from "../src/jobs.ts";
+import { buildRouterTools } from "../src/router-tools.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";
 
 /** 进程还在不在（被杀了就 false）。 */
@@ -16,12 +18,20 @@ function isRunning(pid: number): boolean {
 }
 
 describe("任务", () => {
+  it("任务事件按完整结果长度分段，缺结果说明原因", () => {
+    const job = { id: "t-1", assistantId: "hob", title: "测试", instruction: "", status: "done" as const, createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [], reportPath: "/tmp/report.md" };
+    expect(jobResultEvent({ ...job, summary: "短结果" })).toBe("任务「测试」（t-1）已完成。\n结果：\n短结果");
+    const long = "字".repeat(3001);
+    expect(jobResultEvent({ ...job, summary: long })).toBe(`任务「测试」（t-1）已完成。\n结果（共 3001 字，以下是前 3,000 字；全文：/tmp/report.md）：\n${long.slice(0, 3000)}`);
+    expect(jobResultEvent({ ...job, status: "failed", statusReason: "中断" })).toBe("任务「测试」（t-1）失败。\n中断");
+    expect(jobResultEvent({ ...job, summary: "短结果" }, "定时任务「每日」")).toBe("定时任务「每日」（t-1）已完成。\n结果：\n短结果");
+  });
   it("report 的 outcome 不认识就退回重填，不当成已完成", async () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([
-        call("report", { outcome: "failed", summary: "没连上" }),
-        call("report", { outcome: "stuck", summary: "没连上数据库" }),
+        call("report", { outcome: "failed", result: "没连上" }),
+        call("report", { outcome: "stuck", result: "没连上数据库" }),
         text("好"),
       ]);
       hob.faux.appendResponses([text("任务受阻。")]);
@@ -44,7 +54,7 @@ describe("任务", () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([
-        call("report", { outcome: "need_approval", summary: "要你定发布还是先放着" }),
+        call("report", { outcome: "need_approval", result: "要你定发布还是先放着" }),
         text("好"),
       ]);
       hob.faux.appendResponses([text("等你定。")]);
@@ -63,7 +73,7 @@ describe("任务", () => {
   it("report 流程：状态 done、写 report.md、推事件回对话", async () => {
     const hob = makeHob();
     try {
-      hob.faux.setResponses([call("report", { outcome: "done", summary: "磁盘用了 40%，剩 60G" }), text("好")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "磁盘用了 40%，剩 60G" }), text("好")]);
       hob.faux.appendResponses([text("磁盘用了 40%。")]);
       const job = await hob.runtime.jobs.start("hob", { title: "查磁盘", instruction: "看看磁盘用了多少" });
       await hob.runtime.jobs.waitIdle();
@@ -87,8 +97,9 @@ describe("任务", () => {
   it("报告原样保留：多行 markdown 不压成一行、长报告不截断", async () => {
     const hob = makeHob();
     try {
-      const summary = `## 结论\n\n- 第一条\n- 第二条\n\n${"细节".repeat(800)}`;
-      hob.faux.setResponses([call("report", { outcome: "done", summary }), text("好")]);
+      const summary = `## 结论\n\n- 第一条\n- 第二条\n\n${"细节".repeat(2000)}`;
+      const event = vi.spyOn(hob.runtime.router, "event");
+      hob.faux.setResponses([call("report", { outcome: "done", result: summary }), text("好")]);
       hob.faux.appendResponses([text("写完了。")]);
       const job = await hob.runtime.jobs.start("hob", { title: "长报告", instruction: "写一份长报告" });
       await hob.runtime.jobs.waitIdle();
@@ -96,7 +107,9 @@ describe("任务", () => {
 
       const done = hob.runtime.store.job(job.id)!;
       expect(done.summary).toBe(summary);
-      expect(readFileSync(done.reportPath!, "utf8")).toContain(summary);
+      const report = readFileSync(done.reportPath!, "utf8");
+      expect(report).toContain(`## 结果\n\n${summary}\n\n## 任务说明`);
+      expect(event.mock.calls.some((args) => args[1] === jobResultEvent(done))).toBe(true);
     } finally {
       hob.close();
     }
@@ -127,7 +140,7 @@ describe("任务", () => {
       hob.runtime.bus.subscribe((event) => { if (event.type === "job_step" && event.step.from === "user") steps.push(event.step); });
       hob.faux.setResponses([
         async () => { await gate; return call("bash", { command: "true" }); },
-        call("report", { outcome: "done", summary: "按补充改了" }),
+        call("report", { outcome: "done", result: "按补充改了" }),
         text("好"),
       ]);
       const job = await hob.runtime.jobs.start("hob", { title: "改配置", instruction: "改配置" });
@@ -146,12 +159,116 @@ describe("任务", () => {
     }
   });
 
+  it("结束后用原会话接着做，覆盖报告并再次通知", async () => {
+    const hob = makeHob();
+    let release = () => {};
+    try {
+      const event = vi.spyOn(hob.runtime.router, "event");
+      hob.faux.setResponses([call("report", { outcome: "done", result: "第一轮结果", files: ["/first.txt"] }), text("好"), text("第一轮完成")]);
+      const job = await hob.runtime.jobs.start("hob", { title: "原任务", instruction: "第一轮说明" });
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("hob");
+      const first = hob.runtime.store.job(job.id)!;
+      const before = readFileSync(hob.runtime.store.workerFile(job.id), "utf8");
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([
+        async () => { await gate; return call("report", { outcome: "done", result: "第二轮结果" }); },
+        text("好"), text("第二轮完成"),
+      ]);
+      await hob.runtime.jobs.reply(job.id, "请继续补充");
+      const running = hob.runtime.store.job(job.id)!;
+      expect(running).toMatchObject({ status: "running", model: first.model, thinking: first.thinking, cwd: first.cwd });
+      expect(running.summary).toBeUndefined();
+      expect(running.files).toBeUndefined();
+      expect(running.reportPath).toBeUndefined();
+      expect(running.endedAt).toBeUndefined();
+      expect(running.statusReason).toBeUndefined();
+      release();
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("hob");
+      const done = hob.runtime.store.job(job.id)!;
+      expect(done).toMatchObject({ status: "done", summary: "第二轮结果", files: [] });
+      expect(readFileSync(done.reportPath!, "utf8")).toContain("第二轮结果");
+      const after = readFileSync(hob.runtime.store.workerFile(job.id), "utf8");
+      expect(after.startsWith(before)).toBe(true);
+      expect(after).toMatch(/用户接着说（\d+月\d+日 \d\d:\d\d）：请继续补充/);
+      expect(event.mock.calls.filter((args) => args[1].includes(`（${job.id}）已完成`))).toHaveLength(2);
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "job" && item.jobId === job.id)).toHaveLength(2);
+      // 第一轮结束时的样子留在 rounds 里，续做的那张卡记着是第 1 轮
+      expect(done.rounds).toMatchObject([{ status: "done", startedAt: first.startedAt, endedAt: first.endedAt, durationMs: first.durationMs, summary: "第一轮结果", files: ["/first.txt"], usage: first.usage, followUp: "请继续补充" }]);
+      expect(readFileSync(done.rounds![0].reportPath!, "utf8")).toContain("第一轮结果");
+      expect(hob.runtime.router.items("hob").items.flatMap((item) => item.kind === "job" && item.jobId === job.id ? [item.round] : [])).toEqual([undefined, 1]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "第三轮结果", files: ["/third.txt"] }), text("好"), text("第三轮完成")]);
+      await hob.runtime.jobs.reply(job.id, "再做一次");
+      await hob.runtime.jobs.waitIdle();
+      const third = hob.runtime.store.job(job.id)!;
+      expect(third.rounds).toHaveLength(2);
+      expect(third.rounds![1]).toMatchObject({ summary: "第二轮结果", files: [], followUp: "再做一次" });
+      expect(third.rounds![1].usage).toEqual({ input: done.usage!.input - first.usage!.input, output: done.usage!.output - first.usage!.output, cost: Number((done.usage!.cost - first.usage!.cost).toFixed(6)) });
+      expect(readFileSync(third.rounds![0].reportPath!, "utf8")).toContain("第一轮结果");
+      expect(readFileSync(third.rounds![1].reportPath!, "utf8")).toContain("第二轮结果");
+      expect(third).toMatchObject({ summary: "第三轮结果", files: ["/third.txt"] });
+    } finally {
+      release();
+      hob.close();
+    }
+  });
+
+  it.each(["stuck", "failed", "stopped"] as const)("%s 状态也能接着做并清除旧原因", async (status) => {
+    const hob = makeHob();
+    try {
+      hob.faux.setResponses([call("report", { outcome: "done", result: "初次" }), text("好"), text("完成")]);
+      const job = await hob.runtime.jobs.start("hob", { title: "原任务", instruction: "原说明" });
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("hob");
+      hob.runtime.store.saveJob({ ...hob.runtime.store.job(job.id)!, status, statusReason: "旧原因" });
+      hob.faux.setResponses([call("report", { outcome: "done", result: "继续完成" }), text("好"), text("完成")]);
+      await hob.runtime.jobs.reply(job.id, "继续");
+      expect(hob.runtime.store.job(job.id)?.statusReason).toBeUndefined();
+      expect(hob.runtime.store.job(job.id)?.rounds).toMatchObject([{ status, statusReason: "旧原因" }]);
+      await hob.runtime.jobs.waitIdle();
+      expect(hob.runtime.store.job(job.id)).toMatchObject({ status: "done", summary: "继续完成" });
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("名额已满时结束任务的跟进排队，空出后继续原会话", async () => {
+    const hob = makeHob({}, { settings: { work: { maxJobs: 1 } } });
+    let release = () => {};
+    try {
+      hob.faux.setResponses([call("report", { outcome: "done", result: "原结果" }), text("好"), text("完成")]);
+      const original = await hob.runtime.jobs.start("hob", { title: "原任务", instruction: "原说明" });
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("hob");
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([
+        async () => { await gate; return call("report", { outcome: "done", result: "占位完成" }); },
+        text("好"), text("占位完成"),
+        call("report", { outcome: "done", result: "接续完成" }), text("好"), text("接续完成"),
+      ]);
+      const blocker = await hob.runtime.jobs.start("hob", { title: "占名额", instruction: "等待" });
+      await waitFor(() => hob.faux.state.callCount >= 1);
+      await hob.runtime.jobs.reply(original.id, "排队后接着做");
+      expect(hob.runtime.store.job(original.id)).toMatchObject({ status: "queued" });
+      expect(hob.runtime.store.job(original.id)?.summary).toBeUndefined();
+      release();
+      await hob.runtime.jobs.waitIdle();
+      expect(hob.runtime.store.job(blocker.id)?.status).toBe("done");
+      expect(hob.runtime.store.job(original.id)).toMatchObject({ status: "done", summary: "接续完成" });
+      expect(readFileSync(hob.runtime.store.workerFile(original.id), "utf8")).toContain("排队后接着做");
+    } finally {
+      release();
+      hob.close();
+    }
+  });
+
   it("ask_user 阻塞等答复，答完继续跑并 report", async () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
-        call("report", { outcome: "done", summary: "删了 3 个旧报告" }),
+        call("report", { outcome: "done", result: "删了 3 个旧报告" }),
         text("好"),
         text("删掉了。"),
       ]);
@@ -181,7 +298,7 @@ describe("任务", () => {
     try {
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
-        call("report", { outcome: "done", summary: "只删了三个月前的旧报告" }),
+        call("report", { outcome: "done", result: "只删了三个月前的旧报告" }),
         text("好"),
         text("只删了旧的。"),
       ]);
@@ -203,16 +320,61 @@ describe("任务", () => {
     }
   });
 
+  it("ask_user 等答复时用户在对话里回（reply）：当作答复，卡片结束，任务接着跑", async () => {
+    const hob = makeHob();
+    try {
+      hob.faux.setResponses([
+        call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
+        call("report", { outcome: "done", result: "只删了旧的" }),
+        text("好"),
+        text("只删了旧的。"),
+      ]);
+      const job = await hob.runtime.jobs.start("hob", { title: "清旧报告", instruction: "删掉旧报告" });
+      await waitFor(() => hob.runtime.store.job(job.id)?.status === "waiting");
+      const approval = hob.runtime.store.approvals()[0];
+
+      await hob.runtime.jobs.reply(job.id, "只删三个月前的");
+      expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "answered", answerText: "只删三个月前的" });
+      await hob.runtime.jobs.waitIdle();
+      expect(hob.runtime.store.job(job.id)?.status).toBe("done");
+      const ask = hob.runtime.jobs.transcript(job.id).find((step) => step.name === "ask_user");
+      expect(ask?.output).toContain("而是在对话里回复：只删三个月前的");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("助手转达任务提问的答复：卡片结束而不冒充用户原话，任务继续", async () => {
+    const hob = makeHob();
+    try {
+      hob.faux.setResponses([
+        call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
+        call("report", { outcome: "done", result: "只删了旧的" }),
+        text("好"), text("只删了旧的。"),
+      ]);
+      const job = await hob.runtime.jobs.start("hob", { title: "清旧报告", instruction: "删掉旧报告" });
+      await waitFor(() => hob.runtime.store.job(job.id)?.status === "waiting");
+      const approval = hob.runtime.store.approvals()[0];
+      const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "reply_job")!;
+      await tool.execute("call", { jobId: job.id, text: "只删三个月前的" });
+      expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "expired" });
+      expect(hob.runtime.store.approval(approval.id)?.answerText).toBeUndefined();
+      await hob.runtime.jobs.waitIdle();
+      expect(hob.runtime.store.job(job.id)?.status).toBe("done");
+      expect(hob.runtime.jobs.transcript(job.id).find((step) => step.name === "ask_user")?.output).toContain("助手转达：只删三个月前的");
+    } finally { hob.close(); }
+  });
+
   it("超过 maxJobs 的任务排队，调大以后立刻接着跑", async () => {
     const hob = makeHob({}, { settings: { work: { maxJobs: 1 } } });
     try {
       // 两个会话共用一套假模型，用工厂按“是不是 Worker”决定回什么，避免抢响应
       const factory = (context: any) => {
-        const isWorker = JSON.stringify(context.messages[0]).includes("你在后台执行");
+        const isWorker = JSON.stringify(context.messages[0]).includes("助手派出的后台任务");
         if (!isWorker) return text("收到。");
         const lastAssistant = [...context.messages].reverse().find((message: any) => message.role === "assistant");
         const reported = lastAssistant?.content?.some((block: any) => block.type === "toolCall" && block.name === "report");
-        return reported ? text("好的。") : call("report", { outcome: "done", summary: "好了" });
+        return reported ? text("好的。") : call("report", { outcome: "done", result: "好了" });
       };
       hob.faux.setResponses(Array.from({ length: 10 }, () => factory));
       const first = await hob.runtime.jobs.start("hob", { title: "一", instruction: "干活一" });
@@ -231,8 +393,8 @@ describe("任务", () => {
     try {
       hob.faux.setResponses(
         Array.from({ length: 10 }, () => (context: any) => {
-          const isWorker = JSON.stringify(context.messages[0]).includes("你在后台执行");
-          return isWorker ? call("report", { outcome: "done", summary: "好了" }) : text("收到。");
+          const isWorker = JSON.stringify(context.messages[0]).includes("助手派出的后台任务");
+          return isWorker ? call("report", { outcome: "done", result: "好了" }) : text("收到。");
         }),
       );
       const first = await hob.runtime.jobs.start("hob", { title: "一", instruction: "干活一" });
@@ -269,7 +431,7 @@ describe("任务", () => {
       const pidFile = join(hob.home, "bash.pid");
       hob.faux.setResponses([
         call("bash", { command: `echo $$ > ${pidFile}; sleep 60; echo 跑完了` }),
-        call("report", { outcome: "done", summary: "命令跑完了" }),
+        call("report", { outcome: "done", result: "命令跑完了" }),
         text("好"),
       ]);
       const job = await hob.runtime.jobs.start("hob", { title: "长命令", instruction: "跑一个很长的命令" });
@@ -290,7 +452,7 @@ describe("任务", () => {
 
       // Router 收到“已停止”事件
       const transcript = readFileSync(join(hob.home, "assistants", "hob", "router.jsonl"), "utf8");
-      expect(transcript).toContain("任务「长命令」已停");
+      expect(transcript).toContain(`任务「长命令」（${job.id}）已停止`);
     } finally {
       hob.close();
     }
@@ -337,7 +499,7 @@ describe("任务", () => {
   it("本机任务的工作目录是 HOB_HOME/jobs/<id>/work，显式给了 cwd 才用它", async () => {
     const hob = makeHob();
     try {
-      hob.faux.setResponses([call("report", { outcome: "done", summary: "写好了" }), text("好")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "写好了" }), text("好")]);
       hob.faux.appendResponses([text("好了")]);
       const job = await hob.runtime.jobs.start("hob", { title: "写简报", instruction: "写一份简报" });
       expect(job.cwd).toBe(join(hob.home, "jobs", job.id, "work"));
@@ -347,9 +509,9 @@ describe("任务", () => {
       const explicit = await hob.runtime.jobs.start("hob", {
         title: "在别处干活",
         instruction: "在给定目录干活",
-        cwd: hob.home,
+        cwd: tmpdir(),
       });
-      expect(explicit.cwd).toBe(hob.home);
+      expect(explicit.cwd).toBe(tmpdir());
       await hob.runtime.jobs.waitIdle();
     } finally {
       hob.close();

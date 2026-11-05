@@ -5,9 +5,10 @@ import { useState, type ReactNode } from "react";
 import type { AssistantSummary, Job } from "../../../shared/types.ts";
 import { plainText } from "../../../shared/plain-text.ts";
 import { homeGroups } from "../home.ts";
+import { assistantStatus } from "../sidebar-data.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar, type AvatarMark } from "../sprites.tsx";
-import { openJob, openJobs, openRoutine, select, useApp } from "../store.ts";
+import { closePanelPages, openJob, openJobs, openRoutine, select, useApp } from "../store.ts";
 import { cronText, fmtElapsed, fmtList } from "../util.ts";
 import { useAssistantMenu } from "./AssistantMenu.tsx";
 import { StatusTag } from "./JobDetail.tsx";
@@ -19,7 +20,7 @@ import { activityParts, STATUS_TEXT } from "./Panel.tsx";
  * 任务行不动，状态那列已经有转圈；只有收起的助手折着时，由它的任务行替它动。
  */
 function isBusy(s: ReturnType<typeof useApp>, a: AssistantSummary): boolean {
-  return a.busy || Object.values(s.jobs).some((j) => j.assistantId === a.id && ["running", "queued", "waiting"].includes(j.status)) || Object.values(s.delegations).some((d) => (d.from === a.id || d.to === a.id) && ["running", "waiting"].includes(d.status));
+  return assistantStatus(a, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) !== "空闲";
 }
 
 /** 在忙吗、轮到第几个看（按助手顺序给在忙的排号，头像按号错开时间看一圈）。 */
@@ -30,17 +31,19 @@ function useHomeBusy(a: AssistantSummary | undefined): { busy: boolean; slot: nu
 }
 
 /**
- * 头像右下角的状态符号，只显示最要紧的一个：等你确认（?）> 受阻（!）> 正在工作（淡蓝 ···）。
- * 受阻：它最近结束的任务没办成，而且你还没看过它的对话（未读清零就不再显示）。
+ * 头像右下角只显示最要紧的状态：等你确认（?）> 受阻（!）> 正在工作（淡蓝 ···）> 完成未读（绿色对勾）。
+ * 受阻和完成未读由最近结束的任务决定，未读清零后不再显示。
  */
 function useMark(a: AssistantSummary, busy: boolean): AvatarMark | undefined {
   const s = useApp();
-  if (Object.values(s.approvals).some((ap) => ap.status === "pending" && ap.assistantId === a.id)) return "ask";
+  if (assistantStatus(a, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) === "等你确认") return "ask";
   const last = Object.values(s.jobs)
     .filter((j) => j.assistantId === a.id && j.endedAt)
     .sort((x, y) => (y.endedAt ?? "").localeCompare(x.endedAt ?? ""))[0];
   if (a.unread > 0 && last && (last.status === "stuck" || last.status === "failed")) return "stuck";
-  return busy ? "busy" : undefined;
+  if (busy) return "busy";
+  if (a.unread > 0 && last?.status === "done") return "done";
+  return undefined;
 }
 
 export function Pin({ a, sel, size = 52 }: { a: AssistantSummary; sel?: boolean; size?: number }) {
@@ -114,9 +117,10 @@ function liveText(job: Job, owner: AssistantSummary | undefined): string {
 
 /**
  * 点首页的任务行：先进这个任务的助手的对话（手机上就是对话页），再展开任务详情。
- * 助手已经并回 / 不在了就只开详情。
+ * 助手已经归档 / 不在了就只开详情。
  */
 function openJobRow(job: Job, owner: AssistantSummary | undefined) {
+  closePanelPages();
   if (owner) void select(job.assistantId);
   openJob(job.id);
 }
@@ -145,7 +149,7 @@ function JobRow({
   return (
     <button className="row job" onClick={onClick}>
       <Face owner={owner} size={size} moving={moving} />
-      <span className="nm">{job.title}</span>
+      <span className="nm">{job.routineId ? <Icon name="clock" size={14} /> : null}{job.title}</span>
       <span className="tm">{time}</span>
       <span className="pv">{plainText(text)}</span>
       <StatusTag job={job} />
@@ -291,7 +295,8 @@ export function HomeSections({ size = 42, markSel = false }: { size?: number; ma
                 className="row"
                 key={r.id}
                 onClick={() => {
-                  void select(r.assistantId, false, false);
+                  closePanelPages();
+                  void select(r.assistantId);
                   openRoutine(r.id);
                 }}
               >

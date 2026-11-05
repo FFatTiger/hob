@@ -23,8 +23,8 @@ function SpritePixels({ art }: { art: ReturnType<typeof spriteArt> }) {
   );
 }
 
-export type AvatarMark = "busy" | "ask" | "stuck";
-const MARK_LABEL: Record<AvatarMark, string> = { busy: "正在工作", ask: "等你确认", stuck: "受阻" };
+export type AvatarMark = "busy" | "ask" | "stuck" | "done";
+const MARK_LABEL: Record<AvatarMark, string> = { busy: "正在工作", ask: "等你确认", stuck: "受阻", done: "已完成，未读" };
 
 /** peek：每 30 秒看一圈（约 3.6 秒，见 styles.css 的 eye-peek）；第 n 个在忙的助手晚 n×4 秒开始，一个看完下一个才看。 */
 const PEEK_GAP_S = 4;
@@ -51,7 +51,7 @@ export function Avatar({
   title?: string;
   onClick?: () => void;
   motion?: "think" | "work" | "home" | "peek";
-  /** 右下角状态符号：busy 正在工作（淡蓝 ···）、ask 等你确认（?）、stuck 受阻（红 !） */
+  /** 右下角状态符号：busy 正在工作、ask 等你确认、stuck 受阻、done 完成未读 */
   mark?: AvatarMark;
   free?: boolean;
   /** peek 的轮次：第几个在忙的助手，按顺序轮流看一圈，不同时动 */
@@ -82,7 +82,7 @@ export function Avatar({
           <SpritePixels art={art} />
         )}
       </svg>
-      {mark ? <span className={`av-mark ${mark}`} aria-label={MARK_LABEL[mark]}>{mark === "busy" ? <svg viewBox="0 0 13 5"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="6.5" cy="2.5" r="1.5" /><circle cx="10.5" cy="2.5" r="1.5" /></svg> : mark === "ask" ? "?" : "!"}</span> : null}
+      {mark ? <span className={`av-mark ${mark}`} aria-label={MARK_LABEL[mark]}>{mark === "busy" ? <svg viewBox="0 0 13 5"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="6.5" cy="2.5" r="1.5" /><circle cx="10.5" cy="2.5" r="1.5" /></svg> : mark === "done" ? <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : mark === "ask" ? "?" : "!"}</span> : null}
     </div>
   );
 }

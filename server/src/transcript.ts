@@ -4,6 +4,9 @@ import { commandSummary } from "../../shared/command.ts";
 import type { JobStep } from "../../shared/types.ts";
 import { showPath } from "./text.ts";
 
+/** 沉淀技能那一轮发给任务的话的开头：任务详情里这句显示成「沉淀技能」。 */
+export const SEDIMENT_PROMPT_HEAD = "这件事以后还会再做。回顾刚才的过程，把能复用的做法沉淀成技能";
+
 /** transcript 里单步输出最多这么多字，超出的整段落盘，页面按路径去拉。 */
 export const STEP_OUTPUT_LIMIT = 20 * 1024;
 /** 实时事件里的单步输出最多这么多字（全文落盘，给路径）。 */
@@ -84,8 +87,19 @@ const MEMORY_TOOLS: Record<string, string> = {
   lore_status: "查看记忆状态",
 };
 
+/** MCP 工具（mcp__<服务>__<工具>）显示成「服务名 · 工具名」，不露原始名。 */
+function mcpToolDisplay(name: string, mcpServers: Record<string, string> | undefined): string | undefined {
+  if (!name.startsWith("mcp__")) return undefined;
+  const rest = name.slice("mcp__".length);
+  const split = rest.indexOf("__");
+  if (split <= 0) return undefined;
+  const server = mcpServers?.[rest.slice(0, split)] ?? rest.slice(0, split);
+  const tool = rest.slice(split + 2) || "?";
+  return `${server} · ${tool}`;
+}
+
 /** 一行中文：「运行 `npm test`」「修改 server/src/jobs.ts」「读取 README.md」。 */
-export function toolTitle(name: string, args: Record<string, unknown>): string {
+export function toolTitle(name: string, args: Record<string, unknown>, mcpServers?: Record<string, string>): string {
   const path = String(args.path ?? "");
   switch (name) {
     case "bash":
@@ -104,6 +118,8 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `列出 ${path}`;
     case "report":
       return "提交结果";
+    case "save_skill":
+      return `保存技能：${oneLine(String(args.title ?? ""), 60)}`;
     case "ask_user":
       return `询问用户：${oneLine(String(args.title ?? ""), 60)}`;
     case "overview":
@@ -112,9 +128,40 @@ export function toolTitle(name: string, args: Record<string, unknown>): string {
       return `生成图片：${oneLine(String(args.prompt ?? ""), 60)}`;
     case "web_search":
       return `联网搜索：${oneLine(String(args.query ?? ""), 60)}`;
+    case "find_knowledge":
+      return args.query ? `找资料：${oneLine(String(args.query), 60)}` : "找资料";
+    case "search_knowledge":
+      return args.query ? `查知识库：${oneLine(String(args.query), 60)}` : "查知识库";
     case "web_fetch":
       return `读取网页：${oneLine(String(args.url ?? ""), 60)}`;
+    case "browser_open": {
+      let target = oneLine(String(args.url ?? ""), 60);
+      try { target = new URL(target).hostname; } catch { /* 无效地址保留原样 */ }
+      return `浏览器 · 打开 ${target}`;
+    }
+    case "browser_snapshot": return "浏览器 · 读取页面";
+    case "browser_click": return "浏览器 · 点击";
+    case "browser_type": return "浏览器 · 输入";
+    case "browser_press": return "浏览器 · 按键";
+    case "browser_back": return "浏览器 · 返回";
+    case "browser_screenshot": return "浏览器 · 截图";
+    case "desktop_screenshot": return "桌面 · 截图";
+    case "desktop_action": {
+      const names: Record<string, string> = { click: "点击", move: "移动", drag: "拖动", type: "输入", key: "按键", scroll: "滚动", wait: "等待" };
+      const first = Array.isArray(args.actions) ? args.actions[0] as { type?: string } | undefined : undefined;
+      return `桌面 · ${names[first?.type ?? ""] ?? "操作"}`;
+    }
+    case "tool_search":
+      return `搜索可用工具：${oneLine(String(args.query ?? ""), 60)}`;
+    case "list_mcp_resources":
+      return "列出 MCP 资源";
+    case "list_mcp_resource_templates":
+      return "列出 MCP 资源模板";
+    case "read_mcp_resource":
+      return `读取 MCP 资源：${oneLine(String(args.uri ?? ""), 90)}`;
     default: {
+      const mcp = mcpToolDisplay(name, mcpServers);
+      if (mcp) return `调用 ${mcp}`;
       const label = MEMORY_TOOLS[name];
       if (!label) return name;
       const target = String(args.uri ?? args.query ?? "");
@@ -148,17 +195,20 @@ export interface ToolStepInput {
   at?: string;
   cwd?: string;
   running?: boolean;
+  /** MCP 工具的显示名映射（转义后的服务名 → 配置里的原名） */
+  mcpServers?: Record<string, string>;
 }
 
 /** 一次工具调用 → 一个步骤（还没有结果）。实时事件和落盘推导都用它，页面按 id 合并。 */
 export function toolStep(input: ToolStepInput): JobStep {
   const args = toolArgs(input.name, input.args, input.cwd ?? "");
+  const mcp = mcpToolDisplay(input.name, input.mcpServers);
   return {
     id: input.id,
     kind: "tool",
     at: input.at ?? new Date().toISOString(),
-    name: input.name,
-    title: toolTitle(input.name, args),
+    name: mcp ?? input.name,
+    title: toolTitle(input.name, args, input.mcpServers),
     args,
     ...(input.running ? { running: true } : {}),
   };
@@ -193,6 +243,8 @@ export interface DeriveOptions {
   limit?: number;
   /** 输出过长时落盘，返回路径 */
   save?: (stepId: string, text: string) => string;
+  /** MCP 工具的显示名映射（转义后的服务名 → 配置里的原名） */
+  mcpServers?: Record<string, string>;
 }
 
 /** 从任务会话文件推导整个过程：说明文字、思考摘要、工具调用（含结果）。 */
@@ -237,6 +289,7 @@ export function deriveSteps(file: string, options: DeriveOptions = {}): JobStep[
             args: block.arguments ?? {},
             at,
             cwd: options.cwd ?? "",
+            mcpServers: options.mcpServers,
             running: true,
           });
           toolIndex.set(step.id, steps.length);
@@ -265,7 +318,7 @@ export function deriveSteps(file: string, options: DeriveOptions = {}): JobStep[
         seenUser = true; // 第一句是任务说明，详情头部已经有
         continue;
       }
-      steps.push({ id: `u${message.timestamp ?? at}`, kind: "text", at, from: "user", text });
+      steps.push({ id: `u${message.timestamp ?? at}`, kind: "text", at, from: "user", text: text.startsWith(SEDIMENT_PROMPT_HEAD) ? "沉淀技能" : text });
     }
   }
   return steps;

@@ -1,5 +1,5 @@
 import { distinctSprite } from "../../shared/sprites.ts";
-import type { AnswerApprovalBody, Approval, Assistant, Draft, Rule } from "../../shared/types.ts";
+import type { AnswerApprovalBody, Approval, Assistant, Draft } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { monthDayText } from "./time.ts";
@@ -156,63 +156,18 @@ export function dismissDraft(runtime: HobRuntime, draftId: string): ActionResult
 }
 
 /**
- * 并回 Hob（分出的反方向）：定时转给主助手、规则去重后追加、补充说明带上来源、
- * 对话和档案移进 archive/，主助手对话里记一行。历史任务留在 jobs/，只补上助手名。
+ * 归档助手：整个目录（档案、对话、规则）移进 archive/，它的定时一并存进去再停掉。
+ * 什么都不转给主助手。历史任务留在 jobs/，只补上助手名。
  */
-export async function mergeAssistant(runtime: HobRuntime, id: string): Promise<ActionResult> {
-  const { store, bus, router, routines } = runtime;
+export async function archiveAssistant(runtime: HobRuntime, id: string): Promise<ActionResult> {
+  const { store, bus, router } = runtime;
   const target = store.assistant(id);
   if (!target) return { status: 404, body: { error: "助手不存在" } };
-  if (target.primary) return { status: 400, body: { error: "主助手不能并回自己" } };
-  const primary = store.assistants().find((assistant) => assistant.primary);
-  if (!primary) return { status: 409, body: { error: "主助手不存在，无法并回" } };
+  if (target.primary) return { status: 400, body: { error: "主助手不能归档" } };
   const live = store
     .jobs()
     .filter((job) => job.assistantId === id && (job.status === "running" || job.status === "queued" || job.status === "waiting"));
-  if (live.length) return { status: 409, body: { error: "请等任务结束后再并回" } };
-
-  // 先算清楚要转多少：规则同一条文字只留一份（主助手原来那条优先）
-  const moved = store.routines().filter((routine) => routine.assistantId === id);
-  const existing = store.rules(primary.id);
-  const now = new Date().toISOString();
-  const added: Rule[] = [];
-  for (const rule of store.rules(id)) {
-    const text = rule.text.trim();
-    if (!text || existing.some((item) => item.text.trim() === text)) continue;
-    const next: Rule = { id: newId("r-"), text, mode: rule.mode, changedAt: now };
-    existing.push(next);
-    added.push(next);
-  }
-
-  // 主助手对话里那行提示：模型没配好时开不了会话，这里就停下，别留下改了一半的状态
-  try {
-    await router.addItem(primary.id, {
-      kind: "note",
-      icon: "split",
-      text: `已并回「${target.name}」：转来 ${moved.length} 个定时任务、${added.length} 条规则`,
-    });
-  } catch (error) {
-    return { status: 409, body: { error: `无法写入 Hob 的对话：${error instanceof Error ? error.message : String(error)}` } };
-  }
-
-  for (const routine of moved) {
-    const next = { ...routine, assistantId: primary.id };
-    store.saveRoutine(next);
-    bus.emit({ type: "routine", routine: next });
-  }
-  // cron 的归属和时区都在建的时候定死，改完所属助手重排一遍
-  if (moved.length) routines.reload();
-
-  if (added.length) {
-    store.saveRules(primary.id, existing);
-    bus.emit({ type: "profile", assistantId: primary.id });
-  }
-
-  const extra = target.instructions.trim();
-  const instructions = extra
-    ? [primary.instructions.trim(), `来自「${target.name}」：`, extra].filter(Boolean).join("\n")
-    : primary.instructions;
-  store.saveAssistant({ ...primary, instructions });
+  if (live.length) return { status: 409, body: { error: "请等任务结束后再归档" } };
 
   // 这个助手挂着没答的审批：助手没了，卡片一并结束
   for (const approval of store.approvals()) {
@@ -228,10 +183,15 @@ export async function mergeAssistant(runtime: HobRuntime, id: string): Promise<A
     store.saveJob({ ...job, assistantName: target.name });
   }
 
+  // 公共屏幕授权不随助手 id 的重新使用继承。
+  const desktop = runtime.settings.settings.desktop;
+  if (desktop?.publicAssistants?.includes(id)) {
+    runtime.settings.setDesktop(runtime.settings.get().revision, { ...desktop, publicAssistants: desktop.publicAssistants.filter((assistantId) => assistantId !== id) });
+  }
   router.forget(id);
-  store.archiveAssistant(id, `${id}-${new Date().toISOString().replace(/[:.]/g, "-")}`);
+  const routines = store.routines().filter((routine) => routine.assistantId === id);
+  store.archiveAssistant(id, `${id}-${new Date().toISOString().replace(/[:.]/g, "-")}`, routines);
+  for (const routine of routines) runtime.routines.remove(routine.id);
   bus.emit({ type: "assistant_removed", id });
-  const merged = router.summary(store.assistant(primary.id)!);
-  bus.emit({ type: "assistant", assistant: merged });
-  return { status: 200, body: { assistant: merged } };
+  return { status: 200, body: { ok: true } };
 }

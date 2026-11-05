@@ -1,0 +1,61 @@
+import { renderToStaticMarkup } from "react-dom/server";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { AssistantSummary, JobStatus } from "../../../shared/types.ts";
+
+const state = vi.hoisted(() => ({
+  assistants: [] as AssistantSummary[],
+  jobs: {} as Record<string, { assistantId: string; status: JobStatus; endedAt?: string }>,
+  approvals: {} as Record<string, { assistantId: string; status: string }>,
+  delegations: {},
+}));
+vi.mock("../store.ts", () => ({ useApp: () => state }));
+vi.mock("./AssistantMenu.tsx", () => ({ useAssistantMenu: () => ({ handlers: {}, takeHeld: () => false }) }));
+vi.mock("./JobDetail.tsx", () => ({ StatusTag: () => null }));
+vi.mock("./Panel.tsx", () => ({ activityParts: () => [], STATUS_TEXT: {} }));
+
+import { AssistantRow, Pin } from "./HomeSections.tsx";
+
+const assistant = { id: "a", name: "助手", duty: "测试", sprite: "hob", unread: 1, busy: false } as AssistantSummary;
+const render = (a = assistant) => [renderToStaticMarkup(<Pin a={a} />), renderToStaticMarkup(<AssistantRow a={a} />)];
+
+describe("首页头像状态", () => {
+  beforeEach(() => {
+    state.assistants = [assistant];
+    state.jobs = { done: { assistantId: "a", status: "done", endedAt: "2026-01-02" } };
+    state.approvals = {};
+  });
+
+  it("最近结束的任务完成且有未读时显示 SVG 对勾", () => {
+    for (const html of render()) expect(html).toMatch(/class="av-mark done" aria-label="已完成，未读"><svg[^>]*><path/);
+  });
+
+  it("未读清零后不显示完成状态", () => {
+    for (const html of render({ ...assistant, unread: 0 })) expect(html).not.toContain("av-mark done");
+  });
+
+  it("忙碌时优先显示 busy，未读角标仍在", () => {
+    const busy = { ...assistant, busy: true };
+    state.assistants = [busy];
+    const [pin, row] = render(busy);
+    for (const html of [pin, row]) {
+      expect(html).toContain('class="av-mark busy"');
+      expect(html).not.toContain('class="av-mark done"');
+    }
+    expect(pin).toContain('class="badge">1</span>');
+  });
+
+  it("以最近结束任务为准，受阻优先于忙碌", () => {
+    state.jobs.failed = { assistantId: "a", status: "failed", endedAt: "2026-01-03" };
+    const busy = { ...assistant, busy: true };
+    state.assistants = [busy];
+    for (const html of render(busy)) expect(html).toContain('class="av-mark stuck"');
+  });
+
+  it("待确认优先于受阻和忙碌", () => {
+    state.jobs.failed = { assistantId: "a", status: "stuck", endedAt: "2026-01-03" };
+    state.approvals.ask = { assistantId: "a", status: "pending" };
+    const busy = { ...assistant, busy: true };
+    state.assistants = [busy];
+    for (const html of render(busy)) expect(html).toContain('class="av-mark ask"');
+  });
+});

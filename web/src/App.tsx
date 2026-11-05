@@ -1,18 +1,23 @@
-import { useEffect, useLayoutEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
 import { FilePreviewOverlay } from "./components/FilePreview.tsx";
 import { JobOverlay } from "./components/JobDetail.tsx";
 import { Login } from "./components/Login.tsx";
+import { Knowledge } from "./components/Knowledge.tsx";
 import { MobileList, Sheet } from "./components/Mobile.tsx";
 import { Panel } from "./components/Panel.tsx";
 import { SettingsPage } from "./components/Settings.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
-import { clearNotice, start, tick, useApp } from "./store.ts";
+import { backPanel, clearNotice, start, tick, useApp, type PanelPage } from "./store.ts";
 import { updateStatusColor } from "./theme.ts";
 import { Avatar } from "./sprites.tsx";
+
+function pageKey(page: PanelPage): string {
+  return `${page.kind}:${"id" in page ? page.id : "path" in page ? page.liveId ?? page.path : ""}`;
+}
 
 /** 页面已经写了「无法连接 Hob」，原始错误里重复的前缀去掉。 */
 function rawError(text: string): string {
@@ -24,15 +29,28 @@ export function App() {
   const [narrow, setNarrow] = useState(() => window.innerWidth < 768);
   const chat = useLeave(s.mobile === "chat" && Boolean(s.sel), 240);
   const settings = useLeave(s.page === "settings", 180);
+  const knowledge = useLeave(s.page === "knowledge", 180);
   const sheet = useLeave(s.sheet, 180);
+  const top = s.panelStack.at(-1);
+  const key = top ? pageKey(top) : "root";
+  const previous = useRef({ key, depth: s.panelStack.length, direction: "" });
+  if (previous.current.key !== key) previous.current = { key, depth: s.panelStack.length, direction: s.panelStack.length > previous.current.depth ? "from-right" : "from-left" };
+  if (narrow && !s.sheet && !top) previous.current.direction = "";
 
   useLayoutEffect(() => {
     updateStatusColor(s, narrow);
-  }, [s.phase, s.page, s.mobile, s.sheet, s.detail, s.filePreview, s.theme, narrow]);
+  }, [s.phase, s.page, s.mobile, s.sheet, s.panelStack, s.theme, narrow]);
 
   useEffect(() => {
     void start();
   }, []);
+
+  useEffect(() => {
+    if (!s.panelStack.length) return;
+    const onKey = (event: KeyboardEvent) => { if (event.key === "Escape" && !event.defaultPrevented) backPanel(); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [s.panelStack]);
 
   useEffect(() => {
     const onResize = () => setNarrow(window.innerWidth < 768);
@@ -89,12 +107,25 @@ export function App() {
       <>
         <SettingsPage narrow={narrow} leaving={settings.leaving} />
         {/* 设置 → 工作 → 查看全部任务：任务记录直接盖在设置页上 */}
-        <JobOverlay />
-        <FilePreviewOverlay />
+        <JobOverlay direction={narrow ? previous.current.direction : ""} />
+        <FilePreviewOverlay direction={narrow ? previous.current.direction : ""} />
         {toast}
       </>
     );
   }
+
+  if (knowledge.mounted) {
+    return (
+      <>
+        <Knowledge narrow={narrow} leaving={knowledge.leaving} />
+        {narrow ? <FilePreviewOverlay direction={previous.current.direction} /> : null}
+        {toast}
+      </>
+    );
+  }
+
+  const filePreview = top?.kind === "file" ? top : null;
+  const detail = top?.kind === "job" || top?.kind === "jobs";
 
   if (narrow) {
     return (
@@ -108,24 +139,38 @@ export function App() {
               <ChatPage />
             </div>
           ) : null}
-          {sheet.mounted ? <Sheet leaving={sheet.leaving} /> : null}
+          {sheet.mounted ? <div style={{ display: top ? "none" : undefined }}><Sheet leaving={sheet.leaving} page={null} layered={!top && previous.current.direction === "from-left"} direction="from-left" /></div> : null}
+          {s.panelStack.map((page, index) => {
+            const active = index === s.panelStack.length - 1;
+            const direction = active ? previous.current.direction : "";
+            return <div key={pageKey(page)} style={{ display: active ? undefined : "none" }}>
+              {page.kind === "file" ? <FilePreviewOverlay page={page} direction={direction} />
+                : page.kind === "job" || page.kind === "jobs" ? <JobOverlay page={page} direction={direction} />
+                : <Sheet page={page} leaving={false} layered direction={direction} />}
+            </div>;
+          })}
         </div>
         <AssistantMenu />
-        <JobOverlay />
-        <FilePreviewOverlay />
         {toast}
       </>
     );
   }
 
   return (
-    <div className="app">
+    <div className={`app${filePreview?.full ? " preview-full" : ""}`}>
       <Sidebar />
       <Chat />
-      <div className={`panelwrap${s.detail ? " detail" : s.collapsed ? " off" : ""}`}>
-        {s.detail ? <JobOverlay embedded /> : <Panel />}
+      <div className={`panelwrap${filePreview?.full ? " full" : ""}${filePreview || detail || (!top && s.nowWide) ? " wide" : ""}${!top && s.collapsed ? " off" : ""}`}>
+        <div className={`panel-page${!top && previous.current.direction ? ` ${previous.current.direction}` : ""}`} style={{ display: top ? "none" : undefined }}><Panel page={null} /></div>
+        {s.panelStack.map((page, index) => {
+          const active = index === s.panelStack.length - 1;
+          return <div key={pageKey(page)} className={`panel-page${active && previous.current.direction ? ` ${previous.current.direction}` : ""}`} style={{ display: active ? undefined : "none" }}>
+            {page.kind === "file" ? <FilePreviewOverlay embedded page={page} />
+              : page.kind === "job" || page.kind === "jobs" ? <JobOverlay embedded page={page} />
+              : <Panel page={page} />}
+          </div>;
+        })}
       </div>
-      <FilePreviewOverlay />
       <AssistantMenu />
       {s.offline ? <div className="toast">{s.offline}</div> : null}
       {toast}

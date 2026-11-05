@@ -7,18 +7,18 @@ export function resolveTheme(theme: Theme, systemDark: boolean) {
 
 interface StatusPage {
   phase: "loading" | "login" | "ready" | "error";
-  page: "main" | "settings";
+  page: "main" | "settings" | "knowledge";
   sheet: boolean;
-  detail: unknown | null;
-  filePreview: { full: boolean } | null;
+  panelStack: Array<{ kind: string; full?: boolean }>;
 }
 
 export function statusSurface(page: StatusPage, narrow: boolean): "bg" | "side" | "panel" {
   // 手机上加载 / 登录页和首页同色：iOS 只认启动时的颜色，启动后再变它不跟，首页就会一直是加载时的颜色
   if (page.phase !== "ready") return narrow ? "bg" : "side";
-  if (page.filePreview && (narrow || page.filePreview.full)) return "bg";
-  if (narrow) return page.detail || page.page === "settings" ? "bg" : page.sheet ? "panel" : "bg";
-  return page.page === "settings" ? "bg" : "side";
+  const top = page.panelStack.at(-1);
+  if (top?.kind === "file" && (narrow || top.full)) return "bg";
+  if (narrow) return top?.kind === "job" || top?.kind === "jobs" || page.page === "settings" || page.page === "knowledge" ? "bg" : top || page.sheet ? "panel" : "bg";
+  return page.page === "settings" || page.page === "knowledge" ? "bg" : "side";
 }
 
 export function updateStatusColor(page: StatusPage, narrow: boolean) {

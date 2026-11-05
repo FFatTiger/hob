@@ -62,6 +62,8 @@ describe("记忆提供者的缺省解析", () => {
       const first = hob.runtime.settings.memory();
       expect(first.provider).toBe("local");
       expect(first.providerExplicit).toBe(false);
+      // 自带的 Lore 插件版本就是 vendor 里正式版的版本号
+      expect(first.lorePlugin).toMatch(/^\d+\.\d+\.\d+$/);
       const next = hob.runtime.settings.setMemoryProvider(first.revision, "off");
       expect(next).toMatchObject({ provider: "off", providerExplicit: true });
       // 再读一次仍然是显式的（写进了 settings.json）
@@ -318,7 +320,7 @@ describe("提示词的「记忆」一节", () => {
       "## 记忆",
       "你和用户是长期合作。涉及过去的偏好、决定和约定时，先用 memory_read 查看记忆；遇到值得长期记住的新事实，用 memory_write 记下来。记忆要精炼，过时的内容及时更新或删除。",
     ]);
-    expect(memoryPromptLines("lore")[1]).toContain("先在 Lore 里查");
+    expect(memoryPromptLines("lore")[1]).toContain("过去的偏好、决定和约定先查 Lore");
     expect(memoryPromptLines("off")).toEqual([]);
   });
 
@@ -399,10 +401,10 @@ describe("memories.json 迁移", () => {
 });
 
 describe("note 文案", () => {
-  it("取写入内容的第一行，超过 30 字截断", () => {
-    expect(memoryNoteText({ content: "\n  不看融资新闻 \n第二行" })).toBe("不看融资新闻");
-    const long = "一二三四五六七八九十一二三四五六七八九十一二三四五六七八九十一二三";
-    expect(memoryNoteText({ content: long })?.length).toBe(31);
+  it("取首个非空行，去掉末尾冒号，超过 80 个字符截断", () => {
+    expect(memoryNoteText({ content: "\n  不看融资新闻： \n第二行" })).toBe("不看融资新闻");
+    expect(memoryNoteText({ content: "标题:，" })).toBe("标题");
+    expect(memoryNoteText({ content: "🙂".repeat(81) })).toBe(`${"🙂".repeat(80)}…`);
     expect(memoryNoteText({ uri: "core://x" })).toBeUndefined();
   });
 });

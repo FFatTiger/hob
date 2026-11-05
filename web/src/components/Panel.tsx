@@ -1,18 +1,21 @@
 // 右栏：进行中的任务 + 定时任务列表 / 定时任务编辑 / 助手设置 / 应用设置。
-import { plainText } from "../../../shared/plain-text.ts";
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useMenu } from "./Knowledge.tsx";
+import { skillUsage } from "../skill-usage.ts";
 import { commandSummary } from "../../../shared/command.ts";
 import type { ActivityLine, Assistant, CustomProp, Job, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
-import { byEnded, byStarted } from "../home.ts";
-import { useRows } from "../motion.ts";
+import { assistantStatus, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
+import { PanelRootDetails } from "./PanelRootDetails.tsx";
 import { fitThinking } from "../model-list.ts";
 import { COLOR_IDS, COLORS, customSprite, parseSprite, PROP_IDS, PROPS, spriteId } from "../../../shared/sprites.ts";
 import { Avatar } from "../sprites.tsx";
+import { useDesktopScreens } from "../desktop-screens.ts";
 import {
   addRule,
-  backToNow,
-  closeSheet,
+  backPanel,
+  changeAssistantSkill,
   collapsePanel,
   createRoutine,
   deleteRule,
@@ -20,7 +23,11 @@ import {
   jumpToJob,
   jumpToDelegation,
   loadModels,
-  mergeAssistant,
+  loadKnowledge,
+  loadAssistantSkills,
+  openKnowledge,
+  openFilePreview,
+  archiveAssistant,
   openAssistantPanel,
   openJob,
   openJobs,
@@ -30,9 +37,16 @@ import {
   updateRule,
   runRoutine,
   saveRoutine,
+  toggleNowWide,
   useApp,
+  type PanelPage,
 } from "../store.ts";
-import { cronText, fmtWhen, parseCron, scheduleCron, WEEK, type Schedule } from "../util.ts";
+import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, WEEK, type Schedule } from "../util.ts";
+import { PanelHead } from "./PanelHead.tsx";
+
+// noVNC 要顶层 await，单独分包按需加载
+const DesktopMini = lazy(() => import("./DesktopView.tsx").then((m) => ({ default: m.DesktopMini })));
+const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((m) => ({ default: m.DesktopView })));
 
 export const STATUS_TEXT: Record<Job["status"], string> = {
   queued: "排队中",
@@ -52,83 +66,54 @@ export function activityParts(line: ActivityLine): [string, string] {
   return [VERB_LABEL[line.verb] ?? line.verb, line.verb === "跑" ? commandSummary(line.text) : line.text];
 }
 
-export function Panel({ mobile = false }: { mobile?: boolean }) {
+export function Panel({ mobile = false, page }: { mobile?: boolean; page?: PanelPage | null }) {
   const s = useApp();
-  const kind = s.panel.kind;
-  const name = s.assistants.find((a) => a.id === s.sel)?.name ?? "";
-  // 手机上这一页是整页：标题写助手名；桌面右栏顶上没有标题
-  const title =
-    kind === "routine" ? "定时任务" : kind === "newRoutine" ? "新建定时任务" : kind === "now" ? (mobile ? name : "") : "助手设置";
-  const back = () => (kind === "now" ? closeSheet() : backToNow());
-  // 首次渲染（页面加载）不播切页动画
-  const first = useRef(true);
-  useEffect(() => {
-    first.current = false;
-  }, []);
-  const view = kind === "routine" ? `routine:${s.panel.id}` : kind;
-
+  const top = page === undefined ? s.panelStack.at(-1) : page;
+  const panel = top && top.kind !== "job" && top.kind !== "jobs" && top.kind !== "file" ? top : { kind: "now" as const };
+  const kind = panel.kind;
+  const [rootScrolled, setRootScrolled] = useState(false);
+  const selectedAssistant = s.profiles[s.sel ?? "hob"]?.assistant ?? s.assistants.find((a) => a.id === (s.sel ?? "hob"));
+  useEffect(() => setRootScrolled(false), [s.sel]);
+  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? "定时任务" : kind === "newRoutine" ? "新建定时任务" : kind === "routines" ? "定时任务" : kind === "skills" ? "技能" : kind === "knowledge" ? "知识库" : kind === "rules" ? "执行前确认" : kind === "now" ? "" : "编辑助手";
   return (
-    <aside className="panel">
-      <div className="phead">
-        {kind === "now" ? (
-          mobile ? (
-            <button className="ib" onClick={closeSheet} title="收起">
-              <Icon name="left" size={17} />
-            </button>
-          ) : null
-        ) : (
-          <button className="ib" onClick={back} title="返回">
-            <Icon name="left" size={17} />
-          </button>
-        )}
-        <span className="t">{title}</span>
-        {kind === "now" ? (
-          <button className="ib" title="助手设置" onClick={openAssistantPanel}>
-            <Icon name="gear" size={17} />
-          </button>
-        ) : null}
-        {/* 手机上是整页，返回就是关；收起右栏只在桌面有 */}
-        {mobile ? null : (
-          <button className="ib" title="收起右栏" onClick={collapsePanel}>
-            <Icon name="dbl" size={17} />
-          </button>
-        )}
-      </div>
-      <div
-        className={`pbody${first.current ? "" : kind === "now" ? " from-left" : " from-right"}`}
-        key={first.current ? "first" : view}
-      >
+    <aside className="panel" onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
+      <PanelHead className="phead" root={kind === "now"} title={<span className="t">{kind === "now" && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
+        {kind === "now" ? <><button className="ib" title="编辑助手" onClick={openAssistantPanel}><Icon name="edit" size={17} /></button><button className="ib panel-close" title="收起右栏" onClick={collapsePanel}><Icon name="dbl" size={17} /></button></> : null}
+        {kind === "routines" ? <button className="ib" title="新建定时任务" onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}
+        {panel.kind === "routine" ? <button className="pbtn" onClick={() => void runRoutine(panel.id)}>立即运行</button> : null}
+      </PanelHead>
+      <div className={`pbody sidebar-page-${kind}`}>
         {kind === "routine" ? (
-          <RoutineEditor key={s.panel.kind === "routine" ? s.panel.id : ""} id={s.panel.kind === "routine" ? s.panel.id : ""} />
+          <RoutineEditor key={panel.kind === "routine" ? panel.id : ""} id={panel.kind === "routine" ? panel.id : ""} />
         ) : kind === "newRoutine" ? (
           <NewRoutine />
         ) : kind === "assistant" ? (
           <AssistantSettings key={s.sel ?? "hob"} />
-        ) : (
-          <PanelNow />
+        ) : kind === "routines" ? <RoutineList /> : kind === "skills" ? <AssistantSkills aid={s.sel ?? "hob"} /> : kind === "knowledge" ? <AssistantKnowledge aid={s.sel ?? "hob"} /> : kind === "rules" ? <AssistantRules aid={s.sel ?? "hob"} /> : (
+          <><PanelNow /><PanelRootDetails /></>
         )}
       </div>
     </aside>
   );
 }
 
-const routineKey = (r: Routine) => r.id;
-
 function PanelNow() {
   const s = useApp();
-  const all = Object.values(s.jobs);
-  // 右栏只放当前助手自己的东西，主助手也一样（全部助手的任务在首页和任务记录里看）
-  const scope = (j: Job) => j.assistantId === (s.sel ?? "hob");
-  const isActive = (j?: Job) => !!j && (j.status === "running" || j.status === "queued");
-  const running = all.filter((j) => scope(j) && isActive(j)).sort(byStarted)[0];
-  const last = all.filter((j) => scope(j) && !isActive(j)).sort(byEnded)[0];
-  const job = running ?? last;
-  const routines = s.routines.filter((r) => r.assistantId === s.sel);
-  const rows = useRows(routines, routineKey, s.sel ?? "");
-  const worklog = s.profiles[s.sel ?? "hob"]?.worklog ?? [];
+  const aid = s.sel ?? "hob";
+  const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
+  const jobs = Object.values(s.jobs);
+  const { running: job, last } = sidebarJobs(jobs, aid);
+  const status = assistant ? assistantStatus(assistant, jobs, Object.values(s.approvals), Object.values(s.delegations)) : "空闲";
+  const next = nextRoutine(s.routines.filter((r) => r.assistantId === aid), s.settings.settings.general.timezone);
 
+  // 只有当前助手的屏幕运行时显示小屏，屏幕关闭后恢复命令行。
+  const desktop = useDesktopScreens();
+  const screenId = desktop.profiles[s.sel ?? "hob"];
+  const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
+  const [screen, setScreen] = useState<null | "view" | "take">(null);
+  const wide = desk && s.nowWide;
+  const lines = (job?.activity ?? []).slice(desk && !wide ? -2 : -8);
   // 新活动行淡入；打开面板时已经有的行不动
-  const lines = (job?.activity ?? []).slice(-8);
   const keys = lines.map((l) => `${l.at}|${l.verb}|${l.text}`);
   const seen = useRef<Set<string> | null>(null);
   if (seen.current === null) seen.current = new Set(keys);
@@ -137,93 +122,67 @@ function PanelNow() {
     for (const k of keys) seen.current!.add(k);
   });
 
+  const log = (cls: string, title: string, onClick: () => void) => (
+    <button className={`screen ${cls}`} title={title} onClick={onClick}>
+      {lines.map((line, i) =>
+        line.verb === "$" ? (
+          <div key={keys[i]} className={freshLines.has(keys[i]) ? "new" : undefined}>
+            <span className="p">$</span> {line.text}
+          </div>
+        ) : (
+          <div key={keys[i]} className={freshLines.has(keys[i]) ? "new" : undefined}>
+            <span className="v">{activityParts(line)[0]}</span>
+            {activityParts(line)[1]}
+          </div>
+        ),
+      )}
+      <div><span className="cur" /></div>
+    </button>
+  );
+
   return (
-    <>
+    <div className="sidebar-card">
+      {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}>{status}</em></div> : null}
+      {desk ? (
+        <div className="now-desk">
+          <div className="now-screen">
+            <button className="now-hit" title={wide ? "收起" : "在侧栏展开"} aria-label={wide ? "收起" : "在侧栏展开"} onClick={toggleNowWide} />
+            <Suspense fallback={null}><DesktopMini key={screenId} screen={screenId!} /></Suspense>
+            <span className="now-live">实时</span>
+            <div className="now-acts">
+              {wide ? <button className="now-btn" title="收起" aria-label="收起" onClick={toggleNowWide}><Icon name="shrink" size={15} /></button> : null}
+              <button className="now-btn" title="全屏" aria-label="全屏查看云桌面" onClick={() => setScreen("view")}><Icon name="expand" size={15} /></button>
+              <button className="now-btn txt" title="接管云桌面" onClick={() => setScreen("take")}><Icon name="pointer" size={14} />接管</button>
+            </div>
+          </div>
+          {job ? log("strip", wide ? "收起" : "在侧栏展开", toggleNowWide) : null}
+        </div>
+      ) : null}
+      {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
       {job ? (
         <>
-          <button className={`screen jd-open${running ? "" : " idle"}`} title="打开任务详情" onClick={() => openJob(job.id)}>
-            {lines.map((line, i) =>
-              line.verb === "$" ? (
-                <div key={keys[i]} className={freshLines.has(keys[i]) ? "new" : undefined}>
-                  <span className="p">$</span> {line.text}
-                </div>
-              ) : (
-                <div key={keys[i]} className={freshLines.has(keys[i]) ? "new" : undefined}>
-                  <span className="v">{activityParts(line)[0]}</span>
-                  {activityParts(line)[1]}
-                </div>
-              ),
-            )}
-            {/* 没在跑：不要闪的光标，最后一行写明已经结束，免得以为还在运行 */}
-            {running ? (
-              <div>
-                <span className="cur" />
-              </div>
-            ) : (
-              <div className="end">— {STATUS_TEXT[job.status]} —</div>
-            )}
-          </button>
-          <div className="caprow">
-            <button className="cap jd-open" onClick={() => openJob(job.id)}>
-              {running ? `进行中 · ${job.title}` : `上一个任务 · ${job.title} · ${STATUS_TEXT[job.status]}`}
-            </button>
-            <button className="more" onClick={() => openJobs(s.sel ?? "hob")}>
-              任务记录
-            </button>
-          </div>
+          {desk ? null : log("jd-open", "打开任务详情", () => openJob(job.id))}
+          <div className="caprow"><span className="cap">{job.title}{job.routineId ? " · 定时执行" : ""} · 已进行 {fmtElapsed(job.startedAt ?? job.createdAt)}</span><button className="more" onClick={() => openJob(job.id)}>任务详情 ›</button></div>
         </>
-      ) : (
-        <div className="slot pslot">分派的任务会显示在这里</div>
-      )}
+      ) : <div className="sidebar-facts">{last ? <button onClick={() => openJob(last.id)}>上次 <span><Icon name={last.status === "done" ? "check" : last.status === "failed" || last.status === "stuck" ? "close" : "stop"} size={14} /><span>{last.title}</span></span><small>{fmtWhen(last.endedAt!)}</small></button> : null}{next ? <div>下一次 <span><span aria-hidden="true">⏱</span><span>{next.routine.name}</span></span><small>{formatNext(next.at, s.settings.settings.general.timezone)}</small></div> : null}</div>}
 
       {s.sel === "hob" ? Object.values(s.delegations).filter((delegation) => delegation.status === "running" || delegation.status === "waiting").map((delegation) => {
         const target = s.assistants.find((assistant) => assistant.id === delegation.to);
-        return <button className="delegation-panel" key={delegation.id} onClick={() => void jumpToDelegation("hob", delegation.id, false)}><Icon name={delegation.status === "waiting" ? "pause" : "spin"} size={14} className={delegation.status === "running" ? "spin" : ""} />交给「{target?.name ?? delegation.to}」 · {delegation.status === "waiting" ? "等你确认" : "进行中"}</button>;
+        return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation("hob", delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>交给「{target?.name ?? delegation.to}」</span><small>{delegation.status === "waiting" ? "等你确认" : "进行中"}</small> ›</button>;
       }) : null}
-      <div className="sech">
-        <span>定时任务</span>
-        <button
-          className="ib"
-          style={{ width: 18, height: 18 }}
-          title="新建定时任务"
-          onClick={openNewRoutine}
-        >
-          <Icon name="plus" size={16} />
-        </button>
-      </div>
-      {rows.length ? (
-        rows.map((row) => (
-          <div className={`rtrow${row.state === "still" ? "" : ` ${row.state}`}`} key={row.key}>
-            <div className="rtclip">
-              <button className={`rt${row.item.active ? "" : " paused"}`} onClick={() => openRoutine(row.key)}>
-                <Icon name={row.item.active ? "clock" : "pause"} size={17} />
-                <div>
-                  <div className="n">{row.item.name}</div>
-                  <div className="s">{row.item.active ? cronText(row.item.schedules[0] ?? "") : "已暂停"}</div>
-                </div>
-              </button>
-            </div>
-          </div>
-        ))
-      ) : (
-        <div className="empty">这个助手还没有定时任务</div>
-      )}
-
-      {worklog.length ? (
-        <div className="wlgroup">
-          <div className="sech">
-            <span>工作日志</span>
-          </div>
-          {worklog.slice(0, 6).map((w, i) => (
-            <div className="wl" key={`${w.at}-${i}`}>
-              <span className="t">{fmtWhen(w.at)}</span>
-              <span>{plainText(w.text)}</span>
-            </div>
-          ))}
-        </div>
-      ) : null}
-    </>
+    </div>
   );
+}
+
+function RoutineList() {
+  const s = useApp();
+  const routines = s.routines.filter((r) => r.assistantId === (s.sel ?? "hob"));
+  return <div className="sidebar-group sidebar-group-rows">{routines.length ? routines.map((r) => <button className="sidebar-item" key={r.id} onClick={() => openRoutine(r.id)}><Icon name={r.active ? "clock" : "pause"} size={18} /><span><strong>{r.name}</strong><small>{r.active ? `${cronText(r.schedules[0] ?? "")}${r.runs[0] ? ` · 上次 ${r.runs[0].status === "done" ? "✓" : "✗"} ${fmtWhen(r.runs[0].at)}` : ""}` : "已暂停"}</small></span><b>›</b></button>) : <div className="empty">这个助手还没有定时任务</div>}</div>;
+}
+
+function AssistantRules({ aid }: { aid: string }) {
+  const rules = useApp().profiles[aid]?.rules ?? [];
+  return <><div className="note">标为「需确认」的事项，助手执行前会先征求你的同意。</div><div className="sidebar-group sidebar-group-rows">{rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)}<RuleCreator aid={aid} /></div></>;
 }
 
 function ScheduleRow({
@@ -310,7 +269,11 @@ function NewRoutine() {
   const [name, setName] = useState("");
   const [instruction, setInstruction] = useState("");
   const [schedule, setSchedule] = useState("0 9 * * *");
+  const [active, setActive] = useState(true);
+  const [skill, setSkill] = useState("");
   const [busy, setBusy] = useState(false);
+  const aid = s.sel ?? "hob";
+  useEffect(() => { void loadAssistantSkills(aid); }, [aid]);
   const ready = name.trim() !== "" && instruction.trim() !== "" && !busy;
   const create = async () => {
     setBusy(true);
@@ -319,13 +282,15 @@ function NewRoutine() {
       name: name.trim(),
       instruction: instruction.trim(),
       schedules: [schedule],
-      active: true,
+      active,
+      ...(skill ? { skill } : {}),
     });
     setBusy(false);
   };
 
   return (
     <>
+      <div className="sidebar-group"><div className="ctl"><span>启用</span><span className="sp" /><button className={`tog${active ? "" : " off"}`} title={active ? "暂停" : "启用"} onClick={() => setActive(!active)} /></div></div>
       <div className="lbl">名称</div>
       <label className="field">
         <input autoFocus value={name} placeholder="如「每日简报」" onChange={(e) => setName(e.target.value)} />
@@ -346,9 +311,12 @@ function NewRoutine() {
         <ScheduleRow value={schedule} onSave={setSchedule} />
       </div>
 
+      <div className="lbl">技能</div>
+      {s.assistantSkills[aid]?.error ? <div className="badline">加载失败：{s.assistantSkills[aid].error} <button onClick={() => void loadAssistantSkills(aid)}>重试</button></div> : null}
+      <div className="sidebar-group"><select className="pick" aria-label="技能" value={skill} disabled={!s.assistantSkills[aid] || s.assistantSkills[aid].loading || !!s.assistantSkills[aid].error} onChange={(e) => setSkill(e.target.value)}><option value="">不用技能</option>{(s.assistantSkills[aid]?.skills ?? []).filter((item) => item.enabled).map((item) => <option key={item.name} value={item.name}>{item.title}</option>)}</select></div>
       <div className="ctl">
         <span className="sp" />
-        <button className="pbtn" onClick={backToNow}>
+        <button className="pbtn" onClick={backPanel}>
           取消
         </button>
         <button className="pbtn solid" disabled={!ready} onClick={() => void create()}>
@@ -362,22 +330,21 @@ function NewRoutine() {
 function RoutineEditor({ id }: { id: string }) {
   const s = useApp();
   const r = s.routines.find((x) => x.id === id);
+  const aid = r?.assistantId;
+  useEffect(() => { if (aid) void loadAssistantSkills(aid); }, [aid]);
   if (!r) return <div className="empty">这个定时任务已不存在。</div>;
 
   return (
     <>
-      <div className="ctl">
+      <div className="sidebar-group"><div className="ctl">
+        <span style={{ fontSize: 14 }}>启用</span>
+        <span className="sp" />
         <button
           className={`tog${r.active ? "" : " off"}`}
           title={r.active ? "暂停" : "启用"}
           onClick={() => void saveRoutine(r.id, { active: !r.active })}
         />
-        <span style={{ fontSize: 14 }}>启用</span>
-        <span className="sp" />
-        <button className="pbtn solid" onClick={() => void runRoutine(r.id)}>
-          立即运行
-        </button>
-      </div>
+      </div></div>
 
       <div className="lbl">名称</div>
       <label className="field">
@@ -425,16 +392,29 @@ function RoutineEditor({ id }: { id: string }) {
         </button>
       </div>
 
+      <div className="lbl">技能</div>
+      {s.assistantSkills[r.assistantId]?.error ? <div className="badline">加载失败：{s.assistantSkills[r.assistantId].error} <button onClick={() => void loadAssistantSkills(r.assistantId)}>重试</button></div> : null}
+      <div className="sidebar-group"><select className="pick" aria-label="技能" value={r.skill ?? ""} disabled={!s.assistantSkills[r.assistantId] || s.assistantSkills[r.assistantId].loading || !!s.assistantSkills[r.assistantId].error} onChange={(e) => void saveRoutine(r.id, { skill: e.target.value || null })}>
+        <option value="">不用技能</option>
+        {r.skill && !s.assistantSkills[r.assistantId]?.skills.some((skill) => skill.name === r.skill && skill.enabled) ? <option value={r.skill} disabled>{r.skill}</option> : null}
+        {(s.assistantSkills[r.assistantId]?.skills ?? []).filter((skill) => skill.enabled).map((skill) => <option key={skill.name} value={skill.name}>{skill.title}</option>)}
+      </select></div>
+
       <div className="lbl">运行记录</div>
+      <div className="sidebar-group sidebar-runs">
       {r.runs.length ? (
         r.runs.map((run) => {
           const job = s.jobs[run.jobId];
           const st = job?.status ?? run.status;
           const spinning = st === "running" || st === "queued";
           const bad = st === "failed" || st === "stuck";
+          const usage = routineRunUsage(run);
           return (
             <button className={`run${bad ? " bad" : ""}`} key={run.jobId} onClick={() => void jumpToJob(r.assistantId, run.jobId)}>
-              <span>{fmtWhen(run.at)}</span>
+              <span className="rt">
+                {fmtWhen(run.at)}
+                {usage ? <small>{usage}</small> : null}
+              </span>
               <Icon name={spinning ? "spin" : bad ? "close" : "check"} size={16} className={spinning ? "spin" : ""} />
             </button>
           );
@@ -442,14 +422,15 @@ function RoutineEditor({ id }: { id: string }) {
       ) : (
         <div className="empty">还没有运行记录</div>
       )}
+      </div>
 
-      <div style={{ marginTop: 18 }}>
+      <div className="sidebar-group sidebar-danger" style={{ marginTop: 18 }}>
         <button
-          className="pbtn"
+          className="pbtn danger"
           onClick={async () => {
             if (!window.confirm(`删除定时任务「${r.name}」？已有的运行记录会保留在对话里。`)) return;
             await deleteRoutine(r.id);
-            backToNow();
+            backPanel();
           }}
         >
           删除定时任务
@@ -485,7 +466,7 @@ function PanelText({ value, multiline, placeholder, save }: { value: string; mul
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
   const props = { value: text, placeholder, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setText(e.target.value), onBlur: () => { if (text !== value) void save(text).then((ok) => { if (!ok) setText(value); }); }, onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); } } };
-  return <label className="field">{multiline ? <textarea rows={4} {...props} /> : <input {...props} />}</label>;
+  return <label className="field">{multiline ? <textarea rows={2} {...props} /> : <input {...props} />}</label>;
 }
 
 function AssistantModels({ aid }: { aid: string }) {
@@ -606,7 +587,6 @@ function AssistantAbilities({ aid }: { aid: string }) {
 
   return (
     <>
-      <div className="lbl">能力</div>
       <PanelSaveStatus message={feedback.message} />
       {row("执行命令", abilities.exec, () => save({ exec: !abilities.exec }), "开启后，任务可以运行命令，并可通过命令访问网络。")}
       {row("修改文件", abilities.write, () => save({ write: !abilities.write }), "开启后，任务可以创建和修改文件。")}
@@ -630,6 +610,34 @@ function AssistantAbilities({ aid }: { aid: string }) {
       <div className="note">读取文件始终可用。</div>
     </>
   );
+}
+
+function AssistantKnowledge({ aid }: { aid: string }) {
+  const s = useApp();
+  const feedback = useAssistantSave(aid);
+  useEffect(() => { void loadKnowledge(); }, []);
+  const ids = (s.profiles[aid]?.assistant.knowledge ?? []).filter((id) => s.knowledge.collections.some((collection) => collection.id === id));
+  return <><PanelSaveStatus message={feedback.message} />
+    {s.knowledge.error ? <div className="badline">加载失败：{s.knowledge.error} <button onClick={() => void loadKnowledge()}>重试</button></div> : s.knowledge.loading ? <div className="note">正在加载…</div> : s.knowledge.collections.length ? <div className="sidebar-group sidebar-group-rows">{s.knowledge.collections.map((collection) => <div className="ctl" key={collection.id}><span>{collection.name}</span><span className="sp" /><button className={`tog${ids.includes(collection.id) ? "" : " off"}`} aria-label={collection.name} aria-pressed={ids.includes(collection.id)} disabled={feedback.busy} onClick={() => void feedback.save({ knowledge: ids.includes(collection.id) ? ids.filter((id) => id !== collection.id) : [...ids, collection.id] })} /></div>)}</div> : <div className="note">还没有知识库 · <button onClick={openKnowledge}>去知识库</button></div>}
+  </>;
+}
+
+function AssistantSkills({ aid }: { aid: string }) {
+  const state = useApp().assistantSkills[aid];
+  const menu = useMenu();
+  useEffect(() => { void loadAssistantSkills(aid); }, [aid]);
+  const selected = state?.skills.find((skill) => skill.name === menu.menu?.id);
+  return <>{state?.error ? <div className="badline">加载失败：{state.error} <button onClick={() => void loadAssistantSkills(aid)}>重试</button></div> : !state || state.loading && !state.skills.length ? <div className="note">正在加载…</div> : state.skills.length ? <div className="sidebar-group sidebar-group-rows">{state.skills.map((skill) => <div className="assistant-skill" key={skill.name}>
+      <button className="assistant-skill-info" onClick={() => openFilePreview(skill.path)}><strong>{skill.title}</strong><span>{skill.description}</span><span>{skillUsage(skill)}</span></button>
+      <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={skill.title} aria-pressed={skill.enabled} onClick={() => void changeAssistantSkill(aid, skill.name, skill.enabled ? "disable" : "enable")} />
+      <button className="knowledge-dots" aria-label={`${skill.title}的操作`} onClick={(e) => menu.toggle(skill.name, e.currentTarget)}><Icon name="more" size={18} /></button>
+    </div>)}</div> : <div className="note">还没有技能。任务完成后会自动沉淀，也可以在任务详情里点「沉淀成技能」。</div>}
+    {selected && menu.menu && createPortal(<div className="amenu knowledge-popup" ref={menu.box}>
+      <button onClick={() => { menu.close(); openFilePreview(selected.path); }}>查看</button>
+      {selected.version > 1 ? <button onClick={() => { menu.close(); void changeAssistantSkill(aid, selected.name, "rollback"); }}>回退到上一版</button> : null}
+      <button onClick={() => { menu.close(); if (window.confirm(`删除「${selected.title}」？`)) void changeAssistantSkill(aid, selected.name, "delete"); }}>删除</button>
+    </div>, document.body)}
+  </>;
 }
 
 /** 换头像：自画的道具（有就排第一个）+ 内置道具，都按当前颜色预览，下面一排换颜色。 */
@@ -721,7 +729,7 @@ function RuleRow({ aid, rule }: { aid: string; rule: Rule }) {
           <button className="rule-text" onClick={() => { cancel.current = false; setText(rule.text); setEditing(true); }} disabled={busy} title="编辑规则">{rule.text}</button>
         )}
         <span className="v">
-          <button className="rule-mode" disabled={busy} onClick={() => void save({ mode: rule.mode === "ask" ? "allow" : "ask" })} title="切换确认方式">{rule.mode === "ask" ? "需确认" : "直接执行"}</button>
+          <button className={`rule-mode ${rule.mode}`} disabled={busy} onClick={() => void save({ mode: rule.mode === "ask" ? "allow" : "ask" })} title="切换确认方式">{rule.mode === "ask" ? "需确认" : "直接执行"}</button>
           <button className="del" title="删除这条规则" disabled={busy} onClick={() => setConfirming(true)}><Icon name="close" size={13} /></button>
         </span>
       </div>
@@ -774,7 +782,7 @@ function AssistantSettings() {
   const aid = s.sel ?? "hob";
   const profile = s.profiles[aid];
   const [picking, setPicking] = useState(false);
-  const [merging, setMerging] = useState(false);
+  const [archiving, setArchiving] = useState(false);
   const feedback = useAssistantSave(aid);
   if (!profile) return <div className="empty">正在读取档案…</div>;
   const a = profile.assistant;
@@ -782,15 +790,15 @@ function AssistantSettings() {
   return (
     <>
       <div className="pgroup">
-        <div className="sech">
-          <span>基本信息</span>
-        </div>
         <div className="bigav">
-          <Avatar sprite={a.sprite} prop={a.prop} size={96} free motion="home" onClick={() => setPicking((v) => !v)} title="换头像" />
+          <Avatar sprite={a.sprite} prop={a.prop} size={96} motion="home" onClick={() => setPicking((v) => !v)} title="换头像" />
         </div>
+        <div className="avatar-hint">点头像更换</div>
         {picking ? <SpritePicker aid={aid} sprite={a.sprite} prop={a.prop} onDone={() => setPicking(false)} /> : null}
 
         <PanelSaveStatus message={feedback.message} />
+        <div className="sech"><span>基本信息</span></div>
+        <div className="sidebar-group">
         <div className="lbl">名字</div>
         <PanelText value={a.name} save={(name) => {
           if (name.trim()) return feedback.save({ name: name.trim() });
@@ -806,33 +814,24 @@ function AssistantSettings() {
 
         <div className="lbl">补充说明</div>
         <PanelText multiline value={a.instructions} placeholder="这个助手特有的做法，如“周报先列要点再展开”" save={(instructions) => feedback.save({ instructions })} />
+        </div>
       </div>
 
       <div className="pgroup">
         <div className="sech">
-          <span>工作方式</span>
+          <span>模型</span>
         </div>
-
-        <div className="lbl">执行前确认</div>
-        <div className="note">标为「需确认」的事项，助手执行前会先征求你的同意。</div>
-        <div className="field" style={{ padding: "2px 12px" }}>
-          {profile.rules.length ? (
-            profile.rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)
-          ) : (
-            <div className="empty">还没有需要执行前确认的规则</div>
-          )}
-          <RuleCreator key={aid} aid={aid} />
-        </div>
-
-        <AssistantModels aid={aid} />
-        <AssistantAbilities aid={aid} />
+        <div className="sidebar-group"><AssistantModels aid={aid} /></div>
+        <div className="sech"><span>能力</span></div>
+        <div className="sidebar-group"><AssistantAbilities aid={aid} /></div>
       </div>
 
       <div className="pgroup">
         <div className="sech">
-          <span>显示与通知</span>
+          <span>通知与位置</span>
         </div>
 
+        <div className="sidebar-group">
         <div className="lbl">通知</div>
         <div className="ctl">
           <span style={{ fontSize: 14 }}>需要确认时通知我</span>
@@ -863,26 +862,27 @@ function AssistantSettings() {
         )}
 
         {a.primary ? null : <div className="mergebar"><button className="pbtn" onClick={() => void feedback.save({ hidden: !a.hidden })}>{a.hidden ? "放回列表" : "收起这个助手"}</button></div>}
+        </div>
       </div>
       {a.primary ? null : (
         <div className="pgroup">
           <div className="sech"><span>危险操作</span></div>
-          <div className="mergebar">
-            {merging ? (
+          <div className="mergebar sidebar-group">
+            {archiving ? (
               <div className="mergeconfirm">
-                将「{a.name}」并回 Hob？它的定时任务和执行前确认规则会转给 Hob，对话记录会保留归档，这个助手会从列表中移除。
+                归档「{a.name}」？它会从列表中移除，定时任务一并停掉。对话、规则和历史任务都留着，不会转给 Hob。
                 <div className="acts">
-                  <button className="pbtn solid" onClick={() => void mergeAssistant(aid)}>
-                    确认并回
+                  <button className="pbtn solid" onClick={() => void archiveAssistant(aid)}>
+                    确认归档
                   </button>
-                  <button className="pbtn" onClick={() => setMerging(false)}>
+                  <button className="pbtn" onClick={() => setArchiving(false)}>
                     取消
                   </button>
                 </div>
               </div>
             ) : (
-              <button className="pbtn danger" onClick={() => setMerging(true)}>
-                并回 Hob
+              <button className="pbtn danger" onClick={() => setArchiving(true)}>
+                归档这个助手
               </button>
             )}
           </div>

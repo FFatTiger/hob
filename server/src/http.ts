@@ -1,5 +1,5 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
@@ -7,6 +7,7 @@ import { streamSSE } from "hono/streaming";
 import { serveStatic } from "@hono/node-server/serve-static";
 import type {
   AboutInfo,
+  ClaudeCodeSettings,
   Assistant,
   HobEvent,
   ImageKeyView,
@@ -22,13 +23,19 @@ import type {
   SettingsPatch,
 } from "../../shared/types.ts";
 import { parseSprite } from "../../shared/sprites.ts";
-import { answerApproval, createFromDraft, dismissDraft, mergeAssistant } from "./actions.ts";
+import { answerApproval, archiveAssistant, createFromDraft, dismissDraft } from "./actions.ts";
 import { setPassword } from "./config.ts";
 import { newId } from "./ids.ts";
+import { claudeStatus } from "./claude-status.ts";
+import { checkDesktopUrl } from "./desktop.ts";
+import { desktopProfile, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
 import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
+import { importMcpServers, listMcpImports, mcpView, patchMcpServer, removeMcpServer, saveMcpServer, testMcpServer } from "./mcp.ts";
+import type { McpServerPatch, McpServerSave } from "../../shared/mcp.ts";
 import { checkImageSettings, generateImage, imageConfigured, imageKey, IMAGE_KEY_SECRET } from "./image.ts";
+import { checkEmbeddingSettings, embed, embeddingKey, embeddingModel, EMBEDDING_KEY_SECRET } from "./embedding.ts";
 import { checkAssistantModels, checkModelsPatch } from "./models.ts";
 import { saveLoreConnection, testLoreConnection } from "./memory.ts";
 import { verifyPassword } from "./password.ts";
@@ -38,6 +45,7 @@ import { SEARCH_PROVIDERS } from "../../shared/search.ts";
 import { WebSearch } from "./search.ts";
 import { clampDuty } from "./text.ts";
 import { deleteOwnSkill, importSkills, listImportSkills, skillViews } from "./skills.ts";
+import { archiveAssistantSkill, listAssistantSkills, rollbackAssistantSkill, setAssistantSkillEnabled } from "./assistant-skills.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
 
 const COOKIE = "hob";
@@ -53,7 +61,7 @@ function issueCookie(config: HobRuntime["config"]): string {
   return `${token}.${signature(config.cookieSecret, token)}`;
 }
 
-function validCookie(config: HobRuntime["config"], value: string | undefined): boolean {
+export function validCookie(config: HobRuntime["config"], value: string | undefined): boolean {
   if (!value) return false;
   const dot = value.lastIndexOf(".");
   if (dot <= 0) return false;
@@ -70,6 +78,8 @@ function validCookie(config: HobRuntime["config"], value: string | undefined): b
 
 export function createApp(runtime: HobRuntime, options: { webDir?: string; home: string }): Hono {
   const { store, bus, router, jobs, routines, config } = runtime;  const app = new Hono();
+  // ponytail: 每次取文件都扫一遍 job.json（几十上百个），慢了再缓存
+  const workDirs = () => store.jobs().flatMap((job) => (job.cwd ? [job.cwd] : []));
 
   app.use("/api/*", async (c, next) => {
     if (c.req.path === "/api/login") return next();
@@ -132,6 +142,66 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json(next);
   });
 
+  app.get("/api/desktop", (c) => c.json(runtime.desktop.view()));
+  app.put("/api/desktop", async (c) => {
+    if (runtime.desktop.deployed) return c.json({ error: "云桌面由部署配置，不能在此修改。" }, 403);
+    const body = await c.req.json().catch(() => ({})) as { revision?: unknown; url?: unknown; enabled?: unknown; token?: unknown };
+    if (typeof body.revision !== "number" || typeof body.url !== "string" || typeof body.enabled !== "boolean" || (body.token !== undefined && typeof body.token !== "string")) return c.json({ error: "云桌面配置无效。" }, 400);
+    try {
+      const url = checkDesktopUrl(body.url);
+      const saved = runtime.settings.setDesktop(body.revision, { url, enabled: body.enabled });
+      if (!saved) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
+      if (body.token !== undefined) writeSecret(options.home, "desktop:token", body.token);
+      runtime.desktopEvents.restart();
+      return c.json(runtime.desktop.view());
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+  app.put("/api/desktop/public", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { revision?: unknown; assistants?: unknown };
+    if (typeof body.revision !== "number" || !Array.isArray(body.assistants) || !body.assistants.every((id) => typeof id === "string" && !!runtime.store.assistant(id))) return c.json({ error: "助手列表无效。" }, 400);
+    const current = runtime.settings.settings.desktop ?? { url: "", enabled: false };
+    const saved = runtime.settings.setDesktop(body.revision, { ...current, publicAssistants: [...new Set(body.assistants)] });
+    if (!saved) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
+    return c.json(runtime.desktop.view());
+  });
+  const validScreen = (id: string) => id === "public" || runtime.store.assistants().some((assistant) => desktopProfile(assistant.id) === id);
+  app.get("/api/desktop/screens", (c) => c.json({ screens: runtime.desktopEvents.screens, profiles: Object.fromEntries(runtime.store.assistants().map((assistant) => [assistant.id, desktopProfile(assistant.id)])) }));
+  app.post("/api/desktop/screens/:id/start", async (c) => {
+    const id = c.req.param("id");
+    if (!/^[a-z0-9-]{1,64}$/.test(id)) return c.json({ error: "屏幕 id 无效。" }, 400);
+    if (!validScreen(id)) return c.json({ error: "屏幕不存在。" }, 404);
+    try { await runtime.desktop.request(`/api/screens/${id}/start`, { method: "POST" }); return c.json({ ok: true }); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 502); }
+  });
+  app.get("/api/desktop/control", (c) => {
+    const screen = c.req.query("screen") ?? "hob";
+    if (!validScreen(screen)) return c.json({ error: "屏幕不存在。" }, 404);
+    return c.json(runtime.desktopControl.state(c.req.query("client") ?? "", screen));
+  });
+  app.post("/api/desktop/control", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { client?: string; action?: string; screen?: string };
+    const screen = typeof body.screen === "string" ? body.screen : "hob";
+    if (!validScreen(screen)) return c.json({ error: "屏幕不存在。" }, 404);
+    try {
+      if (body.action === "take") runtime.desktopControl.take(body.client ?? "", screen);
+      else if (body.action === "release") runtime.desktopControl.release(body.client ?? "", screen);
+      else throw new Error("操作无效。");
+      return c.json(runtime.desktopControl.state(body.client ?? "", screen));
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409); }
+  });
+  // 接管后要自己登录网站：在云桌面里打开某个助手的浏览器（每个助手的登录状态分开）
+  app.post("/api/desktop/browser", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { assistantId?: unknown };
+    const id = typeof body.assistantId === "string" ? body.assistantId : "";
+    if (!runtime.store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
+    try { await openDesktopBrowser(runtime, id); return c.json({ ok: true }); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 502); }
+  });
+  app.post("/api/desktop/test", async (c) => {
+    try { return c.json({ ok: true, health: await (await runtime.desktop.request("/api/health")).json() }); }
+    catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+  });
+
   app.get("/api/skills", async (c) => {
     const memory = runtime.settings.memory();
     try { if (memory.provider === "lore" && !runtime.pi.loreSkillPaths.length) await runtime.pi.discoverLoreSkills(); }
@@ -151,6 +221,67 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.delete("/api/skills/:id", (c) => {
     try { deleteOwnSkill(options.home, c.req.param("id")); return c.json({ ok: true }); }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+
+  // 设置 → MCP：列表（密钥不回传）。文件坏了返回错误，不当成空列表
+  app.get("/api/mcp", (c) => {
+    try {
+      return c.json(mcpView(options.home));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+    }
+  });
+
+  // 新建或改一个服务（名称在地址里；env / headers 逐键保留、替换、删除）
+  app.put("/api/mcp/:name", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as McpServerSave;
+    try {
+      return c.json(await saveMcpServer(options.home, c.req.param("name"), body));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  // 启用开关、提供方式、单独关掉的工具
+  app.patch("/api/mcp/:name", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as McpServerPatch;
+    try {
+      return c.json(await patchMcpServer(options.home, c.req.param("name"), body));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  app.delete("/api/mcp/:name", async (c) => {
+    try {
+      return c.json(await removeMcpServer(options.home, c.req.param("name")));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  // 测试连接：连接 → 列工具 → 关闭；失败也是 200，原因在返回值里
+  app.post("/api/mcp/:name/test", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { refresh?: boolean };
+    try {
+      return c.json(await testMcpServer(options.home, c.req.param("name"), body.refresh !== false));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
+  // 从本机导入：只读 pi / Claude Code / Cursor 的配置，同名跳过
+  app.get("/api/mcp/import", (c) => c.json(listMcpImports(options.home)));
+
+  app.post("/api/mcp/import", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
+    const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
+    if (!ids.length) return c.json({ error: "请选择要导入的服务。" }, 400);
+    try {
+      return c.json(await importMcpServers(options.home, ids));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
   });
 
   // 设置 → 模型：引擎注册表里现在能用的聊天模型 + 名单里哪些已经不可用
@@ -187,6 +318,24 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   // 设置 → 服务商：列表（Key 只报配没配）、引擎自带的服务商目录、整份设置
+  app.get("/api/providers/claude-status", async (c) => c.json(await claudeStatus(runtime.home, runtime.settings.settings.claude?.executable || undefined)));
+  app.get("/api/claude", async (c) => {
+    await runtime.providers.apply();
+    return c.json({ settings: runtime.settings.get(), status: await claudeStatus(runtime.home, runtime.settings.settings.claude?.executable || undefined) });
+  });
+  app.put("/api/claude", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { revision?: number; claude?: ClaudeCodeSettings };
+    try {
+      if (!body.claude) throw new Error("Claude Code 设置无效。");
+      const settings = runtime.settings.setClaude(body.revision ?? -1, body.claude);
+      if (!settings) return c.json({ error: "设置已更改，请刷新后重试。" }, 409);
+      await runtime.providers.apply();
+      router.releaseSessions();
+      return c.json({ settings, status: await claudeStatus(runtime.home, settings.settings.claude?.executable || undefined) });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
   app.get("/api/providers", async (c) => c.json(await runtime.providers.view()));
 
   // 新建或改一个服务商；Key 可选，留空就沿用已存的
@@ -296,6 +445,34 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
   });
 
+  app.get("/api/knowledge/embedding", (c) => c.json({ keyConfigured: Boolean(embeddingKey(options.home)) }));
+
+  app.put("/api/knowledge/embedding", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { revision?: number; embedding?: unknown; apiKey?: unknown };
+    if (typeof body.revision !== "number") return c.json({ error: "缺 revision" }, 400);
+    try {
+      const previous = embeddingModel(runtime.settings.settings.knowledge?.embedding ?? { source: "off" });
+      const settings = runtime.settings.setEmbedding(body.revision, body.embedding);
+      if (!settings) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
+      const keyChanged = typeof body.apiKey === "string" && Boolean(body.apiKey.trim());
+      if (keyChanged) writeSecret(options.home, EMBEDDING_KEY_SECRET, String(body.apiKey).trim());
+      // 换模型要全部重算；只换 Key 时向量还能用，只重试之前失败的
+      if (previous !== embeddingModel(settings.settings.knowledge?.embedding ?? { source: "off" })) await runtime.knowledge.refreshIndexes(true);
+      else if (keyChanged) await runtime.knowledge.reindex();
+      return c.json({ settings, keyConfigured: Boolean(embeddingKey(options.home)) });
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+
+  app.post("/api/knowledge/embedding/test", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { embedding?: unknown; apiKey?: unknown };
+    try {
+      const config = body.embedding ? checkEmbeddingSettings(body.embedding) : runtime.settings.settings.knowledge?.embedding ?? { source: "off" };
+      const key = typeof body.apiKey === "string" && body.apiKey.trim() ? body.apiKey.trim() : embeddingKey(options.home);
+      const vectors = await embed(config, key, ["知识库连接测试"]);
+      return c.json({ ok: true, dims: vectors[0]!.length });
+    } catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
+  });
+
   // 设置 → 图像生成：接口的 Key 配没配（Key 永不回显）
   app.get("/api/image", (c) => {
     const view: ImageKeyView = { keyConfigured: Boolean(imageKey(options.home)) };
@@ -316,6 +493,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (typeof body.apiKey === "string" && body.apiKey.trim()) {
       writeSecret(options.home, IMAGE_KEY_SECRET, body.apiKey.trim());
     }
+    router.releaseSessions();
     const saved: ImageSettingsSaved = { settings, keyConfigured: Boolean(imageKey(options.home)) };
     return c.json(saved);
   });
@@ -418,6 +596,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const endpoint = typeof body.endpoint === "string" && body.endpoint ? body.endpoint : undefined;
     const result = await runtime.push.test(endpoint);
     if (endpoint && result.skipped === "no-devices") return c.json({ error: "这台设备尚未订阅推送" }, 404);
+    if (!result.sent && result.error) return c.json({ error: `发送失败：${result.error}` }, 502);
     return c.json(result);
   });
 
@@ -470,6 +649,42 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const job = store.job(c.req.param("id"));
     if (!job) return c.json({ error: "任务不存在" }, 404);
     return c.json({ job, steps: jobs.transcript(job.id) });
+  });
+
+  app.get("/api/assistants/:id/skills", (c) => {
+    const id = c.req.param("id");
+    if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
+    try { return c.json(listAssistantSkills(options.home, id)); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+  app.patch("/api/assistants/:id/skills/:name", async (c) => {
+    const id = c.req.param("id");
+    if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
+    const body = await c.req.json().catch(() => ({})) as { enabled?: unknown };
+    if (typeof body.enabled !== "boolean") return c.json({ error: "启用状态无效" }, 400);
+    try {
+      const skill = setAssistantSkillEnabled(options.home, id, c.req.param("name"), body.enabled);
+      bus.emit({ type: "skills", assistantId: id });
+      return c.json(skill);
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+  app.post("/api/assistants/:id/skills/:name/rollback", (c) => {
+    const id = c.req.param("id");
+    if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
+    try {
+      const skill = rollbackAssistantSkill(options.home, id, c.req.param("name"));
+      bus.emit({ type: "skills", assistantId: id });
+      return c.json(skill);
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
+  });
+  app.delete("/api/assistants/:id/skills/:name", (c) => {
+    const id = c.req.param("id");
+    if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
+    try {
+      archiveAssistantSkill(options.home, id, c.req.param("name"));
+      bus.emit({ type: "skills", assistantId: id });
+      return c.json({ ok: true });
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
 
   app.get("/api/assistants/:id/items", (c) => {
@@ -538,6 +753,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       bus.emit({ type: "profile", assistantId: id });
       return c.json({ ok: true, rule });
     }
+    if (body.knowledge !== undefined) {
+      if (!Array.isArray(body.knowledge) || body.knowledge.some((id) => typeof id !== "string")) return c.json({ error: "知识库绑定无效。" }, 400);
+      const collections = (await runtime.knowledge.list()).collections;
+      if (body.knowledge.some((id) => !collections.some((item) => item.id === id))) return c.json({ error: "知识库不存在。" }, 400);
+    }
     if (typeof body.sprite === "string" && body.sprite !== assistant.sprite) {
       const parsed = parseSprite(body.sprite);
       // custom 要有画法数据才收（画法在 prop 字段上，PATCH 不改它）；否则渲染成空手火苗，不如拒绝
@@ -567,18 +787,19 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       ...(models ? { models } : {}),
       ...(abilities ? { abilities } : {}),
       ...(typeof body.instructions === "string" ? { instructions: body.instructions } : {}),
+      ...(body.knowledge !== undefined ? { knowledge: [...new Set(body.knowledge)] } : {}),
     };
     store.saveAssistant(next);
-    // 能派的模型写在 start_job 的说明里，换了就重开会话
-    if (models) router.releaseSessions();
+    // 工具说明和注册取决于模型及助手能力，变化后重开会话
+    if (models || abilities) router.releaseSessions();
     const summary = router.summary(next);
     bus.emit({ type: "assistant", assistant: summary });
     return c.json({ assistant: summary });
   });
 
-  // 并回 Hob：定时和规则转给主助手，对话和档案进归档，助手从列表移除
-  app.post("/api/assistants/:id/merge", async (c) => {
-    const result = await mergeAssistant(runtime, c.req.param("id"));
+  // 归档助手：档案、对话、规则和定时进归档，助手从列表移除
+  app.post("/api/assistants/:id/archive", async (c) => {
+    const result = await archiveAssistant(runtime, c.req.param("id"));
     return c.json(result.body as Record<string, unknown>, result.status as 200);
   });
 
@@ -650,6 +871,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       instruction?: string;
       schedules?: string[];
       active?: boolean;
+      skill?: string | null;
     };
     try {
       const routine = routines.update(c.req.param("id"), body);
@@ -678,11 +900,18 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     }
   });
 
+  app.post("/api/jobs/:id/sediment", (c) => {
+    const id = c.req.param("id");
+    if (!store.job(id)) return c.json({ error: "任务不存在" }, 404);
+    try { jobs.startSediment(id, "manual"); return c.json({ ok: true }); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409); }
+  });
+
   app.post("/api/jobs/:id/reply", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { text?: string };
     if (!body.text?.trim()) return c.json({ error: "消息是空的" }, 400);
     try {
-      await jobs.reply(c.req.param("id"), body.text.trim());
+      await jobs.reply(c.req.param("id"), body.text.trim(), "user");
       return c.json({ ok: true });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 409);
@@ -692,6 +921,85 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/jobs/:id/stop", async (c) => {
     await jobs.stop(c.req.param("id"));
     return c.json({ ok: true });
+  });
+
+  app.get("/api/knowledge", async (c) => {
+    const limit = Number(c.req.query("limit"));
+    return c.json(await runtime.knowledge.list({ origin: c.req.query("origin"), collection: c.req.query("collection"), kind: c.req.query("kind"), assistantId: c.req.query("assistantId"), q: c.req.query("q"), before: c.req.query("before"), ...(Number.isFinite(limit) && limit > 0 ? { limit: Math.floor(limit) } : {}) }));
+  });
+
+  app.post("/api/knowledge/collections", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { name?: unknown };
+    if (typeof body.name !== "string" || !body.name.trim()) return c.json({ error: "名称不能为空" }, 400);
+    const collection = await runtime.knowledge.createCollection(body.name.trim());
+    return c.json({ collection: { ...collection, count: 0 } });
+  });
+
+  app.patch("/api/knowledge/collections/:id", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { name?: unknown };
+    if (typeof body.name !== "string" || !body.name.trim()) return c.json({ error: "名称不能为空" }, 400);
+    const collection = await runtime.knowledge.renameCollection(c.req.param("id"), body.name.trim());
+    if (!collection) return c.json({ error: "知识库不存在" }, 404);
+    const count = (await runtime.knowledge.list()).collections.find((item) => item.id === collection.id)?.count ?? 0;
+    return c.json({ collection: { ...collection, count } });
+  });
+
+  app.delete("/api/knowledge/collections/:id", async (c) => {
+    const deleted = await runtime.knowledge.deleteCollection(c.req.param("id"));
+    if (deleted === undefined) return c.json({ error: "知识库不存在" }, 404);
+    return c.json({ deleted });
+  });
+
+  app.get("/api/knowledge/entries/:id", async (c) => {
+    const raw = c.req.query("chunk");
+    if (raw !== undefined && !/^\d+$/.test(raw)) return c.json({ error: "段号无效" }, 400);
+    const view = await runtime.knowledge.entry(c.req.param("id"), raw === undefined ? undefined : Number(raw));
+    return view ? c.json(view) : c.json({ error: "条目不存在" }, 404);
+  });
+
+  app.post("/api/knowledge/collections/:id/reindex", async (c) => {
+    return await runtime.knowledge.reindex(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "知识库不存在" }, 404);
+  });
+
+  app.patch("/api/knowledge/entries/:id", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { name?: unknown; collections?: unknown };
+    if ((body.name !== undefined && (typeof body.name !== "string" || !body.name.trim())) || (body.collections !== undefined && (!Array.isArray(body.collections) || !body.collections.every((id) => typeof id === "string")))) return c.json({ error: "条目参数无效" }, 400);
+    try {
+      const entry = await runtime.knowledge.updateEntry(c.req.param("id"), { ...(typeof body.name === "string" ? { name: body.name.trim() } : {}), ...(Array.isArray(body.collections) ? { collections: body.collections as string[] } : {}) });
+      return entry ? c.json({ entry }) : c.json({ error: "条目不存在" }, 404);
+    } catch (error) {
+      if (error instanceof Error && error.message === "知识库不存在") return c.json({ error: error.message }, 404);
+      throw error;
+    }
+  });
+
+  app.delete("/api/knowledge/entries/:id", async (c) => {
+    return await runtime.knowledge.deleteEntry(c.req.param("id")) ? c.json({ ok: true }) : c.json({ error: "条目不存在" }, 404);
+  });
+
+  app.post("/api/knowledge/upload", async (c) => {
+    const collectionId = c.req.query("collection");
+    if (!collectionId || !(await runtime.knowledge.list()).collections.some((item) => item.id === collectionId)) return c.json({ error: "知识库不存在" }, 404);
+    const body = await c.req.parseBody({ all: true });
+    const files = Object.values(body).flatMap((value) => Array.isArray(value) ? value : [value]).filter((value): value is File => value instanceof File);
+    if (!files.length) return c.json({ error: "没有收到文件" }, 400);
+    if (files.some((file) => file.size > 100 * 1024 * 1024)) return c.json({ error: "文件超过 100 MB" }, 400);
+    const dir = join(options.home, "knowledge", "incoming");
+    mkdirSync(dir, { recursive: true });
+    const entries = [];
+    for (const file of files) {
+      const name = file.name.replace(/[/\\\\]/g, "_") || "file";
+      const path = join(dir, `${newId("u-")}-${name}`);
+      try {
+        writeFileSync(path, Buffer.from(await file.arrayBuffer()), { mode: 0o600 });
+        const entry = await runtime.knowledge.upload({ path, name }, collectionId);
+        if (entry) entries.push(entry);
+      } catch (error) {
+        if (error instanceof Error && error.message === "知识库不存在") return c.json({ error: error.message }, 404);
+        throw error;
+      } finally { rmSync(path, { force: true }); }
+    }
+    return c.json({ entries });
   });
 
   app.post("/api/uploads", async (c) => {
@@ -713,7 +1021,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.get("/api/files", async (c) => {
     const requested = c.req.query("path");
-    const lookup = requested ? lookupFile(options.home, requested) : null;
+    const lookup = requested ? lookupFile(options.home, requested, workDirs()) : null;
     const nosniff = { "x-content-type-options": "nosniff" };
     if (!lookup) return c.json({ error: "缺 path" }, 400, nosniff);
     if (!lookup.ok) return c.json({ error: lookup.error }, lookup.status, nosniff);
@@ -745,7 +1053,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.get("/api/files/meta", (c) => {
     const requested = c.req.query("path");
     if (!requested) return c.json({ error: "缺 path" }, 400);
-    const lookup = lookupFile(options.home, requested);
+    const lookup = lookupFile(options.home, requested, workDirs());
     if (!lookup.ok) return c.json({ error: lookup.error }, lookup.status);
     const { info } = lookup;
     const meta: FileMeta = {
@@ -761,11 +1069,15 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json(meta);
   });
 
-  // 任务工作目录里的文件（递归、修改时间倒序、最多 200 个），只在这个任务的目录里找
+  // 任务工作目录，一次只列一层。
   app.get("/api/jobs/:id/files", (c) => {
     const job = store.job(c.req.param("id"));
     if (!job) return c.json({ error: "任务不存在" }, 404);
-    return c.json(listJobFiles(store.workDir(job.id)));
+    try {
+      return c.json(listJobFiles(job.cwd ?? store.workDir(job.id), c.req.query("path")));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : "无法读取工作目录" }, 400);
+    }
   });
 
   app.get("/api/events", (c) => {

@@ -51,7 +51,7 @@ describe("火苗动画", () => {
     try {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => { release = resolve; });
-      hob.faux.setResponses([async () => { await gate; return call("report", { outcome: "done", summary: "完成" }); }, text("好"), text("完成")]);
+      hob.faux.setResponses([async () => { await gate; return call("report", { outcome: "done", result: "完成" }); }, text("好"), text("完成")]);
       await hob.runtime.jobs.start("hob", { title: "测试", instruction: "报告完成" });
       await waitFor(() => hob.faux.state.callCount > 0);
       expect(events.some((e) => e.type === "router-activity")).toBe(false);

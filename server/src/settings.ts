@@ -2,6 +2,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
+  ClaudeCodeSettings,
   MemoryConfig,
   MemoryProvider,
   ModelPick,
@@ -17,10 +18,11 @@ import type {
 } from "../../shared/types.ts";
 import { defaultSearch, normalizeSearch } from "../../shared/search.ts";
 import { checkImageSettings, normalizeImageSettings } from "./image.ts";
+import { checkEmbeddingSettings, normalizeEmbeddingSettings } from "./embedding.ts";
 import { checkThinkingMap, isThinkingLevel } from "./models.ts";
 import { normalizeThinkingMap } from "../../shared/thinking.ts";
 import type { ModelScores } from "../../shared/types.ts";
-import { isMemoryProvider, loreConnection, resolveMemoryProvider } from "./memory.ts";
+import { isMemoryProvider, LORE_PLUGIN_VERSION, loreConnection, resolveMemoryProvider } from "./memory.ts";
 import { checkProvider } from "./providers.ts";
 import { checkTimezone } from "./time.ts";
 
@@ -89,6 +91,8 @@ export function defaultSettings(timezone = systemTimezone(), models: ModelSettin
     models,
     image: { source: "off" },
     search: defaultSearch(),
+    desktop: { url: "", enabled: false, publicAssistants: [] },
+    claude: { enabled: false, plan: "pro", executable: "" },
     work: { maxJobs: 2, jobStallMinutes: 15, routerStallMinutes: 6 },
     push: { email: "" },
   };
@@ -211,7 +215,18 @@ function normalize(raw: unknown, base: Settings): Settings {
     models: normalizeModels(input.models, base.models),
     providers: normalizeProviders(input.providers ?? base.providers),
     image: normalizeImageSettings(input.image, base.image),
+    knowledge: { embedding: normalizeEmbeddingSettings(input.knowledge?.embedding, base.knowledge?.embedding ?? { source: "off" }) },
     search: normalizeSearch(input.search ?? base.search),
+    desktop: {
+      url: typeof input.desktop?.url === "string" ? input.desktop.url : (base.desktop?.url ?? ""),
+      enabled: typeof input.desktop?.enabled === "boolean" ? input.desktop.enabled : (base.desktop?.enabled ?? false),
+      publicAssistants: Array.isArray(input.desktop?.publicAssistants) ? input.desktop.publicAssistants.filter((id): id is string => typeof id === "string") : (base.desktop?.publicAssistants ?? []),
+    },
+    claude: {
+      enabled: input.claude?.enabled === true,
+      plan: input.claude?.plan === "max" ? "max" : "pro",
+      executable: typeof input.claude?.executable === "string" ? input.claude.executable.trim() : "",
+    },
     skills: { disabled: Array.isArray(input.skills?.disabled) ? input.skills.disabled.filter((v): v is string => typeof v === "string") : (base.skills?.disabled ?? []) },
     work: {
       maxJobs: int(work.maxJobs, base.work.maxJobs, 1, 8),
@@ -317,6 +332,7 @@ export class SettingsStore {
       provider: resolveMemoryProvider(this.memoryProvider, lore.configured),
       providerExplicit: this.memoryProvider !== undefined,
       lore,
+      lorePlugin: LORE_PLUGIN_VERSION,
     };
   }
 
@@ -368,7 +384,10 @@ export class SettingsStore {
         },
         // image / providers 不在这份补丁里（各走自己的接口），别把它们冲回默认
         image: current.image,
+        knowledge: current.knowledge,
         search: current.search,
+        desktop: current.desktop,
+        claude: current.claude,
         skills: patch.skills ?? current.skills,
         providers: current.providers,
         work: { ...current.work, ...(patch.work ?? {}) },
@@ -388,6 +407,29 @@ export class SettingsStore {
     if (revision !== this.file.revision) return undefined;
     const next = checkImageSettings(image);
     this.file = { revision: this.file.revision + 1, settings: { ...this.get().settings, image: next } };
+    this.write();
+    return this.get();
+  }
+
+  setEmbedding(revision: number, embedding: unknown): SettingsFile | undefined {
+    if (revision !== this.file.revision) return undefined;
+    const next = checkEmbeddingSettings(embedding);
+    this.file = { revision: this.file.revision + 1, settings: { ...this.get().settings, knowledge: { embedding: next } } };
+    this.write();
+    return this.get();
+  }
+
+  setClaude(revision: number, claude: ClaudeCodeSettings): SettingsFile | undefined {
+    if (revision !== this.file.revision) return undefined;
+    if (typeof claude.enabled !== "boolean" || (claude.plan !== "pro" && claude.plan !== "max") || typeof claude.executable !== "string") throw new Error("Claude Code 设置无效。");
+    this.file = { revision: this.file.revision + 1, settings: { ...this.get().settings, claude: { ...claude, executable: claude.executable.trim() } } };
+    this.write();
+    return this.get();
+  }
+
+  setDesktop(revision: number, desktop: { url: string; enabled: boolean; publicAssistants?: string[] }): SettingsFile | undefined {
+    if (revision !== this.file.revision) return undefined;
+    this.file = { revision: this.file.revision + 1, settings: { ...this.get().settings, desktop: { ...this.get().settings.desktop, ...desktop } } };
     this.write();
     return this.get();
   }

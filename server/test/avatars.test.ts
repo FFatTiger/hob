@@ -136,10 +136,10 @@ describe("头像数据", () => {
         aboutYou: { name: "", language: "", notes: "" },
         memory: "off",
       });
-      expect(prompt).toContain("server 服务器/运维");
-      expect(prompt).toContain("wifi 网络/路由器");
-      expect(prompt).toContain("hob 那个火苗是主助手专用的，不要用。");
-      expect(prompt).toContain("库里没有贴合职责的道具时，可以自己画一件");
+      expect(prompt).not.toContain("server 服务器/运维");
+      expect(prompt).not.toContain("wifi 网络/路由器");
+      expect(prompt).not.toContain("hob 那个火苗是主助手专用的，不要用。");
+      expect(prompt).not.toContain("库里没有贴合职责的道具时，可以自己画一件");
     } finally {
       hob.close();
     }

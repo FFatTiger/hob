@@ -4,6 +4,7 @@ import type {
   AssistantSummary,
   Bootstrap,
   Delegation,
+  DesktopView,
   Draft,
   HobEvent,
   ImageKeyView,
@@ -33,16 +34,20 @@ import type {
   WorklogEntry,
 } from "../../shared/types.ts";
 import { defaultSearch } from "../../shared/search.ts";
+import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry } from "../../shared/knowledge.ts";
+import type { McpView } from "../../shared/mcp.ts";
+import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
+export type SceneId = "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
 
 /** 每个截图场景对应的界面状态（选中哪个助手、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
   { sel: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat" }
 > = {
+  image: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "act-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "act-think": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "act-tool": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -92,6 +97,27 @@ function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
 }
 
+/** 演示模式里的云桌面状态，地址栏 ?desktop=none（缺省）/ ready / deployed / failed。 */
+type DesktopScene = "none" | "ready" | "deployed" | "failed";
+
+export function desktopMockScene(): DesktopScene {
+  const value = new URLSearchParams(globalThis.location?.search ?? "").get("desktop");
+  return value === "ready" || value === "deployed" || value === "failed" ? value : "none";
+}
+
+const DESKTOP_HEALTH = {
+  version: "1.7.0",
+  display: { width: 1280, height: 800 },
+  screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
+};
+
+const DESKTOP_VIEWS: Record<DesktopScene, DesktopView> = {
+  none: { revision: 1, url: "", enabled: false, deployed: false, tokenConfigured: false, publicAssistants: [] },
+  ready: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true, publicAssistants: [] },
+  deployed: { revision: 1, url: "http://desktop:6080", enabled: true, deployed: true, tokenConfigured: true, publicAssistants: [] },
+  failed: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true, publicAssistants: [] },
+};
+
 interface Db {
   assistants: AssistantSummary[];
   items: Record<string, Item[]>;
@@ -100,6 +126,7 @@ interface Db {
   approvals: Record<string, Approval>;
   drafts: Record<string, Draft>;
   routines: Routine[];
+  assistantSkills: Record<string, AssistantSkill[]>;
   rules: Record<string, Rule[]>;
   worklog: Record<string, WorklogEntry[]>;
   settings: Bootstrap["settings"];
@@ -109,6 +136,7 @@ const HOB_TASK_ACTIVITY: Job["activity"] = [
   { at: minsAgo(6), verb: "$", text: "npm run typecheck" },
   { at: minsAgo(5), verb: "读", text: "protocol/src/projection.ts" },
   { at: minsAgo(4), verb: "读", text: "client/src/runtime/store.ts" },
+  { at: minsAgo(3), verb: "跑", text: "浏览器 打开 http://localhost:3000/pricing" },
   { at: minsAgo(3), verb: "跑", text: "npm test -w protocol" },
   { at: minsAgo(2), verb: "读", text: "client/src/chat/Transcript.tsx" },
   { at: minsAgo(1), verb: "读", text: "client/src/chat/ToolRow.tsx" },
@@ -339,6 +367,21 @@ function buildDb(scene: SceneId): Db {
     activity: clone(HOB_TASK_ACTIVITY),
   };
 
+  const jobRounds: Job = {
+    id: "t-rounds", assistantId: "hob", title: "整理项目资料", instruction: "整理项目资料并列出缺失项。",
+    status: "running", createdAt: minsAgo(40), startedAt: minsAgo(5),
+    stats: { reads: 5, commands: 2, edits: 0 },
+    rounds: [
+      { status: "done", startedAt: minsAgo(40), endedAt: minsAgo(30), durationMs: 600000, summary: "已整理资料清单。", files: ["/srv/example/list.md"], followUp: "核对缺失的文档。" },
+      { status: "stuck", startedAt: minsAgo(25), endedAt: minsAgo(15), durationMs: 600000, summary: "缺少接口文档，暂时无法核对。", followUp: "先根据现有资料继续。" },
+    ],
+    activity: [
+      { at: minsAgo(35), verb: "读", text: "/srv/example/资料" },
+      { at: minsAgo(20), verb: "搜", text: "接口文档" },
+      { at: minsAgo(3), verb: "读", text: "/srv/example/项目说明" },
+    ],
+  };
+
   const jobDone: Job = {
     id: "t-0927",
     assistantId: "server",
@@ -350,11 +393,13 @@ function buildDb(scene: SceneId): Db {
     endedAt: at(1, 3, 5),
     stats: { reads: 4, commands: 2, edits: 0 },
     summary: "已清理 2.1GB 旧日志，服务均正常运行。",
-    files: ["/srv/example/reports/log-cleanup-1031.md"],
+    cwd: "/srv/example/reports",
+    files: ["/srv/example/reports/log-cleanup-1031.md", "/srv/example/reports/stats.csv"],
     activity: [
       { at: at(1, 3, 0), verb: "$", text: "du -sh /var/log/*" },
       { at: at(1, 3, 1), verb: "读", text: "/var/log/nginx" },
       { at: at(1, 3, 3), verb: "跑", text: "find /var/log -mtime +3 -delete" },
+      ...Array.from({ length: 9 }, (_, i) => ({ at: at(1, 3, 4), verb: "读" as const, text: `/srv/example/reports/src/check-${i}.ts` })),
       { at: at(1, 3, 5), verb: "说", text: "已清理 2.1GB，服务均正常运行。" },
     ],
   };
@@ -410,6 +455,7 @@ function buildDb(scene: SceneId): Db {
     },
     {
       id: "r-daily",
+      skill: "daily-brief",
       assistantId: "bird",
       name: "每日简报",
       instruction:
@@ -418,7 +464,7 @@ function buildDb(scene: SceneId): Db {
       active: true,
       createdAt: at(7, 9, 0),
       runs: [
-        { jobId: "t-0926", at: at(0, 9, 0), status: "done" },
+        { jobId: "t-0926", at: at(0, 9, 0), status: "done", durationMs: 372000, tools: 95, tokens: 198000 },
         { jobId: "t-0925", at: at(1, 9, 0), status: "done" },
         { jobId: "t-0924", at: at(2, 9, 1), status: "done" },
         { jobId: "t-0923", at: at(3, 9, 0), status: "done" },
@@ -436,7 +482,7 @@ function buildDb(scene: SceneId): Db {
     },
   ];
 
-  const asst = (id: string, time: string, text: string, routine?: { id: string; name: string }): Item => ({
+  const asst = (id: string, time: string, text: string, routine?: { id: string; name: string; jobId?: string }): Item => ({
     kind: "assistant",
     id,
     at: time,
@@ -453,6 +499,9 @@ function buildDb(scene: SceneId): Db {
     asst("i-h4", at(0, 10, 5), "已交给任务处理，完成后通知你。"),
     { kind: "job", id: "i-h5", at: at(0, 10, 5), jobId: "t-0931" },
     { kind: "question", id: "i-h6", at: at(0, 10, s1 ? 9 : 15), approvalId: "ap-split" },
+    { kind: "job", id: "i-round-1", at: minsAgo(40), jobId: "t-rounds", round: 0 },
+    { kind: "job", id: "i-round-2", at: minsAgo(25), jobId: "t-rounds", round: 1 },
+    { kind: "job", id: "i-round-3", at: minsAgo(5), jobId: "t-rounds", round: 2 },
   ];
   if (!s1) {
     hobItems.push(
@@ -510,7 +559,8 @@ function buildDb(scene: SceneId): Db {
       id: "r-daily",
       name: "每日简报",
     }),
-    asst("i-b2", at(0, 9, 0), "今天 6 条，挑选 2 条重点：", { id: "r-daily", name: "每日简报" }),
+    { kind: "job", id: "i-b-job", at: at(0, 9, 0), jobId: "t-0926" },
+    asst("i-b2", at(0, 9, 0), "今天 6 条，挑选 2 条重点：", { id: "r-daily", name: "每日简报", jobId: "t-0926" }),
     asst(
       "i-b3",
       at(0, 9, 0),
@@ -530,7 +580,9 @@ function buildDb(scene: SceneId): Db {
     ),
     { kind: "user", id: "i-b6", at: at(0, 9, 14), text: "以后不需要包含融资新闻。" },
     asst("i-b7", at(0, 9, 14), "好的，已记录。"),
-    { kind: "note", id: "i-b8", at: at(0, 9, 14), icon: "memory", text: "记忆已更新 · 不包含融资新闻" },
+    { kind: "note", id: "i-b8", at: at(0, 9, 14), icon: "memory", text: "记忆已更新 · 不包含融资新闻，优先关注人工智能产品和模型的重要更新与实际应用" },
+    { kind: "note", id: "i-b8-en", at: at(0, 9, 14), icon: "memory", text: "记忆已更新 · Follow important AI product and model updates, focusing on practical applications." },
+    { kind: "note", id: "i-b9", at: at(0, 9, 15), icon: "skill", text: "已沉淀技能「每日行业简报」，以后定时执行按它做", path: "/mock/assistants/bird/skills/daily-brief/SKILL.md" },
   ];
 
   const small = (id: string, a: string, b: string, c: string): Item[] => [
@@ -568,6 +620,15 @@ function buildDb(scene: SceneId): Db {
     leaf: small("i-lf", "本周三次训练已记录。", "下周增加到四次。", "好的，下周安排四次。"),
   };
 
+  if (scene === "image") {
+    items.hob = [
+      { kind: "user", id: "image-user", at: minsAgo(3), text: "画几张图片给我看看。" },
+      { kind: "image", id: "image-done", at: minsAgo(3), startedAt: minsAgo(3), prompt: "海边的日落", size: "1536x1024", status: "done", path: "/mock/photo.jpg" },
+      { kind: "image", id: "image-failed", at: minsAgo(2), startedAt: minsAgo(2), prompt: "山间的早晨", status: "failed", error: "图像服务暂时不可用，请稍后重试。" },
+      { kind: "image", id: "image-pending", at: minsAgo(1), startedAt: minsAgo(1), prompt: "安静的街道", status: "pending" },
+    ];
+  }
+
   if (scene === "bubbles" || scene === "bubbles-dark") {
     items.hob = [
       { kind: "user", id: "bubble-user", at: minsAgo(3), text: "给我看看公式、代码和媒体。" },
@@ -590,7 +651,14 @@ function buildDb(scene: SceneId): Db {
   }
 
   const delegations: Record<string, Delegation> = {};
-  const jobs: Record<string, Job> = { "t-0931": jobRunning, "t-0927": jobDone, "t-0929": jobBackup };
+  const jobs: Record<string, Job> = { "t-0931": jobRunning, "t-rounds": jobRounds, "t-0927": jobDone, "t-0929": jobBackup,
+    "t-0926": { id: "t-0926", assistantId: "bird", title: "每日简报", instruction: "整理每日简报", status: "done", createdAt: at(0, 8, 54), startedAt: at(0, 8, 54), endedAt: at(0, 9, 0), durationMs: 372000, stats: { reads: 30, commands: 60, edits: 5 }, usage: { input: 180000, output: 18000, cost: 0 }, routineId: "r-daily", summary: "今天 6 条，挑选 2 条重点。", activity: [] },
+  };
+  if (scene === "s1" || scene === "s6") {
+    delegations["dg-sidebar-running"] = { id: "dg-sidebar-running", from: "hob", to: "page", text: "整理文章。", createdAt: minsAgo(6), status: "running", jobIds: [] };
+    delegations["dg-sidebar-waiting"] = { id: "dg-sidebar-waiting", from: "hob", to: "server", text: "检查服务器。", createdAt: minsAgo(5), status: "waiting", jobIds: [] };
+    items.hob.push({ kind: "delegation", id: "sidebar-running", at: minsAgo(6), delegationId: "dg-sidebar-running" }, { kind: "delegation", id: "sidebar-waiting", at: minsAgo(5), delegationId: "dg-sidebar-waiting" });
+  }
   if (scene.startsWith("d-")) {
     const status = scene === "d-waiting" || scene === "d-mobile" ? "waiting" : scene === "d-done" ? "done" : "running";
     const delegation: Delegation = { id: "dg-demo", from: "hob", to: "server", text: "检查服务器磁盘和服务状态，清理前先确认，不要影响正在运行的服务。", createdAt: minsAgo(6), status, jobIds: ["t-delegated"], approvalIds: [] };
@@ -632,6 +700,10 @@ function buildDb(scene: SceneId): Db {
     approvals,
     drafts: { "d-bird": draft },
     routines,
+    assistantSkills: { bird: [
+      { name: "daily-brief", title: "每日行业简报", description: "整理值得关注的行业动态。", path: "/mock/assistants/bird/skills/daily-brief/SKILL.md", version: 2, createdAt: at(7, 9), updatedAt: at(1, 9), uses: 3, lastUsedAt: at(0, 9), enabled: true },
+      { name: "release-watch", title: "重要发布追踪", description: "追踪模型和产品的重要发布。", path: "/mock/assistants/bird/skills/release-watch/SKILL.md", version: 1, createdAt: at(2, 9), updatedAt: at(2, 9), uses: 0, enabled: true },
+    ] },
     rules: {
       hob: [
         { id: "rule-1", text: "花钱", mode: "ask", changedAt: at(10, 9, 0) },
@@ -888,13 +960,34 @@ const MOCK_IMPORTED_PROVIDERS: Record<string, ProviderSettings> = {
 /** 假后端：和 realApi 同一套接口，操作真的改内存里的状态并发事件。 */
 const mockUploads = new Map<string, string>();
 
+const MCP_MOCK: McpView = {
+  servers: [
+    { name: "filesystem", valid: true, kind: "stdio", enabled: true, exposure: "direct", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."], description: "读写指定目录的文件" },
+    { name: "docs", valid: true, kind: "http", enabled: false, exposure: "deferred", url: "https://example.com/mcp", headers: { Authorization: { redacted: true } } },
+  ],
+};
+
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
+  if (new URLSearchParams(globalThis.location?.search ?? "").has("citation")) (db.items.hob ??= []).push({ kind: "assistant", id: "mock-citation", at: new Date().toISOString(), text: "这里是资料里的结论：[工作记录.md](#k/k-2/0)。" });
+  let collections: KnowledgeCollection[] = [{ id: "kc-1", name: "工作资料", createdAt: minsAgo(1000), count: 0 }, { id: "kc-2", name: "灵感收藏", createdAt: minsAgo(900), count: 0 }];
+  let entries: KnowledgeEntry[] = ["项目封面.png", "产品设计页面.html", "工作记录.md", "数据汇总.csv", "参考文档.pdf", "插画.png", "会议纪要.md", "网站方案.html", "预算表.csv", "资料.txt", "附件.json", "录音.mp3"].map((name, i) => ({
+    id: `k-${i}`, origin: i % 3 === 0 ? "chat" : i % 3 === 1 ? "output" : "upload", name,
+    description: `项目资料 · ${name}，记录设计与工作进展。`, kind: name.endsWith(".png") ? "image" : name.endsWith(".html") ? "html" : name.endsWith(".csv") ? "csv" : name.endsWith(".pdf") ? "pdf" : name.endsWith(".json") ? "json" : name.endsWith(".mp3") ? "audio" : "markdown",
+    path: `/mock/knowledge/${name}`, hash: `hash-${i}`, size: 2048 + i * 1000, createdAt: minsAgo(i < 6 ? i * 60 : 14 * 24 * 60 + i), updatedAt: minsAgo(i < 6 ? i * 60 : 14 * 24 * 60 + i),
+    source: { assistantId: "hob", itemId: scene === "bubbles" || scene === "bubbles-dark" ? ["bubble-file", "bubble-page", "bubble-audio", "bubble-video", "bubble-job"][i % 5] : scene === "image" ? "image-done" : db.items.hob?.[0]?.id }, collections: i % 2 ? ["kc-1"] : ["kc-2"],
+  }));
+  const indexStates = ["queued", "indexing", "ready", "failed", "unsupported"] as const;
+  entries.forEach((entry, i) => { entry.index = { state: indexStates[i % indexStates.length]!, ...(i % indexStates.length === 3 ? { error: "无法读取文件" } : {}) }; });
+  const hob = db.assistants.find((a) => a.id === "hob");
+  if (hob) hob.knowledge = ["kc-1"];
+  let embeddingKeyConfigured = false;
   const listeners = new Set<(ev: HobEvent) => void>();
   const emit = (ev: HobEvent) => listeners.forEach((l) => l(ev));
   const assistant = (id: string) => db.assistants.find((a) => a.id === id);
   /** 模拟模式里的记忆设置：没配 Lore 时缺省本地记忆。 */
   const keys = new Set<string>(["anthropic", "my-proxy"]);
+  let desktop = clone(DESKTOP_VIEWS[desktopMockScene()]);
   const providersView = (): ProvidersView => ({
     providers: db.settings.settings.providers.map((provider) => ({ ...provider, keyConfigured: keys.has(provider.id) })),
     builtin: clone(MOCK_BUILTIN),
@@ -910,6 +1003,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     revision: db.settings.revision,
     provider: "local",
     providerExplicit: false,
+    lorePlugin: "1.12.5",
     lore: { configured: false, baseUrl: null, source: "none", tokenConfigured: false },
   };
   /** 模拟模式里已经订阅的设备：看图用的假设备。 */
@@ -927,7 +1021,9 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     const steps: JobStep[] = [];
     job.activity.forEach((line, index) => {
       if (line.verb === "$") return;
-      const name = line.verb === "读" ? "read" : line.verb === "跑" ? "bash" : line.verb === "改" ? "edit" : line.verb === "说" ? "report" : "ls";
+      // 「浏览器 打开 地址」是云桌面里开网页的动作，演成 browser_* 步骤（任务详情里有“看桌面”入口）
+      const browser = line.text.match(/^浏览器 打开 (\S+)$/);
+      const name = browser ? "browser_open" : line.verb === "读" ? "read" : line.verb === "跑" ? "bash" : line.verb === "改" ? "edit" : line.verb === "说" ? "report" : "ls";
       steps.push({
         id: `mock-${job.id}-${index}`,
         kind: "tool",
@@ -935,12 +1031,14 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         name,
         title: name === "report" ? "提交结果" : `${line.verb} ${line.text}`,
         args:
-          name === "bash"
-            ? { command: line.text }
-            : name === "report"
-              ? { outcome: "done", summary: line.text }
-              : { path: line.text },
-        output: name === "report" ? "结果已记录。" : `${line.text}\n`,
+          browser
+            ? { url: browser[1] }
+            : name === "bash"
+              ? { command: line.text }
+              : name === "report"
+                ? { outcome: "done", summary: line.text }
+                : { path: line.text },
+        output: name === "report" ? "结果已记录。" : browser ? "已打开页面。" : `${line.text}\n`,
         durationMs: 120,
       });
     });
@@ -968,6 +1066,23 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   }
 
   return {
+    knowledge: async (query = {}) => {
+      const q = query.q?.toLowerCase();
+      const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
+      const limit = query.limit ?? 50;
+      return { entries: clone(matches.slice(0, limit).map((e) => q ? { ...e, snippet: e.description ?? e.name } : e)), hasMore: matches.length > limit, collections: clone(collections.map((c) => ({ ...c, count: entries.filter((e) => e.collections.includes(c.id)).length, indexed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "ready").length, failed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "failed").length, unsupported: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "unsupported").length }))) };
+    },
+    knowledgeEntry: async (id, chunk) => { const entry = entries.find((e) => e.id === id); if (!entry) throw new ApiError(404, "文件不存在"); return { entry: clone(entry), ...(chunk !== undefined ? { chunk: { index: chunk, heading: entry.name, text: "模拟模式中的项目资料。" } } : {}) }; },
+    reindexKnowledge: async (id) => { if (!collections.some((c) => c.id === id)) throw new ApiError(404, "知识库不存在"); entries.filter((e) => e.collections.includes(id) && e.index?.state === "failed").forEach((e) => { e.index = { state: "queued" }; }); emit({ type: "knowledge" }); return { ok: true }; },
+    embeddingKey: async () => ({ keyConfigured: embeddingKeyConfigured }),
+    putEmbedding: async (revision, embedding, apiKey) => { if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改"); db.settings = { revision: revision + 1, settings: { ...db.settings.settings, knowledge: { embedding } } }; if (apiKey) embeddingKeyConfigured = true; return { settings: clone(db.settings), keyConfigured: embeddingKeyConfigured }; },
+    embeddingTest: async () => ({ ok: true, dims: 1024 }),
+    createKnowledgeCollection: async (name) => { const c = { id: `kc-${Date.now()}`, name, createdAt: new Date().toISOString(), count: 0 }; collections.push(c); emit({ type: "knowledge" }); return clone(c); },
+    renameKnowledgeCollection: async (id, name) => { const c = collections.find((c) => c.id === id); if (!c) throw new ApiError(404, "知识库不存在"); c.name = name; emit({ type: "knowledge" }); return clone(c); },
+    deleteKnowledgeCollection: async (id) => { collections = collections.filter((c) => c.id !== id); const before = entries.length; entries = entries.filter((e) => !(e.origin === "upload" && e.collections.length === 1 && e.collections[0] === id)).map((e) => ({ ...e, collections: e.collections.filter((c) => c !== id) })); emit({ type: "knowledge" }); return { deleted: before - entries.length }; },
+    patchKnowledgeEntry: async (id, patch) => { const e = entries.find((e) => e.id === id); if (!e) throw new ApiError(404, "文件不存在"); Object.assign(e, patch); emit({ type: "knowledge" }); return clone(e); },
+    deleteKnowledgeEntry: async (id) => { entries = entries.filter((e) => e.id !== id); emit({ type: "knowledge" }); return { ok: true }; },
+    uploadKnowledge: async (collection, files) => { const added = files.map((file, i): KnowledgeEntry => ({ id: `k-${Date.now()}-${i}`, origin: "upload", name: file.name, kind: "other", path: URL.createObjectURL(file), hash: `mock-${Date.now()}-${i}`, size: file.size, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), collections: [collection] })); entries.unshift(...added); emit({ type: "knowledge" }); return { entries: clone(added) }; },
     me: async () => {},
     login: async () => {},
     logout: async () => {},
@@ -982,6 +1097,12 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     settings: async () => clone(db.settings),
     models: async () => ({ ...clone(MOCK_MODELS), roster: clone(db.settings.settings.models.roster) }),
     providers: async () => providersView(),
+    claude: async () => ({ settings: clone(db.settings), status: { found: false, loggedIn: false } }),
+    saveClaude: async (revision, claude) => {
+      if (revision !== db.settings.revision) throw new ApiError(409, "设置已更改，请刷新后重试。");
+      db.settings = { revision: revision + 1, settings: { ...db.settings.settings, claude } };
+      return { settings: clone(db.settings), status: { found: false, loggedIn: false } };
+    },
     putThinking: async (body) => {
       const provider = db.settings.settings.providers.find((item) => body.ref.startsWith(`${item.id}/`));
       const current = provider
@@ -1069,6 +1190,32 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       db.settings = { revision: db.settings.revision + 1, settings: { ...db.settings.settings, image } };
       return { settings: clone(db.settings), keyConfigured: Boolean(apiKey) || MOCK_IMAGE_KEY.keyConfigured };
     },
+    assistantSkills: async (id) => clone(db.assistantSkills[id] ?? []),
+    patchAssistantSkill: async (id, name, enabled) => {
+      const skill = db.assistantSkills[id]?.find((s) => s.name === name);
+      if (!skill) throw new Error("技能不存在");
+      skill.enabled = enabled;
+      emit({ type: "skills", assistantId: id });
+      return clone(skill);
+    },
+    rollbackAssistantSkill: async (id, name) => {
+      const skill = db.assistantSkills[id]?.find((s) => s.name === name);
+      if (!skill || skill.version <= 1) throw new Error("没有上一版");
+      skill.version--;
+      emit({ type: "skills", assistantId: id });
+      return clone(skill);
+    },
+    deleteAssistantSkill: async (id, name) => {
+      db.assistantSkills[id] = (db.assistantSkills[id] ?? []).filter((s) => s.name !== name);
+      emit({ type: "skills", assistantId: id });
+      return { ok: true };
+    },
+    sedimentJob: async (id) => {
+      if (!db.jobs[id]) throw new Error("任务不存在");
+      if (db.jobs[id].status !== "done") throw new Error("任务尚未完成");
+      setTimeout(() => emit({ type: "sediment-finished", jobId: id }), 0);
+      return { ok: true };
+    },
     skills: async () => {
       const off = db.settings.settings.skills?.disabled ?? [];
       const skill = (id: string, source: "hob" | "common" | "lore", description: string, content: string, overridden = false) =>
@@ -1085,6 +1232,28 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     skillsImport: async () => ({ found: true, skipped: [], skills: [{ id: "review", name: "review", description: "检查代码与需求。", exists: false }, { id: "research", name: "research", description: "整理研究结果。", exists: true }] }),
     importSkills: async (_source, ids) => ({ imported: ids, skipped: [], errors: [] }),
     deleteSkill: async () => {},
+    desktop: async () => clone(desktop),
+    saveDesktop: async (body) => {
+      desktop = { ...desktop, revision: desktop.revision + 1, url: body.url, enabled: body.enabled, tokenConfigured: desktop.tokenConfigured || Boolean(body.token) };
+      return clone(desktop);
+    },
+    saveDesktopPublic: async (revision, assistants) => {
+      if (revision !== desktop.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
+      desktop = { ...desktop, revision: desktop.revision + 1, publicAssistants: [...assistants] };
+      return clone(desktop);
+    },
+    testDesktop: async () => {
+      if (desktopMockScene() === "failed") return { ok: false, error: `无法连接 ${desktop.url}，请确认云桌面已部署并启动。` };
+      if (!desktop.url) return { ok: false, error: "请先填写云桌面地址。" };
+      return { ok: true, health: clone(DESKTOP_HEALTH) };
+    },
+    mcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
+    putMcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
+    patchMcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
+    deleteMcp: async () => ({ servers: [] }),
+    testMcp: async () => ({ ok: true, tools: [{ name: "read_file", description: "读取一个文件" }, { name: "list_directory", description: "列出目录内容" }] }),
+    mcpImports: async () => ({ sources: ["pi（~/.pi/agent/mcp.json）"], items: [{ id: "pi:github", name: "github", source: "pi", kind: "http", exists: false, selectable: true }] }),
+    importMcp: async (ids) => ({ imported: ids, skipped: [] }),
     search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
@@ -1204,6 +1373,16 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       // 演示「未送达」：发这句就当网络断了
       if (body.text === "模拟发送失败") throw new Error("网络连接已断开");
       const time = new Date().toISOString();
+      for (const delegation of Object.values(db.delegations)) {
+        if (delegation.to !== assistantId || delegation.reportedAt || delegation.status === "interrupted") continue;
+        Object.assign(delegation, { status: "takenOver", endedAt: time, reportedAt: time });
+        emit({ type: "delegation", delegation: clone(delegation) });
+      }
+      for (const approval of Object.values(db.approvals)) {
+        if (approval.assistantId !== assistantId || approval.source !== "router" || approval.status !== "pending") continue;
+        approval.status = "expired";
+        emit({ type: "approval", approval: clone(approval) });
+      }
       const item: Item = {
         kind: "user",
         id: uid("mock-u"),
@@ -1248,44 +1427,18 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       }
       setAssistant(assistantId, patch);
     },
-    mergeAssistant: async (assistantId) => {
+    archiveAssistant: async (assistantId) => {
       const target = assistant(assistantId);
-      const primary = db.assistants.find((a) => a.primary);
       if (!target) throw new ApiError(404, "助手不存在");
-      if (target.primary || !primary) throw new ApiError(400, "主助手不能并回自己");
+      if (target.primary) throw new ApiError(400, "主助手不能归档");
       const live = Object.values(db.jobs).filter(
         (job) => job.assistantId === assistantId && (job.status === "running" || job.status === "queued" || job.status === "waiting"),
       );
-      if (live.length) throw new ApiError(409, "请等任务结束后再并回");
-
-      const moved = db.routines.filter((r) => r.assistantId === assistantId);
-      for (const routine of moved) {
-        routine.assistantId = primary.id;
-        emit({ type: "routine", routine: clone(routine) });
-      }
-      const rules = (db.rules[primary.id] ??= []);
-      let added = 0;
-      for (const rule of db.rules[assistantId] ?? []) {
-        if (rules.some((item) => item.text === rule.text)) continue;
-        rules.push({ ...rule, id: uid("rule") });
-        added += 1;
-      }
-      db.rules[assistantId] = [];
-      const extra = target.instructions.trim();
-      if (extra) {
-        primary.instructions = [primary.instructions.trim(), `来自「${target.name}」：`, extra].filter(Boolean).join("\n");
-        emit({ type: "assistant", assistant: clone(primary) });
-      }
-      pushItem(primary.id, {
-        kind: "note",
-        id: uid("mock-n"),
-        at: new Date().toISOString(),
-        icon: "split",
-        text: `已并回「${target.name}」：转来 ${moved.length} 个定时任务、${added} 条规则`,
-      });
+      if (live.length) throw new ApiError(409, "请等任务结束后再归档");
+      for (const routine of db.routines.filter((r) => r.assistantId === assistantId)) emit({ type: "routine_removed", id: routine.id });
+      db.routines = db.routines.filter((r) => r.assistantId !== assistantId);
       db.assistants = db.assistants.filter((a) => a.id !== assistantId);
       emit({ type: "assistant_removed", id: assistantId });
-      emit({ type: "profile", assistantId: primary.id });
     },
     deleteRule: async (assistantId, ruleId) => {
       db.rules[assistantId] = (db.rules[assistantId] ?? []).filter((r) => r.id !== ruleId);
@@ -1293,7 +1446,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     answerApproval: async (approvalId, answer) => {
       const ap = db.approvals[approvalId];
-      if (!ap || ap.status === "answered") return;
+      if (!ap || ap.status !== "pending") return;
       ap.status = "answered";
       if (answer.key) ap.chosen = answer.key;
       else ap.answerText = (answer.text ?? "").trim();
@@ -1313,7 +1466,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       }
       emit({ type: "approval", approval: clone(ap) });
       for (const delegation of Object.values(db.delegations)) {
-        if ((delegation.approvalIds ?? []).includes(ap.id) || (ap.jobId && delegation.jobIds.includes(ap.jobId))) {
+        if (!delegation.reportedAt && ((delegation.approvalIds ?? []).includes(ap.id) || (ap.jobId && delegation.jobIds.includes(ap.jobId)))) {
           delegation.status = "running";
           if (ap.jobId && db.jobs[ap.jobId]?.status === "waiting") {
             db.jobs[ap.jobId].status = "running";
@@ -1366,7 +1519,10 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     patchRoutine: async (routineId, patch) => {
       const r = db.routines.find((x) => x.id === routineId);
       if (!r) return;
-      Object.assign(r, patch);
+      const { skill, ...rest } = patch;
+      Object.assign(r, rest);
+      if (skill === null) delete r.skill;
+      else if (skill !== undefined) r.skill = skill;
       emit({ type: "routine", routine: clone(r) });
     },
     deleteRoutine: async (routineId) => {
@@ -1439,27 +1595,36 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       return path;
     },
     fileUrl: (path, opts) =>
-      mockUploads.get(path) ?? (path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`),
+      mockUploads.get(path) ?? (path === "/srv/example/reports/stats.csv" ? `data:text/plain;charset=utf-8,${encodeURIComponent('项目,大小\n旧日志,2.1GB\n服务,正常')}` : path === "/srv/example/reports/log-cleanup-1031.md" ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 清理报告\n\n已清理旧日志，服务运行正常。')}` : path.startsWith("/mock/assistants/") ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 每日行业简报\n\n整理值得关注的行业动态。')}` : path.startsWith("blob:") ? path : path.startsWith("/mock/knowledge/") ? (path.endsWith(".png") ? `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#d5e3d4"/><circle cx="430" cy="110" r="55" fill="#f5d599"/><path d="M0 380L190 150 340 330 430 220 600 400" fill="#83a392"/></svg>')}` : path.endsWith(".html") ? `data:text/html;charset=utf-8,${encodeURIComponent('<h1>产品设计页面</h1><p>这是模拟模式中的项目资料。</p>')}` : `data:text/plain;charset=utf-8,${encodeURIComponent('模拟模式中的项目资料。')}`) : path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`),
     fileMeta: async (path) => {
       const name = path.split("/").pop() ?? path;
       const dot = name.lastIndexOf(".");
       const ext = dot > 0 ? name.slice(dot).toLowerCase() : "";
       const kind: FileMeta["kind"] =
-        ext === ".md" ? "markdown" : ext === ".csv" ? "csv" : ext === ".html" ? "html" : ext === ".json" ? "json" : "text";
+        [".png", ".jpg", ".jpeg", ".webp", ".gif"].includes(ext) ? "image" : ext === ".md" ? "markdown" : ext === ".csv" ? "csv" : ext === ".html" ? "html" : ext === ".json" ? "json" : "text";
       return {
         path,
         name,
         size: 2048,
         modifiedAt: new Date().toISOString(),
-        mime: "text/plain; charset=utf-8",
+        mime: kind === "image" ? `image/${ext === ".jpg" ? "jpeg" : ext.slice(1)}` : "text/plain; charset=utf-8",
         kind,
-        text: true,
+        text: kind !== "image",
       };
     },
-    jobFiles: async (jobId) => {
+    jobFiles: async (jobId, path) => {
       const job = db.jobs[jobId];
       if (!job) throw new ApiError(404, "任务不存在");
-      return { files: [], hasMore: false };
+      const base = "/srv/example/reports";
+      const file = (rel: string): JobFilesView["files"][number] => ({ type: "file", path: `${base}/${rel}`, rel, name: rel.split("/").pop()!, size: 2048, modifiedAt: job.createdAt, kind: rel.endsWith(".md") ? "markdown" : rel.endsWith(".csv") ? "csv" : "code" });
+      const files: JobFilesView["files"] = jobId !== "t-0927" ? [] : !path ? [
+        { type: "directory", path: `${base}/src`, rel: "src", name: "src", count: 2 },
+        file("log-cleanup-1031.md"), file("stats.csv"), file("notes.txt"),
+      ] : path === "src" ? [
+        { type: "directory", path: `${base}/src/checks`, rel: "src/checks", name: "checks", count: 1 }, file("src/main.ts"),
+      ] : path === "src/checks" ? [file("src/checks/logs.ts")] : [];
+      const directoryCount = files.filter((entry) => entry.type === "directory").length;
+      return { files, total: files.length, directoryCount, fileCount: files.length - directoryCount };
     },
     push: async () => pushView(),
     subscribePush: async (subscription: PushSubscriptionJson, label: string) => {

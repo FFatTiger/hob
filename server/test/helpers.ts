@@ -114,6 +114,8 @@ export function makeHob(overrides: Partial<HobConfig> = {}, options: MakeHobOpti
     home,
     faux,
     close: () => {
+      runtime.desktopEvents.stop();
+      runtime.desktopControl.dispose();
       runtime.jobs.disposeAll();
       runtime.router.disposeAll();
       rmSync(home, { recursive: true, force: true });

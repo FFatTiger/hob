@@ -1,6 +1,6 @@
-import { readFileSync } from "node:fs";
 import type { Delegation } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
+import { jobResultEvent } from "./jobs.ts";
 import type { HobRuntime } from "./runtime.ts";
 
 /** 转交状态由目标回合、任务和审批共同决定；判定和标记回流不跨异步边界。 */
@@ -19,23 +19,38 @@ export class DelegationManager {
     });
   }
 
-  async start(to: string, text: string): Promise<Delegation> {
+  async start(to: string, text: string, files: string[] = []): Promise<Delegation> {
     const target = this.runtime.store.assistant(to);
     if (!target || to === "hob") throw new Error("目标助手不存在或不能转交给自己。");
     const delegation: Delegation = { id: newId("dg-"), from: "hob", to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
     this.runtime.store.saveDelegation(delegation);
     await this.runtime.router.addItem("hob", { kind: "delegation", delegationId: delegation.id });
+    let sourceUserId: string;
     try {
-      await this.runtime.router.addForwarded(to, text, delegation.id);
+      const forwarded = await this.runtime.router.addForwarded(to, text, delegation.id, "hob", files);
+      sourceUserId = forwarded.id;
     } catch (error) {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
       throw error;
     }
     this.runtime.bus.emit({ type: "delegation", delegation });
-    void this.runtime.router.relay(to, `转自 Hob：${text}`, delegation.id).catch((error: unknown) => {
+    void this.runtime.router.relay(to, `转自 Hob：${text}`, delegation.id, { sourceUserId }, text).catch((error: unknown) => {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
     });
     return delegation;
+  }
+
+  takeOver(to: string): void {
+    const { store, bus, router } = this.runtime;
+    for (const record of store.delegations()) {
+      if (record.to !== to || record.reportedAt || record.status === "interrupted") continue;
+      const now = new Date().toISOString();
+      const delegation: Delegation = { ...record, status: "takenOver", endedAt: now, reportedAt: now };
+      store.saveDelegation(delegation);
+      bus.emit({ type: "delegation", delegation });
+      const name = store.assistant(to)?.name ?? to;
+      void router.event(record.from, `转交给「${name}」的事已被用户接手。原请求：${record.text}`).catch(() => undefined);
+    }
   }
 
   addJob(id: string, jobId: string): void {
@@ -98,16 +113,11 @@ export class DelegationManager {
     if (complete) {
       const reports = jobs.map((job) => {
         if (!job) return "任务记录丢失";
-        let report = job.summary ?? job.statusReason ?? "无报告";
-        if (job.reportPath) {
-          try { report = readFileSync(job.reportPath, "utf8"); }
-          catch (error) { report = `报告读取失败：${error instanceof Error ? error.message : String(error)}；摘要：${report}`; }
-        }
-        return `任务「${job.title}」${job.status}：${report.length > 6000 ? `${report.slice(0, 6000)}…（报告过长已截断，完整内容在任务详情）` : report}`;
+        return jobResultEvent(job);
       });
       const name = store.assistant(record.to)?.name ?? record.to;
       const message = record.status === "returned"
-        ? `转交给「${name}」的事已退回：${record.reply}。原请求：${record.text}\n交回内容：${record.returnedText ?? record.text}\n「${name}」已退回过一次，别再转给它。`
+        ? `转交给「${name}」的事已退回：${record.reply}。原请求：${record.text}\n交回内容：${record.returnedText ?? record.text}\n「${name}」已退回过一次。`
         : `转交给「${name}」的事已结束：${record.reply || "（没有回复）"}`;
       void router.event(record.from, `${message}\n${reports.join("\n")}`).catch(() => undefined);
     }

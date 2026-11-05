@@ -3,8 +3,8 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deriveSteps } from "../../server/src/transcript.ts";
-import type { JobStep } from "../../shared/types.ts";
-import { diffLines, groupThinking, jobReason, mergeStep, mergeSteps, titleParts } from "../src/steps.ts";
+import type { Job, JobStep } from "../../shared/types.ts";
+import { diffLines, groupThinking, jobDetailRounds, jobReason, jobRoundView, mergeStep, mergeSteps, titleParts } from "../src/steps.ts";
 
 function tool(id: string, extra: Partial<JobStep> = {}): JobStep {
   return { id, kind: "tool", at: "2026-11-01T01:00:00.000Z", name: "bash", title: "跑 `ls`", ...extra };
@@ -200,5 +200,40 @@ describe("步骤说明分段", () => {
       { text: "npm test", mono: true },
     ]);
     expect(titleParts("改 server/src/jobs.ts")).toEqual([{ text: "改 server/src/jobs.ts", mono: false }]);
+  });
+});
+
+describe("任务详情分轮", () => {
+  it("按时间切步骤并使用各轮说明和结果，不把旧报告显示在进行中一轮", () => {
+    const job: Job = { id: "t", assistantId: "hob", title: "测试", instruction: "初始说明", status: "running", createdAt: "01", startedAt: "05", summary: "旧报告", files: ["旧文件"], stats: { reads: 0, commands: 0, edits: 0 }, activity: [], rounds: [
+      { status: "done", startedAt: "01", endedAt: "02", summary: "报告一", files: ["文件一"], followUp: "第二轮说明" },
+      { status: "stuck", startedAt: "03", endedAt: "04", summary: "报告二", followUp: "第三轮说明" },
+    ] };
+    const rounds = jobDetailRounds(job, [tool("a", { at: "01" }), tool("b", { at: "02" }), tool("c", { at: "03" }), tool("d", { at: "05" })]);
+    expect(rounds.map((round) => round.instruction)).toEqual(["初始说明", "第二轮说明", "第三轮说明"]);
+    expect(rounds.map((round) => round.steps?.map((step) => step.id))).toEqual([["a", "b"], ["c"], ["d"]]);
+    expect(rounds.map((round) => round.job.summary)).toEqual(["报告一", "报告二", undefined]);
+    expect(rounds.map((round) => round.job.files)).toEqual([["文件一"], undefined, undefined]);
+    expect(jobDetailRounds(job, undefined)[0].steps).toBeUndefined();
+  });
+});
+
+describe("续做过的任务卡", () => {
+  const job: Job = {
+    id: "t-1", assistantId: "hob", title: "巡检", instruction: "检查", status: "running", createdAt: "2026-11-05T01:00:00.000Z",
+    startedAt: "2026-11-05T03:00:00.000Z", stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+    rounds: [
+      { status: "done", startedAt: "2026-11-05T01:00:00.000Z", endedAt: "2026-11-05T01:06:00.000Z", durationMs: 360000 },
+      { status: "stuck", statusReason: "等不到接口", startedAt: "2026-11-05T02:00:00.000Z", endedAt: "2026-11-05T02:01:00.000Z", durationMs: 60000 },
+    ],
+  };
+
+  it("前面几张停在那一轮结束时，最后一张跟着任务", () => {
+    expect(jobRoundView(job, 0)).toMatchObject({ status: "done", durationMs: 360000, statusReason: undefined });
+    expect(jobRoundView(job)).toMatchObject({ status: "done" });
+    expect(jobRoundView(job, 1)).toMatchObject({ status: "stuck", statusReason: "等不到接口", durationMs: 60000 });
+    expect(jobRoundView(job, 2)).toBe(job);
+    const fresh = { ...job, rounds: undefined };
+    expect(jobRoundView(fresh, 0)).toBe(fresh);
   });
 });

@@ -128,7 +128,7 @@ export function AssistantMenu() {
       <button
         onClick={() =>
           run(() => {
-            void select(a.id, false, false);
+            void select(a.id, false);
             openAssistantPanel();
           })
         }

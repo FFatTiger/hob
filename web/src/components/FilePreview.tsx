@@ -1,5 +1,5 @@
 // 文件预览：桌面右侧抽屉（可切全宽），手机全屏页。按类型选展示方式，元数据来自 /api/files/meta。
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { FileMeta, PageLive } from "../../../shared/types.ts";
 import { livePageHtml } from "../../../shared/page-shell.ts";
 import { Icon } from "../icons.tsx";
@@ -7,9 +7,11 @@ import { fileIcon } from "../file-icons.ts";
 import { numericColumns } from "../csv-columns.ts";
 import { useLeave } from "../motion.ts";
 import { copyText } from "../clipboard.ts";
-import { closeFilePreview, fetchFileMeta, fileUrl, photoUrl, setNotice, togglePreviewFull, useApp } from "../store.ts";
+import { closePanelPages, fetchFileMeta, fileUrl, photoUrl, setNotice, togglePreviewFull, useApp, type PanelPage } from "../store.ts";
+import { PanelHead } from "./PanelHead.tsx";
 import { fmtBytes, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
+import { matchKnowledgeText } from "../knowledge-highlight.ts";
 
 /** 文本预览最多显示这么多（服务端也按这个截）。 */
 const MAX_TEXT = 1024 * 1024;
@@ -19,28 +21,20 @@ type Load =
   | { state: "error"; outside: boolean; message: string }
   | { state: "ok"; meta: FileMeta };
 
-export function FilePreviewOverlay() {
+export function FilePreviewOverlay({ embedded = false, direction = "", page }: { embedded?: boolean; direction?: string; page?: PanelPage }) {
   const s = useApp();
-  const preview = s.filePreview;
+  const top = page ?? s.panelStack.at(-1);
+  const preview = top?.kind === "file" ? top : null;
   const presence = useLeave(Boolean(preview), 180);
   const last = useRef(preview);
   if (preview) last.current = preview;
 
-  useEffect(() => {
-    if (!preview) return;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") closeFilePreview();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [preview]);
-
   const shown = preview ?? last.current;
   if (!presence.mounted || !shown) return null;
   return (
-    <div className={`fpwrap${presence.leaving ? " leaving" : ""}`} onClick={closeFilePreview}>
+    <div className={`${embedded ? "fp-embedded" : "fpwrap"}${direction ? ` ${direction}` : ""}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
       <div className={`fp${shown.full ? " full" : ""}`} onClick={(event) => event.stopPropagation()}>
-        {shown.liveId && s.livePages[shown.liveId] ? <LivePreview page={s.livePages[shown.liveId]} /> : <FilePreview path={shown.path} title={shown.title} />}
+        {shown.liveId && s.livePages[shown.liveId] ? <LivePreview page={s.livePages[shown.liveId]} /> : <FilePreview path={shown.path} title={shown.title} find={shown.find} page={shown.page} />}
       </div>
     </div>
   );
@@ -82,7 +76,7 @@ function LivePreview({ page }: { page: PageLive }) {
 }
 
 /** 点开一个文件：先拉元数据，按 kind 选展示方式。 */
-function FilePreview({ path, title }: { path: string; title?: string }) {
+function FilePreview({ path, title, find, page }: { path: string; title?: string; find?: string; page?: number }) {
   const [load, setLoad] = useState<Load>({ state: "loading" });
 
   useEffect(() => {
@@ -116,7 +110,7 @@ function FilePreview({ path, title }: { path: string; title?: string }) {
           <div className="fp-center">
             <div className="fp-nofile">
               <Icon name="doc" size={22} />
-              <div>{load.outside ? "这个文件不在 Hob 的数据目录里，无法预览" : load.message}</div>
+              <div>{load.outside ? "这个文件不在 Hob 的数据目录或任务的工作目录里，无法预览" : load.message}</div>
               <button
                 className="pbtn"
                 onClick={() =>
@@ -128,7 +122,7 @@ function FilePreview({ path, title }: { path: string; title?: string }) {
             </div>
           </div>
         ) : (
-          <Body meta={load.meta} />
+          <Body meta={load.meta} find={find} page={page} />
         )}
       </div>
     </>
@@ -137,11 +131,10 @@ function FilePreview({ path, title }: { path: string; title?: string }) {
 
 /** 顶部：文件名、大小、修改时间、下载、在新窗口打开、全宽切换。 */
 function Head({ name, meta, path, liveStatus, disabled }: { name: string; meta: FileMeta | null; path: string; liveStatus?: string; disabled?: boolean }) {
+  const top = useApp().panelStack.at(-1);
+  const full = top?.kind === "file" && top.full;
   return (
-    <div className="fphead">
-      <button className="ib" title="关闭" onClick={closeFilePreview}>
-        <Icon name="left" size={18} />
-      </button>
+    <PanelHead className="fphead" close>
       <Icon name={fileIcon(path)} size={18} className="fp-file-icon" />
       <div className="fpt">
         <div className="n" title={name}>
@@ -165,9 +158,9 @@ function Head({ name, meta, path, liveStatus, disabled }: { name: string; meta: 
         <Icon name="out" size={17} />
       </button>
       <button className="ib fp-act fp-wide-btn" title="切换全宽" onClick={togglePreviewFull}>
-        <Icon name="dbl" size={17} />
+        <Icon name={full ? "shrink" : "expand"} size={17} />
       </button>
-    </div>
+    </PanelHead>
   );
 }
 
@@ -187,7 +180,7 @@ function HtmlBody({ meta }: { meta: FileMeta }) {
   return <><div className="fp-note">网页在隔离环境中显示，不能访问 Hob 的数据。</div><iframe ref={frame} className="fp-frame" sandbox="allow-scripts" src={fileUrl(meta.path, { inline: true }) + (meta.page ? (document.documentElement.classList.contains("dark") ? "#dark" : "#light") : "")} title={meta.name} /></>;
 }
 
-function Body({ meta }: { meta: FileMeta }) {
+function Body({ meta, find, page }: { meta: FileMeta; find?: string; page?: number }) {
   switch (meta.kind) {
     case "image":
       return <ImageBody path={meta.path} name={meta.name} svg={false} />;
@@ -195,7 +188,7 @@ function Body({ meta }: { meta: FileMeta }) {
       // svg 也按图片显示（<img> 里的 svg 不执行脚本），要 inline 才不会被当附件拦下
       return <ImageBody path={meta.path} name={meta.name} svg />;
     case "pdf":
-      return <iframe className="fp-frame" src={fileUrl(meta.path)} title={meta.name} />;
+      return <iframe className="fp-frame" src={fileUrl(meta.path) + (page ? `#page=${page}` : "")} title={meta.name} />;
     case "audio":
       return (
         <div className="fp-center">
@@ -223,7 +216,7 @@ function Body({ meta }: { meta: FileMeta }) {
         </div>
       );
     default:
-      return <TextBody meta={meta} />;
+      return <TextBody meta={meta} find={find} />;
   }
 }
 
@@ -264,9 +257,11 @@ function ImageBody({ path, name, svg }: { path: string; name: string; svg: boole
 }
 
 /** 文本类（markdown / json / csv / 代码 / 纯文本）：先拉内容再按格式渲染。 */
-function TextBody({ meta }: { meta: FileMeta }) {
+function TextBody({ meta, find }: { meta: FileMeta; find?: string }) {
   const [text, setText] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mathVersion, setMathVersion] = useState(0);
+  const mathRendered = useCallback(() => setMathVersion((version) => version + 1), []);
 
   useEffect(() => {
     let live = true;
@@ -298,7 +293,7 @@ function TextBody({ meta }: { meta: FileMeta }) {
     return (
       <>
         {notice}
-        <Markdown className="fp-md markdown-body" text={text} />
+        <HighlightText find={find} text={text} mathVersion={mathVersion}><Markdown className="fp-md markdown-body" text={text} onMathRendered={mathRendered} /></HighlightText>
       </>
     );
   }
@@ -312,7 +307,7 @@ function TextBody({ meta }: { meta: FileMeta }) {
     return (
       <>
         {notice}
-        <CodeView text={pretty} />
+        <HighlightText find={find} text={text}><CodeView text={pretty} /></HighlightText>
       </>
     );
   }
@@ -320,16 +315,35 @@ function TextBody({ meta }: { meta: FileMeta }) {
     return (
       <>
         {notice}
-        <CsvView text={text} tsv={meta.mime.includes("tab-separated")} />
+        <HighlightText find={find} text={text}><CsvView text={text} tsv={meta.mime.includes("tab-separated")} /></HighlightText>
       </>
     );
   }
   return (
     <>
       {notice}
-      <CodeView text={text} />
+      <HighlightText find={find} text={text}><CodeView text={text} /></HighlightText>
     </>
   );
+}
+
+function HighlightText({ find, text, mathVersion, children }: { find?: string; text: string; mathVersion?: number; children: ReactNode }) {
+  const root = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const registry = CSS.highlights;
+    if (!root.current || !find || !registry || typeof Highlight === "undefined") return;
+    const walker = document.createTreeWalker(root.current, NodeFilter.SHOW_TEXT, { acceptNode(node) { return node.parentElement?.closest(".ln, .code-copy, .fp-codebar, .katex-mathml") ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT; } });
+    const nodes: Text[] = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode as Text);
+    const match = matchKnowledgeText(nodes, find);
+    if (!match) return;
+    const { start, end } = match;
+    const range = document.createRange(); range.setStart(start.node, start.offset); range.setEnd(end.node, end.offset);
+    registry.set("knowledge-source", new Highlight(range));
+    start.node.parentElement?.scrollIntoView({ block: "center" });
+    return () => { registry.delete("knowledge-source"); };
+  }, [find, text, mathVersion]);
+  return <div ref={root}>{children}</div>;
 }
 
 /** 代码 / 纯文本：等宽、行号、自动换行开关。 */
@@ -357,7 +371,7 @@ function CodeView({ text }: { text: string }) {
 }
 
 /** CSV / TSV：前 1000 行，表头固定，横向滚动。 */
-function CsvView({ text, tsv }: { text: string; tsv: boolean }) {
+export function CsvView({ text, tsv }: { text: string; tsv: boolean }) {
   const rows = useMemo(() => parseDelimited(text, tsv ? "\t" : ","), [text, tsv]);
   const numbers = useMemo(() => numericColumns(rows), [rows]);
   const shown = rows.slice(0, 1000);

@@ -1,8 +1,8 @@
-import { mkdirSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { deflateSync } from "node:zlib";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/http.ts";
@@ -269,8 +269,43 @@ describe("GET /api/files/meta", () => {
   });
 });
 
+describe("GET /api/files 读任务工作目录", () => {
+  it("任务工作目录在数据目录外的也能读；包含数据目录的太宽不算；密钥和 .env 不给", async () => {
+    const hob = makeHob();
+    const project = mkdtempSync(join(tmpdir(), "hob-proj-"));
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const job = (id: string, cwd: string) => hob.runtime.store.saveJob({
+        id, assistantId: "hob", title: "干活", instruction: "干活", kind: "local", status: "done", cwd,
+        createdAt: "2026-11-01T01:00:00.000Z", stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+      });
+      const get = (path: string) => app.request(`/api/files/meta?path=${encodeURIComponent(path)}`, { headers: { cookie } });
+      mkdirSync(join(project, "report"), { recursive: true });
+      mkdirSync(join(project, ".ssh"), { recursive: true });
+      writeFileSync(join(project, "report", "比对.md"), "# 报告");
+      writeFileSync(join(project, ".env"), "TOKEN=x");
+      writeFileSync(join(project, ".ssh", "config"), "x");
+      expect((await get(join(project, "report", "比对.md"))).status).toBe(403);
+
+      job("t-dd01", project);
+      expect((await get(join(project, "report", "比对.md"))).status).toBe(200);
+      expect((await get(join(project, ".env"))).status).toBe(403);
+      expect((await get(join(project, ".ssh", "config"))).status).toBe(403);
+
+      // 工作目录是数据目录的上级（比如家目录）：不因此放开上级目录里的其它文件
+      const sibling = join(hob.home, "..", `${basename(hob.home)}-sibling.txt`);
+      writeFileSync(sibling, "x");
+      job("t-dd02", join(hob.home, ".."));
+      expect((await get(sibling)).status).toBe(403);
+    } finally {
+      rmSync(project, { recursive: true, force: true });
+      hob.close();
+    }
+  });
+});
+
 describe("GET /api/jobs/:id/files", () => {
-  it("递归列出任务工作目录，跳过 node_modules/.git 和符号链接，新的在前；任务不存在 404", async () => {
+  it("只列一层、目录在前、文件按修改时间倒序，并拒绝越界路径", async () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
@@ -288,19 +323,40 @@ describe("GET /api/jobs/:id/files", () => {
       const work = hob.runtime.store.workDir("t-cc01");
       mkdirSync(join(work, "src", "deep"), { recursive: true });
       mkdirSync(join(work, "node_modules", "pkg"), { recursive: true });
+      mkdirSync(join(work, ".git"), { recursive: true });
       writeFileSync(join(work, "新.txt"), "a");
+      writeFileSync(join(work, "旧.txt"), "a");
+      utimesSync(join(work, "旧.txt"), new Date(1000), new Date(1000));
       writeFileSync(join(work, "src", "main.ts"), "b");
-      writeFileSync(join(work, "node_modules", "pkg", "junk.js"), "c");
+      symlinkSync(tmpdir(), join(work, "escape"));
       symlinkSync(join(work, "新.txt"), join(work, "link.txt"));
-
-      const response = await app.request("/api/jobs/t-cc01/files", { headers: { cookie } });
+      const get = (path = "") => app.request(`/api/jobs/t-cc01/files${path ? `?path=${encodeURIComponent(path)}` : ""}`, { headers: { cookie } });
+      const response = await get();
       expect(response.status).toBe(200);
-      const body = (await response.json()) as { files: { rel: string }[]; hasMore: boolean };
-      expect(body.files.map((file) => file.rel).sort()).toEqual(["src/main.ts", "新.txt"]);
-      expect(body.hasMore).toBe(false);
-
-      const missing = await app.request("/api/jobs/t-zzzz/files", { headers: { cookie } });
-      expect(missing.status).toBe(404);
+      const body = await response.json() as { files: { rel: string; type: string; count?: number }[]; total: number; fileCount: number; directoryCount: number };
+      expect(body.files.map((file) => file.rel)).toEqual(["src", "新.txt", "旧.txt"]);
+      expect(body.files[0]).toMatchObject({ type: "directory", count: 2 });
+      expect(body).toMatchObject({ total: 3, fileCount: 2, directoryCount: 1 });
+      const child = await get("src");
+      expect((await child.json() as typeof body).files.map((item) => item.rel)).toEqual(["src/deep", "src/main.ts"]);
+      for (const path of ["..", "src/../src", "/etc", "escape", "missing", "新.txt", "node_modules"]) expect((await get(path)).status, path).toBe(400);
+      for (let i = 0; i < 205; i++) writeFileSync(join(work, `extra-${i}`), "x");
+      const many = await (await get()).json() as typeof body;
+      expect(many.total).toBe(208);
+      expect(many.files).toHaveLength(200);
+      const custom = join(hob.home, "custom-work");
+      mkdirSync(custom);
+      writeFileSync(join(custom, "custom.txt"), "x");
+      hob.runtime.store.saveJob({ id: "t-custom", assistantId: "hob", title: "自定义目录", instruction: "干活", kind: "local", status: "done", cwd: custom, createdAt: "2026-11-01T01:00:00.000Z", stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
+      const customView = await (await app.request("/api/jobs/t-custom/files", { headers: { cookie } })).json() as typeof body;
+      expect(customView.files.map((item) => item.rel)).toEqual(["custom.txt"]);
+      // 还没建出工作目录的任务：当作空的，不报错
+      hob.runtime.store.saveJob({ id: "t-nowork", assistantId: "hob", title: "排队中", instruction: "干活", kind: "local", status: "queued", createdAt: "2026-11-01T01:00:00.000Z", stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
+      const empty = await app.request("/api/jobs/t-nowork/files", { headers: { cookie } });
+      expect(empty.status).toBe(200);
+      expect(await empty.json()).toEqual({ files: [], total: 0, fileCount: 0, directoryCount: 0 });
+      expect(await (await app.request("/api/jobs/t-nowork/files?path=src", { headers: { cookie } })).json()).toEqual({ error: "这个文件夹已经不在了" });
+      expect((await app.request("/api/jobs/t-zzzz/files", { headers: { cookie } })).status).toBe(404);
     } finally {
       hob.close();
     }

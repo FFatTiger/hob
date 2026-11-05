@@ -4,9 +4,17 @@ import type {
   AnswerApprovalBody,
   Assistant,
   Bootstrap,
+  ClaudeCodeSettings,
+  ClaudeCodeView,
   DiscoveredModels,
   Draft,
+  DesktopView,
+  DesktopTestResult,
   HobEvent,
+  EmbeddingSettings,
+  EmbeddingKeyView,
+  EmbeddingSettingsSaved,
+  EmbeddingTestResult,
   ImageKeyView,
   ImageSettings,
   ImageSettingsSaved,
@@ -37,7 +45,13 @@ import type {
   SettingsPatch,
 } from "../../shared/types.ts";
 
+import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrigin, KnowledgePage, KnowledgeEntryView } from "../../shared/knowledge.ts";
+
+import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
+import type { McpImportResult, McpImportView, McpSecretMutation, McpServerPatch, McpServerSave, McpServerView, McpTestResult, McpView } from "../../shared/mcp.ts";
+
+export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; q?: string; before?: string; limit?: number };
 
 export class ApiError extends Error {
   status: number;
@@ -79,9 +93,19 @@ export interface EventHandlers {
   onDown(reason: string): void;
 }
 
-import type { SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
-
 export interface HobApi {
+  knowledge(query?: KnowledgeQuery): Promise<KnowledgePage>;
+  knowledgeEntry(id: string, chunk?: number): Promise<KnowledgeEntryView>;
+  reindexKnowledge(id: string): Promise<{ ok: true }>;
+  embeddingKey(): Promise<EmbeddingKeyView>;
+  putEmbedding(revision: number, embedding: EmbeddingSettings, apiKey?: string): Promise<EmbeddingSettingsSaved>;
+  embeddingTest(body: { embedding?: EmbeddingSettings; apiKey?: string }): Promise<EmbeddingTestResult>;
+  createKnowledgeCollection(name: string): Promise<KnowledgeCollection>;
+  renameKnowledgeCollection(id: string, name: string): Promise<KnowledgeCollection>;
+  deleteKnowledgeCollection(id: string): Promise<{ deleted: number }>;
+  patchKnowledgeEntry(id: string, patch: { name?: string; collections?: string[] }): Promise<KnowledgeEntry>;
+  deleteKnowledgeEntry(id: string): Promise<{ ok: true }>;
+  uploadKnowledge(collection: string, files: File[]): Promise<{ entries: KnowledgeEntry[] }>;
   me(): Promise<void>;
   login(password: string): Promise<void>;
   logout(): Promise<void>;
@@ -90,6 +114,8 @@ export interface HobApi {
   models(): Promise<ModelsView>;
   putSettings(revision: number, patch: SettingsPatch): Promise<SettingsFile>;
   providers(): Promise<ProvidersView>;
+  claude(): Promise<ClaudeCodeView>;
+  saveClaude(revision: number, claude: ClaudeCodeSettings): Promise<ClaudeCodeView>;
   putProvider(id: string, body: unknown): Promise<ProvidersView>;
   putThinking(body: ModelThinkingPatch): Promise<ModelThinkingSaved>;
   deleteProvider(id: string): Promise<ProvidersView>;
@@ -102,10 +128,26 @@ export interface HobApi {
   }): Promise<DiscoveredModels>;
   providersImport(): Promise<ProviderImportView>;
   importProviders(ids: string[]): Promise<ProvidersView>;
+  assistantSkills(assistantId: string): Promise<AssistantSkill[]>;
+  patchAssistantSkill(assistantId: string, name: string, enabled: boolean): Promise<AssistantSkill>;
+  rollbackAssistantSkill(assistantId: string, name: string): Promise<AssistantSkill>;
+  deleteAssistantSkill(assistantId: string, name: string): Promise<{ ok: true }>;
+  sedimentJob(jobId: string): Promise<{ ok: true }>;
   skills(): Promise<SkillsView>;
   skillsImport(source: SkillImportSource): Promise<SkillImportView>;
   importSkills(source: SkillImportSource, ids: string[], overwrite: boolean): Promise<SkillImportResult>;
   deleteSkill(id: string): Promise<void>;
+  desktop(): Promise<DesktopView>;
+  saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }): Promise<DesktopView>;
+  saveDesktopPublic(revision: number, assistants: string[]): Promise<DesktopView>;
+  testDesktop(): Promise<DesktopTestResult>;
+  mcp(): Promise<McpView>;
+  putMcp(name: string, body: McpServerSave): Promise<McpView>;
+  patchMcp(name: string, patch: McpServerPatch): Promise<McpView>;
+  deleteMcp(name: string): Promise<McpView>;
+  testMcp(name: string, refresh: boolean): Promise<McpTestResult>;
+  mcpImports(): Promise<McpImportView>;
+  importMcp(ids: string[]): Promise<McpImportResult>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
   testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
@@ -126,14 +168,14 @@ export interface HobApi {
   stopAssistant(assistantId: string): Promise<void>;
   markRead(assistantId: string): Promise<void>;
   patchAssistant(assistantId: string, patch: Partial<Assistant> & { rule?: { id?: string; text?: string; mode?: "ask" | "allow" } }): Promise<{ rule?: Rule } | void>;
-  mergeAssistant(assistantId: string): Promise<void>;
+  archiveAssistant(assistantId: string): Promise<void>;
   deleteRule(assistantId: string, ruleId: string): Promise<void>;
   retryDelegation(id: string): Promise<void>;
   answerApproval(approvalId: string, answer: AnswerApprovalBody): Promise<void>;
   createDraft(draftId: string): Promise<void>;
   dismissDraft(draftId: string): Promise<void>;
   createRoutine(body: Omit<Routine, "id" | "createdAt" | "runs">): Promise<Routine | undefined>;
-  patchRoutine(routineId: string, patch: Partial<Routine>): Promise<void>;
+  patchRoutine(routineId: string, patch: Omit<Partial<Routine>, "skill"> & { skill?: string | null }): Promise<void>;
   deleteRoutine(routineId: string): Promise<void>;
   runRoutine(routineId: string): Promise<void>;
   replyJob(jobId: string, text: string): Promise<void>;
@@ -144,11 +186,11 @@ export interface HobApi {
   /** thumb：对话里显示的缩略图（长边 720），点开预览才拉原图 */
   fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean; thumb?: boolean }): string;
   fileMeta(path: string): Promise<FileMeta>;
-  jobFiles(jobId: string): Promise<JobFilesView>;
+  jobFiles(jobId: string, path?: string): Promise<JobFilesView>;
   push(): Promise<PushView>;
   subscribePush(subscription: PushSubscriptionJson, label: string): Promise<PushView>;
   unsubscribePush(endpoint: string): Promise<PushView>;
-  testPush(endpoint?: string): Promise<{ sent: number; removed: number }>;
+  testPush(endpoint?: string): Promise<{ sent: number; removed: number; error?: string }>;
   visibility(clientId: string, visible: boolean): Promise<void>;
   events(handlers: EventHandlers, clientId?: string): () => void;
 }
@@ -167,9 +209,31 @@ const EVENT_TYPES: HobEvent["type"][] = [
   "routine",
   "routine_removed",
   "profile",
+  "knowledge",
+  "skills",
 ];
 
 export const realApi: HobApi = {
+  knowledge: (query = {}) => {
+    const params = new URLSearchParams();
+    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
+    return req<KnowledgePage>(`/api/knowledge?${params}`);
+  },
+  knowledgeEntry: (id, chunk) => req<KnowledgeEntryView>(`/api/knowledge/entries/${encodeURIComponent(id)}${chunk !== undefined ? `?chunk=${chunk}` : ""}`),
+  reindexKnowledge: (id) => req<{ ok: true }>(`/api/knowledge/collections/${encodeURIComponent(id)}/reindex`, { method: "POST" }),
+  embeddingKey: () => req<EmbeddingKeyView>("/api/knowledge/embedding"),
+  putEmbedding: (revision, embedding, apiKey) => req<EmbeddingSettingsSaved>("/api/knowledge/embedding", json({ revision, embedding, ...(apiKey ? { apiKey } : {}) }, "PUT")),
+  embeddingTest: (body) => req<EmbeddingTestResult>("/api/knowledge/embedding/test", json(body)),
+  createKnowledgeCollection: (name) => req<{ collection: KnowledgeCollection }>("/api/knowledge/collections", json({ name })).then((result) => result.collection),
+  renameKnowledgeCollection: (id, name) => req<{ collection: KnowledgeCollection }>(`/api/knowledge/collections/${encodeURIComponent(id)}`, json({ name }, "PATCH")).then((result) => result.collection),
+  deleteKnowledgeCollection: (id) => req<{ deleted: number }>(`/api/knowledge/collections/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  patchKnowledgeEntry: (id, patch) => req<{ entry: KnowledgeEntry }>(`/api/knowledge/entries/${encodeURIComponent(id)}`, json(patch, "PATCH")).then((result) => result.entry),
+  deleteKnowledgeEntry: (id) => req<{ ok: true }>(`/api/knowledge/entries/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  uploadKnowledge: (collection, files) => {
+    const form = new FormData();
+    for (const file of files) form.append("files", file);
+    return req<{ entries: KnowledgeEntry[] }>(`/api/knowledge/upload?collection=${encodeURIComponent(collection)}`, { method: "POST", body: form });
+  },
   me: () => req<void>("/api/me"),
   login: (password) => req<void>("/api/login", json({ password })),
   logout: () => req<void>("/api/logout", { method: "POST" }),
@@ -178,6 +242,8 @@ export const realApi: HobApi = {
   models: () => req<ModelsView>("/api/models"),
   putSettings: (revision, patch) => req<SettingsFile>("/api/settings", json({ revision, patch }, "PUT")),
   providers: () => req<ProvidersView>("/api/providers"),
+  claude: () => req<ClaudeCodeView>("/api/claude"),
+  saveClaude: (revision, claude) => req<ClaudeCodeView>("/api/claude", json({ revision, claude }, "PUT")),
   putProvider: (id, body) => req<ProvidersView>(`/api/providers/${encodeURIComponent(id)}`, json(body, "PUT")),
   putThinking: (body) => req<ModelThinkingSaved>("/api/models/thinking", json(body, "PUT")),
   deleteProvider: (id) => req<ProvidersView>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),
@@ -185,10 +251,31 @@ export const realApi: HobApi = {
   discoverProvider: (body) => req<DiscoveredModels>("/api/providers/discover", json(body)),
   providersImport: () => req<ProviderImportView>("/api/providers/import"),
   importProviders: (ids) => req<ProvidersView>("/api/providers/import", json({ ids })),
+  assistantSkills: (id) => req<AssistantSkill[]>(`/api/assistants/${encodeURIComponent(id)}/skills`),
+  patchAssistantSkill: (id, name, enabled) => req<AssistantSkill>(`/api/assistants/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`, { method: "PATCH", headers: { "content-type": "application/json" }, body: JSON.stringify({ enabled }) }),
+  rollbackAssistantSkill: (id, name) => req<AssistantSkill>(`/api/assistants/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}/rollback`, { method: "POST" }),
+  deleteAssistantSkill: (id, name) => req<{ ok: true }>(`/api/assistants/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  sedimentJob: (id) => req<{ ok: true }>(`/api/jobs/${encodeURIComponent(id)}/sediment`, { method: "POST" }),
   skills: () => req<SkillsView>("/api/skills"),
   skillsImport: (source) => req<SkillImportView>(`/api/skills/import/${source}`),
   importSkills: (source, ids, overwrite) => req<SkillImportResult>(`/api/skills/import/${source}`, json({ ids, overwrite })),
   deleteSkill: (id) => req<void>(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  desktop: () => req<DesktopView>("/api/desktop"),
+  saveDesktop: (body) => req<DesktopView>("/api/desktop", json(body, "PUT")),
+  saveDesktopPublic: (revision, assistants) => req<DesktopView>("/api/desktop/public", json({ revision, assistants }, "PUT")),
+  testDesktop: () => req<DesktopTestResult>("/api/desktop/test", json({})),
+  mcp: () => req<McpView>("/api/mcp"),
+  putMcp: (name, body) => req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, json(body, "PUT")),
+  patchMcp: (name, patch) =>
+    req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(patch),
+    }),
+  deleteMcp: (name) => req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }),
+  testMcp: (name, refresh) => req<McpTestResult>(`/api/mcp/${encodeURIComponent(name)}/test`, json({ refresh })),
+  mcpImports: () => req<McpImportView>("/api/mcp/import"),
+  importMcp: (ids) => req<McpImportResult>("/api/mcp/import", json({ ids })),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
   testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),
@@ -223,8 +310,8 @@ export const realApi: HobApi = {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(patch),
     }),
-  mergeAssistant: (assistantId) =>
-    req<void>(`/api/assistants/${encodeURIComponent(assistantId)}/merge`, { method: "POST" }),
+  archiveAssistant: (assistantId) =>
+    req<void>(`/api/assistants/${encodeURIComponent(assistantId)}/archive`, { method: "POST" }),
   deleteRule: (assistantId, ruleId) =>
     req<void>(`/api/assistants/${encodeURIComponent(assistantId)}/rules/${encodeURIComponent(ruleId)}`, {
       method: "DELETE",
@@ -269,7 +356,7 @@ export const realApi: HobApi = {
   fileUrl: (path, opts) =>
     `/api/files?path=${encodeURIComponent(path)}${opts?.inline ? "&inline=1" : ""}${opts?.truncate ? "&truncate=1" : ""}${opts?.thumb ? "&thumb=1" : ""}`,
   fileMeta: (path) => req<FileMeta>(`/api/files/meta?path=${encodeURIComponent(path)}`),
-  jobFiles: (jobId) => req<JobFilesView>(`/api/jobs/${encodeURIComponent(jobId)}/files`),
+  jobFiles: (jobId, path) => req<JobFilesView>(`/api/jobs/${encodeURIComponent(jobId)}/files${path ? `?path=${encodeURIComponent(path)}` : ""}`),
   push: () => req<PushView>("/api/push"),
   // 服务端回 { device, push }：取 push 那份视图
   subscribePush: (subscription, label) =>
@@ -281,7 +368,7 @@ export const realApi: HobApi = {
       body: JSON.stringify({ endpoint }),
     }),
   testPush: (endpoint) =>
-    req<{ sent: number; removed: number }>("/api/push/test", json(endpoint ? { endpoint } : {})),
+    req<{ sent: number; removed: number; error?: string }>("/api/push/test", json(endpoint ? { endpoint } : {})),
   visibility: (clientId, visible) => req<void>("/api/visibility", json({ clientId, visible })),
   events: ({ onEvent, onReconnect, onDown }, clientId) => {
     const es = new EventSource(`/api/events${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`);

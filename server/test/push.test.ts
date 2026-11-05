@@ -8,20 +8,23 @@ import { pushApproval, pushJobEnd, PushService, type PushSender } from "../src/p
 import type { HobRuntime } from "../src/runtime.ts";
 import { makeHob } from "./helpers.ts";
 
-/** 假的推送发送器：记下发了什么，可以按 endpoint 让某台设备返回 410/404。 */
+/** 假的推送发送器：记下发了什么，可以按 endpoint 让某台设备返回 410/404，或带原因的错误（Apple 的写法）。 */
 function fakeSender() {
   const sent: { endpoint: string; payload: { title: string; body: string; url: string }; subject: string }[] = [];
   const gone = new Map<string, number>();
+  const reject = new Map<string, { status: number; reason: string }>();
   const sender: PushSender = async (target, payload, vapid) => {
     const status = gone.get(target.endpoint);
-    if (status) {
-      const error = new Error(`push service ${status}`) as Error & { statusCode: number };
-      error.statusCode = status;
+    const rejected = reject.get(target.endpoint);
+    if (status || rejected) {
+      const error = new Error(`push service ${status ?? rejected?.status}`) as Error & { statusCode: number; body?: string };
+      error.statusCode = status ?? rejected!.status;
+      if (rejected) error.body = JSON.stringify({ reason: rejected.reason });
       throw error;
     }
     sent.push({ endpoint: target.endpoint, payload: JSON.parse(payload), subject: vapid.subject });
   };
-  return { sent, gone, sender };
+  return { sent, gone, reject, sender };
 }
 
 function subscription(id: string): PushSubscriptionJson {
@@ -114,13 +117,13 @@ describe("推送存储", () => {
     }
   });
 
-  it("VAPID subject 用设置里的邮箱，没填就 hob@localhost", async () => {
+  it("VAPID subject 用设置里的邮箱，没填就用项目主页（Apple 不认 localhost）", async () => {
     const fake = fakeSender();
     const hob = makeHob({}, { pushSender: fake.sender });
     try {
       hob.runtime.push.subscribe(subscription("a"), "iPhone");
       await hob.runtime.push.test();
-      expect(fake.sent[0]?.subject).toBe("mailto:hob@localhost");
+      expect(fake.sent[0]?.subject).toBe("https://github.com/FFatTiger/hob");
 
       const current = hob.runtime.settings.get();
       hob.runtime.settings.patch(current.revision, { push: { email: "me@example.com" } });
@@ -222,6 +225,22 @@ describe("推送触发规则", () => {
       hob.close();
     }
   });
+
+  it("旧密钥订的（Apple 回 400 VapidPkHashMismatch）也删掉；其他拒绝如实带回原因、设备留着", async () => {
+    const fake = fakeSender();
+    const hob = makeHob({}, { pushSender: fake.sender });
+    try {
+      hob.runtime.push.subscribe(subscription("stale"), "iPhone");
+      hob.runtime.push.subscribe(subscription("jwt"), "iPad");
+      fake.reject.set(subscription("stale").endpoint, { status: 400, reason: "VapidPkHashMismatch" });
+      fake.reject.set(subscription("jwt").endpoint, { status: 403, reason: "BadJwtToken" });
+      const result = await hob.runtime.push.send({ title: "Hob", body: "x", url: "/" });
+      expect(result).toEqual({ sent: 0, removed: 1, error: "推送服务拒绝（403 BadJwtToken）" });
+      expect(hob.runtime.push.view().devices.map((device) => device.label)).toEqual(["iPad"]);
+    } finally {
+      hob.close();
+    }
+  });
 });
 
 describe("推送接口", () => {
@@ -266,6 +285,13 @@ describe("推送接口", () => {
       expect(tested.status).toBe(200);
       expect(await tested.json()).toEqual({ sent: 1, removed: 0 });
       expect(fake.sent[0]?.payload.body).toContain("测试通知");
+
+      // 推送服务拒收：不是「发了 0 条」，是带原因的失败
+      fake.reject.set(subscription("a").endpoint, { status: 403, reason: "BadJwtToken" });
+      const refused = await post("/api/push/test", { endpoint: subscription("a").endpoint });
+      expect(refused.status).toBe(502);
+      expect(await refused.json()).toEqual({ error: "发送失败：推送服务拒绝（403 BadJwtToken）" });
+      fake.reject.clear();
 
       const deleted = await app.request("/api/push/subscribe", {
         method: "DELETE",

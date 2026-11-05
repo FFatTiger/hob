@@ -10,6 +10,11 @@ describe("地址 hash", () => {
     expect(parseRoute(models)).toEqual({ sel: null, settings: true, section: "models" });
   });
 
+  it("知识库地址可以恢复", () => {
+    expect(routeHash({ page: "knowledge", section: null, sel: "hob", mobile: "list" }, true)).toBe("#/knowledge");
+    expect(parseRoute("#/knowledge").knowledge).toBe(true);
+  });
+
   it("手机首页列表没有 hash，桌面总带当前助手", () => {
     expect(routeHash({ page: "main", section: null, sel: "ops", mobile: "list" }, true)).toBe("");
     expect(routeHash({ page: "main", section: null, sel: "ops", mobile: "list" }, false)).toBe("#/chat/ops");

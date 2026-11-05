@@ -35,3 +35,21 @@ export interface SkillImportResult {
   skipped: string[];
   errors: string[];
 }
+
+/**
+ * 助手自己沉淀的技能：HOB_HOME/assistants/<id>/skills/<name>/SKILL.md（加 scripts/、references/），
+ * 元数据在 assistants/<id>/skills/skills.json。只有这个助手的任务加载。
+ */
+export interface AssistantSkill {
+  name: string; // 目录名：小写字母、数字、连字符
+  title: string; // 界面上显示的名字，如「网关每日巡检」
+  description: string; // 一句话：什么时候用
+  path: string; // SKILL.md 的绝对路径（预览用）
+  version: number; // 每次修补 +1，旧版在 skills/<name>/.history/<版本>/
+  createdAt: string;
+  updatedAt: string;
+  fromJobId?: string; // 最近一次从哪个任务沉淀或修补
+  uses: number; // 被任务读过几次
+  lastUsedAt?: string;
+  enabled: boolean;
+}

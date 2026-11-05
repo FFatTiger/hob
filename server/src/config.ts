@@ -1,5 +1,5 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { hashPassword, isPasswordHash } from "./password.ts";
@@ -65,6 +65,8 @@ function writeAtomic(path: string, text: string): void {
  */
 export function loadConfig(home: string, env: NodeJS.ProcessEnv = process.env): HobConfig {
   mkdirSync(home, { recursive: true });
+  // 对话、任务、引擎日志（MCP 服务发来的日志原样落盘）都在这里：只给本人读
+  chmodSync(home, 0o700);
   const file = join(home, CONFIG_FILE);
   const stored: Record<string, unknown> = existsSync(file)
     ? (JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>)

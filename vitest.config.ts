@@ -4,7 +4,7 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     root: ".",
-    include: ["server/test/**/*.test.ts", "web/test/**/*.test.ts"],
+    include: ["server/test/**/*.test.ts", "web/test/**/*.test.ts", "web/src/**/*.test.tsx"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },

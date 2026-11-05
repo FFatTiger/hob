@@ -23,22 +23,30 @@ describe("定时", () => {
       hob.runtime.routines.update(routine.id, { active: true });
 
       hob.faux.setResponses([
-        call("report", { outcome: "done", summary: "今天 6 条" }),
+        call("report", { outcome: "done", result: "今天 6 条" }),
         text("简报好了。"),
         text("好"),
       ]);
       const job = await hob.runtime.routines.runNow(routine.id);
       expect(job.routineId).toBe(routine.id);
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "job" && item.jobId === job.id)).toHaveLength(1);
       await hob.runtime.jobs.waitIdle();
       await hob.runtime.router.waitIdle("hob");
 
       const saved = hob.runtime.store.routine(routine.id)!;
-      expect(saved.runs[0]).toMatchObject({ jobId: job.id, status: "done" });
+      const finished = hob.runtime.store.job(job.id)!;
+      expect(saved.runs[0]).toMatchObject({ jobId: job.id, status: "done", durationMs: finished.durationMs, tools: finished.stats.reads + finished.stats.commands + finished.stats.edits, tokens: finished.usage!.input + finished.usage!.output });
 
       // 定时结果的回复带 routine 标记
       const items = hob.runtime.router.items("hob").items;
       const reply = items.filter((item) => item.kind === "assistant").pop();
-      expect(reply).toMatchObject({ kind: "assistant", routine: { id: routine.id, name: "每日简报" } });
+      expect(reply).toMatchObject({ kind: "assistant", routine: { id: routine.id, name: "每日简报", jobId: job.id } });
+
+      hob.faux.setResponses([call("report", { outcome: "done", result: "继续完成" }), text("完成了。"), text("好")]);
+      await hob.runtime.jobs.reply(job.id, "继续做");
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "job" && item.jobId === job.id)).toHaveLength(2);
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("hob");
     } finally {
       hob.close();
     }

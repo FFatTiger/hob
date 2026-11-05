@@ -296,7 +296,7 @@ export class ProviderService {
     );
     const builtin = runtime
       .getProviders()
-      .filter((provider) => !customIds.has(provider.id))
+      .filter((provider) => provider.id !== "claude-bridge" && !customIds.has(provider.id))
       .map((provider) => ({ id: provider.id, name: provider.name }))
       .sort((a, b) => a.name.localeCompare(b.name));
     const models: Record<string, ModelThinkingView[]> = {};
@@ -341,6 +341,7 @@ export class ProviderService {
       runtime.registerProvider(provider.id, config);
     }
     await this.applyBuiltinThinking(runtime);
+    await this.options.pi.configureClaude(runtime, this.options.home, this.settings.settings.claude);
   }
 
   /**
@@ -400,7 +401,7 @@ export class ProviderService {
     const builtin = new Map(
       runtime
         .getProviders()
-        .filter((provider) => !customIds.has(provider.id))
+        .filter((provider) => provider.id !== "claude-bridge" && !customIds.has(provider.id))
         .map((provider) => [provider.id, provider] as const),
     );
     const source = localPiDir();

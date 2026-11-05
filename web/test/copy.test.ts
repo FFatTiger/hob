@@ -29,6 +29,10 @@ function hits(files: string[], words: string[]): string[] {
   for (const file of files) {
     for (const line of readFileSync(file, "utf8").split("\n")) {
       for (const word of words) {
+        if (file.endsWith("server/src/worker-tools.ts") && word === "派活" && line.includes("完整结果：结论、数据、链接、文件路径；写给派活的助手。")) continue;
+        if ((file.endsWith("server/src/router-tools.ts") || file.endsWith("server/src/worker-tools.ts")) && word === "直接做" && (line.includes("同类事以后可以不再问时，填这类事的简称") || line.includes("以后「${remember}」直接做") || line.includes("记下用户对某类事的确认方式：ask 先问，allow 直接做。"))) continue;
+        if (file.endsWith("server/src/worker-tools.ts") && word === "拍板" && line.includes("done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板")) continue;
+        if (file.endsWith("server/src/jobs.ts") && word === "干活" && line.includes("不能在 Hob 的数据目录里干活；不填 cwd 就在任务自己的目录里做。")) continue;
         if (line.includes(word)) found.push(`${relative(ROOT, file)}: ${word} → ${line.trim().slice(0, 60)}`);
       }
     }

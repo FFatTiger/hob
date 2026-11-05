@@ -45,7 +45,7 @@ export function pageTool(runtime: HobRuntime, assistantId: string, router: boole
         if (!title || !summary) throw new Error("标题和摘要不能为空。");
         const path = await renderPage(runtime.home, title, summary, String(params.html ?? ""));
         await runtime.router.addItem(assistantId, { kind: "file", path, name: title, meta: summary });
-        return { content: [{ type: "text" as const, text: `页面已展示：${path}${router ? "。本轮到此结束。" : ""}` }], details: { path }, ...(router ? { terminate: true } : {}) };
+        return { content: [{ type: "text" as const, text: `页面已展示：${path}` }], details: { path }, ...(router ? { terminate: true } : {}) };
       } catch (error) {
         return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true };
       }

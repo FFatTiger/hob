@@ -1,8 +1,8 @@
 import { homedir } from "node:os";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, extname } from "node:path";
+import { copyFileSync, existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
-import type { ImageContent } from "@earendil-works/pi-ai";
+import { Type, type ImageContent } from "@earendil-works/pi-ai";
 import { commandSummary } from "../../shared/command.ts";
 import type {
   ActivityLine,
@@ -10,23 +10,28 @@ import type {
   ApprovalOption,
   Job,
   JobsPage,
+  JobRound,
   JobStatus,
   JobStep,
   RoutineRun,
 } from "../../shared/types.ts";
 import { IMAGE_TYPES, isImagePath } from "../../shared/media.ts";
 import { newId } from "./ids.ts";
+import { availableDesktopTools, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
+import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
+import { MCP_SESSION_TOOLS, mcpEnabled, mcpServerDisplay } from "./mcp.ts";
 import { jobModel } from "./models.ts";
 import { overviewTool } from "./overview.ts";
 import { pageTool } from "./pages.ts";
 import { pushApproval, pushJobEnd } from "./push.ts";
 import { buildWorkerPrompt, type Abilities, type PromptSettings } from "./prompt.ts";
 import { availableSkills } from "./skills.ts";
+import { enabledAssistantSkills, listAssistantSkills, readSkillFiles, recordAssistantSkillUse, saveAssistantSkill, usableAssistantSkills } from "./assistant-skills.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
-import { STEP_EVENT_LIMIT, deriveSteps, textOfContent, toolStep, withOutput } from "./transcript.ts";
+import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, deriveSteps, textOfContent, toolStep, withOutput } from "./transcript.ts";
 import { registerAskTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
 import { searchTools } from "./search.ts";
 
@@ -85,7 +90,7 @@ interface WorkerState {
   job: Job;
   session?: AgentSession;
   manager?: SessionManager;
-  reported?: { outcome: "done" | "stuck" | "need_approval"; summary: string; files?: string[] };
+  reported?: { outcome: "done" | "stuck" | "need_approval"; result: string; files?: string[] };
   lastText?: string;
   askedFollowUp: boolean;
   lastActivityAt: number;
@@ -95,12 +100,26 @@ interface WorkerState {
   stopped?: boolean;
   /** 正在跑的工具步骤，按 toolCallId 存：输出更新、跑完都按同一个步骤 id 替换 */
   steps: Map<string, JobStep>;
+  readPaths: Map<string, string>;
   /** 你补的话已交给任务、还没被读到（任务做完当前这一步才读）；读到时换成正式的一行 */
   queued: JobStep[];
+  /** 任务过程里 MCP 工具的显示名（转义后的服务名 → 配置里的原名） */
+  mcpServers: Record<string, string>;
+  desktop?: DesktopToolSession;
 }
 
 /** 推给助手的任务结果最多带这么多字的报告。 */
-const EVENT_SUMMARY_MAX = 6000;
+const EVENT_SUMMARY_MAX = 3000;
+
+export function jobResultEvent(job: Job, prefix = `任务「${job.title}」`): string {
+  const status = job.status === "done" ? "已完成" : job.status === "stuck" ? "受阻" : job.status === "stopped" ? "已停止" : "失败";
+  const result = job.summary;
+  const header = `${prefix}（${job.id}）${status}。`;
+  if (!result) return `${header}\n${job.statusReason ?? "没有结果"}`;
+  return result.length > EVENT_SUMMARY_MAX
+    ? `${header}\n结果（共 ${result.length} 字，以下是前 3,000 字；全文：${job.reportPath}）：\n${result.slice(0, EVENT_SUMMARY_MAX)}`
+    : `${header}\n结果：\n${result}`;
+}
 
 function trim(value: string, max = 240): string {
   const oneLine = value.replace(/\s+/g, " ").trim();
@@ -133,6 +152,10 @@ function activityFor(toolName: string, args: Record<string, unknown>, cwd = ""):
 export class JobManager {
   private workers = new Map<string, WorkerState>();
   private queue: string[] = [];
+  private followUps = new Map<string, string>();
+  private finishing = new Map<string, Promise<void>>();
+  private sediments = new Map<string, { cancelled: boolean; session?: AgentSession; task?: Promise<void> }>();
+  private replied = new Set<string>();
   private watchdog?: NodeJS.Timeout;
 
   constructor(private readonly runtime: HobRuntime) {}
@@ -175,6 +198,7 @@ export class JobManager {
     const steps = deriveSteps(this.store.workerFile(jobId), {
       cwd: job.cwd ?? "",
       save: (stepId, text) => this.store.writeStepOutput(jobId, stepId, text),
+      mcpServers: mcpServerDisplay(this.runtime.home),
     });
     return [...steps, ...(this.workers.get(jobId)?.queued ?? [])];
   }
@@ -182,6 +206,18 @@ export class JobManager {
   async start(assistantId: string, input: StartJobInput): Promise<Job> {
     const assistant = this.store.assistant(assistantId);
     if (!assistant) throw new Error(`助手不存在：${assistantId}`);
+    if (input.cwd?.trim()) {
+      const canonical = (path: string): string => {
+        const absolute = resolve(path);
+        let parent = absolute;
+        while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent);
+        return resolve(realpathSync(parent), relative(parent, absolute));
+      };
+      const path = relative(canonical(this.runtime.home), canonical(input.cwd));
+      if (!path || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))) {
+        throw new Error("不能在 Hob 的数据目录里干活；不填 cwd 就在任务自己的目录里做。");
+      }
+    }
     await this.runtime.models.get();
     const requested =
       input.model || input.thinking
@@ -215,8 +251,7 @@ export class JobManager {
     };
     this.store.saveJob(job);
     if (job.delegationId) this.runtime.delegations.addJob(job.delegationId, job.id);
-    // 定时跑的任务不出卡片：结果以带「⏱ 名字」的回复回到对话，过程在右栏和运行记录里看
-    if (!input.routineId) await this.runtime.router.addItem(assistantId, { kind: "job", jobId: job.id });
+    await this.runtime.router.addItem(assistantId, { kind: "job", jobId: job.id });
     this.bus.emit({ type: "job", job });
     this.publishBusy(assistantId);
     this.queue.push(job.id);
@@ -249,7 +284,9 @@ export class JobManager {
       const id = this.queue.shift()!;
       const job = this.store.job(id);
       if (!job || job.status !== "queued") continue;
-      void this.launch(job).catch((error) => this.failLaunch(job, error));
+      const followUp = this.followUps.get(id);
+      this.followUps.delete(id);
+      void this.launch(job, followUp).catch((error) => this.failLaunch(job, error));
     }
   }
 
@@ -258,7 +295,7 @@ export class JobManager {
     await this.finish(job.id, "failed", undefined, message);
   }
 
-  private async launch(job: Job): Promise<void> {
+  private async launch(job: Job, followUp?: string): Promise<void> {
     const running: Job = {
       ...job,
       status: "running",
@@ -274,28 +311,41 @@ export class JobManager {
       ...baseAbilities,
       image: baseAbilities.image && imageConfigured(this.runtime.settings.settings.image),
     };
-    const customTools = [registerReportTool(this.runtime, running.id), registerAskTool(this.runtime, running.id)];
+    const knowledge = await boundKnowledge(this.runtime, running.assistantId);
+    const customTools = [registerReportTool(this.runtime, running.id), registerAskTool(this.runtime, running.id), findKnowledgeTool(this.runtime)];
+    if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, running.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, running.id));
     if (this.runtime.settings.settings.general.showPage !== false) customTools.push(pageTool(this.runtime, running.assistantId, false));
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
+    const desktop = await availableDesktopTools(this.runtime, running.assistantId, !!this.runtime.models.find(running.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"));
+    if (this.store.job(running.id)?.status !== "running") { await desktop?.dispose(); return; }
+    if (desktop) customTools.push(...desktop.tools());
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报
     if (assistant?.primary) customTools.push(overviewTool(this.runtime));
+    // MCP：配置里有启用中的服务才加载（改完配置，之后新开的任务生效）
+    const mcp = mcpEnabled(this.runtime.home);
+    const ownSkills = enabledAssistantSkills(this.runtime.home, running.assistantId);
+    const ownNames = new Set(ownSkills.map((skill) => skill.name));
     const opened = await this.runtime.pi.open({
       file: this.store.workerFile(running.id),
       cwd: running.cwd ?? homedir(),
       model: running.model ?? this.runtime.settings.settings.models.work.ref,
       thinking: running.thinking ?? this.runtime.settings.settings.models.work.thinking,
       memory: this.runtime.settings.memory().provider,
-      skills: availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled),
+      skills: [...ownSkills, ...availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled).filter((skill) => !ownNames.has(skill.name))],
       disabledSkills: this.runtime.settings.settings.skills?.disabled,
       systemPrompt: () =>
-        buildWorkerPrompt(this.store, running.id, { ...this.promptSettings(), abilities }),
+        buildWorkerPrompt(this.store, running.id, { ...this.promptSettings(), abilities, knowledgeNames: knowledge.map((collection) => collection.name) }),
       tools: [
         ...workerTools(abilities),
         ...customTools.map((tool) => tool.name),
+        ...(mcp ? MCP_SESSION_TOOLS : []),
       ],
       customTools,
+      mcp,
     });
+    if (this.store.job(running.id)?.status !== "running") { opened.session.dispose(); await desktop?.dispose(); return; }
+    const mcpServers = mcpServerDisplay(this.runtime.home);
 
     const worker: WorkerState = {
       job: running,
@@ -304,13 +354,23 @@ export class JobManager {
       askedFollowUp: false,
       lastActivityAt: Date.now(),
       steps: new Map(),
+      readPaths: new Map(),
       queued: [],
+      mcpServers,
+      desktop,
     };
     this.workers.set(running.id, worker);
-    const images = imageContents(running.inputs);
+    if (followUp !== undefined) {
+      const step: JobStep = { id: `q${Date.now()}-0`, kind: "text", at: new Date().toISOString(), from: "user", text: followUp, queued: true };
+      worker.queued.push(step);
+      this.emitStep(worker, step);
+    }
+    const images = followUp === undefined ? imageContents(running.inputs) : [];
 
     opened.session.subscribe((event) => {
+      if (worker.stopped) return;
       if (event.type === "tool_execution_start") {
+        if (event.toolName === "read" && typeof event.args?.path === "string") worker.readPaths.set(event.toolCallId, event.args.path);
         this.recordActivity(worker, event.toolName, event.args ?? {});
         const step = toolStep({
           id: event.toolCallId,
@@ -318,6 +378,7 @@ export class JobManager {
           args: event.args ?? {},
           at: new Date().toISOString(),
           cwd: worker.job.cwd ?? "",
+          mcpServers: worker.mcpServers,
           running: true,
         });
         worker.steps.set(event.toolCallId, step);
@@ -330,9 +391,17 @@ export class JobManager {
         return;
       }
       if (event.type === "tool_execution_end") {
+        if (event.toolName === "read" && !event.isError) {
+          const readPath = worker.readPaths.get(event.toolCallId);
+          if (readPath) {
+            try { this.recordSkillUse(worker, readPath); }
+            catch (error) { console.error("记录技能用量失败：", error); }
+          }
+        }
+        worker.readPaths.delete(event.toolCallId);
         const step =
           worker.steps.get(event.toolCallId) ??
-          toolStep({ id: event.toolCallId, name: event.toolName, args: {}, cwd: worker.job.cwd ?? "" });
+          toolStep({ id: event.toolCallId, name: event.toolName, args: {}, cwd: worker.job.cwd ?? "", mcpServers: worker.mcpServers });
         worker.steps.delete(event.toolCallId);
         this.emitStep(
           worker,
@@ -368,10 +437,26 @@ export class JobManager {
     });
 
     void opened.session
-      .prompt(running.instruction, images.length ? { images } : undefined)
+      .prompt(followUp ?? running.instruction, images.length ? { images } : undefined)
       .catch(async (error: unknown) => {
-        await this.finish(running.id, "failed", undefined, error instanceof Error ? error.message : String(error));
+        if (!worker.stopped) await this.finish(running.id, "failed", undefined, error instanceof Error ? error.message : String(error));
       });
+  }
+
+  private recordSkillUse(worker: WorkerState, path: string): void {
+    const job = this.store.job(worker.job.id);
+    if (!job) return;
+    let absolute: string;
+    try { absolute = realpathSync(resolve(job.cwd ?? homedir(), path)); }
+    catch { return; }
+    const skill = usableAssistantSkills(this.runtime.home, job.assistantId).find((item) => existsSync(item.path) && realpathSync(item.path) === absolute);
+    if (!skill || job.skillsUsed?.includes(skill.name)) return;
+    recordAssistantSkillUse(this.runtime.home, job.assistantId, skill.name);
+    const next = { ...job, skillsUsed: [...(job.skillsUsed ?? []), skill.name] };
+    this.store.saveJob(next);
+    worker.job = next;
+    this.bus.emit({ type: "job", job: next });
+    this.bus.emit({ type: "skills", assistantId: job.assistantId });
   }
 
   private recordActivity(worker: WorkerState, toolName: string, args: Record<string, unknown>): void {
@@ -467,7 +552,7 @@ export class JobManager {
       await this.finish(worker.job.id, "stuck", undefined, "未提交结果");
       return;
     }
-    await session.prompt("你还没有调用 report 提交结果。请现在调用 report(outcome, summary)。");
+    await session.prompt("你还没有调用 report 提交结果。请现在调用 report(outcome, result)。");
   }
 
   /** report 工具收到结果后由 worker-tools 调用。 */
@@ -477,10 +562,10 @@ export class JobManager {
     const status: JobStatus = worker.reported.outcome === "done" ? "done" : "stuck";
     // 不写原因：outcome 只说明模型自己认为没做完，状态词（受阻、待确认）卡片上已经写过一遍，
     // 当原因存下来就会重复。真正的原因由看门狗和停止操作给。
-    await this.finish(workerId, status, worker.reported.summary, undefined, worker.reported.files);
+    await this.finish(workerId, status, worker.reported.result, undefined, worker.reported.files);
   }
 
-  reportFromTool(jobId: string, data: { outcome: "done" | "stuck" | "need_approval"; summary: string; files?: string[] }): void {
+  reportFromTool(jobId: string, data: { outcome: "done" | "stuck" | "need_approval"; result: string; files?: string[] }): void {
     const worker = this.workers.get(jobId);
     if (!worker) return;
     worker.reported = data;
@@ -494,10 +579,28 @@ export class JobManager {
     reason?: string,
     files?: string[],
   ): Promise<void> {
+    const pending = this.finishing.get(jobId);
+    if (pending) return pending;
+    const task = this.finishOnce(jobId, status, summary, reason, files);
+    this.finishing.set(jobId, task);
+    try { await task; } finally { this.finishing.delete(jobId); }
+    const job = this.store.job(jobId);
+    const steps = status === "done" && job?.status === "done" ? this.transcript(jobId) : [];
+    // 自动沉淀：用户中途接着说过话；或者没照着技能做、而且是定时执行或动手 20 次以上。
+    // 照着技能顺利做完的不再沉淀，免得每天跑完都改一版。
+    const followed = this.replied.has(jobId) || steps.some((step) => step.from === "user" && step.text !== "沉淀技能");
+    const fresh = !job?.skillsUsed?.length && (Boolean(job?.routineId) || steps.filter((step) => step.kind === "tool").length >= 20);
+    if (job?.status === "done" && status === "done" && (followed || fresh)) this.startSediment(jobId);
+  }
+
+  private async finishOnce(jobId: string, status: JobStatus, summary?: string, reason?: string, files?: string[]): Promise<void> {
     const job = this.store.job(jobId);
     if (!job || ENDED.includes(job.status)) return;
     const worker = this.workers.get(jobId);
+    if (worker) worker.stopped = true;
     if (worker?.finishTimer) clearTimeout(worker.finishTimer);
+    this.followUps.delete(jobId);
+    await worker?.desktop?.dispose();
     await this.settle(job, status, { summary, reason, files, lastText: worker?.lastText });
 
     if (worker?.session) {
@@ -515,10 +618,7 @@ export class JobManager {
   ): Promise<void> {
     const endedAt = new Date().toISOString();
     // 报告原样保留（不压成一行、不截断）：任务详情和 report.md 要完整的；只有推给助手的事件太长时才截
-    const cleanSummary = options.summary?.trim() || undefined;
-    const eventSummary = cleanSummary && cleanSummary.length > EVENT_SUMMARY_MAX
-      ? `${cleanSummary.slice(0, EVENT_SUMMARY_MAX)}…（报告过长已截断，完整内容在任务详情）`
-      : cleanSummary;
+    const cleanSummary = options.summary?.trim() ? options.summary : undefined;
     const statusText = status === "done" ? "已完成" : status === "stuck" ? "受阻" : status === "stopped" ? "已停止" : "失败";
     const reportPath = this.store.writeReport(
       job.id,
@@ -528,13 +628,9 @@ export class JobManager {
         `状态：${statusText}${options.reason ? `（${options.reason}）` : ""}`,
         `结束时间：${monthDayTimeText(this.runtime.settings.settings.general.timezone)}`,
         "",
-        "## 摘要",
+        "## 结果",
         "",
-        cleanSummary ?? "（没有摘要）",
-        "",
-        "## 任务最后一条回复",
-        "",
-        options.lastText ?? "（没有回复）",
+        cleanSummary ?? options.lastText ?? "（没有回复）",
         "",
         "## 任务说明",
         "",
@@ -547,11 +643,12 @@ export class JobManager {
       endedAt,
       reportPath,
       ...(job.startedAt ? { durationMs: Date.parse(endedAt) - Date.parse(job.startedAt) } : {}),
-      ...(cleanSummary ? { summary: cleanSummary } : {}),
+      ...(options.summary !== undefined ? { summary: cleanSummary } : {}),
       ...(options.reason ? { statusReason: options.reason } : {}),
-      ...(options.files?.length ? { files: options.files } : {}),
+      ...(options.summary !== undefined ? { files: options.files ?? [] } : {}),
     };
     this.store.saveJob(next);
+    for (const path of options.files ?? []) void this.runtime.knowledge.collect({ origin: "output", path, description: job.title, assistantId: job.assistantId, jobId: job.id }).catch((error) => console.error("知识库收集失败：", error));
     // 转交里的任务：先把转交重新打开，结果由目标助手接着处理完才回流 Hob（见 DelegationManager.resume）
     const delegationId = !job.routineId && job.delegationId && this.runtime.delegations.resume(job.delegationId) ? job.delegationId : undefined;
     this.bus.emit({ type: "job", job: next });
@@ -571,20 +668,25 @@ export class JobManager {
     if (job.routineId) {
       const routine = this.store.routine(job.routineId);
       if (routine) {
-        const run: RoutineRun = { jobId: job.id, at: endedAt, status };
+        const run: RoutineRun = {
+          jobId: job.id, at: endedAt, status,
+          ...(next.durationMs !== undefined ? { durationMs: next.durationMs } : {}),
+          tools: next.stats.reads + next.stats.commands + next.stats.edits,
+          ...(next.usage ? { tokens: next.usage.input + next.usage.output } : {}),
+        };
         const runs = [run, ...routine.runs.filter((item) => item.jobId !== job.id)].slice(0, 20);
         const updated = { ...routine, runs };
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
         await this.runtime.router
-          .event(job.assistantId, `定时任务「${routine.name}」结果：${eventSummary ?? options.reason ?? statusText}${filesNote}`, {
-            routine: { id: routine.id, name: routine.name },
+          .event(job.assistantId, `${jobResultEvent(next, `定时任务「${routine.name}」`)}${filesNote}`, {
+            routine: { id: routine.id, name: routine.name, jobId: job.id },
             ...cont,
           })
           .catch(() => undefined);
       }
     } else if (assistant) {
-      const text = `任务「${job.title}」${statusText}${eventSummary ? `：${eventSummary}` : options.reason ? `：${options.reason}` : ""}${filesNote}`;
+      const text = `${jobResultEvent(next)}${filesNote}`;
       if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId, cont).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
       else await this.runtime.router.event(job.assistantId, text, cont).catch(() => undefined);
     }
@@ -612,14 +714,60 @@ export class JobManager {
       }
     }
     const lines: string[] = [];
-    if (posted.length) lines.push(`产出的图片已经直接发到对话里了（${posted.join("、")}），用户看得到，不要再发或再派任务去取。`);
-    if (others.length) lines.push(`产出文件：${others.join("、")}（要给用户就用 send_file）。`);
+    if (posted.length) lines.push(`图片已发到对话里：${posted.join("、")}`);
+    if (others.length) lines.push(`文件：${others.join("、")}`);
     return { note: lines.length ? `\n${lines.join("\n")}` : "", posted: posted.length };
   }
 
-  async reply(jobId: string, text: string): Promise<void> {
+  async reply(jobId: string, text: string, source: "user" | "router" = "user"): Promise<void> {
+    await this.finishing.get(jobId);
+    const sediment = this.sediments.get(jobId);
+    if (sediment) {
+      sediment.cancelled = true;
+      await sediment.session?.abort().catch(() => undefined);
+      await sediment.task;
+    }
+    this.replied.add(jobId);
+    const job = this.store.job(jobId);
+    if (!job) throw new Error("没有这个任务。");
+    if (ENDED.includes(job.status)) {
+      const { endedAt, statusReason, durationMs, summary, files, reportPath, ...rest } = job;
+      const previous = job.rounds ?? [];
+      // 这一轮的报告另存一份：下一轮写报告会覆盖原文件。原文件不在了就不存，不让续做因此失败
+      const savedReport = reportPath && existsSync(reportPath) ? join(dirname(reportPath), `report.round-${previous.length + 1}.md`) : undefined;
+      if (reportPath && savedReport) copyFileSync(reportPath, savedReport);
+      const used = previous.reduce((sum, round) => ({ input: sum.input + (round.usage?.input ?? 0), output: sum.output + (round.usage?.output ?? 0), cost: sum.cost + (round.usage?.cost ?? 0) }), { input: 0, output: 0, cost: 0 });
+      const usage = job.usage && previous.every((round) => round.usage) ? { input: job.usage.input - used.input, output: job.usage.output - used.output, cost: Number((job.usage.cost - used.cost).toFixed(6)) } : undefined;
+      const ended: JobRound = { status: job.status, statusReason, startedAt: job.startedAt, endedAt, durationMs, summary, files, usage, reportPath: savedReport, followUp: text };
+      const rounds = [...previous, ended];
+      const queued: Job = { ...rest, rounds, status: "queued", startedAt: new Date().toISOString() };
+      this.store.saveJob(queued);
+      try {
+        await this.runtime.router.addItem(job.assistantId, { kind: "job", jobId, round: rounds.length });
+      } catch (error) {
+        this.store.saveJob(job);
+        throw error;
+      }
+      this.followUps.set(jobId, `用户接着说（${monthDayTimeText(this.runtime.settings.settings.general.timezone)}）：${text}`);
+      this.bus.emit({ type: "job", job: queued });
+      this.publishBusy(job.assistantId);
+      this.queue.push(jobId);
+      this.pump();
+      return;
+    }
     const worker = this.workers.get(jobId);
     if (!worker?.session) throw new Error("这个任务当前未在运行。");
+    // 任务卡在 ask_user 等答复：用户在对话里回的话就是答复，不然插话要等提问返回才读得到，任务永远等下去
+    const asking = worker.ask ? this.store.approvals().find((item) => item.jobId === jobId && item.status === "pending") : undefined;
+    if (asking) {
+      const answered: Approval = source === "user"
+        ? { ...asking, status: "answered", answerText: text, answeredAt: new Date().toISOString() }
+        : { ...asking, status: "expired" };
+      this.store.saveApproval(answered);
+      this.bus.emit({ type: "approval", approval: answered });
+      this.resolveAsk(answered, source === "user" ? `用户没有选给出的选项，而是在对话里回复：${text}` : `助手转达：${text}`);
+      return;
+    }
     // 先显示出来：任务在跑命令时要等这一步做完才读到，界面上标着「等待读取」
     const step: JobStep = { id: `q${Date.now()}-${worker.queued.length}`, kind: "text", at: new Date().toISOString(), from: "user", text, queued: true };
     worker.queued.push(step);
@@ -631,6 +779,95 @@ export class JobManager {
       worker.queued = worker.queued.filter((item) => item !== step);
       throw error;
     }
+  }
+
+  startSediment(jobId: string, source: "manual" | "auto" = "auto"): void {
+    const job = this.store.job(jobId);
+    if (!job) throw new Error("任务不存在");
+    if (job.status !== "done" || this.finishing.has(jobId) || this.workers.has(jobId)) throw new Error("只有已完成的任务可以沉淀");
+    if (this.sediments.has(jobId)) throw new Error("任务正在沉淀技能");
+    const state: { cancelled: boolean; session?: AgentSession; task?: Promise<void> } = { cancelled: false };
+    this.sediments.set(jobId, state);
+    state.task = this.sedimentRound(job, state, source).catch(async (error) => {
+      if (state.cancelled) return;
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("沉淀技能失败：", error);
+      await this.runtime.router.addItem(job.assistantId, { kind: "note", icon: "info", text: `技能沉淀失败：${message}` }).catch((noteError) => console.error("写入沉淀失败提示失败：", noteError));
+    }).finally(() => {
+      this.sediments.delete(jobId);
+      this.bus.emit({ type: "sediment-finished", jobId });
+    });
+  }
+
+  private async sedimentRound(job: Job, state: { cancelled: boolean; session?: AgentSession }, source: "manual" | "auto"): Promise<void> {
+    let calledSave = false;
+    let lastText = "";
+    const skillTool = {
+      name: "save_skill", label: "保存技能",
+      description: "保存或修补这个助手的技能。name 只用小写字母、数字和连字符，和已有技能同名就是修补，旧版会保留。content 是 SKILL.md 的正文，不用写开头的 name 和 description。files 放脚本和参考资料，路径以 scripts/ 或 references/ 开头。",
+      parameters: Type.Object({
+        name: Type.String({ description: "技能的目录名，如 gateway-daily-check。" }),
+        title: Type.String({ description: "中文名，如「网关每日巡检」。" }),
+        description: Type.String({ description: "一句话写什么时候用，120 字以内。" }),
+        content: Type.String({ description: "SKILL.md 正文。" }),
+        files: Type.Optional(Type.Array(Type.Object({ path: Type.String(), content: Type.Optional(Type.String()), from: Type.Optional(Type.String()) }), { description: "可选，脚本和参考资料：path 加 content，或 path 加 from（工作目录里已有文件的路径，直接复制）。" })),
+      }),
+      execute: async (_id: string, params: any) => {
+        calledSave = true;
+        if (state.cancelled || this.store.job(job.id)?.status !== "done") throw new Error("任务已继续，取消沉淀");
+        const files = readSkillFiles(job.cwd ?? this.store.workDir(job.id), params.files);
+        const skill = saveAssistantSkill(this.runtime.home, job.assistantId, { ...params, files }, job.id);
+        let text = skill.version === 1 ? `已沉淀技能「${skill.title}」` : `已更新技能「${skill.title}」· 第 ${skill.version} 版`;
+        const routine = job.routineId && this.store.routine(job.routineId);
+        if (routine && !routine.skill) {
+          this.runtime.routines.update(routine.id, { skill: skill.name });
+          text = `已沉淀技能「${skill.title}」，以后定时执行按它做`;
+        }
+        await this.runtime.router.addItem(job.assistantId, { kind: "note", icon: "skill", text, path: skill.path });
+        this.bus.emit({ type: "skills", assistantId: job.assistantId });
+        return { content: [{ type: "text" as const, text: "技能已保存。" }], details: undefined };
+      },
+    };
+    const skills = listAssistantSkills(this.runtime.home, job.assistantId);
+    const existing = skills.map((skill) => `${skill.name}：${skill.title} —— ${skill.description}`).join("\n") || "无";
+    const message = `${SEDIMENT_PROMPT_HEAD}，下次照着做，更快、更稳。
+
+技能写的是这一类事怎么做，不是这一次的经过。下次接到同类的事，照着它就能一次做成用户要的样子。
+- 按做事的顺序写步骤，带上要用的命令、查询和判断点；怎么判断结果对不对，写在对应的那一步里。
+- 用户在过程中纠正过的做法、对结果提过的要求，写进去。
+- 坑写成一条规则加一句原因，放在它影响的那一步。规则要离开这一次也成立：不写事情经过和这一次的数据；会变的情况不写死，写怎么查。
+- 同一条经验只写一次。修补时直接改掉写错的那句，不在后面追加更正。
+- 助手的规矩、工具说明里已经有的，不再重复。
+- 能写成脚本的写成只读脚本，放在 scripts/，一次输出要看的全部结果。写好后用 bash 真跑一遍，输出对得上再保存。偶尔才用得上的细节放 references/，按主题起文件名。
+- 会改东西的步骤只写进文档，不写进脚本，也不要执行。
+
+不写进技能：
+- 临时故障和网络错误。环境没装好、没配好导致的失败，只写怎么装好、配好。
+- 「某个工具不能用」这类结论：环境修好以后，它还会一直挡着你。
+- 这次没走通的尝试：不能写成推荐做法。
+
+下面已有同类技能的，修补它，不要另建；新建时，名字和说明按这一类事来起，不按这一次。没有值得沉淀的，就回复「没有需要沉淀的」，不调用 save_skill。
+
+这个助手已有的技能：${existing}`;
+    if (state.cancelled) return;
+    const opened = await this.runtime.pi.open({
+      file: this.store.workerFile(job.id), cwd: job.cwd ?? homedir(),
+      model: job.model ?? this.runtime.settings.settings.models.work.ref,
+      thinking: job.thinking ?? this.runtime.settings.settings.models.work.thinking,
+      memory: "off", systemPrompt: () => buildWorkerPrompt(this.store, job.id, this.promptSettings()),
+      tools: ["read", "ls", "grep", "find", "bash", "save_skill"], customTools: [skillTool],
+    });
+    state.session = opened.session;
+    opened.session.subscribe((event) => {
+      if (event.type === "message_end" && event.message.role === "assistant") lastText = textOfContent(event.message.content).trim();
+    });
+    try {
+      if (!state.cancelled) await opened.session.prompt(message);
+      if (!state.cancelled && source === "manual" && !calledSave) {
+        const reason = lastText && lastText !== "没有需要沉淀的" ? `：${lastText}` : "";
+        await this.runtime.router.addItem(job.assistantId, { kind: "note", icon: "skill", text: `「${job.title}」没有可沉淀的做法${reason}` });
+      }
+    } finally { opened.session.dispose(); }
   }
 
   async stop(jobId: string): Promise<void> {
@@ -740,11 +977,13 @@ export class JobManager {
       }
     }
     this.queue = [];
+    this.followUps.clear();
   }
 
   disposeAll(): void {
     this.stopWatchdog();
-    for (const worker of this.workers.values()) worker.session?.dispose();
+    for (const state of this.sediments.values()) { state.cancelled = true; void state.session?.abort(); }
+    for (const worker of this.workers.values()) { worker.session?.dispose(); void worker.desktop?.dispose(); }
     this.workers.clear();
   }
 
@@ -755,7 +994,7 @@ export class JobManager {
       const active = this.store
         .jobs()
         .filter((job) => job.status === "running" || job.status === "queued" || job.status === "waiting");
-      if (!active.length) return;
+      if (!active.length && !this.finishing.size && !this.sediments.size) return;
       await new Promise((resolve) => setTimeout(resolve, 25));
     }
   }

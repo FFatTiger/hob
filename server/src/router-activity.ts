@@ -6,6 +6,7 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
   const withValue = (label: string, text: string) => text ? `${label}：${text}` : label;
   let label: string;
   switch (name) {
+    case "read": label = withValue("正在读", basename(value("path"))); break;
     case "start_job": label = withValue("派任务", value("title")); break;
     case "reply_job": label = "补充任务要求"; break;
     case "stop_job": label = "停止任务"; break;
@@ -18,11 +19,14 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "message_assistant": { const id = value("assistantId"); label = id ? `交给「${assistantName?.(id) ?? id}」` : "交给助手"; break; }
     case "hand_back_to_hob": label = "交回 Hob"; break;
     case "show_page": label = withValue("写页面", value("title")); break;
+    case "find_knowledge": label = withValue("正在找资料", value("query")); break;
+    case "search_knowledge": label = withValue("正在查知识库", value("query")); break;
     case "web_search": label = withValue("搜索", value("query")); break;
     case "web_fetch": label = "读取网页"; break;
     case "generate_image": label = "画图"; break;
     case "overview": label = "查看工作概况"; break;
     case "read_skill": label = withValue("看技能", value("name")); break;
+    case "save_job_as_skill": label = "沉淀技能"; break;
     default:
       label = /^(memory_write|memory_forget|memory_restore|lore_create_node|lore_update_node|lore_delete_node|lore_move_node)$/.test(name) ? "记下来"
         : /^(memory_|lore_|scratchpad)/.test(name) ? "翻记忆" : "调用工具";

@@ -27,6 +27,16 @@ export function clearFresh() {
   fresh.clear();
 }
 
+/** 滚到对话里的那一条并闪一下：消息行闪气泡，卡片闪自己。 */
+export function flashItem(row: HTMLElement) {
+  const target = row.querySelector<HTMLElement>(".hov.msg > .u, .hov.msg > .b") ?? row;
+  target.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" });
+  target.classList.remove("quote-flash");
+  void target.offsetWidth;
+  target.classList.add("quote-flash");
+  window.setTimeout(() => target.classList.remove("quote-flash"), 1100);
+}
+
 /** show 变 false 之后再多留 ms，用来播退场。 */
 export function useLeave(show: boolean, ms = 180): { mounted: boolean; leaving: boolean } {
   const [mounted, setMounted] = useState(show);

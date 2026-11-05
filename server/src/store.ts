@@ -90,10 +90,11 @@ export class Store {
   }
 
   /**
-   * 并回 Hob：整个助手目录移进 archive/assistants/<id>-<时间>/。同盘 rename，不复制也不删数据，
-   * 归档里的 profile.json 就是它原来的档案。
+   * 归档助手：整个助手目录移进 archive/assistants/<id>-<时间>/。同盘 rename，不复制也不删数据，
+   * 归档里的 profile.json 就是它原来的档案；它的定时存成目录里的 routines.json。
    */
-  archiveAssistant(id: string, name: string): string {
+  archiveAssistant(id: string, name: string, routines: Routine[] = []): string {
+    if (routines.length) writeJsonAtomic(join(this.assistantDir(id), "routines.json"), routines);
     const target = join(this.home, "archive", "assistants", name);
     mkdirSync(dirname(target), { recursive: true });
     renameSync(this.assistantDir(id), target);

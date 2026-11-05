@@ -3,9 +3,8 @@
 // 点页面里的返回按钮关掉的，同步退掉多出来的历史，免得之后侧滑多退一次。桌面不压历史。
 // 地址 hash 跟着当前页面走（#/chat/<助手>、#/settings/<分栏>），桌面手机都一样，刷新回到原来那页。
 import {
-  backToJobs,
-  closeDetail,
-  closeFilePreview,
+  backPanel,
+  closeKnowledge,
   closeSettings,
   closeSheet,
   closeSub,
@@ -17,13 +16,15 @@ import {
 } from "./store.ts";
 import { routeHash } from "./route.ts";
 
-type Layer = "chat" | "sheet" | "settings" | "section" | "sub" | "jobs" | "job" | "file";
+type Layer = "chat" | "sheet" | "knowledge" | "settings" | "section" | "sub" | "panelPage";
 
 /** 当前从底到顶叠着哪几层。 */
 export function layers(s: State, narrow: boolean): Layer[] {
   if (!narrow) return [];
   const out: Layer[] = [];
-  if (s.page === "settings") {
+  if (s.page === "knowledge") {
+    out.push("knowledge");
+  } else if (s.page === "settings") {
     out.push("settings");
     if (s.section) out.push("section");
     if (s.sub) out.push("sub");
@@ -31,17 +32,14 @@ export function layers(s: State, narrow: boolean): Layer[] {
     if (s.mobile === "chat" && s.sel) out.push("chat");
     if (s.sheet) out.push("sheet");
   }
-  if (s.detail?.kind === "jobs" || (s.detail?.kind === "job" && s.worklog)) out.push("jobs");
-  if (s.detail?.kind === "job") out.push("job");
-  if (s.filePreview) out.push("file");
+  for (const _page of s.panelStack) out.push("panelPage");
   return out;
 }
 
 const CLOSE: Record<Layer, () => void> = {
-  file: closeFilePreview,
-  job: backToJobs,
-  jobs: closeDetail,
+  panelPage: backPanel,
   sheet: closeSheet,
+  knowledge: () => { closeKnowledge(); setMobile("list"); },
   chat: () => setMobile("list"),
   sub: closeSub,
   section: () => setSection(null),

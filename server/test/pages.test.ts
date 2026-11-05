@@ -60,7 +60,7 @@ describe("展示页面", () => {
     try {
       const events: HobEvent[] = [];
       hob.runtime.bus.subscribe((event) => { if (event.type === "page-live") events.push(event); });
-      hob.faux.setResponses([call("show_page", { title: "TCP", summary: "握手", html }), call("report", { outcome: "done", summary: "完成" }), text("完成")]);
+      hob.faux.setResponses([call("show_page", { title: "TCP", summary: "握手", html }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
       hob.faux.appendResponses([text("完成")]);
       await hob.runtime.jobs.start("hob", { title: "画图", instruction: "画一页" });
       await hob.runtime.jobs.waitIdle();
@@ -123,7 +123,7 @@ describe("展示页面", () => {
       const result = await pageTool(hob.runtime, "hob", false).execute("x", { title: "标题", summary: "摘要", html });
       expect(result.isError).toBe(true);
       const open = vi.spyOn(hob.runtime.pi, "open");
-      hob.faux.setResponses([call("report", { outcome: "done", summary: "完成" }), text("完成")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
       hob.faux.appendResponses([text("完成")]);
       await hob.runtime.jobs.start("hob", { title: "测试", instruction: "完成测试" });
       await hob.runtime.jobs.waitIdle();

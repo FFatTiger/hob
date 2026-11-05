@@ -42,6 +42,7 @@ const INHERITED_MODEL_ENV = [
   "GROQ_API_KEY",
   "MISTRAL_API_KEY",
   "CLAUDECODE",
+  "CLAUDE_CONFIG_DIR",
 ];
 
 /** 按前缀删：CLAUDE_CODE_OAUTH_TOKEN 这类 Claude Code 自己的变量一个不留。 */

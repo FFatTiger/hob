@@ -126,6 +126,28 @@ export interface ModelThinkingView {
   custom: boolean; // 存过自定义档位（可以恢复默认）
 }
 
+export interface ClaudeCodeSettings {
+  enabled: boolean;
+  plan: "pro" | "max";
+  executable: string;
+}
+
+export interface ClaudeCodeView {
+  settings: SettingsFile;
+  status: ClaudeCodeStatus;
+}
+
+/** 本机 Claude Code 状态，不包含凭据或程序原始输出。 */
+export interface ClaudeCodeStatus {
+  found: boolean;
+  executable?: string;
+  version?: string;
+  loggedIn: boolean;
+  email?: string;
+  plan?: string;
+  error?: string;
+}
+
 /** GET /api/providers：已配的服务商、引擎自带的服务商目录、跟着一起回的整份设置（前端要新 revision）。 */
 export interface ProvidersView {
   providers: ProviderView[];
@@ -214,6 +236,8 @@ export interface Assistant {
   };
   /** 派出去的活能用的能力；缺省全开（读总是有） */
   abilities?: { exec: boolean; write: boolean; image: boolean };
+  /** 知识库二期：绑定的用户知识库 id。缺省 = 没绑定：不自动查，也没有 search_knowledge */
+  knowledge?: string[];
   createdAt: Iso;
   splitFrom?: { from: string; at: Iso; conversations: number };
 }
@@ -245,6 +269,9 @@ export interface RoutineRun {
   jobId: string;
   at: Iso;
   status: JobStatus;
+  durationMs?: number; // 技能二期：这次用时
+  tools?: number; // 技能二期：工具调用次数
+  tokens?: number; // 技能二期：输入加输出 token
 }
 
 export interface Routine {
@@ -256,6 +283,7 @@ export interface Routine {
   active: boolean;
   createdAt: Iso;
   runs: RoutineRun[]; // 最近 20 次，新的在前
+  skill?: string; // 绑定这个助手自己的技能（AssistantSkill.name）：每次执行按它做
 }
 
 export interface Delegation {
@@ -264,7 +292,7 @@ export interface Delegation {
   to: string;
   text: string;
   createdAt: Iso;
-  status: "running" | "waiting" | "done" | "stuck" | "interrupted" | "returned";
+  status: "running" | "waiting" | "done" | "stuck" | "interrupted" | "returned" | "takenOver";
   jobIds: string[];
   reply?: string;
   returnedText?: string; // 退回时补充的用户要求
@@ -342,7 +370,7 @@ export interface JobsPage {
 export interface Job {
   id: string; // "t-" + 4 位以上
   assistantId: string;
-  assistantName?: string; // 建任务时的助手名：助手并回 Hob 后，任务详情里照样显示
+  assistantName?: string; // 建任务时的助手名：助手归档后，任务详情里照样显示
   title: string; // 如 "查页面卡顿"
   instruction: string;
   status: JobStatus;
@@ -353,7 +381,7 @@ export interface Job {
   usage?: JobUsage; // 输入/输出 token 和花费
   durationMs?: number; // 用时（结束时间 − 开始时间）
   stats: { reads: number; commands: number; edits: number };
-  summary?: string; // report 的摘要（≤600 字）
+  summary?: string; // report 的完整结果
   reportPath?: string; // 完整报告
   files?: string[]; // 产出文件（绝对路径）
   cwd?: string; // 工作目录（缺省为 HOB_HOME/jobs/<id>/work）
@@ -362,8 +390,24 @@ export interface Job {
   modelReason?: string; // 换了模型的原因，如「需要看图，换成了 X」
   inputs?: string[]; // 交给任务的附件（绝对路径）
   routineId?: string; // 由定时触发
+  skillsUsed?: string[]; // 这次读过的本助手技能（AssistantSkill.name）
   delegationId?: string; // 转交回合创建的任务
+  /** 续做前每一轮结束时的样子（第 0 轮起）。对话里前面几张任务卡照它显示，最后一张跟着任务实时变 */
+  rounds?: JobRound[];
   activity: ActivityLine[]; // 最近 200 行
+}
+
+export interface JobRound {
+  summary?: string;
+  files?: string[];
+  usage?: JobUsage;
+  reportPath?: string;
+  followUp?: string;
+  status: JobStatus;
+  statusReason?: string;
+  startedAt?: Iso;
+  endedAt?: Iso;
+  durationMs?: number;
 }
 
 export interface ApprovalOption {
@@ -408,16 +452,17 @@ export interface Draft {
   createdAt: Iso;
 }
 
-export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info";
+export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info" | "skill";
 
 export type Item = (
   | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string } }
-  | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string } }
-  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; handbackId?: string } // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
+  | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string; jobId?: string } }
+  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; handbackId?: string; path?: string } // path：点了预览这个文件（如技能的 SKILL.md） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
   | { kind: "question"; id: string; at: Iso; approvalId: string }
-  | { kind: "job"; id: string; at: Iso; jobId: string }
+  | { kind: "job"; id: string; at: Iso; jobId: string; round?: number } // 第几轮（续做一次 +1），缺省是第 0 轮
   | { kind: "delegation"; id: string; at: Iso; delegationId: string }
   | { kind: "draft"; id: string; at: Iso; draftId: string }
+  | { kind: "image"; id: string; at: Iso; prompt: string; size?: string; startedAt: Iso; status: "pending" | "done" | "failed"; path?: string; error?: string }
   | { kind: "file"; id: string; at: Iso; path: string; name: string; meta?: string } // meta 如 "3200 字 · 4 张图"
 ) & {
   /** 这条开启新的一组，前端在它上面拉开间距：事件触发的新一轮回复，或任务直接发进对话的图片、提问卡 */
@@ -468,6 +513,7 @@ export interface MemoryConfig {
   provider: MemoryProvider;
   providerExplicit: boolean; // 用户在设置里明确选过（没选过就是按有没有配好 Lore 推出的）
   lore: LoreConnectionInfo;
+  lorePlugin: string; // Hob 自带的 Lore 插件版本（Lore 正式版的版本号）
 }
 
 /** POST /api/memory/lore-test：测试失败也是 200，原因在这里。 */
@@ -508,13 +554,47 @@ export interface Settings {
   models: ModelSettings;
   image: ImageSettings;
   search: SearchSettings;
+  /** 云桌面令牌保存在 secrets.json，不包含在设置中。 */
+  desktop?: { url: string; enabled: boolean; publicAssistants?: string[] };
+  claude?: ClaudeCodeSettings;
   /** 停用的技能，键为来源和技能名。 */
   skills?: { disabled: string[] };
   work: WorkSettings;
   push: PushSettings;
+  /** 知识库二期：向量模型（Key 在 secrets.json 的 embedding）；缺省 = 关闭，只按关键词查 */
+  knowledge?: { embedding: EmbeddingSettings };
 }
 
+/** 设置 → 知识库：向量模型，照图像生成的做法（兼容接口的地址 + 模型，Key 单独存）。 */
+export type EmbeddingSettings = { source: "off" } | { source: "openai"; baseUrl: string; model: string };
+
+/** GET /api/knowledge/embedding：Key 配没配（永不回显）。 */
+export interface EmbeddingKeyView {
+  keyConfigured: boolean;
+}
+
+/** PUT /api/knowledge/embedding 的返回：整份设置和 Key 状态。 */
+export interface EmbeddingSettingsSaved {
+  settings: SettingsFile;
+  keyConfigured: boolean;
+}
+
+/** POST /api/knowledge/embedding/test：失败也是 200，原因在这里。 */
+export type EmbeddingTestResult = { ok: true; dims: number } | { ok: false; error: string };
+
 /** HOB_HOME/settings.json：界面可改的设置，写入走 revision 比对（CAS）。 */
+export interface DesktopView {
+  revision: number;
+  url: string;
+  enabled: boolean;
+  deployed: boolean;
+  tokenConfigured: boolean;
+  publicAssistants: string[];
+}
+
+export interface DesktopScreen { id: string; running: boolean; browserRunning: boolean; viewers: number; lastActiveAt: string | null }
+export type DesktopTestResult = { ok: true; health: { version: string; display: { width: number; height: number }; screens: DesktopScreen[] } } | { ok: false; error: string };
+
 export interface SettingsFile {
   revision: number;
   settings: Settings;
@@ -583,20 +663,18 @@ export interface FileMeta {
   page?: boolean; // 展示页面目录中的渲染产物
 }
 
-/** GET /api/jobs/:id/files：任务工作目录里的一个文件。 */
-export interface JobFileEntry {
-  path: string; // 绝对路径
-  rel: string; // 相对任务工作目录，如 "src/index.ts"
-  name: string;
-  size: number;
-  modifiedAt: Iso;
-  kind: FileKind;
-}
+/** 工作目录中的一项，目录的 count 是其下一层可见项数。 */
+export type JobFileEntry = { path: string; rel: string; name: string } & (
+  | { type: "file"; size: number; modifiedAt: Iso; kind: FileKind }
+  | { type: "directory"; count: number }
+);
 
-/** GET /api/jobs/:id/files：任务工作目录（HOB_HOME/jobs/<id>/work）里的文件，最多 200 个。 */
+/** 一层最多返回 200 项，total 为截断前的总数。 */
 export interface JobFilesView {
-  files: JobFileEntry[]; // 修改时间倒序
-  hasMore: boolean;
+  files: JobFileEntry[];
+  total: number;
+  fileCount: number;
+  directoryCount: number;
 }
 
 export interface Bootstrap {
@@ -609,12 +687,15 @@ export interface Bootstrap {
 }
 
 export type HobEvent =
+  | { type: "desktop-control"; screen: string; taken: boolean }
+  | { type: "desktop-screens"; screens: DesktopScreen[] }
   | ({ type: "page-live" } & PageLive)
   | { type: "assistant"; assistant: AssistantSummary } // 新建或变化
   | { type: "assistant_removed"; id: string }
   | { type: "item"; assistantId: string; item: Item } // 新条目，或按 id 替换
   | { type: "delta"; assistantId: string; itemId: string; text: string } // 流式追加到 assistant 条目
   | { type: "job"; job: Job }
+  | { type: "sediment-finished"; jobId: string }
   | { type: "delegation"; delegation: Delegation }
   | { type: "job_step"; jobId: string; step: JobStep } // 新的一步，或按 id 替换（输出流式更新、跑完补结果）
   | { type: "router-activity"; assistantId: string; activity: RouterActivity | null }
@@ -623,7 +704,9 @@ export type HobEvent =
   | { type: "draft"; draft: Draft }
   | { type: "routine"; routine: Routine }
   | { type: "routine_removed"; id: string }
-  | { type: "profile"; assistantId: string }; // rules/memories/worklog 变了，前端重拉 profile
+  | { type: "profile"; assistantId: string } // rules/memories/worklog 变了，前端重拉 profile
+  | { type: "knowledge" } // 知识库有变化，打开着的知识库页面重拉
+  | { type: "skills"; assistantId: string }; // 这个助手的技能有变化，打开着的技能列表重拉
 
 /** POST /api/assistants/:id/messages 的请求体 */
 export interface SendMessageBody {

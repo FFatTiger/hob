@@ -12,10 +12,12 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 由此得出 v1 的四条硬规则：
 
-1. **助手的对话层手里没有执行工具。** 对话会话（Router）没有 bash/read/edit/write，只有协调工具。要干活只能 `start_job`。委派是结构上的，不靠提示词。
+1. **对话层能读不能改。** Router 的 read 只读；跑命令、改文件交给任务。
 2. **任务必须明说结果。** 任务会话（Worker）结束前必须调用 `report(outcome, summary)`，outcome ∈ 完成 / 卡住 / 等你批。一轮跑完没调用 = 系统追问一次，再不报就记为"卡住：没交代结果"。
-3. **结果以事件回到对话。** 任务结束 → 卡片状态更新 → 给所属助手的 Router 推一条事件消息 → Router 用一两句话告诉你。对话里只留摘要，完整报告落盘，卡片能点开看。
+3. **结果完整交回。** 事件带前 3,000 字和全文路径；Router 上下文有预算，工具大结果落盘，约 10 万 token 时压缩。
 4. **任何时候都看得见。** 正在干的活在右栏“正在做”实时显示（读了什么、跑了什么），任务卡片点开能看完整过程。
+
+提示词只写事实，见 AGENTS.md。
 
 ## 进程和底座
 
@@ -48,7 +50,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
   config.json                 启动项：端口、host、密码哈希、cookie 签名密钥
   settings.json               界面可改的设置（主题、时区、关于你、服务商、模型、并发、卡住判定、推送邮箱），带 revision，写入走 CAS
   secrets.json                密钥（0600，原子写），接口只写不读回：provider:<id>、imageApiKey
-  engine/                     引擎目录：auth.json（引擎写的凭据）、models.json（Hob 写给引擎的内置服务商思考档）、bin（rg / fd）、资源
+  engine/                     引擎目录：auth.json（引擎写的凭据）、models.json（Hob 写给引擎的内置服务商思考档）、mcp.json（MCP 服务配置，设置 → MCP 写）、bin（rg / fd）、资源
   memory/                     本地记忆（捆绑的本地记忆插件）
   lore/                       Lore 连接（config.json，格式 { base_url, api_token }，0600、原子写）
   push.json                   Web Push：VAPID 密钥 + 订阅设备（0600，原子写）
@@ -65,7 +67,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
     job.json                  Job
     worker.jsonl              任务会话（pi 会话文件）
     report.md                 完整报告（Spill）
-  archive/assistants/<id>-<时间>/  并回 Hob 的助手：整个目录原样移到这里（profile / rules / worklog / router.jsonl）
+  archive/assistants/<id>-<时间>/  归档的助手：整个目录原样移到这里（profile / rules / worklog / router.jsonl / routines.json）
   uploads/                    输入框上传的文件
   previews/                   设置 → 图像生成「生成测试图片」生成的图
   pages/                      展示页面 HTML 和 Markdown 稿子
@@ -75,20 +77,19 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 - **Assistant（助手）**：主助手 `id = "hob"` 唯一内置，首次启动自动创建；其余都是用户数据，不写死任何角色。`duty` 是职责简介，`dutyLong` 是详细职责；创建助手时从草稿复制，旧助手启动时从对应的已创建草稿幂等回填。长期记忆不属于某个助手（见下文“记忆”），助手自己特有的做法写在 `instructions`（补充说明）里。
 - **Item（对话条目）**：对话 = 有序的 Item 列表。用户消息、助手回复从 pi 会话的消息得出；卡片类（question / job / draft / note / file）用 pi 的自定义条目 `customType: "hob.item"` 存在同一个 `router.jsonl` 里，**不进模型上下文**。卡片的可变状态（审批是否已选、任务进度、草稿是否已建）在 approvals.json / jobs / drafts.json 里，条目只存 id 引用，渲染时合并。
-- **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手并回 Hob 后任务详情照样显示。
+- **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手归档后任务详情照样显示。结束的任务可以接着做（续做）：上一轮结束时的状态、原因、用时存进 `rounds`，对话里再放一张带 `round`（第几轮）的任务卡；前面几张卡按 `rounds` 显示那一轮的结果、不带按钮，只有最后一张跟着任务实时变。
 - **Approval（审批）**：选择题卡片。来源可以是 Router（不阻塞，答案作为下一条用户消息回到 Router）或 Worker（Worker 的 `ask_user` 工具阻塞等答案）。带 `always` 的选项（"以后这类直接…"）选中后自动写一条 `mode: "allow"` 的 Rule，并在对话里出一行"已记进 X 的规矩 · …"。审批仍属于提问的助手；转交回合或关联任务提出的审批，也在主助手的委派卡内展示同一条审批，两处调用同一答复接口。
 - **Routine（定时）**：cron 表达式（`croner` 库）。到点 = 为所属助手开一个 local Job，结果作为带"⏱ 名字"标签的助手消息回到对话。运行记录 = 该定时产生的 Job 列表。
 - **Draft（新助手草稿）**：Hob 提议分出助手时生成。点"创建"才真正建助手，并把草稿里的补充说明写进新助手的 `instructions`、在新助手对话开头写一行"X月X日 从 Hob 分出 · 带走 N 段对话"。
 
-## 并回 Hob
+## 归档助手
 
-助手只能收起、不能删；要消掉一个助手就并回 Hob（`POST /api/assistants/:id/merge`，和"分出"对称）。
+助手可以收起，也可以归档（`POST /api/assistants/:id/archive`）。归档不往主助手转任何东西。
 
-- 拒绝：主助手（"主助手不能并回自己"）、助手不存在、这个助手还有进行中 / 排队 / 等待确认的任务（"请等任务结束后再并回"）。
-- 定时任务的 `assistantId` 改成主助手并按新的助手重排调度；规则追加到主助手（按文字去重，同一条只留主助手原来那条，模式照旧）；补充说明非空时接在主助手那段后面，前面一行 `来自「<名字>」：`。长期记忆本来就共用一份，不动。
+- 拒绝：主助手（"主助手不能归档"）、助手不存在、这个助手还有进行中 / 排队 / 等待确认的任务（"请等任务结束后再归档"）。
 - 这个助手还没答复的审批记为 `expired`，卡片不再挂着。
-- 整个助手目录（profile / rules / worklog / router.jsonl / state）用同盘 rename 移进 `HOB_HOME/archive/assistants/<id>-<时间>/`，不复制、不删除；历史任务留在 `jobs/`，`Job.assistantName` 补上当时的助手名，任务详情里不会因为找不到助手而报错。
-- 主助手对话里出一行"已并回「<名字>」：转来 N 个定时任务、M 条规则"（写不进这行就不动数据，返回原因）；然后推 `assistant_removed`：前端从列表移除，正看着它的切到主助手，草稿卡里指向它的"已创建 · 查看"变成"已并回 Hob"且不能再点。
+- 整个助手目录（profile / rules / worklog / router.jsonl / state）用同盘 rename 移进 `HOB_HOME/archive/assistants/<id>-<时间>/`，不复制、不删除；它的定时任务先存成目录里的 `routines.json`，再停掉、从 `routines.json` 里拿掉（推 `routine_removed`）。历史任务留在 `jobs/`，`Job.assistantName` 补上当时的助手名，任务详情里不会因为找不到助手而报错。
+- 然后推 `assistant_removed`：前端从列表移除，正看着它的切到主助手，草稿卡里指向它的"已创建 · 查看"变成"已归档"且不能再点。
 
 ## Router（对话层）
 
@@ -111,6 +112,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 | `message_assistant(assistantId, text)` | 仅 Hob：创建持久化委派卡并在目标对话显示「转自 Hob」，目标回合及关联任务结束后只向 Hob 回流一次结果，本轮结束 |
 | `hand_back_to_hob(text, reason)` | 仅非主助手：不归自己职责的事交回 Hob；普通回合在双方对话中留下可互相定位的条目，转交回合则退回委派，本轮结束 |
 | `send_file(path)` | 把任务产出的文件作为文件卡片发到对话 |
+| `generate_image(prompt, size?, refs?)` | 配置图像生成且助手能力开启时可直接生图，结果自动显示在对话 |
 | `show_page(title, summary, html)` | 助手写正文 HTML 片段，Hob 套上自带样式（亮暗跟随）和离线 CSP 存为单页，发页面卡后结束本轮；对话生成时通过实时事件展示草稿；通用设置可关闭 |
 | `web_search(query, depth?, max?)` / `web_fetch(url, raw?)` | 已启用联网搜索时可直接搜索或读取网页，搜索服务商按设置的优先级使用 |
 
@@ -143,19 +145,33 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 记忆是所有助手共用的一份（关于用户的事实、偏好、约定），不属于某个助手；助手自己的做法放在它的规矩和补充说明里。
 
-- 设置 → 记忆三选一：**本地记忆**（捆绑 `pi-memory` 0.4.2）/ **Lore**（捆绑 `@local/lore-pi-extension` 1.12.4）/ **关闭**。两个插件随 Hob 固定版本（`pi-memory` 在 package.json 钉死版本；Lore 插件不在 npm 上，源码放在 `vendor/lore-pi-extension/` 按路径加载），绝不安装任何东西，**绝不同时加载**（加载时断言）。
+- 设置 → 记忆三选一：**本地记忆**（捆绑 `pi-memory` 0.4.2）/ **Lore**（捆绑 Lore 的 pi 插件正式版）/ **关闭**。两个插件随 Hob 固定版本，绝不安装任何东西，**绝不同时加载**（加载时断言）。
+  - `pi-memory` 在 package.json 钉死版本。
+  - Lore 插件只发在 GitHub Release（`lore-pi.zip`），不在 npm 上。`vendor/lore-pi-extension/` 里放的是某个正式版的原样内容，按路径加载，不手改。换版本用 `npm run update-lore -- <版本号>`（`scripts/update-lore.mjs` 下载那一版的 `lore-pi.zip` 换进来），测试通过后随 Hob 一起发布。当前版本在设置 → 记忆里显示（`GET /api/memory` 的 `lorePlugin`）。
 - 加载方式：Router 和 Worker 会话各开一份 pi 会话时，`PiHost` 用 `DefaultResourceLoader` 只挂当前提供者的那一个插件入口（`noExtensions: true`，用户自己装的扩展一份都不加载），工具放行按插件工具名（`memory_*` / `scratchpad` / `lore_*`）。本地记忆强制 `PI_MEMORY_EXIT_SUMMARY=0`，`memory_search` 在注册前过滤掉（没带 qmd，只会报错）。本地记忆目录是 `HOB_HOME/memory`（插件在模块加载时就读 `PI_MEMORY_DIR`，所以 `createRuntime` 在打开任何会话之前把它指好）。
 - 缺省解析：从没选过时，看 Hob 自己的 `HOB_HOME/lore/config.json`（启动时 `LORE_HOME` 指到这里，插件读的也是它）——地址和 Token 都有 → Lore，否则本地记忆；选过就按选过的。存在 `settings.json` 的顶层 `memory.provider`。
 - Lore 连接只读写 `HOB_HOME/lore/config.json`（0600、原子写、保留不认识的键），不读环境变量、不碰其他 Lore 客户端的配置；函数显式收 `home`。Token 只写不读，接口只报 `tokenConfigured`；换地址不换 Token 时旧 Token 清掉。明文 http 只允许本机 / 局域网 / Tailscale / IPv6 ULA 与 link-local / `.local`，公网必须 https。
 - 选 Lore 但连接没配好 → 接口 400（fail-closed），**绝不静默回退到本地记忆**。连不上也不回退，测试连接把原因（地址无效 / 公网用了 http / 缺 Token / Token 被拒 / 连不上）原样显示。
 - 切换生效：新会话立即生效；空闲的 Router 立刻释放，在回复的等这一轮跑完再释放，下一轮按新提供者重新打开。
 - 提示词里的「记忆」一节按当前提供者逐轮生成（本地记忆讲 `memory_read`/`memory_write`，Lore 讲在 Lore 里查/记），关闭时不出这一节。
-- 写成功：Router 调用 `memory_write` / `lore_create_node` / `lore_update_node` 成功后，对话里出一行「记忆已更新 · 写入内容第一行（最多 30 字）」。
+- 写成功：Router 调用 `memory_write` / `lore_create_node` / `lore_update_node` 成功后，对话里出一行「记忆已更新 · 写入内容第一行（服务端最多 80 个字符，前端按宽度省略）」。
 - 老数据：启动时发现 `assistants/<id>/memories.json`，把每条作为一行追加进该助手的 `instructions`，然后删掉文件（一次性，不是兼容层）。
 
 ## 技能
 
 任务可用的技能来自 `HOB_HOME/skills`、Lore 插件发现的工作副本以及 `~/.agents/skills`，同名按此顺序优先。任务只加载启用的技能；对话层只列出名称和说明。引擎的默认技能目录与项目技能不加载。停用状态保存在设置中，不修改技能文件。设置页可从 pi、Claude Code、Codex 的本机技能目录复制到 Hob，限制大小并跳过越界链接；通用技能和 Lore 技能不由 Hob 删除。
+
+## MCP
+
+任务可以调用 [MCP](https://modelcontextprotocol.io) 服务提供的工具（本地命令 stdio / 远程地址 streamable HTTP）；对话层不执行东西，不加载 MCP。全局一份配置，所有助手派出的任务共用；不做按助手开关。
+
+- **配置位置**：`HOB_HOME/engine/mcp.json`，就是引擎自己读的那份（`mcpServers` 格式，与其他 MCP 客户端一致）。Hob 不读用户的 `~/.pi/agent/mcp.json`，除非在「从本机导入」里明确导入（来源只读，同名跳过；也支持从 Claude Code 的 `~/.claude.json` 顶层和 Cursor 的 `~/.cursor/mcp.json` 导入）。写入：同目录临时文件 + rename，新建 0600，只改目标条目，其它键原样保留；文件坏了（JSON 解析失败）读的时候报错，不当成空列表。
+- **只给任务**：Worker 会话打开时若配置里有启用中的服务，加载引擎的 MCP 扩展和 tool_search 扩展，会话启动时后台连服务；工具白名单追加 `mcp__*` 和 `tool_search`。Router 会话不加载。改了配置：之后新开的任务生效，正在跑的任务不受影响（不重连）。
+- **提供方式**：每个服务选「直接提供」（`exposure: direct`，默认，工具直接声明给模型）或「按需搜索」（`deferred`，模型先搜索再调用，适合工具多的服务）。不提供 codemode（不加载 codemode 扩展，写文件时顶层 `autoEnableCodemode: false`）。单个工具可以关掉（`toolExposure` 里设 `hidden`）；服务整体可停用（`enabled: false`）。
+- **密钥处理**：环境变量和请求头的**值**不回传给前端，接口只报键名和「已设置」；整值 `${VAR}` 引用和 `!command` 不含密钥，原样回显。编辑时逐键「保留 / 替换 / 删除」，未动的值不回传。测试连接时密钥的明文值也会从错误信息和 stderr 里打掉。
+- **测试连接**（设置 → MCP → 服务详情）：connect → 列工具 → 关闭，单个服务 15 秒超时，显示错误和 stdio 的 stderr 末尾几行；stdio 子进程一定收掉（关 stdin 后对整个进程组 SIGTERM/SIGKILL）。需要 OAuth 登录的远程服务这版不做登录流程，状态显示「需要登录，暂不支持」。SSE 传输不受支持（填 `/sse` 结尾的地址会给明确提示）。
+- **任务过程**：任务详情里 MCP 工具调用显示成「服务名 · 工具名」，不露 `mcp__x__y` 原始名。
+- 接口：`GET /api/mcp`、`PUT /api/mcp/:name`、`PATCH /api/mcp/:name`（启用 / 提供方式 / 关掉的工具）、`DELETE /api/mcp/:name`、`POST /api/mcp/:name/test`、`GET|POST /api/mcp/import`，都在登录后；服务端实现 `server/src/mcp.ts`。
 
 ## 从本机导入（可选）
 
@@ -175,8 +191,17 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 - 没配就没有图像生成能力：Worker 不注册 `generate_image`，提示词里写「不能做：图像生成」；配了且助手的「能力 → 图像生成」开着才注册。
 - 生成：`server/src/image.ts` 的 `generateImage`。无参考图打 `POST {baseUrl}/images/generations`（JSON），有参考图打 `POST {baseUrl}/images/edits`（multipart 的 `image` 字段）。返回 `b64_json` 或 `url` 都支持，统一按 MIME 落成 png/jpg/webp/gif。
 - 失败给具体原因：连不上（地址不通）、Key 被拒（401/403 带接口原话）、404 提示检查 /v1 和模型名、超时。
+- 对话工具 `generate_image(prompt, size?, refs?)`：满足同一门槛时注册，开始即发出生成中图片条目，图片存在 `HOB_HOME/images`，完成或失败以相同 id 追加状态更新并推送；重启时仍在生成的条目标为中断。成功后图片已在对话显示，返回路径可供改图参考。
 - 任务工具 `generate_image(prompt, size?, refs?)`：图片存任务工作目录，返回绝对路径；任务要以 `report` 的 `files` 交回才会显示。
 - 图片进对话：`report.files` 里的图片在任务结束后作为 `file` 条目进对话（非图片文件留在任务卡和报告里），`send_file` 发图片也一样；前端渲染成内联缩略图（最大宽 320、圆角），点开全屏。`GET /api/files` 按扩展名给 content-type。
+
+## 云桌面
+
+可选的 desktopd v2 是独立容器，通过地址和 Bearer 令牌连接。每个助手按 `desktopProfile(assistantId)` 使用独立屏幕和浏览器，公共屏幕固定为 `public`，助手 id 与其冲突时映射成稳定哈希。屏幕按需启动，空闲回收后保留浏览器数据；有观看者或 CDP 连接时不回收。各任务在所属屏幕的浏览器中各开一个标签页，结束时断开连接而不关闭标签页。
+
+设置中的 `desktop.publicAssistants` 默认空，只有选中的助手有 `screen: own | public` 工具参数；公共屏幕由第一个使用它的任务持有至任务结束，其余任务排队最多 10 分钟。接管状态按屏幕隔离。Hob 监听 desktopd 的 `/api/events`，断线时清空快照并退避重连，屏幕变化经 Hob SSE 推送；`GET /api/desktop/screens` 提供快照及助手到屏幕的映射，`POST /api/desktop/screens/:id/start` 只允许已存在助手的屏幕和公共屏幕。VNC 经登录保护的 `/api/desktop/vnc?screen=…&client=…` 代理；只看时过滤键鼠输入。
+
+右栏仅在当前助手的屏幕运行时显示桌面小屏，否则显示任务命令行。桌面视图可切换助手屏幕及公共屏幕，选择未启动的屏幕会先启动。网站登录由用户自己完成；Google 目前会拒绝开启远程调试的浏览器登录。
 
 ## 设置（settings.json / secrets.json）
 
@@ -225,7 +250,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
   - `POST /api/assistants/:id/messages {text, quote?, files?}`、`POST /api/assistants/:id/stop`、`POST /api/assistants/:id/read`
-  - `PATCH /api/assistants/:id`（助手设置或 `{ rule: { id?, text?, mode? } }` 保存规则；不传 id 时必须提供文字和模式并新增，返回规则）、`DELETE /api/assistants/:id/rules/:rid`、`POST /api/assistants/:id/merge`（并回 Hob，见上文）
+  - `PATCH /api/assistants/:id`（助手设置或 `{ rule: { id?, text?, mode? } }` 保存规则；不传 id 时必须提供文字和模式并新增，返回规则）、`DELETE /api/assistants/:id/rules/:rid`、`POST /api/assistants/:id/archive`（归档助手，见上文）
   - `GET /api/memory`、`PUT /api/memory {revision, provider}`、`PUT /api/memory/lore {baseUrl, token?}`、`POST /api/memory/lore-test`（记忆提供者与 Lore 连接，见上文“记忆”）、`GET /api/memory/lore/import`（本机的 Lore 连接，不带 Token）、`POST /api/memory/lore/import`（导进 Hob 自己的配置）
   - `GET /api/image`（Key 配没配）、`PUT /api/image {revision, image, apiKey?}`（Key 只写不读，留空 = 沿用）、`POST /api/image/test {image?, apiKey?}`（试一张，失败也是 200，原因在 `error` 里）
   - `GET /api/push`（publicKey + 已订阅设备）、`POST /api/push/subscribe {subscription, label}`、`DELETE /api/push/subscribe {endpoint}`、`POST /api/push/test {endpoint?}`（推送，见下文“PWA 与推送”）
@@ -244,14 +269,14 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 - 可安装：`web/public/manifest.webmanifest`（Hob，standalone）+ `web/public/icons/` 的图标（192 / 512 any、512 maskable、apple-touch-icon 180、favicon 32）。图标由 `node scripts/make-icons.mjs` 把 hob 像素火苗截图生成，出图提交进仓库。
 - Service worker（`web/public/sw.js`，手写，无依赖）：导航 network-first（断网回退缓存的 index.html），`/assets/*`、`/icons/*`、`/fonts/*` cache-first，`/api/*` 一律不拦不缓存。只在生产构建里注册（`web/src/pwa.ts`）。新版本装好不自动接管，页面提示「有新版本 · 刷新」，点了才 `skipWaiting`。
 - iOS：`env(safe-area-inset-*)` 给列表页、对话页输入框、全屏页头部留出安全区。
-- Web Push：`web-push`，VAPID 密钥首次用时生成，和订阅一起存 `HOB_HOME/push.json`（0600、原子写）；subject 是 `mailto:` + 设置 → 通知里填的邮箱（没填用 `mailto:hob@localhost`）。推送在出审批（该助手开了“需要我拍板时通知我”）和任务卡住/失败时发出，标题是助手名，点开跳 `/?a=<助手id>`。只要有一个可见的页面客户端就不推；推送服务回 404/410 的订阅自动删掉。页面里不再用浏览器 `Notification` 提醒。
+- Web Push：`web-push`，VAPID 密钥首次用时生成，和订阅一起存 `HOB_HOME/push.json`（0600、原子写）；subject 是 `mailto:` + 设置 → 通知里填的邮箱，没填用 Hob 的项目主页（Apple 不认 `mailto:…@localhost`）。推送在出审批（该助手开了“需要我拍板时通知我”）和任务卡住/失败时发出，标题是助手名，点开跳 `/?a=<助手id>`。只要有一个可见的页面客户端就不推；推送服务回 404/410 或 Apple 的 `VapidPkHashMismatch`（订阅用的是旧密钥）的订阅自动删掉，其他失败写日志，「发送测试通知」如实显示原因；页面开推送时浏览器里现有订阅的公钥对不上，先退掉再重订。页面里不再用浏览器 `Notification` 提醒。
 
 ## 前端
 
 - 照 `docs/design/v2/index.html` 做（那是唯一的视觉真相源：CSS 变量、尺寸、组件都直接搬）。截图 `s1~s6.png` 是验收对照。
 - 头像：都是 Hob 的像素小火苗，换一种颜色、带一件职责道具（安全帽、放大镜、Wi-Fi…），数据和画法在 `shared/sprites.ts`，前端画成 SVG。sprite 记成「道具」或「道具:颜色」；库里没有贴合职责的道具时，AI 可以自己画一件：sprite 记成 `custom` 或 `custom:颜色`，画法存在 `Assistant.prop`（`{ art, pal, dx }`，格式和 PROPS 里的一项相同；校验在 `shared/sprites.ts` 的 `validateCustomProp`，前后端共用，最多 16 行 × 16 字符、最多 6 种颜色、不能动火苗的 o y e 和描边 k、不能盖住眼睛、至少 6 个像素），草稿同样能带一份；自画道具在头像选择器里排第一个，换成内置道具后画法保留、能换回来；建助手时模型按职责挑道具（道具表同时生成提示词里的那行说明），和已有助手撞了就自动换颜色（自画的图案各不相同，不算撞）；助手设置里可以换道具和颜色。
 - 桌面三栏：左栏助手（置顶大头像 + 分组列表 + 收起的助手 + 底部设置）、中间对话、右栏（正在做 + 定时 / 定时编辑 / 助手设置，可收起）。设置是整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
-- 设置页：通用、服务商、模型、记忆、图像生成、任务、通知、关于都是真页面。
+- 设置页：通用、服务商、模型、记忆、图像生成、联网搜索、技能、MCP、任务、通知、关于都是真页面。
 - 手机（宽 < 768px）：列表页（顶部在跑的任务行 + 助手）和对话页两级。
 - 浅色为主，深色按系统或设置切换（index.html 里的 `.dark` 变量）。
 - 不用 UI 组件库、不用 CSS 框架；React + 手写 CSS。

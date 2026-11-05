@@ -139,7 +139,7 @@ describe("技能来源", () => {
       const options = { timezone, aboutYou, memory: "off" as const };
       expect(buildSystemPrompt(hob.runtime.store, "hob", options)).not.toContain("## 任务可用的技能");
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", { ...options, skills: [{ name: "a", description: "说明" }] });
-      expect(prompt).toContain("## 任务可用的技能\n- a：说明");
+      expect(prompt).toContain("任务能用的技能：a");
     } finally {
       hob.close();
     }

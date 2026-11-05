@@ -2,6 +2,7 @@ import { Cron } from "croner";
 import type { Job, Routine } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { newId } from "./ids.ts";
+import { listAssistantSkills, usableAssistantSkills } from "./assistant-skills.ts";
 
 export interface RoutineInput {
   assistantId: string;
@@ -55,13 +56,18 @@ export class RoutineScheduler {
     this.timers.set(routine.id, list);
   }
 
+  private instruction(routine: Routine): string {
+    const skill = routine.skill && usableAssistantSkills(this.runtime.home, routine.assistantId).find((item) => item.name === routine.skill);
+    return skill ? `按技能「${skill.title}」做（先读它的 SKILL.md）。\n${routine.instruction}` : routine.instruction;
+  }
+
   private async fire(routineId: string): Promise<void> {
     const routine = this.runtime.store.routine(routineId);
     if (!routine || !routine.active) return;
     try {
       await this.runtime.jobs.start(routine.assistantId, {
         title: routine.name,
-        instruction: routine.instruction,
+        instruction: this.instruction(routine),
         routineId: routine.id,
       });
     } catch (error) {
@@ -91,11 +97,15 @@ export class RoutineScheduler {
     return routine;
   }
 
-  update(id: string, patch: Partial<Pick<Routine, "name" | "instruction" | "schedules" | "active">>): Routine {
+  update(id: string, patch: Partial<Pick<Routine, "name" | "instruction" | "schedules" | "active">> & { skill?: string | null }): Routine {
     const routine = this.runtime.store.routine(id);
     if (!routine) throw new Error(`定时任务不存在：${id}`);
     if (patch.schedules) validate(patch.schedules, this.runtime.settings.settings.general.timezone);
-    const next: Routine = { ...routine, ...patch };
+    if (patch.skill !== undefined && patch.skill !== null && (typeof patch.skill !== "string" || !listAssistantSkills(this.runtime.home, routine.assistantId).some((skill) => skill.name === patch.skill))) throw new Error("绑定的技能无效");
+    const { skill, ...rest } = patch;
+    const next: Routine = { ...routine, ...rest };
+    if (skill === null) delete next.skill;
+    else if (skill !== undefined) next.skill = skill;
     this.runtime.store.saveRoutine(next);
     this.apply(next);
     this.runtime.bus.emit({ type: "routine", routine: next });
@@ -122,7 +132,7 @@ export class RoutineScheduler {
     if (!routine) throw new Error(`定时任务不存在：${id}`);
     return await this.runtime.jobs.start(routine.assistantId, {
       title: routine.name,
-      instruction: routine.instruction,
+      instruction: this.instruction(routine),
       routineId: routine.id,
     });
   }

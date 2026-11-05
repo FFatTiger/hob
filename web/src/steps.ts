@@ -1,6 +1,6 @@
 // 任务过程的纯函数：步骤合并、edit 的 diff 行。
 import { plainText } from "../../shared/plain-text.ts";
-import type { JobStep } from "../../shared/types.ts";
+import type { Job, JobStep } from "../../shared/types.ts";
 
 /** 同一个 id 到了就替换（工具输出流式更新、跑完补结果），否则接在末尾。 */
 export function mergeStep(list: JobStep[], step: JobStep): JobStep[] {
@@ -67,6 +67,12 @@ export function groupThinking(list: JobStep[]): StepRows {
     rows.push(thinking ? { ...step, thinking } : step);
   }
   return { rows, thinking: take() ?? null };
+}
+
+/** 已结束时折叠合并思考后的步骤；在跑时始终全部显示。 */
+export function visibleSteps(rows: StepRow[], ended: boolean, expanded: boolean) {
+  const shown = ended && !expanded ? rows.slice(0, 8) : rows;
+  return { rows: shown, remaining: rows.length - shown.length };
 }
 
 export interface DiffLine {
@@ -146,6 +152,21 @@ function middle(a: string[], b: string[]): DiffLine[] {
   return out;
 }
 
+export function jobDetailRounds(job: Job, steps: JobStep[] | undefined) {
+  const history = job.rounds ?? [];
+  return [...history, job].map((round, index) => {
+    const last = index === history.length;
+    const start = round.startedAt ?? (index === 0 ? job.createdAt : history[index - 1].endedAt);
+    const end = last ? undefined : round.endedAt;
+    const nextStart = !last ? (history[index + 1]?.startedAt ?? (index + 1 === history.length ? job.startedAt : undefined)) : undefined;
+    return {
+      job: { ...job, ...round, summary: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.summary, files: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.files },
+      instruction: index === 0 ? job.instruction : history[index - 1].followUp,
+      steps: steps?.filter((step) => (!start || step.at >= start) && (!end || step.at <= end) && (!nextStart || step.at < nextStart)),
+    };
+  });
+}
+
 /** 状态词：右上角的状态标签已经写过，原因行不能再重复它们。 */
 const STATUS_WORDS = new Set(["排队中", "进行中", "待确认", "已完成", "受阻", "失败", "已停止"]);
 
@@ -153,6 +174,16 @@ const STATUS_WORDS = new Set(["排队中", "进行中", "待确认", "已完成"
  * 任务卡和详情里的原因文字：只在真有原因时给。
  * 以前的版本把 outcome 存成了「受阻」「待确认」，那不是原因，不能往卡片上再写一遍。
  */
+/**
+ * 对话里第 round 张任务卡显示的样子：任务续做过的话，前面几张停在那一轮结束时；
+ * 最后一轮（以及没续做过的）就是任务本身，跟着实时变。
+ */
+export function jobRoundView(job: Job, round = 0): Job {
+  const past = job.rounds?.[round];
+  if (!past) return job;
+  return { ...job, status: past.status, statusReason: past.statusReason, startedAt: past.startedAt, endedAt: past.endedAt, durationMs: past.durationMs };
+}
+
 export function jobReason(job: { statusReason?: string }): string | undefined {
   const reason = job.statusReason ? plainText(job.statusReason) : "";
   if (!reason || STATUS_WORDS.has(reason)) return undefined;

@@ -1,18 +1,19 @@
 // 对话条目的渲染：气泡、选择题、任务卡、草稿卡、文件卡、灰字提示。
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { Approval, ApprovalOption, Delegation, Draft, Item, Job } from "../../../shared/types.ts";
+import type { Approval, ApprovalOption, Delegation, Draft, Item, Job, NoteIcon } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
 import { visibleLiveCards } from "../page-live.ts";
 import { Markdown } from "./Markdown.tsx";
 import { splitTables } from "../markdown.ts";
 import { MediaCard } from "./MediaCard.tsx";
+import { ImageGenCard } from "./ImageGen.tsx";
 import { PhotoStack } from "./PhotoStack.tsx";
 import { Avatar } from "../sprites.tsx";
 import { Icon, type IconName } from "../icons.tsx";
 import { fileIcon } from "../file-icons.ts";
-import { isFresh, useLeave } from "../motion.ts";
+import { flashItem, isFresh, useLeave } from "../motion.ts";
 import { copyText } from "../clipboard.ts";
 import {
   answer,
@@ -38,15 +39,16 @@ import {
   useApp,
 } from "../store.ts";
 import { fmtDuration, fmtElapsed, fmtWhen, isToday, needDivider } from "../util.ts";
-import { jobReason } from "../steps.ts";
+import { jobReason, jobRoundView } from "../steps.ts";
 import { menuPosition, messageMenu, moveSwipe, swipeReply, type SwipeState } from "../message-menu.ts";
 
 /* ---------------- markdown ---------------- */
 
 /* ---------------- 单项 ---------------- */
 
-const NOTE_ICON: Record<"memory" | "rule" | "routine" | "split" | "info", IconName> = {
+const NOTE_ICON: Record<NoteIcon, IconName> = {
   memory: "mem",
+  skill: "bulb",
   rule: "rule",
   routine: "clock",
   split: "split",
@@ -148,13 +150,7 @@ function MessagePopup({ anchor, text, itemId, close }: { anchor: RefObject<HTMLD
 function jumpToQuote(event: React.MouseEvent<HTMLElement>, itemId: string) {
   const list = event.currentTarget.closest(".col");
   const target = [...(list?.querySelectorAll<HTMLElement>(".message-row[data-item-id]") ?? [])].find((row) => row.dataset.itemId === itemId);
-  const bubble = target?.querySelector<HTMLElement>(".hov.msg > .u, .hov.msg > .b");
-  if (!bubble) return;
-  bubble.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" });
-  bubble.classList.remove("quote-flash");
-  void bubble.offsetWidth;
-  bubble.classList.add("quote-flash");
-  window.setTimeout(() => bubble.classList.remove("quote-flash"), 1100);
+  if (target) flashItem(target);
 }
 
 /** 每条消息工具行的状态。 */
@@ -176,8 +172,10 @@ function took(job: Job): string | undefined {
   return ms === undefined ? undefined : fmtDuration(ms);
 }
 
-function JobCard({ job, fresh }: { job: Job; fresh: boolean }) {
+function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: number; fresh: boolean; itemId: string }) {
   const s = useApp(); // 活动流／状态在 store 里更新，这里跟着重渲染
+  const job = jobRoundView(current, round);
+  const past = job !== current; // 续做之前的那几轮：停在那一轮结束时，没有按钮
   const [replying, setReplying] = useState(false);
   const [text, setText] = useState("");
   const [swapped, setSwapped] = useState(false); // 状态刚变过：图标播淡出／弹一下
@@ -185,7 +183,7 @@ function JobCard({ job, fresh }: { job: Job; fresh: boolean }) {
   const st = STATUS[job.status];
   const done = job.status === "done";
   const running = job.status === "running";
-  const canReply = running || job.status === "waiting";
+  const canReply = !past && (running || job.status === "waiting");
   const bad = job.status === "stuck" || job.status === "failed";
   const reason = jobReason(job);
   const owner = s.assistants.find((a) => a.id === job.assistantId);
@@ -201,19 +199,19 @@ function JobCard({ job, fresh }: { job: Job; fresh: boolean }) {
   }, [job.status]);
 
   return (
-    <div className={`hov${fresh ? " enter" : ""}`} id={`job-${job.id}`}>
+    <div className={`hov${fresh ? " enter" : ""}`} id={past ? undefined : `job-${job.id}`} data-item-id={itemId}>
       <div
         className="b jobcard"
         role="button"
         tabIndex={0}
-        onClick={() => openJob(job.id)}
+        onClick={() => openJob(job.id, round ?? 0)}
         onKeyDown={(event) => {
-          if (event.key === "Enter") openJob(job.id);
+          if (event.key === "Enter") openJob(job.id, round ?? 0);
         }}
       >
         <div className="tt">
           {owner ? <span className="jav"><Avatar sprite={owner.sprite} prop={owner.prop} size={40} /></span> : null}
-          <span className="jt">{job.title}</span>
+          <span className="jt">{job.routineId ? <Icon name="clock" size={14} /> : null}{job.title}</span>
           <span className={`st${done ? " done" : ""}`}>
             <span className="stico">
               <Icon name="spin" size={14} w={2} className={`spin stspin${running ? "" : " off"}`} />
@@ -303,8 +301,8 @@ function DraftCard({ draft }: { draft: Draft }) {
   // 建好以后：头像跟着新助手走（可能是自画的道具），细节收起来，留职责和「查看」
   const made = created ? s.assistants.find((a) => a.id === draft.createdAssistantId) : undefined;
   const prop = made?.prop ?? draft.prop;
-  // 建出来的助手并回 Hob 了：点过去也没这人了，就说明一下
-  const merged = Boolean(created) && !made;
+  // 建出来的助手归档了：点过去也没这人了，就说明一下
+  const archived = Boolean(created) && !made;
   return (
     <div className="draft">
         <div className="top">
@@ -366,8 +364,8 @@ function DraftCard({ draft }: { draft: Draft }) {
             </button>
           </div>
           <div className={created ? undefined : "off"}>
-            <button className="btn solid" disabled={merged} onClick={() => void select(draft.createdAssistantId!)}>
-              {merged ? "已并回 Hob" : "已创建 · 查看"}
+            <button className="btn solid" disabled={archived} onClick={() => void select(draft.createdAssistantId!)}>
+              {archived ? "已归档" : "已创建 · 查看"}
             </button>
           </div>
         </div>
@@ -380,7 +378,7 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
   const [expanded, setExpanded] = useState(false);
   const target = s.assistants.find((a) => a.id === delegation.to);
   const name = target?.name ?? delegation.to;
-  const labels: Record<Delegation["status"], string> = { running: "进行中", waiting: "等你确认", done: "已完成", stuck: "受阻", interrupted: "已中断", returned: "已退回" };
+  const labels: Record<Delegation["status"], string> = { running: "进行中", waiting: "等你确认", done: "已完成", stuck: "受阻", interrupted: "已中断", returned: "已退回", takenOver: "已被你接手" };
   const approvals = Object.values(s.approvals).filter((approval) => approval.status === "pending" && ((delegation.approvalIds ?? []).includes(approval.id) || Boolean(approval.jobId && delegation.jobIds.includes(approval.jobId))));
   return (
     <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`}>
@@ -389,7 +387,7 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
           {target ? <span className="jav"><Avatar sprite={target.sprite} prop={target.prop} size={40} /></span> : null}
           <span className="jt">交给「{name}」</span>
           <span className={`st${delegation.status === "done" ? " done" : ""}${delegation.status === "stuck" || delegation.status === "interrupted" || delegation.status === "returned" ? " bad" : ""}`}>
-            <Icon name={delegation.status === "running" ? "spin" : delegation.status === "done" ? "check" : delegation.status === "waiting" ? "pause" : "close"} className={delegation.status === "running" ? "spin" : ""} size={14} />
+            <Icon name={delegation.status === "running" ? "spin" : delegation.status === "done" ? "check" : delegation.status === "waiting" ? "pause" : delegation.status === "takenOver" ? "user" : "close"} className={delegation.status === "running" ? "spin" : ""} size={14} />
             {labels[delegation.status]}
           </span>
         </div>
@@ -436,7 +434,9 @@ function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean 
       <div className="qt">{approval.title}</div>
       {approval.detail ? <div className="qs">{approval.detail}</div> : null}
       <div className="opts">
-        {reply ? (
+        {approval.status === "expired" ? (
+          <div className="opt">已结束</div>
+        ) : reply ? (
           <div className="opt chosen">
             <span className="key">
               <Icon name="user" size={12} />
@@ -481,7 +481,7 @@ function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean 
             );
           })
         )}
-        {reply || animated || active ? null : (
+        {approval.status === "expired" || reply || animated || active ? null : (
           <div className="other">
             <input
               value={text}
@@ -503,9 +503,9 @@ function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean 
   );
 }
 
-function FileCard({ name, path, meta, fresh }: { name: string; path: string; meta?: string; fresh: boolean }) {
+function FileCard({ name, path, meta, fresh, itemId }: { name: string; path: string; meta?: string; fresh: boolean; itemId: string }) {
   return (
-    <button className={`att filecard${fresh ? " enter" : ""}`} onClick={() => openFilePreview(path, name)}>
+    <button className={`att filecard${fresh ? " enter" : ""}`} data-item-id={itemId} onClick={() => openFilePreview(path, name)}>
       <span className="ico">
         <Icon name={fileIcon(path)} size={18} />
       </span>
@@ -520,9 +520,9 @@ function FileCard({ name, path, meta, fresh }: { name: string; path: string; met
 }
 
 /** 图片条目：缩略图，点开文件预览（预览里再点可以放大）。 */
-function ImageCard({ name, path, fresh }: { name: string; path: string; fresh: boolean }) {
+function ImageCard({ name, path, fresh, itemId }: { name: string; path: string; fresh: boolean; itemId: string }) {
   return (
-    <button className={`imgcard${fresh ? " enter" : ""}`} onClick={() => openFilePreview(path)} title={name}>
+    <button className={`imgcard${fresh ? " enter" : ""}`} data-item-id={itemId} onClick={() => openFilePreview(path)} title={name}>
       <img src={photoUrl(path)} alt={name} loading="lazy" />
     </button>
   );
@@ -669,8 +669,9 @@ function ItemView({
       <>
         {item.routine ? (
           <div className={`tag${fresh ? " enter-fade" : ""}`}>
-            <Icon name="clock" size={13} />
-            {item.routine.name}
+            {item.routine.jobId ? (
+              <button onClick={() => openJob(item.routine!.jobId!)}><Icon name="clock" size={13} />{item.routine.name}</button>
+            ) : <><Icon name="clock" size={13} />{item.routine.name}</>}
           </div>
         ) : null}
         <div className="message-row" data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
@@ -701,7 +702,7 @@ function ItemView({
     return (
       <div className={`sys${fresh ? " enter-fade" : ""}`} id={item.handbackId ? `handback-${item.handbackId}` : undefined}>
         {item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}
-        {item.handbackId ? <button onClick={() => void jumpToHandback("hob", item.handbackId!, true)}>{item.text}</button> : item.text}
+        {item.handbackId ? <button onClick={() => void jumpToHandback("hob", item.handbackId!, true)}>{item.text}</button> : item.icon === "skill" && item.path ? <button onClick={() => openFilePreview(item.path!)}>{item.text}</button> : item.icon === "memory" ? <span className="sys-memory" title={item.text}>{item.text.replace(/[:：,，;；、]+\s*$/u, "")}</span> : item.text}
       </div>
     );
   }
@@ -713,7 +714,7 @@ function ItemView({
 
   if (item.kind === "job") {
     const job = s.jobs[item.jobId];
-    return job ? <JobCard job={job} fresh={fresh} /> : null;
+    return job ? <JobCard job={job} round={item.round} fresh={fresh} itemId={item.id} /> : null;
   }
 
   if (item.kind === "draft") {
@@ -730,10 +731,12 @@ function ItemView({
     return delegation ? <DelegationCard delegation={delegation} fresh={fresh} /> : null;
   }
 
+  if (item.kind === "image") return <ImageGenCard {...item} fresh={fresh} itemId={item.id} />;
+
   return isImagePath(item.path) ? (
-    <ImageCard path={item.path} name={item.name} fresh={fresh} />
+    <ImageCard path={item.path} name={item.name} fresh={fresh} itemId={item.id} />
   ) : (
-    <MediaCard path={item.path} name={item.name} fallback={<FileCard path={item.path} name={item.name} meta={item.meta} fresh={fresh} />} />
+    <MediaCard path={item.path} name={item.name} itemId={item.id} fallback={<FileCard path={item.path} name={item.name} meta={item.meta} fresh={fresh} itemId={item.id} />} />
   );
 }
 

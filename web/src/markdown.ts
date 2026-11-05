@@ -3,6 +3,7 @@ import { Marked } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import type katex from "katex";
 import { iconSvg } from "./icons.tsx";
+import { parseKnowledgeLink } from "../../shared/knowledge.ts";
 
 function escapeHtml(s: string): string {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
@@ -72,8 +73,10 @@ const SAFE_HREF = /^(https?:|mailto:|\/|#|\.)/i;
 export function renderMarkdown(text: string): string {
   const html = markdown.parse(text, { async: false, gfm: true, breaks: true }) as string;
   return html.replace(/<a href="([^"]*)"/g, (_m, href: string) =>
-    SAFE_HREF.test(href.trim()) ? `<a target="_blank" rel="noreferrer" href="${href}"` : "<a",
-  );
+    parseKnowledgeLink(href) ? `<a class="knowledge-citation" href="${href}"` : SAFE_HREF.test(href.trim()) ? `<a target="_blank" rel="noreferrer" href="${href}"` : "<a",
+  ).replace(/(<a class="knowledge-citation"[^>]*>)/g, `$1${iconSvg("doc", 13)}`)
+    // 模型常照着附带资料的格式把出处写在括号里；标签本身已经够醒目，括号去掉
+    .replace(/[（(]\s*(<a class="knowledge-citation"[^>]*>[\s\S]*?<\/a>)\s*[）)]/g, "$1");
 }
 
 /**

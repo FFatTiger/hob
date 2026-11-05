@@ -17,7 +17,7 @@ FROM node:22-bookworm-slim
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl git openssh-client python3 ripgrep fd-find procps tini \
   && rm -rf /var/lib/apt/lists/* \
-  && mkdir /data && chown node:node /data
+  && mkdir /data /shared && chown node:node /data /shared
 WORKDIR /app
 COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules

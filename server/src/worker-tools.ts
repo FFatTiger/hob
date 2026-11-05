@@ -13,15 +13,14 @@ export function registerReportTool(runtime: HobRuntime, jobId: string): ToolDefi
   return {
     name: "report",
     label: "提交结果",
-    description:
-      "任务结束时必须调用一次，提交结果。summary 用中文写给用户：一两句结论 + 关键数字，不要罗列过程。",
+    description: "任务结束时调用一次，提交结果。",
     promptSnippet: "任务结束必须调用 report 提交结果。",
     parameters: Type.Object({
       outcome: Type.Unsafe<"done" | "stuck" | "need_approval">(
-        Type.String({ description: "done 已完成 / stuck 受阻 / need_approval 待确认" }),
+        Type.String({ description: "done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板" }),
       ),
-      summary: Type.String({ description: "中文摘要，一两句结论 + 关键数字，不超过 600 字" }),
-      files: Type.Optional(Type.Array(Type.String(), { description: "产出文件的绝对路径" })),
+      result: Type.String({ description: "完整结果：结论、数据、链接、文件路径；写给派活的助手。" }),
+      files: Type.Optional(Type.Array(Type.String(), { description: "要给用户看的文件（绝对路径）" })),
     }),
     execute: async (_id, params: any) => {
       // 不认识的结果不能当成已完成：退回让模型重新调用
@@ -34,7 +33,7 @@ export function registerReportTool(runtime: HobRuntime, jobId: string): ToolDefi
       }
       runtime.jobs.reportFromTool(jobId, {
         outcome: params.outcome,
-        summary: String(params.summary ?? ""),
+        result: String(params.result ?? ""),
         ...(Array.isArray(params.files) && params.files.length ? { files: params.files as string[] } : {}),
       });
       return ok("结果已记录。");
@@ -47,7 +46,7 @@ export function registerAskTool(runtime: HobRuntime, jobId: string): ToolDefinit
   return {
     name: "ask_user",
     label: "询问用户",
-    description: "遇到规则要求执行前确认、或者不可逆的操作时，用这个询问用户，会一直等到用户选择。返回用户选择的选项文字。",
+    description: "在对话里出选择题卡片（2 到 3 个选项），等用户选，返回用户的选择。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。",
     promptSnippet: "规则要求执行前确认的事，执行前必须调用 ask_user。",
     parameters: Type.Object({
       title: Type.String({ description: "问题，一句话" }),
@@ -55,27 +54,30 @@ export function registerAskTool(runtime: HobRuntime, jobId: string): ToolDefinit
       options: Type.Array(
         Type.Object({
           label: Type.String({ description: "选项文字" }),
-          always: Type.Optional(Type.Boolean({ description: "选中后将这句话记为规则" })),
         }),
         { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
       ),
-      ruleText: Type.Optional(Type.String({ description: "always 选项要写进规则的文字" })),
+      remember: Type.Optional(Type.String({ description: "同类事以后可以不再问时，填这类事的简称（如「清理临时目录」）；卡片会多一个「以后直接做」的选项。" })),
     }),
     execute: async (_id, params: any) => {
-      const labels: { label: string; always?: boolean }[] = Array.isArray(params.options) ? params.options : [];
+      const labels: { label: string }[] = Array.isArray(params.options) ? params.options : [];
       if (labels.length < 2 || labels.length > 3) {
         return { content: [{ type: "text" as const, text: "选项要 2 到 3 个。" }], details: undefined, isError: true };
+      }
+      const remember = typeof params.remember === "string" ? params.remember.trim() : "";
+      if (remember && labels.length > 2) {
+        return { content: [{ type: "text" as const, text: "带 remember 时最多给 2 个选项。" }], details: undefined, isError: true };
       }
       const options: ApprovalOption[] = labels.map((option, index) => ({
         key: (["A", "B", "C"] as const)[index],
         label: String(option.label),
-        ...(option.always ? { always: true } : {}),
       }));
+      if (remember) options.push({ key: "C", label: `以后「${remember}」直接做`, always: true });
       const answer = await runtime.jobs.askQuestion(jobId, {
         title: String(params.title),
         ...(params.detail ? { detail: String(params.detail) } : {}),
         options,
-        ...(params.ruleText ? { ruleText: String(params.ruleText) } : {}),
+        ...(remember ? { ruleText: remember } : {}),
       });
       // 用户可能没选给出的选项，而是自己写了一段：answer 已经是回给模型的整句
       return ok(answer);

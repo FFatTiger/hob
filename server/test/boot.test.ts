@@ -53,6 +53,7 @@ describe("启动时把环境指向 HOB_HOME", () => {
       CLAUDECODE: "1",
       CLAUDE_CODE_OAUTH_TOKEN: "oauth",
       CLAUDE_CODE_ANYTHING_ELSE: "1",
+      CLAUDE_CONFIG_DIR: "/other/claude",
       PATH: "/usr/bin",
     };
     applyEngineEnv(env, tempHome());
@@ -110,7 +111,7 @@ describe("启动时把环境指向 HOB_HOME", () => {
       const models = await hob.runtime.models.get();
       expect(models.map((model) => model.ref)).toEqual(["hob-faux/faux-1"]);
 
-      hob.faux.setResponses([call("report", { outcome: "done", summary: "跑通了" }), text("好了")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "跑通了" }), text("好了")]);
       const job = await hob.runtime.jobs.start("hob", { title: "试一下", instruction: "跑一下" });
       await hob.runtime.jobs.waitIdle();
       expect(hob.runtime.store.job(job.id)!.status).toBe("done");

@@ -1,8 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { Item } from "../../shared/types.ts";
 import { answerApproval, createFromDraft } from "../src/actions.ts";
 import { createRuntime } from "../src/runtime.ts";
+import { createApp } from "../src/http.ts";
 import { PiHost } from "../src/pi.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { applyDelta, mergeItems } from "../../web/src/merge.ts";
@@ -25,6 +26,35 @@ function systemText(context: {
 }
 
 describe("Router", () => {
+  it("现在块只进模型消息，不进用户气泡或事件展示", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      hob.faux.setResponses([text("收到"), text("知道了")]);
+      await hob.runtime.router.send("hob", { text: "你好" });
+      await hob.runtime.router.waitIdle("hob");
+      await hob.runtime.router.event("hob", "任务完成");
+      await waitFor(() => readFileSync(hob.runtime.store.routerFile("hob"), "utf8").includes("[hob-event] 任务完成"));
+      await hob.runtime.router.waitIdle("hob");
+      const entries = readFileSync(hob.runtime.store.routerFile("hob"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const user = entries.find((entry) => entry.type === "message" && entry.message?.role === "user");
+      expect(JSON.stringify(user.message.content)).toContain("【现在】");
+      expect(JSON.stringify(user.message.content)).toContain("你好");
+      expect(entries.find((entry) => entry.customType === "hob.user").data.text).toBe("你好");
+      const event = entries.find((entry) => entry.type === "custom_message" && entry.customType === "hob.event");
+      expect(event.content).toMatch(/^【现在】[\s\S]*\n\n\[hob-event\] 任务完成$/);
+      expect(event.display).toBe(false);
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "user")).toMatchObject([{ text: "你好" }]);
+      expect(JSON.stringify(hob.runtime.router.items("hob"))).not.toContain("【现在】");
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const response = await app.request("/api/assistants/hob/items", { headers: { cookie } });
+      expect(response.status).toBe(200);
+      const page = await response.json();
+      expect(page.items.filter((item: Item) => item.kind === "user")).toMatchObject([{ text: "你好" }]);
+      expect(JSON.stringify(page)).not.toContain("【现在】");
+    } finally { hob.close(); }
+  });
   it("记忆插件写成功就出一行「记忆已更新」", async () => {
     const hob = makeHob();
     try {
@@ -98,8 +128,8 @@ describe("Router", () => {
         call("ask_user", {
           title: "发到公众号吗？",
           detail: "发出去就撤不回了",
-          options: [{ label: "发" }, { label: "以后这类直接发，不用问我", always: true }],
-          ruleText: "发公众号",
+          options: [{ label: "发" }, { label: "不发" }],
+          remember: "发公众号",
         }),
         text("等你定。"),
       ]);
@@ -108,20 +138,20 @@ describe("Router", () => {
 
       const approval = hob.runtime.store.approvals()[0];
       expect(approval).toMatchObject({ status: "pending", source: "router", title: "发到公众号吗？" });
-      expect(approval.options.map((option) => option.key)).toEqual(["A", "B"]);
+      expect(approval.options.map((option) => option.key)).toEqual(["A", "B", "C"]);
 
       const question = hob.runtime.router.items("hob").items.find((item) => item.kind === "question");
       expect(question).toMatchObject({ kind: "question", approvalId: approval.id });
 
       hob.faux.setResponses([text("好，以后直接发。")]);
-      const result = await answerApproval(hob.runtime, approval.id, { key: "B" });
+      const result = await answerApproval(hob.runtime, approval.id, { key: "C" });
       expect(result.status).toBe(200);
       await hob.runtime.router.waitIdle("hob");
 
       expect(hob.runtime.store.rules("hob")).toMatchObject([{ text: "发公众号", mode: "allow" }]);
       const items = hob.runtime.router.items("hob").items;
       expect(items.some((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 发公众号")).toBe(true);
-      expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "answered", chosen: "B" });
+      expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "answered", chosen: "C" });
 
       // 再答一次 409
       const again = await answerApproval(hob.runtime, approval.id, { key: "A" });
@@ -129,6 +159,25 @@ describe("Router", () => {
     } finally {
       hob.close();
     }
+  });
+
+  it("对话回复结束本助手的 Router 提问，不影响任务提问，即使没有模型", async () => {
+    const hob = makeHob();
+    try {
+      hob.faux.setResponses([call("ask_user", { title: "发吗", options: [{ label: "发" }, { label: "不发" }] })]);
+      await hob.runtime.router.send("hob", { text: "帮我发" });
+      await hob.runtime.router.waitIdle("hob");
+      const approval = hob.runtime.store.approvals()[0];
+      const jobApproval = { ...approval, id: "job-question", source: "job" as const, jobId: "job-1" };
+      hob.runtime.store.saveApproval(jobApproval);
+      const emitted: string[] = [];
+      hob.runtime.bus.subscribe((entry) => { if (entry.type === "approval") emitted.push(entry.approval.id); });
+      vi.spyOn(hob.runtime.router as unknown as { modelGap: () => Promise<string | undefined> }, "modelGap").mockResolvedValue("没有模型");
+      await hob.runtime.router.send("hob", { text: "先别发" });
+      expect(hob.runtime.store.approval(approval.id)?.status).toBe("expired");
+      expect(hob.runtime.store.approval(jobApproval.id)?.status).toBe("pending");
+      expect(emitted).toEqual([approval.id]);
+    } finally { hob.close(); }
   });
 
   it("自己写的一段话作为答案：事件里写清是用户写的，照样进 Router 上下文", async () => {
@@ -163,8 +212,8 @@ describe("Router", () => {
       hob.faux.setResponses([
         call("ask_user", {
           title: "升级完要重启吗？",
-          options: [{ label: "只重启 hapi-hub" }, { label: "以后两个都重启", always: true }],
-          ruleText: "升级 hapi 后重启 hapi-hub / hapi-runner",
+          options: [{ label: "只重启 hapi-hub" }, { label: "暂不重启" }],
+          remember: "升级 hapi 后重启 hapi-hub / hapi-runner",
         }),
       ]);
       await hob.runtime.router.send("hob", { text: "刚升级了 hapi" });
@@ -177,7 +226,7 @@ describe("Router", () => {
         call("set_rule", { text: "升级 hapi 后重启 hapi-hub / hapi-runner", mode: "allow" }),
         text("好，以后两个都重启。"),
       ]);
-      expect((await answerApproval(hob.runtime, approval.id, { key: "B" })).status).toBe(200);
+      expect((await answerApproval(hob.runtime, approval.id, { key: "C" })).status).toBe(200);
       await hob.runtime.router.waitIdle("hob");
 
       const notes = hob.runtime
@@ -370,12 +419,12 @@ describe("Router", () => {
         expect(result.terminate).toBe(true);
         return result.content[0].text;
       };
-      hob.faux.setResponses([call("report", { outcome: "done", summary: "好了" }), text("好")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "好了" }), text("好")]);
       hob.faux.appendResponses([text("好")]);
 
-      expect(await run("start_job", { title: "查磁盘", instruction: "看看磁盘" })).toContain("本轮到此结束");
+      expect(await run("start_job", { title: "查磁盘", instruction: "看看磁盘" })).toMatch(/^任务「查磁盘」.*已开始。$/);
       expect(await run("ask_user", { title: "发吗", options: [{ label: "发" }, { label: "别发" }] })).toContain(
-        "本轮到此结束",
+        "问题卡已显示给用户。",
       );
       expect(
         await run("propose_assistant", {
@@ -384,7 +433,7 @@ describe("Router", () => {
           dutyLong: "盯模型发布、agent 产品和开源项目，每天挑 6 条。",
           sprite: "bird",
         }),
-      ).toContain("本轮到此结束");
+      ).toContain("草稿卡已显示给用户。");
       expect(hob.runtime.store.drafts()[0]?.duty).toBe("盯着模型发布和");
       // 模型给的头像只认内置的，不能指到生成的头像文件上
       await run("propose_assistant", { name: "旁门", duty: "试试", dutyLong: "试试。", sprite: "img:img-abc123.png" });

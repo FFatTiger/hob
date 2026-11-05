@@ -7,6 +7,7 @@ import type {
   Assistant,
   AssistantSummary,
   Bootstrap,
+  ClaudeCodeSettings,
   Delegation,
   Draft,
   FileMeta,
@@ -37,34 +38,29 @@ import type {
   SettingsPatch,
   ThinkingLevelMapSetting,
 } from "../../shared/types.ts";
+import type { AssistantSkill } from "../../shared/skills.ts";
+import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup } from "../../shared/knowledge.ts";
 import { defaultSearch, type SearchProviderName, type SearchSettings } from "../../shared/search.ts";
 import { ApiError, realApi, type HobApi } from "./api.ts";
 import { applyDelta, mergeItems } from "./merge.ts";
 import { shouldOpenLive } from "./page-live.ts";
-import { clearFresh, markFresh } from "./motion.ts";
+import { clearFresh, flashItem, markFresh } from "./motion.ts";
 import { isSentAs, localPath, pendingItem, type Attachment, type PendingMessage } from "./outbox.ts";
 import { isImagePath } from "../../shared/media.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
 import { resolveTheme, updateStatusColor } from "./theme.ts";
+import { popPage, pushPage, removeMissingLivePages, replacePage, selectPanelStack, type PanelPage } from "./panel-stack.ts";
+export type { FilePreviewState, PanelPage } from "./panel-stack.ts";
 
 export type Theme = "system" | "light" | "dark";
 export type PanelState =
   | { kind: "now" }
   | { kind: "routine"; id: string }
   | { kind: "newRoutine" } // 还没创建的定时任务：填好名称和任务内容才真正创建
-  | { kind: "assistant" };
-/** 盖在界面上的两层：任务详情（单条）和 任务记录（全部任务）。 */
-export type DetailState = { kind: "job"; id: string } | { kind: "jobs" };
-/** 文件预览：桌面右侧抽屉，可切全宽。 */
-export interface FilePreviewState {
-  path: string;
-  full: boolean;
-  /** 卡片上的显示名（展示页面的标题）；没有就用文件名 */
-  title?: string;
-  liveId?: string;
-}
+  | { kind: "assistant" }
+  | { kind: "routines" | "skills" | "knowledge" | "rules" };
 export interface WorklogState {
   jobs: Job[];
   assistantId: string | null;
@@ -84,6 +80,9 @@ export type SettingsSub =
   | { kind: "importProviders"; title: string }
   | { kind: "skill"; key: string; title: string }
   | { kind: "importSkills"; title: string }
+  | { kind: "mcpServer"; name: string; title: string }
+  | { kind: "addMcp"; title: string }
+  | { kind: "importMcp"; title: string }
   | { kind: "searchProvider"; name: SearchProviderName; title: string };
 
 const EMPTY_SETTINGS: Settings = {
@@ -107,25 +106,27 @@ export interface State {
   offline: string | null; // 实时连接断开
   assistants: AssistantSummary[];
   jobs: Record<string, Job>;
+  sedimenting: Record<string, boolean>;
   delegations: Record<string, Delegation>;
   routines: Routine[];
   approvals: Record<string, Approval>;
   drafts: Record<string, Draft>;
   settings: SettingsFile;
-  page: "main" | "settings"; // 设置是整页
+  page: "main" | "settings" | "knowledge";
+  knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
   items: Record<string, Item[]>;
   itemGen: Record<string, number>; // 每次重新拉这段对话 +1，聊天区据此判断“整批换了”而不是“新到一条”
   profiles: Record<string, Profile>;
+  assistantSkills: Record<string, { skills: AssistantSkill[]; loading: boolean; error: string | null }>;
   sel: string | null;
-  panel: PanelState;
-  detail: DetailState | null; // 任务详情 / 工作记录（盖在上面）
-  filePreview: FilePreviewState | null; // 文件预览（盖在任务详情上面）
+  panelStack: PanelPage[];
   livePages: Record<string, PageLive>;
   steps: Record<string, JobStep[]>; // 打开了详情的任务才有过程
   worklog: WorklogState | null;
   collapsed: boolean;
+  nowWide: boolean; // 右栏「正在做」展开成宽栏：大屏桌面 + 完整日志
   theme: Theme;
   query: string;
   quote: { itemId: string; text: string } | null;
@@ -144,7 +145,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
+const SCENES: SceneId[] = ["image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const api: HobApi = MOCK ? createMock(scene) : realApi;
@@ -154,7 +155,7 @@ const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice
 let watchingVisibility = false;
 
 function parsePanel(raw: string): PanelState {
-  if (raw === "assistant" || raw === "now") return { kind: raw };
+  if (raw === "assistant" || raw === "now" || raw === "routines" || raw === "skills" || raw === "knowledge" || raw === "rules" || raw === "newRoutine") return { kind: raw };
   if (raw.startsWith("routine:")) return { kind: "routine", id: raw.slice("routine:".length) };
   return { kind: "now" };
 }
@@ -178,25 +179,27 @@ function initial(): State {
     offline: null,
     assistants: [],
     jobs: {},
+    sedimenting: {},
     delegations: {},
     routines: [],
     approvals: {},
     drafts: {},
     settings: { revision: 0, settings: EMPTY_SETTINGS },
     page: "main",
+    knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
     items: {},
     itemGen: {},
     profiles: {},
+    assistantSkills: {},
     sel: "hob",
-    panel: { kind: "now" },
-    detail: null,
-    filePreview: null,
+    panelStack: [],
     livePages: {},
     steps: {},
     worklog: null,
     collapsed: false,
+    nowWide: false,
     theme: storedTheme() ?? "system",
     query: "",
     quote: null,
@@ -214,7 +217,8 @@ function initial(): State {
   };
   if (MOCK) {
     state.sel = ui.sel;
-    state.panel = parsePanel(ui.panel);
+    const panel = parsePanel(ui.panel);
+    state.panelStack = panel.kind === "now" ? [] : [panel];
     state.collapsed = ui.collapsed;
     state.mobile = ui.mobile;
     state.theme = ui.dark ? "dark" : "light";
@@ -222,12 +226,13 @@ function initial(): State {
   const aParam = params.get("a");
   if (aParam) state.sel = aParam;
   if (bootRoute.sel) state.sel = bootRoute.sel;
+  if (bootRoute.knowledge) state.page = "knowledge";
   if (bootRoute.settings) {
     state.page = "settings";
     state.section = bootRoute.section;
   }
   const pParam = params.get("panel");
-  if (pParam) state.panel = parsePanel(pParam);
+  if (pParam) { const panel = parsePanel(pParam); state.panelStack = panel.kind === "now" ? [] : [panel]; }
   if (params.get("collapsed") === "1") state.collapsed = true;
   if (themeFromUrl) state.theme = "dark";
   return state;
@@ -370,6 +375,18 @@ export async function loadModels(): Promise<ModelsView | null> {
 
 /* ---------------- 服务商 ---------------- */
 
+export async function loadClaude() {
+  const view = await api.claude();
+  set({ settings: view.settings });
+  return view;
+}
+
+export async function saveClaude(claude: ClaudeCodeSettings) {
+  const view = await api.saveClaude(state.settings.revision, claude);
+  set({ settings: view.settings });
+  return view;
+}
+
 /** 服务商变动后：整份设置（新 revision）一起更新，并拉一次新的模型名单。 */
 async function adoptProviders(view: ProvidersView): Promise<ProvidersView> {
   set({ settings: view.settings });
@@ -469,12 +486,47 @@ export const loadSkills = () => api.skills();
 export const loadSkillImports = (source: import("../../shared/skills.ts").SkillImportSource) => api.skillsImport(source);
 export const importSelectedSkills = (source: import("../../shared/skills.ts").SkillImportSource, ids: string[], overwrite: boolean) => api.importSkills(source, ids, overwrite);
 export const deleteSkill = (id: string) => api.deleteSkill(id);
+export const loadDesktop = () => api.desktop();
+export async function saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }) {
+  const view = await api.saveDesktop(body);
+  set({ settings: await api.settings() });
+  return view;
+}
+export async function saveDesktopPublic(revision: number, assistants: string[]) {
+  const view = await api.saveDesktopPublic(revision, assistants);
+  set({ settings: await api.settings() });
+  return view;
+}
+export const testDesktop = () => api.testDesktop();
+export const loadMcp = () => api.mcp();
+export const putMcpServer = (name: string, body: import("../../shared/mcp.ts").McpServerSave) => api.putMcp(name, body);
+export const patchMcpServer = (name: string, patch: import("../../shared/mcp.ts").McpServerPatch) => api.patchMcp(name, patch);
+export const deleteMcpServer = (name: string) => api.deleteMcp(name);
+export const testMcpServer = (name: string, refresh = true) => api.testMcp(name, refresh);
+export const loadMcpImports = () => api.mcpImports();
+export const importMcpServers = (ids: string[]) => api.importMcp(ids);
 export const loadSearch = () => api.search();
 export const testSearch = (name: string, baseUrl?: string, apiKey?: string) => api.testSearch(name, baseUrl, apiKey);
 export async function saveSearch(providers: SearchSettings, keys?: Record<string, string>) {
   try { const saved = await api.putSearch(state.settings.revision, providers, keys); set({ settings: saved }); return null; }
   catch (e) { if (e instanceof ApiError && e.status === 409) set({ settings: await api.settings() }); return errText(e); }
 }
+
+/* ---------------- 知识库索引 ---------------- */
+export const loadEmbeddingKey = () => api.embeddingKey();
+export const testEmbedding = (body: Parameters<typeof api.embeddingTest>[0]) => api.embeddingTest(body);
+export async function saveEmbedding(embedding: import("../../shared/types.ts").EmbeddingSettings, apiKey?: string) {
+  try {
+    const saved = await api.putEmbedding(state.settings.revision, embedding, apiKey);
+    set({ settings: saved.settings });
+    return saved;
+  } catch (e) {
+    if (e instanceof ApiError && e.status === 409) set({ settings: await api.settings() });
+    throw e;
+  }
+}
+export const getKnowledgeEntry = (id: string, chunk?: number) => api.knowledgeEntry(id, chunk);
+export const reindexKnowledge = (id: string) => api.reindexKnowledge(id);
 
 /* ---------------- 图像生成 ---------------- */
 
@@ -642,11 +694,11 @@ export async function removePushDevice(endpoint: string): Promise<PushResult> {
 }
 
 /** 设置页的「发送测试通知」：发给这台设备。 */
-export async function sendTestPush(): Promise<{ ok: true; sent: number } | { ok: false; error: string }> {
+export async function sendTestPush(): Promise<{ ok: true; sent: number; removed: number } | { ok: false; error: string }> {
   const subscription = await currentSubscription();
   try {
     const result = await api.testPush(subscription?.endpoint);
-    return { ok: true, sent: result.sent };
+    return { ok: true, sent: result.sent, removed: result.removed };
   } catch (e) {
     return { ok: false, error: errText(e) };
   }
@@ -723,7 +775,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], items: {}, profiles: {}, jobs: {}, routines: [] });
+  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [] });
 }
 
 async function loadBootstrap() {
@@ -748,7 +800,7 @@ async function loadBootstrap() {
         {
           onEvent: applyEvent,
           onReconnect: () => {
-            set({ offline: null });
+            set({ offline: null, sedimenting: {} });
             void loadBootstrap();
           },
           onDown: (reason) => set({ offline: reason }),
@@ -761,21 +813,25 @@ async function loadBootstrap() {
       state.sel && boot.assistants.some((a) => a.id === state.sel)
         ? state.sel
         : (boot.assistants.find((a) => a.primary)?.id ?? boot.assistants[0]?.id ?? null);
-    if (sel) await select(sel, true, mobileWantsChat());
+    if (sel) await select(sel, mobileWantsChat());
+    if (state.page === "knowledge") void loadKnowledge();
   } catch (e) {
     set({ phase: "error", error: errText(e) });
   }
 }
 
 const closedLivePages = new Set<string>();
-function applyEvent(ev: HobEvent) {
+export function applyEvent(ev: HobEvent) {
   switch (ev.type) {
+    case "sediment-finished":
+      set((s) => ({ sedimenting: { ...s.sedimenting, [ev.jobId]: false } }));
+      break;
     case "page-live": {
       const first = !state.livePages[ev.callId];
       set((s) => ({
         livePages: { ...s.livePages, [ev.callId]: ev },
         ...(shouldOpenLive(ev, { seen: !first, closed: closedLivePages.has(ev.callId), assistantId: s.sel, inChat: s.page === "main" && (s.mobile === "chat" || !window.matchMedia("(max-width: 767px)").matches) })
-          ? { filePreview: { path: "", full: false, liveId: ev.callId } } : {}),
+          ? { panelStack: pushPage(s.panelStack, { kind: "file", path: "", full: false, liveId: ev.callId }) } : {}),
       }));
       break;
     }
@@ -821,7 +877,7 @@ function applyEvent(ev: HobEvent) {
     case "job":
       set((s) => ({ jobs: { ...s.jobs, [ev.job.id]: ev.job } }));
       // 任务刚结束：重新拉一份过程，拿到落盘的完整输出（实时事件里的输出截到了 4KB）
-      if (endedStatus(ev.job.status) && state.detail?.kind === "job" && state.detail.id === ev.job.id && state.steps[ev.job.id]) {
+      if (endedStatus(ev.job.status) && state.panelStack.some((page) => page.kind === "job" && page.id === ev.job.id) && state.steps[ev.job.id]) {
         void loadTranscript(ev.job.id);
       }
       break;
@@ -861,8 +917,14 @@ function applyEvent(ev: HobEvent) {
     case "routine_removed":
       set((s) => ({
         routines: s.routines.filter((r) => r.id !== ev.id),
-        panel: s.panel.kind === "routine" && s.panel.id === ev.id ? { kind: "now" } : s.panel,
+        panelStack: s.panelStack.filter((page) => page.kind !== "routine" || page.id !== ev.id),
       }));
+      break;
+    case "skills":
+      void loadAssistantSkills(ev.assistantId);
+      break;
+    case "knowledge":
+      if (state.page === "knowledge") void loadKnowledge(false, true);
       break;
     case "profile":
       void loadProfile(ev.assistantId);
@@ -888,13 +950,13 @@ function watchVisibility(): void {
 
 /* ---------------- 数据 ---------------- */
 
-export async function select(id: string, keepPanel = false, nav = true, keepDetail = false) {
+export async function select(id: string, nav = true, keepStack = false) {
   set((s) => ({
     sel: id,
-    ...(s.sel !== id && !keepDetail ? { detail: null, worklog: null } : {}),
-    ...(nav ? { mobile: "chat" as const, sheet: false, search: false } : {}),
+    panelStack: selectPanelStack(s.panelStack, s.sel, id, keepStack),
+    ...(s.sel !== id && !keepStack ? { worklog: null } : {}),
+    ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
     quote: null,
-    ...(keepPanel ? {} : { panel: { kind: "now" as const } }),
   }));
   const a = state.assistants.find((x) => x.id === id);
   if (a && a.unread > 0) {
@@ -912,8 +974,7 @@ async function loadItems(id: string) {
     const active = new Set((page.pageLive ?? []).map((live) => live.callId));
     set((s) => {
       const livePages = Object.fromEntries(Object.entries(s.livePages).filter(([key, live]) => live.assistantId !== id || live.state === "done" || !knownLive.has(key) || active.has(key)));
-      const previewMissing = s.filePreview?.liveId && !livePages[s.filePreview.liveId];
-      return { livePages, ...(previewMissing ? { filePreview: null } : {}) };
+      return { livePages, panelStack: removeMissingLivePages(s.panelStack, livePages) };
     });
     for (const live of page.pageLive ?? []) applyEvent({ type: "page-live", ...live });
     set((s) => ({
@@ -1119,14 +1180,14 @@ export async function dismissDraft(id: string) {
   }
 }
 
-/** 并回 Hob：列表由 assistant_removed 事件更新，正看着它的切到主助手。 */
-export async function mergeAssistant(id: string) {
+/** 归档助手：列表由 assistant_removed 事件更新，正看着它的切到主助手。 */
+export async function archiveAssistant(id: string) {
   try {
-    await api.mergeAssistant(id);
+    await api.archiveAssistant(id);
     const primary = state.assistants.find((a) => a.primary);
-    if (state.sel === id && primary) await select(primary.id, true);
+    if (state.sel === id && primary) await select(primary.id);
   } catch (e) {
-    set({ notice: `并回失败：${errText(e)}` });
+    set({ notice: `归档失败：${errText(e)}` });
   }
 }
 
@@ -1145,19 +1206,23 @@ export async function jumpToDelegation(assistantId: string, id: string, forwarde
   await jumpToLink(assistantId, id, forwarded ? "forward" : "delegation");
 }
 
+async function findConversationItem(assistantId: string, matches: (item: Item) => boolean): Promise<boolean> {
+  let list = state.items[assistantId] ?? [];
+  while (!list.some(matches) && list.length) {
+    const page = await api.items(assistantId, list[0].id);
+    if (!page.items.length) break;
+    list = [...page.items, ...list];
+    set((s) => ({ items: { ...s.items, [assistantId]: list }, jobs: { ...s.jobs, ...index(page.jobs) }, approvals: { ...s.approvals, ...index(page.approvals) }, drafts: { ...s.drafts, ...index(page.drafts) }, delegations: { ...s.delegations, ...index(page.delegations ?? []) } }));
+    if (!page.hasMore) break;
+  }
+  return list.some(matches);
+}
+
 async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback") {
   if (state.sel !== assistantId || !state.items[assistantId]) await select(assistantId);
   const matches = (item: Item) => kind === "forward" ? item.kind === "user" && item.from?.delegationId === id : kind === "handback" ? item.kind === "note" && item.handbackId === id : item.kind === "delegation" && item.delegationId === id;
   try {
-    let list = state.items[assistantId] ?? [];
-    while (!list.some(matches) && list.length) {
-      const page = await api.items(assistantId, list[0].id);
-      if (!page.items.length) break;
-      list = [...page.items, ...list];
-      set((s) => ({ items: { ...s.items, [assistantId]: list }, jobs: { ...s.jobs, ...index(page.jobs) }, approvals: { ...s.approvals, ...index(page.approvals) }, delegations: { ...s.delegations, ...index(page.delegations ?? []) } }));
-      if (!page.hasMore) break;
-    }
-    if (!list.some(matches)) { set({ notice: "未找到对应的转交消息" }); return; }
+    if (!await findConversationItem(assistantId, matches)) { set({ notice: "未找到对应的转交消息" }); return; }
     requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(`${kind}-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })));
   } catch (e) { set({ notice: `无法定位转交消息：${errText(e)}` }); }
 }
@@ -1180,12 +1245,43 @@ export async function stopJob(jobId: string) {
   }
 }
 
+const skillLoads: Record<string, number> = {};
+export async function loadAssistantSkills(id: string) {
+  const generation = skillLoads[id] = (skillLoads[id] ?? 0) + 1;
+  set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: s.assistantSkills[id]?.skills ?? [], loading: true, error: null } } }));
+  try {
+    const skills = await api.assistantSkills(id);
+    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills, loading: false, error: null } } }));
+  } catch (e) {
+    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: [], loading: false, error: errText(e) } } }));
+  }
+}
+
+export async function changeAssistantSkill(id: string, name: string, action: "enable" | "disable" | "rollback" | "delete") {
+  try {
+    if (action === "rollback") await api.rollbackAssistantSkill(id, name);
+    else if (action === "delete") await api.deleteAssistantSkill(id, name);
+    else await api.patchAssistantSkill(id, name, action === "enable");
+    await loadAssistantSkills(id);
+  } catch (e) { set({ notice: `操作失败：${errText(e)}` }); }
+}
+
+export async function sedimentJob(id: string) {
+  set((s) => ({ sedimenting: { ...s.sedimenting, [id]: true } }));
+  try { await api.sedimentJob(id); return true; }
+  catch (e) {
+    set((s) => ({ notice: `沉淀失败：${errText(e)}`, sedimenting: { ...s.sedimenting, [id]: false } }));
+    return false;
+  }
+}
+
 /* ---------------- 定时任务 ---------------- */
 
-export async function saveRoutine(id: string, patch: Partial<Routine>) {
+export async function saveRoutine(id: string, patch: Omit<Partial<Routine>, "skill"> & { skill?: string | null }) {
   const before = state.routines.find((r) => r.id === id);
   if (!before) return;
-  set((s) => ({ routines: s.routines.map((r) => (r.id === id ? { ...r, ...patch } : r)) }));
+  const { skill, ...rest } = patch;
+  set((s) => ({ routines: s.routines.map((r) => r.id === id ? { ...r, ...rest, ...(skill !== undefined ? { skill: skill ?? undefined } : {}) } : r) }));
   try {
     await api.patchRoutine(id, patch);
   } catch (e) {
@@ -1203,7 +1299,7 @@ export async function createRoutine(body: Omit<Routine, "id" | "createdAt" | "ru
     return;
   }
   const added = created?.id ? created : state.routines.find((r) => !before.has(r.id));
-  if (added) openRoutine(added.id);
+  if (added) set((s) => ({ panelStack: replacePage(s.panelStack, { kind: "routine", id: added.id }) }));
 }
 
 export async function deleteRoutine(id: string) {
@@ -1311,24 +1407,26 @@ export async function loadTranscript(jobId: string) {
   }
 }
 
-export function openJob(id: string) {
-  set((s) => ({ detail: { kind: "job", id }, worklog: s.detail?.kind === "jobs" ? s.worklog : null }));
+export function openJob(id: string, round?: number) {
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "job", id, round }) }));
   void loadTranscript(id);
 }
 
 /** 任务记录：从右栏进来时只看这个助手的，从首页「全部」进来看所有助手的。 */
 export function openJobs(assistantId: string | null = null) {
-  set({ detail: { kind: "jobs" } });
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "jobs" }) }));
   void loadWorklog({ assistantId, status: null });
 }
 
-export function closeDetail() {
-  set({ detail: null });
+export function backPanel() {
+  const top = state.panelStack.at(-1);
+  if (top?.kind === "file" && top.liveId) closedLivePages.add(top.liveId);
+  set((s) => ({ panelStack: popPage(s.panelStack) }));
 }
 
-/** 从任务详情退回任务记录列表。 */
-export function backToJobs() {
-  set((s) => ({ detail: s.worklog ? { kind: "jobs" } : null }));
+export function closePanelPages() {
+  for (const page of state.panelStack) if (page.kind === "file" && page.liveId) closedLivePages.add(page.liveId);
+  set({ panelStack: [] });
 }
 
 export async function loadWorklog(filter: { assistantId?: string | null; status?: JobStatus | null } = {}) {
@@ -1399,15 +1497,31 @@ export async function jumpToJob(assistantId: string, jobId: string) {
 }
 
 export function openRoutine(id: string) {
-  set({ panel: { kind: "routine", id }, collapsed: false, sheet: true });
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "routine", id }) }));
 }
 
 export function openNewRoutine() {
-  set({ panel: { kind: "newRoutine" }, collapsed: false, sheet: true });
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "newRoutine" }) }));
 }
 
 export function openAssistantPanel() {
-  set({ panel: { kind: "assistant" }, collapsed: false, sheet: true });
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "assistant" }) }));
+}
+
+export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules") {
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind }) }));
+}
+
+export function loadSidebarFiles(assistantId: string, before?: string) {
+  return api.knowledge({ origin: "output", assistantId, before, limit: 30 });
+}
+
+let sidebarCollectionsLoaded = false;
+export async function loadSidebarCollections() {
+  if (sidebarCollectionsLoaded) return;
+  const page = await api.knowledge({ limit: 1 });
+  sidebarCollectionsLoaded = true;
+  set((s) => ({ knowledge: { ...s.knowledge, collections: page.collections } }));
 }
 
 /** 助手头像 / 助手行上的右键（桌面）或长按（手机）菜单。 */
@@ -1419,12 +1533,88 @@ export function closeAssistantMenu() {
   if (state.menu) set({ menu: null });
 }
 
+let knowledgeRequest = 0;
+export async function loadKnowledge(more = false, refresh = false) {
+  if (more && (state.knowledge.loading || !state.knowledge.hasMore)) return;
+  const k = state.knowledge;
+  const request = ++knowledgeRequest;
+  set({ knowledge: { ...k, loading: more || k.entries.length === 0, error: null } });
+  try {
+    const page = await api.knowledge({ ...(k.category === "output" || k.category === "chat" ? { origin: k.category } : k.category !== "all" ? { collection: k.category } : {}), q: k.q, kind: k.kind || undefined, assistantId: k.assistantId, before: more ? k.entries.at(-1)?.updatedAt : undefined, limit: refresh ? Math.min(200, Math.max(50, k.entries.length)) : 50 });
+    if (request !== knowledgeRequest) return;
+    set({ knowledge: { ...state.knowledge, entries: more ? [...k.entries, ...page.entries] : page.entries, collections: page.collections, hasMore: page.hasMore, loading: false } });
+  } catch (e) {
+    if (request === knowledgeRequest) set({ knowledge: { ...state.knowledge, loading: false, error: errText(e) } });
+  }
+}
+export function setKnowledgeFilter(patch: Partial<Pick<State["knowledge"], "category" | "q" | "kind" | "assistantId">>) {
+  // 旧结果的 hasMore 不适用于新条件：新的一页回来前不许接着往下翻，免得新旧条目拼在一起
+  set({ knowledge: { ...state.knowledge, ...patch, hasMore: false } });
+  void loadKnowledge();
+}
+export async function createKnowledgeCollection(name: string, select = true) {
+  try {
+    const collection = await api.createKnowledgeCollection(name.trim());
+    if (select) setKnowledgeFilter({ category: collection.id });
+    else await loadKnowledge(false, true);
+    return collection;
+  } catch (e) { set({ notice: `新建失败：${errText(e)}` }); return null; }
+}
+export async function renameKnowledgeCollection(id: string, name: string) {
+  try { await api.renameKnowledgeCollection(id, name.trim()); await loadKnowledge(false, true); return true; }
+  catch (e) { set({ notice: `改名失败：${errText(e)}` }); return false; }
+}
+export async function deleteKnowledgeCollection(id: string) {
+  try {
+    const { deleted } = await api.deleteKnowledgeCollection(id);
+    if (state.knowledge.category === id) setKnowledgeFilter({ category: "all" });
+    else await loadKnowledge(false, true);
+    set({ notice: deleted ? `已删除知识库，一起删掉 ${deleted} 个文件` : "已删除知识库" });
+  } catch (e) { set({ notice: `删除失败：${errText(e)}` }); }
+}
+export async function patchKnowledgeEntry(id: string, patch: { name?: string; collections?: string[] }) {
+  try { await api.patchKnowledgeEntry(id, patch); await loadKnowledge(false, true); return true; }
+  catch (e) { set({ notice: `保存失败：${errText(e)}` }); return false; }
+}
+export async function deleteKnowledgeEntry(id: string) {
+  try { await api.deleteKnowledgeEntry(id); await loadKnowledge(false, true); }
+  catch (e) { set({ notice: `删除失败：${errText(e)}` }); }
+}
+export async function uploadKnowledge(collection: string, files: File[]) {
+  try { await api.uploadKnowledge(collection, files); await loadKnowledge(false, true); }
+  catch (e) { set({ notice: `上传失败：${errText(e)}` }); }
+}
+export function openKnowledge() {
+  set({ page: "knowledge", panelStack: [], sheet: false });
+  void loadKnowledge();
+}
+export function closeKnowledge() { set({ page: "main", panelStack: [] }); }
+export async function jumpToItem(assistantId: string, itemId: string) {
+  set({ page: "main", panelStack: [] });
+  await select(assistantId);
+  try {
+    if (!await findConversationItem(assistantId, (item) => item.id === itemId)) { set({ notice: "未找到对应的对话消息" }); return; }
+    const deadline = performance.now() + 1500;
+    const locate = () => {
+      if (state.page !== "main" || state.sel !== assistantId) return;
+      const el = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
+      if (!el) {
+        if (performance.now() < deadline) requestAnimationFrame(locate);
+        else set({ notice: "没能定位到这条消息" });
+        return;
+      }
+      flashItem(el);
+    };
+    requestAnimationFrame(locate);
+  } catch (e) { set({ notice: `无法定位对话消息：${errText(e)}` }); }
+}
+
 export function openSettings() {
-  set({ page: "settings", section: null, sub: null, sheet: false, search: false });
+  set({ page: "settings", section: null, sub: null, sheet: false, search: false, panelStack: [] });
 }
 
 export function closeSettings() {
-  set({ page: "main" });
+  set({ page: "main", panelStack: [] });
 }
 
 /** 桌面点了左导航 / 手机点了列表里的一项。 */
@@ -1440,8 +1630,8 @@ export function closeSub() {
   set({ sub: null });
 }
 
-export function backToNow() {
-  set({ panel: { kind: "now" }, sheet: false });
+export function toggleNowWide() {
+  set((s) => ({ nowWide: !s.nowWide }));
 }
 
 export function collapsePanel() {
@@ -1449,7 +1639,7 @@ export function collapsePanel() {
 }
 
 export function expandPanel() {
-  set({ collapsed: false, panel: { kind: "now" } });
+  set({ collapsed: false, panelStack: [] });
 }
 
 export function setQuery(query: string) {
@@ -1501,31 +1691,24 @@ export function fetchFileMeta(path: string): Promise<FileMeta> {
   return api.fileMeta(path);
 }
 
-/** 任务工作目录里的产出文件（递归、最多 200 个）；失败提示并返回 null。 */
-export async function loadJobFiles(jobId: string): Promise<JobFilesView | null> {
-  try {
-    return await api.jobFiles(jobId);
-  } catch (e) {
-    set({ notice: `无法加载产出文件：${errText(e)}` });
-    return null;
-  }
+/** 读取工作目录的一层；错误交给目录视图就地显示。 */
+export function loadJobFiles(jobId: string, path?: string): Promise<JobFilesView> {
+  return api.jobFiles(jobId, path);
 }
 
 /** 打开文件预览（盖在最上层；点 esc 或背景关闭）。 */
-export function openFilePreview(path: string, title?: string) {
-  set({ filePreview: { path, full: false, ...(title ? { title } : {}) } });
+export function openFilePreview(path: string, title?: string, location?: { find?: string; page?: number }) {
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "file", path, full: false, ...(title ? { title } : {}), ...location }) }));
 }
 
 export function openLivePreview(callId: string) {
-  set({ filePreview: { path: "", full: false, liveId: callId } });
-}
-
-export function closeFilePreview() {
-  if (state.filePreview?.liveId) closedLivePages.add(state.filePreview.liveId);
-  set({ filePreview: null });
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "file", path: "", full: false, liveId: callId }) }));
 }
 
 /** 桌面右栏和全宽之间切换。 */
 export function togglePreviewFull() {
-  set((s) => (s.filePreview ? { filePreview: { ...s.filePreview, full: !s.filePreview.full } } : {}));
+  set((s) => {
+    const top = s.panelStack.at(-1);
+    return top?.kind === "file" ? { panelStack: replacePage(s.panelStack, { ...top, full: !top.full }) } : {};
+  });
 }

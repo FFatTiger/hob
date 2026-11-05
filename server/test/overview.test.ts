@@ -182,7 +182,7 @@ describe("overview", () => {
         const { timezone, aboutYou } = hob.runtime.settings.settings.general;
         return { timezone, aboutYou };
       };
-      expect(buildWorkerPrompt(hob.runtime.store, job.id, promptSettings())).toContain("overview");
+      expect(buildWorkerPrompt(hob.runtime.store, job.id, promptSettings())).not.toContain("overview");
       const otherJob = await hob.runtime.jobs.start("write", { title: "写周报", instruction: "写周报" });
       await hob.runtime.jobs.waitIdle(10_000);
       expect(buildWorkerPrompt(hob.runtime.store, otherJob.id, promptSettings())).not.toContain("overview");

@@ -1,4 +1,5 @@
 // 时间与 cron 的显示/解析。界面文字用中文，时间格式照设计稿（今天 10:05 / 昨天 17:05 / 10月30日 09:00）。
+import type { RoutineRun } from "../../shared/types.ts";
 const WEEK = ["日", "一", "二", "三", "四", "五", "六"];
 
 function clock(d: Date): string {
@@ -61,6 +62,11 @@ export function fmtTokens(count: number): string {
   if (count < 1000) return String(count);
   const k = count / 1000;
   return `${k < 10 ? k.toFixed(1) : Math.round(k)}k`;
+}
+
+/** 定时执行的用量：用时 · 操作次数 · token，旧记录没有就是空串。 */
+export function routineRunUsage(run: RoutineRun): string {
+  return [run.durationMs !== undefined ? fmtDuration(run.durationMs) : undefined, run.tools !== undefined ? `${run.tools} 次操作` : undefined, run.tokens !== undefined ? `${fmtTokens(run.tokens)} token` : undefined].filter(Boolean).join(" · ");
 }
 
 /** 文件大小：3.2 KB / 1.4 MB。 */

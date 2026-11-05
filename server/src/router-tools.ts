@@ -1,7 +1,10 @@
 import { Type } from "@earendil-works/pi-ai";
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename } from "node:path";
+import { basename, extname, join, resolve } from "node:path";
+import { readFile } from "node:fs/promises";
+import { IMAGE_TYPES } from "../../shared/media.ts";
+import { lookupFile } from "./files.ts";
 import {
   COLORS,
   COLOR_IDS,
@@ -17,6 +20,8 @@ import type { ColorId } from "../../shared/sprites.ts";
 import type { Approval, ApprovalOption, CustomProp, Draft, Routine } from "../../shared/types.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { newId } from "./ids.ts";
+import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
+import { generateImage, imageConfigured } from "./image.ts";
 import { defaultWorkRef, jobModel, noteOf, thinkingLevelsOf, usableRefs } from "./models.ts";
 import { overviewTool } from "./overview.ts";
 import { pageTool } from "./pages.ts";
@@ -82,23 +87,72 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
   });
   const modelText = modelList.length ? modelList.join("\n") : "（现在没有可用的模型）";
 
+  const checkFile = (path: string) => {
+    const found = lookupFile(runtime.home, path, store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []));
+    if (!found.ok) throw new Error(found.error);
+    return found.info.path;
+  };
+  const read = createReadToolDefinition(runtime.home, { operations: {
+    access: async (path) => { checkFile(path); },
+    readFile: async (path) => readFile(checkFile(path)),
+    detectImageMimeType: async (path) => IMAGE_TYPES[extname(checkFile(path)).toLowerCase()],
+  } }) as unknown as Tool;
   const tools: Tool[] = [
+    {
+      name: "save_job_as_skill",
+      label: "沉淀技能",
+      description: "把一个已完成的任务的做法沉淀成这个助手的技能，在任务自己的会话里做，做完对话里会有提示。",
+      parameters: Type.Object({ jobId: Type.String() }),
+      execute: async (_id, params: { jobId: string }) => {
+        const job = store.job(params.jobId);
+        if (!job || job.assistantId !== assistantId) return fail("任务不存在");
+        try { jobs.startSediment(job.id, "manual"); return ok("已开始沉淀技能。"); }
+        catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
+    {
+      ...read,
+      description: "读文件或看图片：用户发来的附件、任务的目录和产出、页面。长文件用 offset 分段读。",
+      execute: async (id, args: { path: string; offset?: number; limit?: number }, signal, update, ctx) => {
+        try {
+          const path = checkFile(resolve(runtime.home, args.path));
+          if (IMAGE_TYPES[extname(path).toLowerCase()]) {
+            if (ctx?.model && !ctx.model.input.includes("image")) return fail("当前对话模型看不了图片");
+            return await read.execute(id, { ...args, path }, signal, update, ctx);
+          }
+          const lines = (await readFile(checkFile(path), "utf8")).split("\n");
+          const start = Math.max(0, Math.floor(args.offset ?? 1) - 1);
+          if (start >= lines.length) return fail(`Offset ${args.offset} is beyond end of file (${lines.length} lines total)`);
+          const end = Math.min(lines.length, start + Math.max(0, Math.floor(args.limit ?? lines.length)));
+          let count = start;
+          let size = 0;
+          while (count < end && size + lines[count].length + (count > start ? 1 : 0) <= 3900) {
+            size += lines[count].length + (count > start ? 1 : 0);
+            count++;
+          }
+          if (count === start && start < end) {
+            const next = start + 2 <= lines.length ? `；接着读用 offset=${start + 2}` : "";
+            const text = `${lines[start].slice(0, 3900)}\n（第 ${start + 1} 行共 ${lines[start].length} 字，这里只有前 3,900 字${next}）`;
+            return { ...ok(text), structuredContent: text };
+          }
+          const content = lines.slice(start, count).join("\n");
+          const text = count < lines.length ? `${content}\n（共 ${lines.length} 行，这里到第 ${count} 行；接着读用 offset=${count + 1}）` : content;
+          return { ...ok(text), structuredContent: text };
+        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
     {
       name: "start_job",
       label: "创建任务",
-      description:
-        "把需要动手的任务交给后台任务执行：读写文件、运行命令、修改内容都只能通过这个工具完成。立即返回任务 id，完成后会有一条事件回到对话。调用后这一轮就结束了：工具返回后不要再输出任何文字。" +
-        (modelList.length > 1
-          ? `可按任务难度和类型指定模型：${modelText}；不确定就不填，使用默认值。`
-          : `模型用 ${modelText}，不用指定。`),
+      description: "把要动手的事交给后台任务：跑命令、改文件、操作设备、多步调研。用户这次的原话、引用、附件和最近几条对话会自动带给任务；任务随时可以停。",
       promptSnippet: "把需要执行的任务交给后台任务。",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
-        instruction: Type.String({ description: "要做什么，写清楚目标和验收标准" }),
+        note: Type.Optional(Type.String({ description: "任务从原话里看不出、又需要知道的背景，最多 200 字。" })),
         cwd: Type.Optional(
           Type.String({
             description:
-              "任务的工作目录；不给就用任务自己的工作目录。写代码、改项目这类任务传项目目录。",
+              "可选，改某个项目时填项目目录；不填就在任务自己的目录里做。",
           }),
         ),
         files: Type.Optional(
@@ -106,25 +160,28 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             description: "要交给任务的文件路径（用户发来的附件）；图片会直接给模型看",
           }),
         ),
-        model: Type.Optional(Type.String({ description: `可选：${modelText}。不填就用默认。` })),
+        model: Type.Optional(Type.String({ description: `可选，不填用默认。聪明、成本、速度 0–100，越高越聪明、越贵、越快：\n${modelText}` })),
         thinking: Type.Optional(
           Type.String({ description: modelSettings.thinkingChoice === "fixed" ? "当前设置为固定思考档，此参数会被忽略，不要填。" : "可选：思考档以可分派模型列表里每个模型标的为准。不填用模型的默认思考档。" }),
         ),
       }),
       execute: async (_id, params: any) => {
         try {
+          const note = params.note == null ? "" : String(params.note);
+          if ([...note].length > 200) return fail("备注最多 200 字；用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景。");
+          const original = router.originalWords(assistantId, note, true, Array.isArray(params.files) ? params.files.map(String) : []);
           const job = await jobs.start(assistantId, {
             title: String(params.title),
-            instruction: String(params.instruction),
+            instruction: original.text,
             ...(params.cwd ? { cwd: String(params.cwd) } : {}),
-            ...(Array.isArray(params.files) && params.files.length ? { files: params.files.map(String) } : {}),
+            ...(original.files.length ? { files: original.files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
             ...(router.currentDelegation(assistantId) ? { delegationId: router.currentDelegation(assistantId) } : {}),
           });
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
           return endTurn(
-            `任务「${job.title}」（${job.id}）已启动，完成后会报告结果。任务卡已显示给用户。本轮到此结束：不要输出任何文字，不要再提这张卡。`,
+            `任务「${job.title}」（${job.id}）已开始。`,
           );
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
@@ -134,15 +191,17 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "reply_job",
       label: "补充任务说明",
-      description: "给正在运行的任务补充说明或纠正方向。",
+      description: "把补充、纠正或追问交给已有的任务，它带着原来的上下文和目录接着做；已经结束的任务也可以。",
       parameters: Type.Object({
         jobId: Type.String({ description: "任务 id" }),
         text: Type.String({ description: "要补充的话" }),
       }),
       execute: async (_id, params: any) => {
         try {
-          await jobs.reply(String(params.jobId), String(params.text));
-          return ok("已转交任务。");
+          const jobId = String(params.jobId);
+          await jobs.reply(jobId, String(params.text), "router");
+          const job = store.job(jobId)!;
+          return ok(`已交给任务「${job.title}」（${jobId}），它会接着做。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -165,28 +224,28 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "ask_user",
       label: "询问用户",
-      description:
-        "在对话里出选择题卡片让用户确认（最多 3 个选项）。用于规则要求执行前确认、或者操作不可逆的时候。选完答案会作为事件回到对话。调用后这一轮就结束了：工具返回后不要再输出任何文字。",
+      description: "在对话里出选择题卡片（2 到 3 个选项），等用户选，答案会回到对话。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。",
       parameters: Type.Object({
         title: Type.String({ description: "问题，一句话" }),
         detail: Type.Optional(Type.String({ description: "补充说明，写清后果" })),
         options: Type.Array(
           Type.Object({
             label: Type.String({ description: "选项文字，如「暂不发布」" }),
-            always: Type.Optional(Type.Boolean({ description: "选中后将这句话记为规则" })),
           }),
           { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
         ),
-        ruleText: Type.Optional(Type.String({ description: "always 选项要写进规则的文字，如「发布公众号」" })),
+        remember: Type.Optional(Type.String({ description: "同类事以后可以不再问时，填这类事的简称（如「清理临时目录」）；卡片会多一个「以后直接做」的选项。" })),
       }),
       execute: async (_id, params: any) => {
-        const labels: { label: string; always?: boolean }[] = Array.isArray(params.options) ? params.options : [];
+        const labels: { label: string }[] = Array.isArray(params.options) ? params.options : [];
         if (labels.length < 2 || labels.length > 3) return fail("选项要 2 到 3 个。");
+        const remember = typeof params.remember === "string" ? params.remember.trim() : "";
+        if (remember && labels.length > 2) return fail("带 remember 时最多给 2 个选项。");
         const options: ApprovalOption[] = labels.map((option, index) => ({
           key: (["A", "B", "C"] as const)[index],
           label: String(option.label),
-          ...(option.always ? { always: true } : {}),
         }));
+        if (remember) options.push({ key: "C", label: `以后「${remember}」直接做`, always: true });
         const approval: Approval = {
           id: newId("q-"),
           assistantId,
@@ -195,7 +254,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           options,
           status: "pending",
           source: "router",
-          ...(params.ruleText ? { ruleText: String(params.ruleText) } : {}),
+          ...(remember ? { ruleText: remember } : {}),
           createdAt: new Date().toISOString(),
         };
         store.saveApproval(approval);
@@ -204,13 +263,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
         await router.addItem(assistantId, { kind: "question", approvalId: approval.id });
         bus.emit({ type: "approval", approval });
         pushApproval({ push: runtime.push, store }, approval);
-        return endTurn("问题卡已显示给用户，等用户选。本轮到此结束：不要输出任何文字。");
+        return endTurn("问题卡已显示给用户。");
       },
     },
     {
       name: "set_rule",
       label: "记录规则",
-      description: "记录一条规则。mode=ask 表示执行前需要确认，mode=allow 表示直接执行。",
+      description: "记下用户对某类事的确认方式：ask 先问，allow 直接做。",
       parameters: Type.Object({
         text: Type.String({ description: "规则内容，如「发布公众号」" }),
         mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
@@ -403,6 +462,38 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     },
   ];
 
+  if (assistant().abilities?.image !== false && imageConfigured(runtime.settings.settings.image)) {
+    tools.push({
+      name: "generate_image",
+      label: "生成图片",
+      description: "直接在对话里按文字生成或修改图片，生成时显示卡片，完成后图片自动显示，不需要派任务或用 send_file 发送。返回的路径可作为后续改图的参考图。",
+      parameters: Type.Object({
+        prompt: Type.String({ description: "要画什么，越具体越好" }),
+        size: Type.Optional(Type.String({ description: "尺寸，如 1024x1024；不填用设置里的默认" })),
+        refs: Type.Optional(Type.Array(Type.String(), { description: "参考图的绝对路径（改图、按图生成的时候给）" })),
+      }),
+      execute: async (_id, params: any) => {
+        const config = runtime.settings.settings.image;
+        const prompt = String(params.prompt ?? "");
+        const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
+        const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() });
+        try {
+          const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "images"), config }, {
+            prompt,
+            ...(params.size ? { size: String(params.size) } : {}),
+            ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
+          });
+          await router.updateImage(assistantId, item.id, { status: "done", path });
+          return ok(`图片已经显示在对话里，不要再用 send_file 发一遍。图片路径：${path}`);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          await router.updateImage(assistantId, item.id, { status: "failed", error: message });
+          return fail(message);
+        }
+      },
+    });
+  }
+
   if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId, true));
 
   if (assistant().primary) {
@@ -411,14 +502,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       {
         name: "propose_assistant",
         label: "提议创建专属助手",
-        description:
-          "提议创建一个专属助手。会生成一张草稿卡，用户点「创建」后才会真正创建。用于同类任务反复出现时。调用后这一轮就结束了：工具返回后不要再输出任何文字。",
+        description: "同类事情反复出现、又没有合适的助手时，提议新建一个专属助手。生成草稿卡，用户点「创建」才会建。",
         parameters: Type.Object({
           name: Type.String({ description: "助手名字：职责加一个亲切的昵称，四五个字，如「运维小子」「写稿搭子」「代理管家」；不要只写「代理」「运维」这种光秃秃的词" }),
           duty: Type.String({ description: "左栏头像下面那行小字，最多 8 个字，如「线上和机器」「模型和 agent」" }),
           dutyLong: Type.String({ description: "草稿卡里的职责说明，两三句话，写完整一些" }),
           sprite: Type.String({
-            description: `头像：内置道具 id 之一（${PROP_IDS.filter((id) => id !== "hob").join(" ")}），或 custom（同时填 prop_art，自己画一件）`,
+            description: `内置道具：${PROP_IDS.filter((id) => id !== "hob").map((id) => `${id} ${PROPS[id].label}`).join("，")}；或 custom（同时填 prop_art，自己画一件）`,
           }),
           prop_art: Type.Optional(
             Type.Object(
@@ -442,7 +532,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           routines: Type.Optional(
             Type.Array(
               Type.Object({ name: Type.String(), instruction: Type.String(), schedule: Type.String() }),
-              { description: "建议包含的定时任务" },
+              { description: "可选。根据上下文判断这个助手需不需要定期做的事，不是每个助手都要有。拿不准就先问用户，问清楚再加。" },
             ),
           ),
           askFirst: Type.Optional(Type.Array(Type.String(), { description: "执行前需确认的事项" })),
@@ -455,6 +545,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           const checked = params.prop_art !== undefined ? validateCustomProp(params.prop_art) : undefined;
           if (checked && !checked.ok) return fail(`prop_art 画得不对：${checked.error}；照着原因改好，再调用一次。`);
           const given = parseSprite(String(params.sprite ?? ""));
+          if (given?.prop === "hob") return fail("hob 火苗是主助手专用的。");
           if (checked?.ok && given && given.prop !== "custom") {
             return fail("sprite 填了内置道具就不要传 prop_art；要自画一件就把 sprite 填 custom。");
           }
@@ -487,17 +578,17 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           await router.addItem(assistantId, { kind: "draft", draftId: draft.id });
           bus.emit({ type: "draft", draft });
           return endTurn(
-            "草稿卡已显示给用户，卡片里已有名称、职责、定时任务和补充说明。本轮到此结束：不要输出任何文字，不要再描述或总结这张卡。",
+            "草稿卡已显示给用户。",
           );
         },
       },
       {
         name: "message_assistant",
         label: "转交其他助手",
-        description: "把一件事交给更合适的助手去办：对话里会出现一张委派卡，对方的回复和它派出的任务全部结束后，结果会作为一条事件回到这里，你再用一两句话告诉用户。调用后本轮结束，不要再输出文字。",
+        description: "把一件事交给更合适的助手（见「其他助手」），由它负责到底；用户的原话和附件会自动转过去，对方的回复和结果会回到这里。",
         parameters: Type.Object({
           assistantId: Type.String({ description: "目标助手 id" }),
-          text: Type.String({ description: "要转交的内容" }),
+          note: Type.Optional(Type.String({ description: "可选，对方需要知道的背景，最多 200 字。" })),
         }),
         execute: async (_id, params: any) => {
           const targetId = String(params.assistantId);
@@ -505,8 +596,11 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           if (!target) return fail(`没有这个助手：${targetId}`);
           if (targetId === assistantId) return fail("不能转交给自己。");
           try {
-            await runtime.delegations.start(targetId, String(params.text));
-            return endTurn(`已转交给「${target.name}」，结果会自动回到这里。`);
+            const note = params.note == null ? "" : String(params.note);
+            if ([...note].length > 200) return fail("备注最多 200 字；用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景。");
+            const original = router.originalWords(assistantId, note);
+            await runtime.delegations.start(targetId, original.text, original.files);
+            return endTurn(`已转交给「${target.name}」。`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
           }
@@ -517,8 +611,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     tools.push({
       name: "hand_back_to_hob",
       label: "交回 Hob",
-      description: "这件事不在你的职责范围内时，把它交回主助手 Hob，由它转给合适的助手或自己处理。text 写清楚用户要什么，reason 一句话说明为什么不归你。调用后本轮结束，不要再输出文字。",
-      parameters: Type.Object({ text: Type.String(), reason: Type.String() }),
+      description: "这件事不归你管时交回 Hob，由它转给合适的助手。",
+      parameters: Type.Object({ text: Type.String({ description: "用户要什么" }), reason: Type.String({ description: "为什么不归你，一句话" }) }),
       execute: async (_id, params: any) => {
         const text = String(params.text ?? "").trim();
         const reason = String(params.reason ?? "").trim();
@@ -534,7 +628,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             await router.addForwarded("hob", text, handbackId, assistantId);
             await router.event("hob", `转自「${assistant().name}」：${text}\n交回原因：${reason}`);
           }
-          return endTurn("已交回 Hob，本轮结束，不要再输出文字。");
+          return endTurn("已交回 Hob。");
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -542,7 +636,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     });
   }
 
-  tools.push(...searchTools(runtime.home, () => runtime.settings.settings.search));
+  tools.push(findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search));
   return tools;
 }
 

@@ -1,7 +1,7 @@
 // 手机（宽 < 768px）：列表页 + 右栏内容的整页。
 import { matches } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { newAssistant, openSettings, setQuery, setSearch, useApp } from "../store.ts";
+import { newAssistant, openKnowledge, openSettings, setQuery, setSearch, useApp, type PanelPage } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { Panel } from "./Panel.tsx";
 
@@ -27,6 +27,9 @@ export function MobileList() {
           </div>
         ) : (
           <>
+            <button className="ib" title="知识库" onClick={openKnowledge}>
+              <Icon name="archive" size={19} />
+            </button>
             <button className="ib" title="搜索助手" onClick={() => setSearch(true)}>
               <Icon name="search" size={19} />
             </button>
@@ -48,10 +51,10 @@ export function MobileList() {
   );
 }
 
-export function Sheet({ leaving }: { leaving: boolean }) {
+export function Sheet({ leaving, layered = false, direction = "", page }: { leaving: boolean; layered?: boolean; direction?: string; page?: PanelPage | null }) {
   return (
-    <div className={`mfull${leaving ? " leaving" : ""}`}>
-      <Panel mobile />
+    <div className={`mfull${leaving ? " leaving" : ""}${layered ? ` layered ${direction}` : ""}`}>
+      <Panel mobile page={page} />
     </div>
   );
 }

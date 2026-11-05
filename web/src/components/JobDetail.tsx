@@ -1,14 +1,14 @@
 // 任务详情（桌面右侧宽抽屉 / 手机全屏）和任务记录（全部任务）。
-import { useEffect, useRef, useState } from "react";
-import type { Job, JobFileEntry, JobStatus, JobStep, ModelInfo } from "../../../shared/types.ts";
+import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties } from "react";
+import type { Job, JobFilesView, JobStatus, JobStep, ModelInfo } from "../../../shared/types.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { fileIcon } from "../file-icons.ts";
 import { Avatar } from "../sprites.tsx";
 import { useLeave } from "../motion.ts";
-import { diffLines, groupThinking, jobReason, titleParts, type StepRow } from "../steps.ts";
+import { diffLines, groupThinking, jobDetailRounds, jobReason, titleParts, visibleSteps, type StepRow } from "../steps.ts";
 import {
-  backToJobs,
-  closeDetail,
+  closePanelPages,
+  fetchFileMeta,
   loadJobFiles,
   loadModels,
   loadWorklog,
@@ -17,11 +17,16 @@ import {
   openJob,
   replyJob,
   select,
+  sedimentJob,
   stopJob,
   useApp,
+  type PanelPage,
 } from "../store.ts";
 import { fmtBytes, fmtDuration, fmtElapsed, fmtTokens, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
+import { PanelHead } from "./PanelHead.tsx";
+const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })));
+
 
 const STATUS: Record<JobStatus, { text: string; icon: IconName; spin?: boolean; bad?: boolean }> = {
   queued: { text: "排队中", icon: "clock" },
@@ -78,52 +83,36 @@ export function StatusTag({ job }: { job: Job }) {
 }
 
 /** 桌面主界面嵌入右栏；手机和设置页保留全屏 / 覆盖层。 */
-export function JobOverlay({ embedded = false }: { embedded?: boolean }) {
+export function JobOverlay({ embedded = false, direction = "", page }: { embedded?: boolean; direction?: string; page?: PanelPage }) {
   const s = useApp();
-  const detail = s.detail;
+  const top = page ?? s.panelStack.at(-1);
+  const detail = top?.kind === "job" || top?.kind === "jobs" ? top : null;
   const presence = useLeave(Boolean(detail), 180);
   const last = useRef(detail);
   if (detail) last.current = detail;
 
-  useEffect(() => {
-    if (!detail) return;
-    const onKey = (event: KeyboardEvent) => {
-      // 文件预览盖在上面时 Esc 先关它
-      if (event.key === "Escape" && !s.filePreview) closeDetail();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [detail, s.filePreview]);
-
   const shown = detail ?? last.current;
   if (!presence.mounted || !shown) return null;
-  const back = shown.kind === "job" && s.worklog;
   return (
-    <div className={`${embedded ? "jd-embedded" : "jd-overlay"}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closeDetail}>
+    <div className={`${embedded ? "jd-embedded" : "jd-overlay"}${direction ? ` ${direction}` : ""}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
       <div className="jd" onClick={(event) => event.stopPropagation()}>
-        <div className="jdhead">
-          <button className="ib" title={back ? "返回任务记录" : "关闭"} onClick={back ? backToJobs : closeDetail}>
-            <Icon name="left" size={18} />
-          </button>
-          <span className="t">{shown.kind === "jobs" ? "任务记录" : "任务"}</span>
-          <button className="ib" title="关闭" onClick={closeDetail}>
-            <Icon name="close" size={17} />
-          </button>
-        </div>
-        {shown.kind === "jobs" ? <WorklogPage /> : <JobDetail key={shown.id} id={shown.id} />}
+        {shown.kind === "jobs" ? <><PanelHead className="jdhead" title={<span className="t">任务记录</span>} close /><WorklogPage /></> : <JobDetail key={`${shown.id}-${shown.round ?? "default"}`} id={shown.id} round={shown.round} />}
       </div>
     </div>
   );
 }
 
-function JobDetail({ id }: { id: string }) {
+function JobDetail({ id, round }: { id: string; round?: number }) {
   const s = useApp();
   const job = s.jobs[id];
   const steps = s.steps[id];
   const body = useRef<HTMLDivElement>(null);
   // 在跑的任务打开时停在最新一步；已结束的从头看（结果排在最前）
-  const pinned = useRef(job ? active(job) : true);
+  const pinned = useRef(round === undefined && (job ? active(job) : true));
   const [models, setModels] = useState<ModelInfo[] | null>(null);
+  const [showDesktop, setShowDesktop] = useState(false);
+  // 续做过的任务：看第几轮。没点过就跟着最新一轮；从对话里第 N 张卡点进来就是第 N 轮
+  const [picked, setPicked] = useState(round);
 
   useEffect(() => {
     void loadModels().then((view) => setModels(view?.models ?? null));
@@ -153,23 +142,25 @@ function JobDetail({ id }: { id: string }) {
   if (!job) {
     return (
       <div className="jdbody">
+        <PanelHead className="jdhead" title={<span className="t">任务</span>} close />
         <div className="empty">无法读取这个任务。</div>
       </div>
     );
   }
 
   const owner = s.assistants.find((a) => a.id === job.assistantId);
-  const ended = !active(job);
   const modelName = job.model ? (models?.find((model) => model.ref === job.model)?.name ?? job.model) : "";
   const started = job.startedAt ?? job.createdAt;
   const elapsed = job.durationMs ?? (active(job) ? Date.now() - new Date(started).getTime() : undefined);
   const usage = job.usage;
   const reason = jobReason(job);
-  // 思考过程并到它后面那一步里，不单独占行
-  const timeline = steps === undefined ? undefined : groupThinking(steps);
 
   return (
     <>
+      <PanelHead className="jdhead" title={<span className="t">任务</span>} close>
+        {job.status === "done" ? <button className="panel-action" disabled={!!s.sedimenting[job.id]} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{s.sedimenting[job.id] ? "正在沉淀…" : "沉淀成技能"}</button> : null}
+        {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="panel-action" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />看桌面</button> : null}
+      </PanelHead>
       <div className="jdbody" ref={body}>
         <div className="jd-title">{job.title}</div>
         <div className="jd-meta">
@@ -201,32 +192,56 @@ function JobDetail({ id }: { id: string }) {
           </div>
         ) : null}
         {reason ? <div className="jd-reason">{reason}</div> : null}
-        {ended ? <Report job={job} /> : null}
-        <div className="lbl">任务内容</div>
-        <div className="jd-instruction">{job.instruction}</div>
-
-        <div className="lbl">执行过程</div>
-        <div className="jd-timeline">
-          {timeline === undefined ? (
-            <div className="empty">正在读取执行过程…</div>
-          ) : timeline.rows.length || timeline.thinking ? (
-            <>
-              {timeline.rows.map((step) => (
-                <Step key={step.id} step={step} cwd={job.cwd} />
+        {job.rounds?.length ? (() => {
+          const parts = jobDetailRounds(job, steps);
+          const current = Math.min(picked ?? parts.length - 1, parts.length - 1);
+          return <>
+            <div className="seg jd-rounds" role="tablist" style={{ "--seg-count": parts.length, "--seg-index": current } as CSSProperties}>
+              {parts.map((_, index) => (
+                <button key={index} role="tab" aria-selected={index === current} className={index === current ? "on" : undefined} onClick={() => setPicked(index)}>
+                  第 {index + 1} 轮
+                </button>
               ))}
-              {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}
-            </>
-          ) : (
-            <div className="empty">还没有执行步骤。</div>
-          )}
-        </div>
-
-        <Outputs job={job} />
-
-        {ended ? null : <Report job={job} />}
+            </div>
+            <RoundBody key={current} part={parts[current]!} last={current === parts.length - 1} index={current} />
+          </>;
+        })() : <>
+          <RoundBody part={{ job, instruction: job.instruction, steps }} last index={0} />
+        </>}
       </div>
 
-      {active(job) ? <ReplyBox job={job} /> : null}
+      <ReplyBox job={job} />
+      {showDesktop ? <Suspense fallback={<div>正在打开云桌面…</div>}><DesktopScreen onClose={() => setShowDesktop(false)} /></Suspense> : null}
+    </>
+  );
+}
+
+/** 一轮的内容：前面几轮写明那一轮的状态和用时（最后一轮就是头部那个状态）；工作目录只跟在最后一轮下面。 */
+function RoundBody({ part, last, index }: { part: { job: Job; instruction?: string; steps?: JobStep[] }; last: boolean; index: number }) {
+  const [expanded, setExpanded] = useState(false);
+  const timeline = part.steps === undefined ? undefined : groupThinking(part.steps);
+  const reason = jobReason(part.job);
+  const ended = !active(part.job);
+  return (
+    <>
+      {last ? null : (
+        <div className="jd-meta">
+          <StatusTag job={part.job} />
+          {part.job.durationMs !== undefined ? <span>用时 {fmtDuration(part.job.durationMs)}</span> : null}
+        </div>
+      )}
+      {reason && !last ? <div className="jd-reason">{reason}</div> : null}
+      {ended ? <><Report job={part.job} /><Outputs job={part.job} /></> : null}
+      {part.instruction ? <><div className="lbl">{index === 0 ? "任务内容" : "这一轮的要求"}</div><div className="jd-instruction">{part.instruction}</div></> : null}
+      <div className="lbl">执行过程</div>
+      <div className="jd-timeline">
+        {timeline === undefined ? <div className="empty">正在读取执行过程…</div> : timeline.rows.length || timeline.thinking ? <>
+          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+          {visibleSteps(timeline.rows, ended, expanded).remaining ? <div className="jd-tool"><button className="jd-tool-head" onClick={() => setExpanded(true)}><span className="ico"><Icon name="more" size={14} /></span><span className="tt">还有 {visibleSteps(timeline.rows, ended, expanded).remaining} 步</span></button></div> : null}
+          {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}
+        </> : <div className="empty">还没有执行步骤。</div>}
+      </div>
+      {last ? <Directory jobId={part.job.id} /> : null}
     </>
   );
 }
@@ -245,7 +260,7 @@ function ReplyBox({ job }: { job: Job }) {
     <div className="jd-foot">
       <input
         value={text}
-        placeholder="补充说明或更正方向"
+        placeholder={active(job) ? "补充说明或更正方向" : "接着说…"}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={(event) => {
           if (event.key === "Enter" && !event.nativeEvent.isComposing) submit();
@@ -474,59 +489,66 @@ function Report({ job }: { job: Job }) {
   );
 }
 
-/**
- * 产出文件：任务报告里交回的文件在前，工作目录里的其余文件跟在后面（修改时间倒序，同路径只一条）。
- * 点击进文件预览。
- */
+/** 只展示报告交回的文件，大小通过文件元数据取得。 */
 function Outputs({ job }: { job: Job }) {
-  const [dirFiles, setDirFiles] = useState<JobFileEntry[] | null>(null);
+  const paths = [...new Set(job.files ?? [])];
+  return paths.length ? <><div className="lbl">产出文件</div><div className="jd-files">{paths.map((path) => <OutputFile key={path} path={path} />)}</div></> : null;
+}
 
+function OutputFile({ path }: { path: string }) {
+  const [size, setSize] = useState<number>();
+  const [error, setError] = useState("");
   useEffect(() => {
     let live = true;
-    setDirFiles(null);
-    void loadJobFiles(job.id).then((view) => {
-      if (live) setDirFiles(view?.files ?? []);
-    });
-    return () => {
-      live = false;
-    };
-  }, [job.id]);
+    void fetchFileMeta(path).then((meta) => { if (live) setSize(meta.size); }).catch((e: unknown) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [path]);
+  return <button className="jd-file-row" onClick={() => openFilePreview(path)}><Icon name={fileIcon(path)} size={18} /><span>{path.split("/").pop()}</span>{error ? <small title={error}>大小读取失败</small> : size !== undefined ? <small>{fmtBytes(size)}</small> : null}</button>;
+}
 
-  const seen = new Set<string>();
-  const rows: { path: string; rel: string; size?: number }[] = [];
-  for (const path of job.files ?? []) {
-    if (seen.has(path)) continue;
-    seen.add(path);
-    rows.push({ path, rel: path.split("/").pop() ?? path });
-  }
-  for (const file of dirFiles ?? []) {
-    if (seen.has(file.path)) continue;
-    seen.add(file.path);
-    rows.push({ path: file.path, rel: file.rel, size: file.size });
-  }
-  if (!rows.length) return null;
+function Directory({ jobId }: { jobId: string }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<JobFilesView>();
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setError("");
+    void loadJobFiles(jobId).then((result) => { if (live) setView(result); }).catch((e: unknown) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [jobId, attempt]);
+  // 还没建出来或是空的：整行不出现
+  if (view && !view.total && !error) return null;
+  return <div className="jd-directory">
+    <button className="jd-directory-head" onClick={() => setOpen(!open)}><Icon name={open ? "down" : "chev"} size={15} />工作目录{view ? ` · ${view.fileCount} 个文件、${view.directoryCount} 个文件夹` : ""}</button>
+    {error ? <div className="jd-dir-error">{error} <button className="jd-more" onClick={() => setAttempt(attempt + 1)}>重试</button></div> : null}
+    {open && view ? <DirectoryRows jobId={jobId} view={view} /> : null}
+  </div>;
+}
 
-  return (
-    <>
-      <div className="lbl">产出文件</div>
-      {rows.map((row) => (
-        <button className="att plain filecard" key={row.path} onClick={() => openFilePreview(row.path)}>
-          <span className="ico">
-            <Icon name={fileIcon(row.path)} size={18} />
-          </span>
-          <span>
-            <span className="n" style={{ display: "block" }}>
-              {row.rel.split("/").pop()}
-            </span>
-            <span className="m">
-              {row.rel}
-              {row.size !== undefined ? ` · ${fmtBytes(row.size)}` : ""}
-            </span>
-          </span>
-        </button>
-      ))}
-    </>
-  );
+function DirectoryRows({ jobId, view }: { jobId: string; view: JobFilesView }) {
+  return <div className="jd-files">{view.files.map((entry) => entry.type === "file" ?
+    <button className="jd-file-row" key={entry.rel} onClick={() => openFilePreview(entry.path)}><Icon name={fileIcon(entry.name)} size={18} /><span>{entry.name}</span><small>{fmtBytes(entry.size)}</small></button> :
+    <DirectoryFolder key={entry.rel} jobId={jobId} entry={entry} />)}
+    {view.total > view.files.length ? <div className="jd-dir-more">还有 {view.total - view.files.length} 项</div> : null}
+  </div>;
+}
+
+function DirectoryFolder({ jobId, entry }: { jobId: string; entry: Extract<JobFilesView["files"][number], { type: "directory" }> }) {
+  const [open, setOpen] = useState(false);
+  const [view, setView] = useState<JobFilesView>();
+  const [error, setError] = useState("");
+  const [attempt, setAttempt] = useState(0);
+  useEffect(() => {
+    if (!open || view) return;
+    let live = true;
+    setError("");
+    void loadJobFiles(jobId, entry.rel).then((result) => { if (live) setView(result); }).catch((e: unknown) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
+    return () => { live = false; };
+  }, [open, view, jobId, entry.rel, attempt]);
+  return <div><button className="jd-file-row" onClick={() => setOpen(!open)}><Icon name={open ? "down" : "chev"} size={14} /><Icon name="folder" size={18} /><span>{entry.name}</span><small>{entry.count} 项</small></button>
+    {open ? <div className="jd-dir-child">{error ? <div className="jd-dir-error">{error} <button className="jd-more" onClick={() => setAttempt(attempt + 1)}>重试</button></div> : view ? <DirectoryRows jobId={jobId} view={view} /> : <div className="jd-dir-more">正在读取…</div>}</div> : null}
+  </div>;
 }
 
 function WorklogPage() {
@@ -536,7 +558,7 @@ function WorklogPage() {
   const status = log?.status ?? null;
 
   return (
-    <div className="jdbody">
+    <div className="jdbody" onScroll={(event) => { const el = event.currentTarget; if (log?.hasMore && !log.loading && el.scrollHeight - el.scrollTop - el.clientHeight < 100) void moreWorklog(); }}>
       <div className="jd-filters">
         <select
           className="pick"
@@ -579,7 +601,7 @@ function WorklogPage() {
                 key={job.id}
                 onClick={() => {
                   // 和首页一样：先进这个任务的助手的对话，再展开详情
-                  if (owner) void select(job.assistantId, false, true, true);
+                  if (owner) void select(job.assistantId, true, true);
                   openJob(job.id);
                 }}
               >

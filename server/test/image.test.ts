@@ -384,7 +384,7 @@ describe("Worker 生图", () => {
       /** 每次开任务都会先开 Router（它带 report 以外的另一套工具），这里只挑 Worker。 */
       const workers = () => opened.filter((entry) => entry.tools.includes("report"));
       const scripted = () => {
-        hob.faux.setResponses([call("report", { outcome: "done", summary: "好了" }), text("好")]);
+        hob.faux.setResponses([call("report", { outcome: "done", result: "好了" }), text("好")]);
       };
 
       // 1. 设置里没配生图：不注册
@@ -405,7 +405,7 @@ describe("Worker 生图", () => {
       await hob.runtime.jobs.start("hob", { title: "配了", instruction: "画一只猫", cwd: dir });
       await hob.runtime.jobs.waitIdle();
       expect(workers()[1].tools).toContain("generate_image");
-      expect(workers()[1].prompt).toContain("生图（generate_image）");
+      expect(workers()[1].prompt).not.toContain("生图（generate_image）");
       expect(workers()[1].prompt).not.toContain("不能做：生图");
 
       // 3. 助手关掉生图：即使配了也不注册
@@ -490,7 +490,7 @@ describe("图片进对话", () => {
     writeFileSync(doc, "# 笔记\n");
     try {
       hob.faux.setResponses([
-        call("report", { outcome: "done", summary: "画好了", files: [image, doc] }),
+        call("report", { outcome: "done", result: "画好了", files: [image, doc] }),
         text("好"),
       ]);
       await hob.runtime.jobs.start("hob", { title: "画猫", instruction: "画一只橘猫", cwd: dir });
@@ -506,7 +506,7 @@ describe("图片进对话", () => {
       expect(files()[0]).toMatchObject({ path: image, name: "cat.png", lead: true });
       // 助手收到的结果里写明图已经发了、别的文件在哪，免得它再派任务去取
       const routerLog = () => readFileSync(hob.runtime.store.routerFile("hob"), "utf8");
-      await waitFor(() => routerLog().includes("已经直接发到对话里"));
+      await waitFor(() => routerLog().includes("图片已发到对话里：cat.png"));
       expect(routerLog()).toContain(doc);
     } finally {
       hob.close();
@@ -536,7 +536,7 @@ describe("图片进对话", () => {
       };
       expect(
         buildWorkerPrompt(hob.runtime.store, job.id, { ...base, abilities: { exec: true, write: true, image: true } }),
-      ).toContain("生图（generate_image）");
+      ).not.toContain("生图（generate_image）");
       expect(
         buildWorkerPrompt(hob.runtime.store, job.id, { ...base, abilities: { exec: true, write: true, image: false } }),
       ).toContain("不能做：生图");

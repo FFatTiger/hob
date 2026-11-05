@@ -228,6 +228,11 @@ export async function testLoreConnection(
   return { ok: true, baseUrl: rawBase };
 }
 
+/** Hob 自带的 Lore 插件版本：vendor 里放的是 Lore 正式版，换版本用 `npm run update-lore -- <版本号>`。 */
+export const LORE_PLUGIN_VERSION: string = JSON.parse(
+  readFileSync(new URL("../../vendor/lore-pi-extension/package.json", import.meta.url), "utf8"),
+).version;
+
 /** 提示词里「记忆」一节的文案：按当前提供者给，关闭时整节不出。 */
 export function memoryPromptLines(provider: MemoryProvider): string[] {
   if (provider === "local") {
@@ -239,7 +244,7 @@ export function memoryPromptLines(provider: MemoryProvider): string[] {
   if (provider === "lore") {
     return [
       "## 记忆",
-      "你和用户是长期合作。涉及过去的偏好、决定和约定时，先在 Lore 里查；遇到值得长期记住的新事实，记进 Lore。",
+      "长期记忆在 Lore：过去的偏好、决定和约定先查 Lore；值得长期记住的新事实记进 Lore。读到的记忆和你刚核实的事实对不上（过时或有错），当场改对；整条已经不成立或没用了，就删掉。",
     ];
   }
   return [];
@@ -254,11 +259,11 @@ export const MEMORY_TOOL_PATTERNS: Record<MemoryProvider, string[]> = {
 
 /**
  * 会写记忆的工具：Router 调成功后在对话里出一行「记忆已更新 · …」。
- * 名字取自捆绑插件的实际注册（pi-memory 0.4.2 的 memory_write，Lore 1.12.4 的建/改节点）。
+ * 名字取自捆绑插件的实际注册（pi-memory 0.4.2 的 memory_write，Lore 插件的建/改节点）。
  */
 export const MEMORY_WRITE_TOOLS = new Set(["memory_write", "lore_create_node", "lore_update_node"]);
 
-/** note 里的摘要：写入内容的第一行，最多 30 个字。 */
+/** note 里的摘要：写入内容的第一行，最多 80 个字符。 */
 export function memoryNoteText(params: unknown): string | undefined {
   const record = isRecord(params) ? params : {};
   for (const key of ["content", "text", "title", "new_text", "old_text"]) {
@@ -266,7 +271,9 @@ export function memoryNoteText(params: unknown): string | undefined {
     if (typeof value !== "string") continue;
     const first = value.split("\n").map((line) => line.trim()).find((line) => line !== "");
     if (!first) continue;
-    return first.length > 30 ? `${first.slice(0, 30)}…` : first;
+    const chars = Array.from(first.replace(/[:：,，;；、]+\s*$/u, ""));
+    if (!chars.length) continue;
+    return chars.length > 80 ? `${chars.slice(0, 80).join("").replace(/[:：,，;；、]+\s*$/u, "")}…` : chars.join("");
   }
   return undefined;
 }

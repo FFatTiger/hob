@@ -4,7 +4,7 @@ import type { AssistantSummary } from "../../../shared/types.ts";
 import { matches } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
-import { newAssistant, openSettings, setQuery, useApp } from "../store.ts";
+import { newAssistant, openKnowledge, openSettings, setQuery, useApp } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 
 const assistantKey = (a: AssistantSummary) => a.id;
@@ -39,6 +39,10 @@ export function Sidebar() {
         <HomeSections size={42} markSel />
       </div>
       <div className="side-foot">
+        <button className="frow" onClick={openKnowledge}>
+          <Icon name="archive" size={18} />
+          <span className="sp">知识库</span>
+        </button>
         <button className="frow" onClick={openSettings}>
           <Icon name="gear" size={18} />
           <span className="sp">设置</span>

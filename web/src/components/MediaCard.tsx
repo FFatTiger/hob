@@ -5,7 +5,7 @@ import { samplePeaks } from "../waveform.ts";
 
 let playing: HTMLAudioElement | null = null;
 
-function AudioCard({ path, name, fallback }: { path: string; name: string; fallback: () => void }) {
+function AudioCard({ path, name, fallback, itemId }: { path: string; name: string; fallback: () => void; itemId?: string }) {
   const audio = useRef<HTMLAudioElement>(null);
   const [peaks, setPeaks] = useState<number[] | null>(null);
   const [time, setTime] = useState(0);
@@ -43,7 +43,7 @@ function AudioCard({ path, name, fallback }: { path: string; name: string; fallb
   }, [path]);
   const progress = duration ? Math.min(1, time / duration) : 0;
   const clock = (n: number) => `${Math.floor(n / 60)}:${String(Math.floor(n % 60)).padStart(2, "0")}`;
-  return <div className="media-audio">
+  return <div className="media-audio" data-item-id={itemId}>
     <audio ref={audio} src={fileUrl(path)} preload="metadata" onError={fallback}
       onPlay={(event) => { if (playing && playing !== event.currentTarget) playing.pause(); playing = event.currentTarget; setPaused(false); }}
       onPause={() => setPaused(true)} onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
@@ -63,11 +63,11 @@ function AudioCard({ path, name, fallback }: { path: string; name: string; fallb
   </div>;
 }
 
-export function MediaCard({ path, name, fallback }: { path: string; name: string; fallback: React.ReactNode }) {
+export function MediaCard({ path, name, fallback, itemId }: { path: string; name: string; fallback: React.ReactNode; itemId?: string }) {
   const [failed, setFailed] = useState(false);
   if (failed) return fallback;
   const kind = fileKind(path);
-  if (kind === "audio") return <AudioCard path={path} name={name} fallback={() => setFailed(true)} />;
-  if (kind === "video") return <div className="media-video"><video controls playsInline preload="metadata" src={fileUrl(path)} onError={() => setFailed(true)} /><button onClick={() => openFilePreview(path, name)}>{name}</button></div>;
+  if (kind === "audio") return <AudioCard path={path} name={name} fallback={() => setFailed(true)} itemId={itemId} />;
+  if (kind === "video") return <div className="media-video" data-item-id={itemId}><video controls playsInline preload="metadata" src={fileUrl(path)} onError={() => setFailed(true)} /><button onClick={() => openFilePreview(path, name)}>{name}</button></div>;
   return fallback;
 }

@@ -2,7 +2,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import type {
@@ -21,22 +21,28 @@ import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
 import { conversationPick, defaultWorkRef, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
 import { buildRouterTools } from "./router-tools.ts";
+import { boundKnowledge, formatKnowledge, KNOWLEDGE_INTRO } from "./knowledge-tools.ts";
 import { MEMORY_WRITE_TOOLS, memoryNoteText } from "./memory.ts";
 import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
 import { availableSkills } from "./skills.ts";
+import { usableAssistantSkills } from "./assistant-skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
+import { nowBlock } from "./now.ts";
+import { monthDayTimeText } from "./time.ts";
 
 export const ITEM_TYPE = "hob.item";
+export const ITEM_UPDATE_TYPE = "hob.item.update";
 export const USER_TYPE = "hob.user";
 export const EVENT_TYPE = "hob.event";
 
 /** 会话条目的 id 和 at 由会话文件给出，写卡片时不用传。 */
 /** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
 export interface EventDetails {
-  routine?: { id: string; name: string };
+  routine?: { id: string; name: string; jobId?: string };
   cont?: true;
   delegationId?: string;
+  sourceUserId?: string;
 }
 
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
@@ -66,6 +72,10 @@ interface RouterState {
   /** 还在跑的记忆写入工具：参数只在 tool_execution_start 里有，按 toolCallId 存着给 note 用 */
   memoryWriteArgs: Map<string, Record<string, unknown>>;
   currentDelegationId?: string;
+  currentUserId?: string;
+  pendingUsers?: { prompt: string; id: string }[];
+  pendingDelivery?: Promise<void>;
+  knowledgeNames?: string[];
   delegationReply?: string[];
   terminatingTools?: Set<string>;
 }
@@ -114,7 +124,7 @@ export function briefModelError(raw: string | undefined): string {
 function walk(entries: SessionEntry[]): { items: Item[]; lead: boolean } {
   const items: Item[] = [];
   let assistantIndex = 0;
-  let routine: { id: string; name: string } | undefined;
+  let routine: EventDetails["routine"];
   let lead = false;
   const push = (item: Item) => {
     items.push(lead ? { ...item, lead: true } : item);
@@ -139,6 +149,12 @@ function walk(entries: SessionEntry[]): { items: Item[]; lead: boolean } {
       // 旧版本把别的助手的审批转述进主助手的对话（relay）；现在审批只在提问的助手那里，历史里的转述卡不再显示
       if ((entry.data as { kind?: string; relay?: boolean } | undefined)?.relay) continue;
       push({ ...(entry.data as object), id: entry.id, at: entry.timestamp } as Item);
+      continue;
+    }
+    if (entry.type === "custom" && entry.customType === ITEM_UPDATE_TYPE) {
+      const update = entry.data as { id: string; status: "done" | "failed"; path?: string; error?: string };
+      const index = items.findIndex((item) => item.id === update.id && item.kind === "image");
+      if (index !== -1) items[index] = { ...items[index], ...update } as Item;
       continue;
     }
     if (entry.type === "custom_message" && entry.customType === EVENT_TYPE) {
@@ -203,7 +219,16 @@ export class RouterManager {
   /** 测试可改小：不给就看设置里的“回复多久无响应视为受阻” */
   stallOverrideMs?: number;
 
-  constructor(private readonly runtime: HobRuntime) {}
+  constructor(private readonly runtime: HobRuntime) {
+    for (const assistant of runtime.store.assistants()) {
+      const file = runtime.store.routerFile(assistant.id);
+      if (!existsSync(file)) continue;
+      const pending = deriveItems(readEntries(file)).filter((item) => item.kind === "image" && item.status === "pending");
+      if (!pending.length) continue;
+      const manager = SessionManagerImpl.open(file, dirname(file), runtime.home);
+      for (const item of pending) manager.appendCustomEntry(ITEM_UPDATE_TYPE, { id: item.id, status: "failed", error: "生成被中断" });
+    }
+  }
 
   private get store() {
     return this.runtime.store;
@@ -245,8 +270,10 @@ export class RouterManager {
     // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
     await this.runtime.models.get();
     const pick = conversationPick(this.runtime.settings.settings.models, assistant);
+    state.knowledgeNames = (await boundKnowledge(this.runtime, assistant.id)).map((collection) => collection.name);
     const opened = await this.runtime.pi.open({
       file: this.store.routerFile(assistant.id),
+      spillDir: join(dirname(this.store.routerFile(assistant.id)), "spill"),
       cwd: this.store.home,
       model: pick.ref,
       thinking: thinkingForPick(pick, this.runtime.models),
@@ -259,17 +286,47 @@ export class RouterManager {
           memory: this.runtime.settings.memory().provider,
           models: this.promptModels(assistant.id),
           skills: availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled, this.runtime.settings.memory().provider === "lore" ? this.runtime.pi.loreSkillPaths : []),
+          assistantSkills: usableAssistantSkills(this.runtime.home, assistant.id),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
+          knowledgeNames: state.knowledgeNames,
         });
       },
       tools: buildRouterTools(this.runtime, assistant.id).map((tool) => tool.name),
       customTools: buildRouterTools(this.runtime, assistant.id),
     });
     state.session = opened.session;
+    if (!state.knowledgeNames.length) refreshSystemPrompt(opened.session, opened.session.getActiveToolNames().filter((name) => name !== "search_knowledge"));
     state.manager = opened.manager;
     state.opening = undefined;
     opened.session.subscribe((event) => this.onSessionEvent(state, assistant.id, event));
     this.touch(assistant.id);
+  }
+
+  private async refreshTools(state: RouterState): Promise<void> {
+    state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge");
+    if (state.knowledgeNames.length) names.push("search_knowledge");
+    refreshSystemPrompt(state.session!, names);
+  }
+
+  private async automaticKnowledge(state: RouterState, query: string): Promise<string> {
+    const ids = this.store.assistant(state.assistantId)?.knowledge ?? [];
+    if ([...query.trim()].length < 4 || !ids.length || this.runtime.settings.settings.knowledge?.embedding.source !== "openai") return "";
+    this.setActivity(state, { state: "tool", label: "正在查知识库" });
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const results = await Promise.race([
+        this.runtime.knowledge.search(query, ids, { limit: 3, gate: true }),
+        new Promise<never>((_, reject) => { timer = setTimeout(() => reject(new Error("知识库检索超时")), 3000); }),
+      ]);
+      const text = formatKnowledge(results, 2400 - [...KNOWLEDGE_INTRO].length - 1);
+      return text ? `\n\n${KNOWLEDGE_INTRO}\n${text}` : "";
+    } catch {
+      return "";
+    } finally {
+      if (timer) clearTimeout(timer);
+      if (state.activity?.label === "正在查知识库") this.setActivity(state, null);
+    }
   }
 
   /** 这个助手能派、当前可用的模型（提示词里那一节）。 */
@@ -327,8 +384,16 @@ export class RouterManager {
       }
     }
     if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
+    if (event.type === "message_start" && event.message.role === "user") {
+      const prompt = messageText(event.message.content);
+      const index = state.pendingUsers?.findIndex((user) => user.prompt.trim() === prompt) ?? -1;
+      if (index >= 0) state.currentUserId = state.pendingUsers!.splice(index, 1)[0].id;
+    }
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       const details = event.message.details as EventDetails | undefined;
+      const users = deriveItems(this.entries(assistantId)).filter((item) => item.kind === "user");
+      const source = details?.sourceUserId ? users.find((item) => item.id === details.sourceUserId) : undefined;
+      state.currentUserId = (source ?? users.at(-1))?.id;
       if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
         state.currentDelegationId = details.delegationId;
         state.delegationReply = [];
@@ -529,7 +594,7 @@ export class RouterManager {
     }
   }
 
-  /** 助手没了（并回 Hob）：关掉它的会话，内存里也不留 —— 它的目录随后会被移进归档。 */
+  /** 助手没了（归档）：关掉它的会话，内存里也不留 —— 它的目录随后会被移进归档。 */
   forget(assistantId: string): void {
     const state = this.routers.get(assistantId);
     if (!state) return;
@@ -556,18 +621,67 @@ export class RouterManager {
     const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
     const full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
     this.bus.emit({ type: "item", assistantId, item: full });
+    if (full.kind === "file") {
+      const rel = relative(join(this.runtime.home, "pages"), resolve(full.path));
+      const page = rel !== ".." && !rel.startsWith(`..${sep}`);
+      void this.runtime.knowledge.collect({ origin: "output", path: full.path, assistantId, itemId: id, ...(page ? { name: full.name, description: full.meta } : {}) }).catch((error) => console.error("知识库收集失败：", error));
+    }
     return full;
+  }
+
+  async updateImage(assistantId: string, id: string, update: { status: "done" | "failed"; path?: string; error?: string }): Promise<void> {
+    const state = await this.ensure(assistantId);
+    const item = deriveItems(this.entries(assistantId)).find((entry) => entry.id === id && entry.kind === "image");
+    if (!item) throw new Error(`图片条目不存在：${id}`);
+    state.manager!.appendCustomEntry(ITEM_UPDATE_TYPE, { id, ...update });
+    this.bus.emit({ type: "item", assistantId, item: { ...item, ...update } });
+    if (item.kind === "image" && update.status === "done" && update.path) {
+      void this.runtime.knowledge.collect({ origin: "output", path: update.path, description: item.prompt, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
+    }
   }
 
   currentDelegation(assistantId: string): string | undefined {
     return this.routers.get(assistantId)?.currentDelegationId;
   }
 
-  async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob"): Promise<Item> {
+  /** 取当前回合来源及其之前的可见对话；事件取最近用户消息。 */
+  originalWords(assistantId: string, note?: string, recent = false, extraFiles: string[] = []): { text: string; files: string[] } {
+    const items = deriveItems(this.entries(assistantId));
+    const state = this.routers.get(assistantId);
+    const source = items.find((item) => item.kind === "user" && item.id === state?.currentUserId)
+      ?? items.findLast((item) => item.kind === "user");
+    const user = source?.kind === "user" ? source : undefined;
+    const files = [...new Set([...(user?.files ?? []), ...extraFiles])];
+    const timezone = this.runtime.settings.settings.general.timezone;
+    const name = this.assistant(assistantId).name;
+    const sections: string[] = [];
+    if (user) {
+      const header = user.from ? `${user.from.name} 转来` : "用户原话";
+      const lines = [`${header}（${monthDayTimeText(timezone, new Date(user.at))}）：`, user.text];
+      if (user.quote) lines.push(`（引用：「${user.quote.text}」）`);
+      sections.push(lines.filter(Boolean).join("\n"));
+      if (recent) {
+        const previous = items.slice(0, items.indexOf(user)).filter((item) => item.kind === "user" || item.kind === "assistant").slice(-6);
+        if (previous.length) sections.push(`最近的对话：\n${previous.map((item) => {
+          if (item.kind !== "user" && item.kind !== "assistant") return "";
+          const clock = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(item.at));
+          const characters = [...item.text];
+          const text = characters.length > 1500 ? `${characters.slice(0, 1500).join("")}…` : item.text;
+          return `${item.kind === "user" ? "用户" : name}（${clock}）：${text}`;
+        }).join("\n")}`);
+      }
+    }
+    if (files.length) sections.push(`附件：${files.join("、")}`);
+    if (note) sections.push(`${name} 的备注：${note}`);
+    return { text: sections.join("\n\n"), files };
+  }
+
+  async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob", files: string[] = []): Promise<Item> {
     const state = await this.ensure(assistantId);
     const from = { assistantId: sourceId, name: this.store.assistant(sourceId)?.name ?? sourceId, delegationId };
-    const id = state.manager!.appendCustomEntry(USER_TYPE, { text, from });
-    const item: Item = { kind: "user", id, at: this.entryAt(state, id), text, from };
+    const data = { text, from, ...(files.length ? { files } : {}) };
+    const id = state.manager!.appendCustomEntry(USER_TYPE, data);
+    const item: Item = { kind: "user", id, at: this.entryAt(state, id), ...data };
     this.bus.emit({ type: "item", assistantId, item });
     return item;
   }
@@ -582,16 +696,18 @@ export class RouterManager {
     assistantId: string,
     text: string,
     details: EventDetails | undefined,
+    knowledgeQuery?: string,
   ): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const session = state.session!;
-    const message = { customType: EVENT_TYPE, content: `[hob-event] ${text}`, display: false, details };
     this.touch(assistantId);
     state.running += 1;
     this.armStall(state);
     this.publishBusy(state);
-    refreshSystemPrompt(session);
     try {
+      const knowledge = knowledgeQuery === undefined ? "" : await this.automaticKnowledge(state, knowledgeQuery);
+      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${text}${knowledge}`, display: false, details };
+      await this.refreshTools(state);
       await this.applyConversationModel(state);
       if (session.isStreaming) {
         await session.sendCustomMessage(message, { deliverAs: "followUp" });
@@ -673,6 +789,7 @@ export class RouterManager {
     };
     const id = manager.appendCustomEntry(USER_TYPE, data);
     const item: Item = { kind: "user", id, at: new Date().toISOString(), ...data };
+    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
     this.bus.emit({ type: "item", assistantId, item });
     const noteId = manager.appendCustomEntry(ITEM_TYPE, { kind: "note", icon: "info", text: note });
     this.bus.emit({
@@ -684,6 +801,13 @@ export class RouterManager {
   }
 
   async send(assistantId: string, body: SendMessageBody): Promise<Item> {
+    this.runtime.delegations.takeOver(assistantId);
+    for (const approval of this.store.approvals()) {
+      if (approval.assistantId !== assistantId || approval.source !== "router" || approval.status !== "pending") continue;
+      const expired = { ...approval, status: "expired" as const };
+      this.store.saveApproval(expired);
+      this.bus.emit({ type: "approval", approval: expired });
+    }
     const gap = await this.modelGap(assistantId);
     if (gap) return this.sendWithoutModel(assistantId, body, gap);
     const state = await this.ensure(assistantId);
@@ -702,11 +826,16 @@ export class RouterManager {
       ...(body.files?.length ? { files: body.files } : {}),
     };
     this.bus.emit({ type: "item", assistantId, item });
+    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
 
     const lines = [body.text];
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
-    const promptText = lines.filter(Boolean).join("\n");
+    const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
+    const previousDelivery = state.pendingDelivery;
+    let releaseDelivery!: () => void;
+    const delivery = new Promise<void>((resolve) => { releaseDelivery = resolve; });
+    state.pendingDelivery = delivery;
 
     this.touch(assistantId);
     state.running += 1;
@@ -714,18 +843,25 @@ export class RouterManager {
     this.publishBusy(state);
     void (async () => {
       try {
+        const promptText = basePrompt + await this.automaticKnowledge(state, body.text);
+        await previousDelivery;
+        (state.pendingUsers ??= []).push({ prompt: promptText, id });
         await this.applyConversationModel(state);
-        refreshSystemPrompt(state.session!);
+        await this.refreshTools(state);
         // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
         const images = state.session!.model?.input.includes("image") ? imageContents(body.files) : [];
-        if (state.session!.isStreaming) await state.session!.steer(promptText, images.length ? images : undefined);
-        else {
-          await state.session!.prompt(promptText, images.length ? { images } : undefined);
+        if (state.session!.isStreaming) {
+          await state.session!.steer(promptText, images.length ? images : undefined);
+          releaseDelivery();
+        } else {
+          await state.session!.prompt(promptText, { ...(images.length ? { images } : {}), preflightResult: releaseDelivery });
           await this.reportTurnError(state);
         }
       } catch (error) {
         await this.fail(state, error);
       } finally {
+        releaseDelivery();
+        if (state.pendingDelivery === delivery) state.pendingDelivery = undefined;
         state.running = Math.max(0, state.running - 1);
         if (!state.running) this.setActivity(state, null);
         this.clearStall(state);
@@ -873,8 +1009,8 @@ export class RouterManager {
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
   /** 把事件当作转交的一轮送给目标助手；这一轮没正常收尾就把转交记为受阻，不会一直挂着。 */
-  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails): Promise<void> {
-    const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId });
+  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails, knowledgeQuery?: string): Promise<void> {
+    const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery);
     if (!success || !this.store.delegation(delegationId)?.turnFinished) {
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }

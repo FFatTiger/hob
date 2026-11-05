@@ -101,6 +101,15 @@ describe("首页分组", () => {
     expect(groups.live.map((j) => j.id)).toEqual(["t-live"]);
   });
 
+  it("进行中和最近任务都包含定时执行", () => {
+    const groups = homeGroups({ assistants: [], jobs: index([
+      job("t-routine-live", "running", { routineId: "r-1" }),
+      job("t-routine-done", "done", { routineId: "r-1", endedAt: minsAgo(2) }),
+    ]), approvals: {}, routines: [], query: "" }, NOW);
+    expect(groups.live.map((j) => j.id)).toEqual(["t-routine-live"]);
+    expect(groups.recent.map((j) => j.id)).toEqual(["t-routine-done"]);
+  });
+
   it("搜索时只列匹配的助手，其它组隐藏", () => {
     const groups = homeGroups(
       {

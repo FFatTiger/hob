@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { engineDir, loadConfig, resolveHome } from "./config.ts";
 import { createApp } from "./http.ts";
+import { attachDesktopWebSocket } from "./desktop-control.ts";
 import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
 import { readLegacyModels } from "./settings.ts";
@@ -39,15 +40,20 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.delegations.recover();
   runtime.routines.start();
   runtime.jobs.startWatchdog();
+  runtime.desktopEvents.restart();
 
   const app = createApp(runtime, { webDir: fileURLToPath(new URL("../../dist/web", import.meta.url)), home });
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);
   const server = serve({ fetch: app.fetch, port, hostname: config.host });
+  const detachDesktop = attachDesktopWebSocket(server, runtime);
 
   return {
     runtime,
     port,
     close: async () => {
+      detachDesktop();
+      runtime.desktopEvents.stop();
+      runtime.desktopControl.dispose();
       runtime.routines.stop();
       runtime.jobs.disposeAll();
       runtime.router.disposeAll();

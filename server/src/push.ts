@@ -57,9 +57,13 @@ const webPushSender: PushSender = async (target, payload, vapid) => {
 
 export interface PushResult {
   sent: number;
-  removed: number; // 订阅已失效（404/410）被删掉的条数
+  removed: number; // 订阅已失效（404/410、密钥对不上）被删掉的条数
   skipped?: "visible" | "no-devices"; // 没发的原因
+  error?: string; // 发送失败的原因（几台都失败时取第一台）
 }
+
+/** 没填邮箱时的 VAPID subject：Apple 不认 mailto:…@localhost（回 403 BadJwtToken） */
+const DEFAULT_SUBJECT = "https://github.com/FFatTiger/hob";
 
 export interface PushServiceOptions {
   home: string;
@@ -88,6 +92,29 @@ function isDevice(value: unknown): value is DeviceRecord {
 function statusOf(error: unknown): number | undefined {
   const status = (error as { statusCode?: unknown })?.statusCode;
   return typeof status === "number" ? status : undefined;
+}
+
+/** 推送服务回的原因：Apple 是 {"reason":"…"}，其他服务给一段文字 */
+function reasonOf(error: unknown): string {
+  const body = (error as { body?: unknown })?.body;
+  if (typeof body !== "string" || !body.trim()) return "";
+  try {
+    const reason = (JSON.parse(body) as { reason?: unknown }).reason;
+    if (typeof reason === "string") return reason;
+  } catch {
+    // 不是 JSON 就用原文
+  }
+  return body.trim().slice(0, 120);
+}
+
+/** 订阅已经用不了：没了（404/410），或是用旧的 VAPID 密钥订的（HOB_HOME 重置过） */
+function isGone(status: number | undefined, reason: string): boolean {
+  return status === 404 || status === 410 || (status === 400 && reason === "VapidPkHashMismatch");
+}
+
+function describeFailure(error: unknown, status: number | undefined, reason: string): string {
+  if (status) return `推送服务拒绝（${status}${reason ? ` ${reason}` : ""}）`;
+  return `连不上推送服务（${error instanceof Error ? error.message : String(error)}）`;
 }
 
 /** 推送服务（可见性只在内存里：进程重启后没有前台客户端）。 */
@@ -136,7 +163,7 @@ export class PushService {
 
   private subject(): string {
     const email = this.options.email().trim();
-    return `mailto:${email || "hob@localhost"}`;
+    return email ? `mailto:${email}` : DEFAULT_SUBJECT;
   }
 
   view(): PushView {
@@ -210,6 +237,7 @@ export class PushService {
     const body = JSON.stringify(payload);
     const vapid = { ...file.vapid, subject: this.subject() };
     const gone: string[] = [];
+    const failures: string[] = [];
     let sent = 0;
     await Promise.all(
       devices.map(async (device) => {
@@ -221,9 +249,15 @@ export class PushService {
           );
           sent += 1;
         } catch (error) {
-          // 404/410 = 订阅没了（卸载了 PWA、清过数据）：删掉，别一直发空
+          // 订阅没了（卸载了 PWA、清过数据）或密钥对不上：删掉，别一直发空；其他失败如实报出去
           const status = statusOf(error);
-          if (status === 404 || status === 410) gone.push(device.endpoint);
+          const reason = reasonOf(error);
+          if (isGone(status, reason)) gone.push(device.endpoint);
+          else {
+            const failure = describeFailure(error, status, reason);
+            console.error(`推送到「${device.label}」失败：${failure}`);
+            failures.push(failure);
+          }
         }
       }),
     );
@@ -231,7 +265,7 @@ export class PushService {
       file.devices = file.devices.filter((device) => !gone.includes(device.endpoint));
       this.write();
     }
-    return { sent, removed: gone.length };
+    return { sent, removed: gone.length, ...(failures.length ? { error: failures[0] } : {}) };
   }
 
   /** 该推的时候推：有可见的客户端、或一台设备都没订阅就不发。 */

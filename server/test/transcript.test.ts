@@ -77,7 +77,7 @@ function mixedSession(): string {
     message("user", { content: "你还没有调用 report 提交结果。请现在调用 report(outcome, summary)。", timestamp: 1_800 }),
     message("assistant", {
       timestamp: 1_900,
-      content: [{ type: "toolCall", id: "call-report", name: "report", arguments: { outcome: "done", summary: "脚本跑通了" } }],
+      content: [{ type: "toolCall", id: "call-report", name: "report", arguments: { outcome: "done", result: "脚本跑通了" } }],
     }),
     message("toolResult", {
       timestamp: 2_000,
@@ -177,7 +177,7 @@ describe("任务过程实时事件", () => {
       hob.runtime.bus.subscribe((event) => events.push(event));
       hob.faux.setResponses([
         call("bash", { command: "echo hi" }),
-        call("report", { outcome: "done", summary: "跑通了" }),
+        call("report", { outcome: "done", result: "跑通了" }),
         text("好"),
       ]);
       hob.faux.appendResponses([text("跑通了。")]);
@@ -210,7 +210,7 @@ describe("任务过程实时事件", () => {
       hob.runtime.bus.subscribe((event) => events.push(event));
       hob.faux.setResponses([
         call("bash", { command: "seq 1 4000" }),
-        call("report", { outcome: "done", summary: "打了很多行" }),
+        call("report", { outcome: "done", result: "打了很多行" }),
         text("好"),
       ]);
       hob.faux.appendResponses([text("打完了。")]);
@@ -263,5 +263,10 @@ describe("步骤标题", () => {
     expect(toolTitle("memory_search", { query: "周报格式" })).toBe("搜索记忆 `周报格式`");
     expect(toolTitle("lore_update_node", {})).toBe("保存记忆");
     expect(toolTitle("some_new_tool", {})).toBe("some_new_tool");
+  });
+
+  it("找资料显示关键词", () => {
+    expect(toolTitle("find_knowledge", { query: "周报" })).toBe("找资料：周报");
+    expect(toolTitle("find_knowledge", {})).toBe("找资料");
   });
 });

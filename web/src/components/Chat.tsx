@@ -3,6 +3,7 @@ import { useEffect, useLayoutEffect, useRef } from "react";
 import type { AssistantSummary, Item } from "../../../shared/types.ts";
 import { isImagePath } from "../../../shared/media.ts";
 import { localPath } from "../outbox.ts";
+import { pastedFiles } from "../pasted-files.ts";
 import { fileIcon } from "../file-icons.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
@@ -255,6 +256,14 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
     if (s.nonce) ta.current?.focus();
   }, [s.nonce]);
 
+  // 截图直接粘进输入框：和「加文件」一样进附件流程，后台开始上传
+  const onPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
+    const files = pastedFiles(event.clipboardData);
+    if (!files.length) return;
+    event.preventDefault();
+    attach(files);
+  };
+
   // 输入框浮在消息上：量出它的高度写到 .chat 上，消息区底部照这个留白
   const wrap = useRef<HTMLDivElement>(null);
   useLayoutEffect(() => {
@@ -267,7 +276,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
   }, [variant]);
 
   const body = (
-    <div className={variant === "mobile" ? "mcomp" : "comp"}>
+    <div className={variant === "mobile" ? "mcomp" : "comp"} onPaste={onPaste}>
       {quote.mounted ? (
         <div className={`comp-quote${quote.leaving ? " leaving" : ""}`}>
           <div className="quote">{s.quote?.text}</div>
@@ -306,7 +315,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
         </div>
       ) : null}
       <div className="comp-main">
-        <label className="pl" title="加文件">
+        <label className="pl" title="加文件（也可粘贴截图）">
           <Icon name="plus" size={19} />
           <input
             type="file"

@@ -99,6 +99,8 @@ const EMPTY_SETTINGS: Settings = {
   push: { email: "" },
 };
 
+export interface SidebarPage<T> { items: T[]; loaded: boolean; loading: boolean; loadingMore: boolean; hasMore: boolean; error: string | null; failedMore?: boolean; cursor?: string }
+
 export interface State {
   phase: "loading" | "login" | "ready" | "error";
   error: string | null; // 致命错误（无法连接后端）
@@ -113,13 +115,15 @@ export interface State {
   drafts: Record<string, Draft>;
   settings: SettingsFile;
   page: "main" | "settings" | "knowledge";
-  knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; hasMore: boolean; loading: boolean; error: string | null };
+  knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
   items: Record<string, Item[]>;
   itemGen: Record<string, number>; // 每次重新拉这段对话 +1，聊天区据此判断“整批换了”而不是“新到一条”
   profiles: Record<string, Profile>;
-  assistantSkills: Record<string, { skills: AssistantSkill[]; loading: boolean; error: string | null }>;
+  assistantSkills: Record<string, { skills: AssistantSkill[]; loaded: boolean; loading: boolean; error: string | null }>;
+  sidebarJobs: Record<string, SidebarPage<Job>>;
+  sidebarFiles: Record<string, SidebarPage<KnowledgeEntry>>;
   sel: string | null;
   panelStack: PanelPage[];
   livePages: Record<string, PageLive>;
@@ -186,13 +190,15 @@ function initial(): State {
     drafts: {},
     settings: { revision: 0, settings: EMPTY_SETTINGS },
     page: "main",
-    knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], hasMore: false, loading: false, error: null },
+    knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], collectionsLoaded: false, hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
     items: {},
     itemGen: {},
     profiles: {},
     assistantSkills: {},
+    sidebarJobs: {},
+    sidebarFiles: {},
     sel: "hob",
     panelStack: [],
     livePages: {},
@@ -226,6 +232,7 @@ function initial(): State {
   const aParam = params.get("a");
   if (aParam) state.sel = aParam;
   if (bootRoute.sel) state.sel = bootRoute.sel;
+  if (bootRoute.panel) state.panelStack = [bootRoute.panel];
   if (bootRoute.knowledge) state.page = "knowledge";
   if (bootRoute.settings) {
     state.page = "settings";
@@ -815,6 +822,10 @@ async function loadBootstrap() {
         : (boot.assistants.find((a) => a.primary)?.id ?? boot.assistants[0]?.id ?? null);
     if (sel) await select(sel, mobileWantsChat());
     if (state.page === "knowledge") void loadKnowledge();
+    // 刷新前开着的任务页：内容要自己拉
+    const top = state.panelStack.at(-1);
+    if (top?.kind === "job") void loadTranscript(top.id);
+    if (top?.kind === "jobs" && !state.worklog) void loadWorklog();
   } catch (e) {
     set({ phase: "error", error: errText(e) });
   }
@@ -1248,12 +1259,12 @@ export async function stopJob(jobId: string) {
 const skillLoads: Record<string, number> = {};
 export async function loadAssistantSkills(id: string) {
   const generation = skillLoads[id] = (skillLoads[id] ?? 0) + 1;
-  set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: s.assistantSkills[id]?.skills ?? [], loading: true, error: null } } }));
+  set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: s.assistantSkills[id]?.skills ?? [], loaded: s.assistantSkills[id]?.loaded ?? false, loading: true, error: null } } }));
   try {
     const skills = await api.assistantSkills(id);
-    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills, loading: false, error: null } } }));
+    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills, loaded: true, loading: false, error: null } } }));
   } catch (e) {
-    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: [], loading: false, error: errText(e) } } }));
+    if (skillLoads[id] === generation) set((s) => ({ assistantSkills: { ...s.assistantSkills, [id]: { skills: s.assistantSkills[id]?.skills ?? [], loaded: s.assistantSkills[id]?.loaded ?? false, loading: false, error: errText(e) } } }));
   }
 }
 
@@ -1512,16 +1523,37 @@ export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rul
   set((s) => ({ panelStack: pushPage(s.panelStack, { kind }) }));
 }
 
-export function loadSidebarFiles(assistantId: string, before?: string) {
-  return api.knowledge({ origin: "output", assistantId, before, limit: 30 });
+async function loadSidebarPage(kind: "sidebarJobs" | "sidebarFiles", assistantId: string, more: boolean) {
+  const empty = { items: [], loaded: false, loading: false, loadingMore: false, hasMore: false, error: null };
+  const previous = state[kind][assistantId] ?? empty;
+  if (previous.loading || (more && (!previous.loaded || !previous.hasMore))) return;
+  set((s) => ({ [kind]: { ...s[kind], [assistantId]: { ...previous, loading: true, loadingMore: more, error: null } } }));
+  try {
+    const before = more ? previous.cursor : undefined;
+    const page = kind === "sidebarJobs"
+      ? await api.jobs({ assistantId, before, limit: 20 }).then((p) => ({ items: p.jobs, hasMore: p.hasMore }))
+      : await api.knowledge({ origin: "output", assistantId, before, limit: 30 }).then((p) => ({ items: p.entries, hasMore: p.hasMore }));
+    const combined = more ? [...previous.items, ...page.items] : [...page.items, ...previous.items];
+    const seen = new Set<string>();
+    const items = combined.filter((item) => !seen.has(item.id) && !!seen.add(item.id));
+    const last = page.items.at(-1);
+    const cursor = more || !previous.loaded ? (last && ("createdAt" in last && kind === "sidebarJobs" ? last.id : (last as KnowledgeEntry).updatedAt)) : previous.cursor;
+    const hasMore = more || !previous.loaded ? page.hasMore : previous.hasMore || page.hasMore;
+    set((s) => ({ [kind]: { ...s[kind], [assistantId]: { items, loaded: true, loading: false, loadingMore: false, hasMore, error: null, cursor } } }));
+  } catch (e) {
+    set((s) => ({ [kind]: { ...s[kind], [assistantId]: { ...previous, loading: false, loadingMore: false, failedMore: more, error: errText(e) } } }));
+  }
 }
+
+export function loadSidebarJobs(assistantId: string, more = false) { return loadSidebarPage("sidebarJobs", assistantId, more); }
+export function loadSidebarFiles(assistantId: string, more = false) { return loadSidebarPage("sidebarFiles", assistantId, more); }
 
 let sidebarCollectionsLoaded = false;
 export async function loadSidebarCollections() {
   if (sidebarCollectionsLoaded) return;
   const page = await api.knowledge({ limit: 1 });
   sidebarCollectionsLoaded = true;
-  set((s) => ({ knowledge: { ...s.knowledge, collections: page.collections } }));
+  set((s) => ({ knowledge: { ...s.knowledge, collections: page.collections, collectionsLoaded: true } }));
 }
 
 /** 助手头像 / 助手行上的右键（桌面）或长按（手机）菜单。 */
@@ -1542,7 +1574,7 @@ export async function loadKnowledge(more = false, refresh = false) {
   try {
     const page = await api.knowledge({ ...(k.category === "output" || k.category === "chat" ? { origin: k.category } : k.category !== "all" ? { collection: k.category } : {}), q: k.q, kind: k.kind || undefined, assistantId: k.assistantId, before: more ? k.entries.at(-1)?.updatedAt : undefined, limit: refresh ? Math.min(200, Math.max(50, k.entries.length)) : 50 });
     if (request !== knowledgeRequest) return;
-    set({ knowledge: { ...state.knowledge, entries: more ? [...k.entries, ...page.entries] : page.entries, collections: page.collections, hasMore: page.hasMore, loading: false } });
+    set({ knowledge: { ...state.knowledge, entries: more ? [...k.entries, ...page.entries] : page.entries, collections: page.collections, collectionsLoaded: true, hasMore: page.hasMore, loading: false } });
   } catch (e) {
     if (request === knowledgeRequest) set({ knowledge: { ...state.knowledge, loading: false, error: errText(e) } });
   }

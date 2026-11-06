@@ -22,6 +22,7 @@ import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { MCP_SESSION_TOOLS, mcpEnabled, mcpServerDisplay } from "./mcp.ts";
 import { jobModel } from "./models.ts";
+import { duration, jobProcessLines } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
 import { pageTool } from "./pages.ts";
 import { pushApproval, pushJobEnd } from "./push.ts";
@@ -83,6 +84,7 @@ export interface StartJobInput {
   model?: string;
   thinking?: string;
   routineId?: string;
+  expectMinutes?: number;
   delegationId?: string;
 }
 
@@ -94,6 +96,9 @@ interface WorkerState {
   lastText?: string;
   askedFollowUp: boolean;
   lastActivityAt: number;
+  pausedMs: number;
+  pausedAt?: number;
+  nextReminder: number;
   finishTimer?: NodeJS.Timeout;
   ask?: (label: string) => void;
   /** 用户叫停了：收尾期间这个 worker 的 report/追问都不再算数 */
@@ -114,7 +119,9 @@ const EVENT_SUMMARY_MAX = 3000;
 export function jobResultEvent(job: Job, prefix = `任务「${job.title}」`): string {
   const status = job.status === "done" ? "已完成" : job.status === "stuck" ? "受阻" : job.status === "stopped" ? "已停止" : "失败";
   const result = job.summary;
-  const header = `${prefix}（${job.id}）${status}。`;
+  const header = job.expect && job.durationMs !== undefined
+    ? `${prefix}（${job.id}）${status}，用时 ${duration(job.durationMs)}，预计 ${job.expect.minutes} 分钟。`
+    : `${prefix}（${job.id}）${status}。`;
   if (!result) return `${header}\n${job.statusReason ?? "没有结果"}`;
   return result.length > EVENT_SUMMARY_MAX
     ? `${header}\n结果（共 ${result.length} 字，以下是前 3,000 字；全文：${job.reportPath}）：\n${result.slice(0, EVENT_SUMMARY_MAX)}`
@@ -231,6 +238,14 @@ export class JobManager {
       ...(hasImageFiles(input.files) ? { hasImages: true } : {}),
     });
     const id = this.nextJobId();
+    const durations = input.routineId ? (this.store.routine(input.routineId)?.runs ?? [])
+      .filter((run) => run.status === "done" && run.durationMs !== undefined && Number.isFinite(run.durationMs) && run.durationMs >= 0)
+      .slice(0, 5).map((run) => run.durationMs!).sort((a, b) => a - b) : [];
+    const middle = Math.floor(durations.length / 2);
+    const median = durations.length % 2 ? durations[middle] : (durations[middle - 1] + durations[middle]) / 2;
+    const expect: NonNullable<Job["expect"]> = input.routineId && durations.length
+      ? { minutes: Math.max(1, Math.ceil(median / 60_000)), source: "routine", runs: durations.length }
+      : input.expectMinutes !== undefined ? { minutes: input.expectMinutes, source: "assistant" } : { minutes: 10, source: "default" };
     const job: Job = {
       id,
       assistantId,
@@ -238,6 +253,7 @@ export class JobManager {
       title: input.title,
       instruction: input.instruction,
       status: "queued",
+      expect,
       createdAt: new Date().toISOString(),
       stats: { reads: 0, commands: 0, edits: 0 },
       activity: [],
@@ -353,6 +369,8 @@ export class JobManager {
       manager: opened.manager,
       askedFollowUp: false,
       lastActivityAt: Date.now(),
+      pausedMs: 0,
+      nextReminder: running.expect?.source === "routine" ? 1.5 : 1,
       steps: new Map(),
       readPaths: new Map(),
       queued: [],
@@ -740,7 +758,7 @@ export class JobManager {
       const usage = job.usage && previous.every((round) => round.usage) ? { input: job.usage.input - used.input, output: job.usage.output - used.output, cost: Number((job.usage.cost - used.cost).toFixed(6)) } : undefined;
       const ended: JobRound = { status: job.status, statusReason, startedAt: job.startedAt, endedAt, durationMs, summary, files, usage, reportPath: savedReport, followUp: text };
       const rounds = [...previous, ended];
-      const queued: Job = { ...rest, rounds, status: "queued", startedAt: new Date().toISOString() };
+      const queued: Job = { ...rest, rounds, status: "queued", expect: { minutes: 10, source: "default" }, startedAt: undefined };
       this.store.saveJob(queued);
       try {
         await this.runtime.router.addItem(job.assistantId, { kind: "job", jobId, round: rounds.length });
@@ -801,6 +819,7 @@ export class JobManager {
 
   private async sedimentRound(job: Job, state: { cancelled: boolean; session?: AgentSession }, source: "manual" | "auto"): Promise<void> {
     let calledSave = false;
+    const savedSkills = new Set<string>();
     let lastText = "";
     const skillTool = {
       name: "save_skill", label: "保存技能",
@@ -816,14 +835,18 @@ export class JobManager {
         calledSave = true;
         if (state.cancelled || this.store.job(job.id)?.status !== "done") throw new Error("任务已继续，取消沉淀");
         const files = readSkillFiles(job.cwd ?? this.store.workDir(job.id), params.files);
-        const skill = saveAssistantSkill(this.runtime.home, job.assistantId, { ...params, files }, job.id);
-        let text = skill.version === 1 ? `已沉淀技能「${skill.title}」` : `已更新技能「${skill.title}」· 第 ${skill.version} 版`;
-        const routine = job.routineId && this.store.routine(job.routineId);
-        if (routine && !routine.skill) {
-          this.runtime.routines.update(routine.id, { skill: skill.name });
-          text = `已沉淀技能「${skill.title}」，以后定时执行按它做`;
+        const overwriteVersion = savedSkills.has(params.name);
+        const skill = saveAssistantSkill(this.runtime.home, job.assistantId, { ...params, files }, job.id, false, { overwriteVersion });
+        savedSkills.add(skill.name);
+        if (!overwriteVersion) {
+          let text = skill.version === 1 ? `已沉淀技能「${skill.title}」` : `已更新技能「${skill.title}」· 第 ${skill.version} 版`;
+          const routine = job.routineId && this.store.routine(job.routineId);
+          if (routine && !routine.skill) {
+            this.runtime.routines.update(routine.id, { skill: skill.name });
+            text = `已沉淀技能「${skill.title}」，以后定时执行按它做`;
+          }
+          await this.runtime.router.addItem(job.assistantId, { kind: "note", icon: "skill", text, path: skill.path });
         }
-        await this.runtime.router.addItem(job.assistantId, { kind: "note", icon: "skill", text, path: skill.path });
         this.bus.emit({ type: "skills", assistantId: job.assistantId });
         return { content: [{ type: "text" as const, text: "技能已保存。" }], details: undefined };
       },
@@ -870,7 +893,7 @@ export class JobManager {
     } finally { opened.session.dispose(); }
   }
 
-  async stop(jobId: string): Promise<void> {
+  async stop(jobId: string, reason = "你叫停了"): Promise<void> {
     const job = this.store.job(jobId);
     if (!job) throw new Error("没有这个任务。");
     const worker = this.workers.get(jobId);
@@ -882,7 +905,7 @@ export class JobManager {
       // abort 会把正在执行的工具（bash 子进程）一起终止
       await worker.session?.abort().catch(() => undefined);
     }
-    await this.finish(jobId, "stopped", undefined, "你叫停了");
+    await this.finish(jobId, "stopped", undefined, reason);
   }
 
   /** Worker 的 ask_user：出审批卡、把任务标成待确认，阻塞到用户答复。 */
@@ -913,7 +936,7 @@ export class JobManager {
     const waiting: Job = { ...job, status: "waiting" };
     this.store.saveJob(waiting);
     this.bus.emit({ type: "job", job: waiting });
-    if (worker) worker.job = waiting;
+    if (worker) { worker.job = waiting; worker.pausedAt = Date.now(); }
     return await new Promise<string>((resolve) => {
       if (worker) worker.ask = resolve;
       else resolve("（任务未在运行）");
@@ -933,6 +956,8 @@ export class JobManager {
     worker?.ask?.(answer);
     if (worker) {
       worker.ask = undefined;
+      if (worker.pausedAt !== undefined) worker.pausedMs += Date.now() - worker.pausedAt;
+      worker.pausedAt = undefined;
       worker.lastActivityAt = Date.now();
     }
   }
@@ -949,6 +974,24 @@ export class JobManager {
   checkStalls(now = Date.now()): void {
     const idleMs = this.runtime.settings.settings.work.jobStallMinutes * 60_000;
     for (const [jobId, worker] of this.workers) {
+      const job = this.store.job(jobId);
+      if (job?.status === "running" && job.startedAt && job.expect && worker.pausedAt === undefined) {
+        const elapsed = Math.max(0, now - Date.parse(job.startedAt) - worker.pausedMs);
+        if (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) {
+          while (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) worker.nextReminder *= 2;
+          const source = job.expect.source === "assistant" ? "派活时估的" : job.expect.source === "routine" ? `这个定时任务以前 ${job.expect.runs} 次的中位数` : "默认 10 分钟";
+          const routine = job.routineId && this.store.routine(job.routineId);
+          const prefix = routine ? `定时任务「${routine.name}」` : `任务「${job.title}」`;
+          const steps = this.transcript(jobId);
+          for (const step of worker.steps.values()) {
+            const index = steps.findIndex((item) => item.id === step.id);
+            if (index >= 0) steps[index] = step; else steps.push(step);
+          }
+          const lines = jobProcessLines(steps, this.runtime.settings.settings.general.timezone, new Date(now)).slice(0, 10);
+          const text = `${prefix}（${job.id}）已运行 ${Math.floor(elapsed / 60_000)} 分钟，超过预计的 ${job.expect.minutes} 分钟（${source}）。\n最近的过程（新的在前）：${lines.length ? `\n${lines.join("\n")}` : ""}`;
+          void this.runtime.router.event(job.assistantId, text).catch((error) => console.error("任务超时通知失败：", error));
+        }
+      }
       // 在等用户答提问不算没响应：等多久都是用户的事
       if (!worker.ask && now - worker.lastActivityAt > idleMs) {
         void this.finish(jobId, "stuck", undefined, `${Math.round(idleMs / 60_000)} 分钟无响应`);

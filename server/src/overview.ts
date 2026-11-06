@@ -9,7 +9,7 @@ const LOG_LIMIT = 10;
 const STATUS_TEXT: Record<Job["status"], string> = {
   queued: "排队中",
   running: "进行中",
-  waiting: "待确认",
+  waiting: "等你确认",
   done: "已完成",
   stuck: "受阻",
   failed: "失败",
@@ -83,13 +83,13 @@ export function overviewText(runtime: HobRuntime, sinceHours = 24): string {
       for (const entry of log) lines.push(`- ${whenText(timezone, entry.at)} ${entry.text}`);
     }
     if (asks.length) {
-      lines.push("待确认：");
+      lines.push("等你确认：");
       for (const approval of asks) lines.push(`- ${approval.title}（${whenText(timezone, approval.createdAt)}）`);
     }
     blocks.push(lines.join("\n"));
   }
 
-  const head = `最近 ${hours} 小时（${whenText(timezone, since)} 之后）：${endedCount} 件结束的任务、${liveCount} 件进行中、${pending.length} 个待确认。`;
+  const head = `最近 ${hours} 小时（${whenText(timezone, since)} 之后）：${endedCount} 件结束的任务、${liveCount} 件进行中、${pending.length} 个等你确认。`;
   if (!blocks.length) return `${head}\n\n这段时间没有记录。`;
   return `${head}\n\n${blocks.join("\n\n")}`;
 }

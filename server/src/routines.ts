@@ -2,7 +2,7 @@ import { Cron } from "croner";
 import type { Job, Routine } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { newId } from "./ids.ts";
-import { listAssistantSkills, usableAssistantSkills } from "./assistant-skills.ts";
+import { listAssistantSkills, skillInstruction, usableAssistantSkills } from "./assistant-skills.ts";
 
 export interface RoutineInput {
   assistantId: string;
@@ -58,7 +58,7 @@ export class RoutineScheduler {
 
   private instruction(routine: Routine): string {
     const skill = routine.skill && usableAssistantSkills(this.runtime.home, routine.assistantId).find((item) => item.name === routine.skill);
-    return skill ? `按技能「${skill.title}」做（先读它的 SKILL.md）。\n${routine.instruction}` : routine.instruction;
+    return skill ? skillInstruction(skill.title, routine.instruction) : routine.instruction;
   }
 
   private async fire(routineId: string): Promise<void> {

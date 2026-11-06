@@ -1,4 +1,5 @@
 // 助手头像：Hob 的像素小火苗 + 颜色 + 道具，数据在 shared/sprites.ts；自画道具的数据跟着助手走。
+import { useRef } from "react";
 import { spriteArt, spriteEyes } from "../../shared/sprites.ts";
 import type { CustomProp, SpriteId } from "../../shared/types.ts";
 
@@ -57,6 +58,9 @@ export function Avatar({
   /** peek 的轮次：第几个在忙的助手，按顺序轮流看一圈，不同时动 */
   slot?: number;
 }) {
+  const lastMark = useRef(mark);
+  if (mark) lastMark.current = mark;
+  const displayedMark = mark ?? lastMark.current;
   const art = spriteArt(sprite, prop);
   // 动起来时眼睛单独一层：外层管看的方向，内层管眨眼，两个 transform 互不覆盖
   const split = motion ? spriteEyes(art) : undefined;
@@ -65,7 +69,7 @@ export function Avatar({
     ? `${((slot ?? 0) % PEEK_TURNS) * PEEK_GAP_S}s`
     : motion ? `${-([...sprite].reduce((h, c) => (h * 31 + c.charCodeAt(0)) % 9973, 7) % 4000) / 1000}s` : undefined;
   return (
-    <div className={`av${free ? " av-free" : ""}${motion ? ` av-motion av-${motion}` : ""}${mark ? " av-marked" : ""}`} title={title} onClick={onClick} style={{ "--av-size": `${size}px`, "--av-bg": art.bg } as React.CSSProperties}>
+    <div className={`av${free ? " av-free" : ""}${motion ? ` av-motion av-${motion}` : ""} av-marked`} title={title} onClick={onClick} style={{ "--av-size": `${size}px`, "--av-bg": art.bg } as React.CSSProperties}>
       <svg viewBox={`${art.offset[0]} ${art.offset[1]} 16 16`} shapeRendering="crispEdges" aria-hidden="true" style={eyeDelay ? ({ "--eye-delay": eyeDelay } as React.CSSProperties) : undefined}>
         {split ? (
           <>
@@ -82,7 +86,7 @@ export function Avatar({
           <SpritePixels art={art} />
         )}
       </svg>
-      {mark ? <span className={`av-mark ${mark}`} aria-label={MARK_LABEL[mark]}>{mark === "busy" ? <svg viewBox="0 0 13 5"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="6.5" cy="2.5" r="1.5" /><circle cx="10.5" cy="2.5" r="1.5" /></svg> : mark === "done" ? <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : mark === "ask" ? "?" : "!"}</span> : null}
+      <span className={`av-mark${mark ? " present" : ""}${displayedMark ? ` ${displayedMark}` : ""}`} aria-label={mark ? MARK_LABEL[mark] : undefined} aria-hidden={!mark}><span key={displayedMark} className="av-mark-icon">{displayedMark === "busy" ? <svg viewBox="0 0 13 5"><circle cx="2.5" cy="2.5" r="1.5" /><circle cx="6.5" cy="2.5" r="1.5" /><circle cx="10.5" cy="2.5" r="1.5" /></svg> : displayedMark === "done" ? <svg viewBox="0 0 16 16" fill="none"><path d="M3 8.5 6.5 12 13 4.5" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg> : displayedMark === "ask" ? "?" : displayedMark === "stuck" ? "!" : null}</span></span>
     </div>
   );
 }

@@ -29,6 +29,8 @@ import { pushApproval } from "./push.ts";
 import { searchTools } from "./search.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { clampDuty } from "./text.ts";
+import { listAssistantSkills, readAssistantSkillBody, saveAssistantSkill, skillInstruction, usableAssistantSkills } from "./assistant-skills.ts";
+import { jobView } from "./job-view.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -99,6 +101,46 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
   } }) as unknown as Tool;
   const tools: Tool[] = [
     {
+      name: "check_job",
+      label: "看任务",
+      description: "看一个任务现在的状态和过程：做到哪一步、跑过哪些命令、说过什么、用了哪个技能、在等什么。",
+      parameters: Type.Object({ jobId: Type.String({ description: "任务 id" }) }),
+      execute: async (_id, params: { jobId: string }) => {
+        const job = store.job(params.jobId);
+        if (!job || (!assistant().primary && job.assistantId !== assistantId)) return fail(`没有这个任务：${params.jobId}`);
+        try {
+          return ok(jobView({ ...job, cwd: job.cwd ?? store.workDir(job.id) }, jobs.transcript(job.id), store.approvals(), listAssistantSkills(runtime.home, job.assistantId), runtime.settings.settings.general.timezone));
+        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
+    {
+      name: "edit_skill",
+      label: "改技能",
+      description: "改这个助手某个技能的正文（SKILL.md）：把一段原文换成新的文字，旧版会保留。要改脚本的，交给任务去改。",
+      parameters: Type.Object({
+        name: Type.String({ description: "技能名" }),
+        edits: Type.Array(Type.Object({ old: Type.String(), new: Type.String() }), { description: "一处或几处修改：old 是正文里的原文，要一字不差、只出现一次；new 是换成的文字" }),
+      }),
+      execute: async (_id, params: { name: string; edits: { old: string; new: string }[] }) => {
+        try {
+          const skill = listAssistantSkills(runtime.home, assistantId).find((item) => item.name === params.name);
+          if (!skill) return fail(`没有这个技能：${params.name}`);
+          let body = readAssistantSkillBody(skill.path);
+          for (const edit of params.edits) {
+            if (!edit.old) return fail("原文不能为空");
+            const count = body.split(edit.old).length - 1;
+            if (!count) return fail(`正文里找不到这段原文：${[...edit.old].slice(0, 30).join("")}`);
+            if (count > 1) return fail(`这段原文出现了 ${count} 次，多带几个字`);
+            body = body.replace(edit.old, () => edit.new);
+          }
+          const saved = saveAssistantSkill(runtime.home, assistantId, { name: skill.name, title: skill.title, description: skill.description, content: body });
+          await router.addItem(assistantId, { kind: "note", icon: "skill", text: `已更新技能「${saved.title}」· 第 ${saved.version} 版`, path: saved.path });
+          bus.emit({ type: "skills", assistantId });
+          return ok(`已更新技能「${saved.title}」，第 ${saved.version} 版。`);
+        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
+    {
       name: "save_job_as_skill",
       label: "沉淀技能",
       description: "把一个已完成的任务的做法沉淀成这个助手的技能，在任务自己的会话里做，做完对话里会有提示。",
@@ -160,6 +202,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             description: "要交给任务的文件路径（用户发来的附件）；图片会直接给模型看",
           }),
         ),
+        skill: Type.Optional(Type.String({ description: "可选，按这个助手的哪个技能做，填技能名。" })),
+        expect_minutes: Type.Optional(Type.Number({ description: "可选，预计多少分钟能交结果。超过了会通知你；不填按 10 分钟。" })),
         model: Type.Optional(Type.String({ description: `可选，不填用默认。聪明、成本、速度 0–100，越高越聪明、越贵、越快：\n${modelText}` })),
         thinking: Type.Optional(
           Type.String({ description: modelSettings.thinkingChoice === "fixed" ? "当前设置为固定思考档，此参数会被忽略，不要填。" : "可选：思考档以可分派模型列表里每个模型标的为准。不填用模型的默认思考档。" }),
@@ -167,12 +211,19 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       }),
       execute: async (_id, params: any) => {
         try {
+          if (params.expect_minutes != null && (!Number.isInteger(params.expect_minutes) || params.expect_minutes < 1 || params.expect_minutes > 10080)) return fail("expect_minutes 要在 1 到 10080 之间");
           const note = params.note == null ? "" : String(params.note);
           if ([...note].length > 200) return fail("备注最多 200 字；用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景。");
+          // 有的模型会把没用的可选参数填成空串：空串当没填
+          const wanted = params.skill ? String(params.skill) : "";
+          const skills = usableAssistantSkills(runtime.home, assistantId);
+          const skill = wanted ? skills.find((item) => item.name === wanted) : undefined;
+          if (wanted && !skill) return fail(`没有这个技能：${wanted}。能用的有：${skills.map((item) => item.name).join("、") || "无"}`);
           const original = router.originalWords(assistantId, note, true, Array.isArray(params.files) ? params.files.map(String) : []);
           const job = await jobs.start(assistantId, {
             title: String(params.title),
-            instruction: original.text,
+            ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
+            instruction: skill ? skillInstruction(skill.title, original.text) : original.text,
             ...(params.cwd ? { cwd: String(params.cwd) } : {}),
             ...(original.files.length ? { files: original.files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
@@ -181,7 +232,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           });
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
           return endTurn(
-            `任务「${job.title}」（${job.id}）已开始。`,
+            `任务「${job.title}」（${job.id}）已开始，预计 ${job.expect?.minutes ?? 10} 分钟${params.expect_minutes == null ? "（默认）" : ""}。`,
           );
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
@@ -214,7 +265,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       parameters: Type.Object({ jobId: Type.String({ description: "任务 id" }) }),
       execute: async (_id, params: any) => {
         try {
-          await jobs.stop(String(params.jobId));
+          await jobs.stop(String(params.jobId), `${assistant().name}叫停了`);
           return ok("已停止。");
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));

@@ -160,7 +160,8 @@ export function jobDetailRounds(job: Job, steps: JobStep[] | undefined) {
     const end = last ? undefined : round.endedAt;
     const nextStart = !last ? (history[index + 1]?.startedAt ?? (index + 1 === history.length ? job.startedAt : undefined)) : undefined;
     return {
-      job: { ...job, ...round, summary: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.summary, files: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.files },
+      // 前几轮没写原因就是没有原因，不能沿用整个任务最后的原因
+      job: { ...job, ...round, statusReason: round.statusReason, summary: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.summary, files: last && ["running", "queued", "waiting"].includes(job.status) ? undefined : round.files },
       instruction: index === 0 ? job.instruction : history[index - 1].followUp,
       steps: steps?.filter((step) => (!start || step.at >= start) && (!end || step.at <= end) && (!nextStart || step.at < nextStart)),
     };
@@ -168,7 +169,7 @@ export function jobDetailRounds(job: Job, steps: JobStep[] | undefined) {
 }
 
 /** 状态词：右上角的状态标签已经写过，原因行不能再重复它们。 */
-const STATUS_WORDS = new Set(["排队中", "进行中", "待确认", "已完成", "受阻", "失败", "已停止"]);
+const STATUS_WORDS = new Set(["排队中", "进行中", "待确认", "等你确认", "已完成", "受阻", "失败", "已停止"]);
 
 /**
  * 任务卡和详情里的原因文字：只在真有原因时给。

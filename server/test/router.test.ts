@@ -422,7 +422,7 @@ describe("Router", () => {
       hob.faux.setResponses([call("report", { outcome: "done", result: "好了" }), text("好")]);
       hob.faux.appendResponses([text("好")]);
 
-      expect(await run("start_job", { title: "查磁盘", instruction: "看看磁盘" })).toMatch(/^任务「查磁盘」.*已开始。$/);
+      expect(await run("start_job", { title: "查磁盘", instruction: "看看磁盘" })).toMatch(/^任务「查磁盘」.*已开始，预计 10 分钟（默认）。$/);
       expect(await run("ask_user", { title: "发吗", options: [{ label: "发" }, { label: "别发" }] })).toContain(
         "问题卡已显示给用户。",
       );

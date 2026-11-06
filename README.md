@@ -16,7 +16,7 @@
 
 **Delegation you can see.** Hob hands work to the right assistant and keeps a delegation card in its own chat: status, linked jobs, and any pending question, which you can answer right on the card. Your original words travel with the work; reply in the receiving assistant's chat to take over, or reply in chat to close a pending question.
 
-**Work that can continue.** Assistants can read files and full job results, and resume a finished job with separate cards and reports for each round. Archive an assistant when no longer needed while keeping its conversations and job history.
+**Work that can continue.** Assistants can read files, inspect job status, activity and results without interrupting the work, and resume a finished job with separate cards and reports for each round. They estimate job duration and receive reminders when work runs over; completion notices include actual and expected time.
 
 **Asks first, then remembers.** Each assistant has "confirm before running" rules. Pick "always allow" once and it becomes a rule, so you won't be asked about that again.
 
@@ -26,19 +26,19 @@
 
 **Cloud desktop.** An optional separate container gives each assistant its own screen and browser, with a shared screen for selected assistants. Watch or take control, sync the clipboard, and type with your local input method.
 
-**A clearer workspace.** The right panel brings assistant details, jobs, files and logs together, with docked file previews. Completed unread work is marked on the assistant's avatar.
+**A clearer workspace.** The right panel brings assistant details, jobs and files together; its two lists load more as you scroll, and nested pages retain their address on refresh. Completed unread work is marked on the assistant's avatar. Archive an assistant when no longer needed while keeping its conversations and job history.
 
 **Pages instead of walls of text.** For processes, comparisons or research, an assistant can answer with a single-page visual document. It opens in the side panel and renders live while the model is still writing.
 
 **Tools that come with it:**
 
 - **Web search** across 10 providers (SearXNG, Exa, Tavily, Brave, Serper, Jina, Firecrawl, Perplexity, You.com, Ollama), used in order with automatic fallback.
-- **Skills** from Hob's own skill folder, the shared `~/.agents/skills`, and Lore. Import existing skills, or let assistants save reusable skills automatically or on request.
+- **Skills** from Hob's own skill folder, the shared `~/.agents/skills`, and Lore. Import existing skills or let assistants save reusable ones, edit their instructions with version history, and choose a skill for a job.
 - **MCP servers** (stdio or streamable HTTP) that jobs can call, with per-server and per-tool switches; import what you already have from Claude Code, Cursor and pi.
 - **Long-term memory**, kept locally or in [Lore](https://github.com/FFatTiger/lore).
 - **Image generation** in chat through an OpenAI-compatible image API, with a progress card while it runs.
 - **Claude subscription** via an existing local Claude Code login on npm or source installs.
-- **Push notifications** when an assistant needs your decision or a job finishes.
+- **Push notifications** when an assistant needs your decision or a job gets stuck or fails.
 
 **Made for the phone too.** Hob is an installable web app with a mobile layout and Telegram-style gestures: swipe a message to reply, long-press for actions. Light and dark themes follow your system.
 

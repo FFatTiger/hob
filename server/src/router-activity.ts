@@ -8,6 +8,8 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
   switch (name) {
     case "read": label = withValue("正在读", basename(value("path"))); break;
     case "start_job": label = withValue("派任务", value("title")); break;
+    case "check_job": label = "看任务"; break;
+    case "edit_skill": label = "改技能"; break;
     case "reply_job": label = "补充任务要求"; break;
     case "stop_job": label = "停止任务"; break;
     case "ask_user": label = "准备问你"; break;

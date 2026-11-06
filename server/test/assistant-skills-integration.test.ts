@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createApp } from "../src/http.ts";
@@ -177,6 +177,8 @@ describe("助手技能接入", () => {
       expect(() => readSkillFiles(cwd, [{ path: "scripts/x", from: "missing.py" }])).toThrow("找不到 from 指向的文件");
       expect(() => readSkillFiles(cwd, [{ path: "scripts/x", content: "x", from: "sub/check.py" }])).toThrow("只给一个");
       expect(() => readSkillFiles(cwd, [{ path: "scripts/x" }])).toThrow("只给一个");
+      expect(readSkillFiles(cwd, [{ path: "scripts/check.py", content: "", from: "sub/check.py" }])?.[0]?.content).toBe("print('ok')\n");
+      expect(readSkillFiles(cwd, [{ path: "scripts/a.py", content: "x", from: "" }])?.[0]?.content).toBe("x");
     } finally { rmSync(base, { recursive: true, force: true }); }
   });
   it("沉淀消息包含复用要求和已有技能", async () => {
@@ -243,6 +245,51 @@ describe("助手技能接入", () => {
       await hob.runtime.jobs.waitIdle();
       expect(events).toEqual([job.id]);
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.text === "技能沉淀失败：模型不可用")).toBe(true);
+    } finally { hob.close(); }
+  });
+  it("每轮每个技能只新增一个版本，后续保存覆盖内容和附件", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const second = { ...input, name: "other-check", title: "其他巡检" };
+      const fresh = { ...input, name: "new-check", title: "新巡检" };
+      saveAssistantSkill(hob.home, "hob", { ...input, files: [{ path: "references/keep.txt", content: "保留" }, { path: "scripts/check.sh", content: "旧版" }] });
+      saveAssistantSkill(hob.home, "hob", second);
+      const job = { id: "t-versions", assistantId: "hob", title: "巡检", instruction: "检查", status: "done" as const, createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [], model: "hob-faux/faux-1", thinking: "off" as const };
+      hob.runtime.store.saveJob(job);
+      hob.faux.setResponses([
+        call("save_skill", { ...input, content: "第一次", files: [{ path: "scripts/check.sh", content: "第一次" }] }),
+        call("save_skill", { ...second, content: "其他更新" }),
+        call("save_skill", { ...fresh, content: "新建第一次" }),
+        call("save_skill", { ...input, content: "第二次", files: [{ path: "scripts/check.sh", content: "第二次" }, { path: "references/new.txt", content: "新附件" }] }),
+        call("save_skill", { ...fresh, content: "新建第二次", files: [{ path: "scripts/new.sh", content: "最终脚本" }] }),
+        text("完成"),
+      ]);
+      hob.runtime.jobs.startSediment(job.id);
+      await hob.runtime.jobs.waitIdle();
+      const root = join(hob.home, "assistants", "hob", "skills");
+      const skills = listAssistantSkills(hob.home, "hob");
+      expect(skills.find((skill) => skill.name === input.name)?.version).toBe(2);
+      expect(skills.find((skill) => skill.name === second.name)?.version).toBe(2);
+      expect(skills.find((skill) => skill.name === fresh.name)?.version).toBe(1);
+      expect(readdirSync(join(root, input.name, ".history"))).toEqual(["1"]);
+      expect(readdirSync(join(root, second.name, ".history"))).toEqual(["1"]);
+      expect(existsSync(join(root, fresh.name, ".history"))).toBe(false);
+      expect(readFileSync(join(root, input.name, ".history", "1", "scripts", "check.sh"), "utf8")).toBe("旧版");
+      expect(readFileSync(join(root, input.name, "SKILL.md"), "utf8")).toContain("第二次");
+      expect(readFileSync(join(root, input.name, "scripts", "check.sh"), "utf8")).toBe("第二次");
+      expect(readFileSync(join(root, input.name, "references", "keep.txt"), "utf8")).toBe("保留");
+      expect(readFileSync(join(root, input.name, "references", "new.txt"), "utf8")).toBe("新附件");
+      expect(readFileSync(join(root, fresh.name, "SKILL.md"), "utf8")).toContain("新建第二次");
+      expect(readFileSync(join(root, fresh.name, "scripts", "new.sh"), "utf8")).toBe("最终脚本");
+      const notes = () => hob.runtime.router.items("hob").items.filter((item) => item.kind === "note" && item.icon === "skill");
+      expect(notes()).toHaveLength(3);
+      hob.faux.setResponses([call("save_skill", { ...input, content: "下一轮" }), text("完成")]);
+      hob.runtime.jobs.startSediment(job.id);
+      await hob.runtime.jobs.waitIdle();
+      expect(listAssistantSkills(hob.home, "hob").find((skill) => skill.name === input.name)?.version).toBe(3);
+      expect(readdirSync(join(root, input.name, ".history")).sort()).toEqual(["1", "2"]);
+      expect(readFileSync(join(root, input.name, ".history", "2", "SKILL.md"), "utf8")).toContain("第二次");
+      expect(notes()).toHaveLength(4);
     } finally { hob.close(); }
   });
   it("原任务会话沉淀，保存后绑定定时并通知", async () => {

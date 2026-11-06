@@ -142,7 +142,7 @@ describe("思考过程归到下一步", () => {
 
 describe("任务卡的原因行", () => {
   it("每个状态词都不当原因显示（右上角状态已经写过一遍）", () => {
-    for (const word of ["排队中", "进行中", "待确认", "已完成", "受阻", "失败", "已停止"]) {
+    for (const word of ["排队中", "进行中", "待确认", "等你确认", "已完成", "受阻", "失败", "已停止"]) {
       expect(jobReason({ statusReason: word })).toBeUndefined();
     }
   });

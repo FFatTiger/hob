@@ -22,7 +22,7 @@ export function Sidebar() {
           <Icon name="search" size={15} />
           <input value={s.query} placeholder="搜索助手" onChange={(e) => setQuery(e.target.value)} />
         </div>
-        <button className="ib" title="创建专属助手" onClick={newAssistant}>
+        <button className="hob-icon-btn" title="创建专属助手" onClick={newAssistant}>
           <Icon name="plus" size={18} />
         </button>
       </div>

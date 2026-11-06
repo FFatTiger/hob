@@ -41,6 +41,7 @@ import {
 import { fmtDuration, fmtElapsed, fmtWhen, isToday, needDivider } from "../util.ts";
 import { jobReason, jobRoundView } from "../steps.ts";
 import { menuPosition, messageMenu, moveSwipe, swipeReply, type SwipeState } from "../message-menu.ts";
+import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
 
 /* ---------------- markdown ---------------- */
 
@@ -156,16 +157,6 @@ function jumpToQuote(event: React.MouseEvent<HTMLElement>, itemId: string) {
 /** 每条消息工具行的状态。 */
 type ToolsState = { open: boolean; start?: (event: React.PointerEvent) => void; close: () => void; touch: boolean; distance: number; ready: boolean };
 
-const STATUS: Record<Job["status"], { text: string; icon: IconName; cls: string }> = {
-  running: { text: "进行中", icon: "spin", cls: "spin" },
-  queued: { text: "排队中", icon: "clock", cls: "" },
-  waiting: { text: "待确认", icon: "pause", cls: "" },
-  done: { text: "已完成", icon: "check", cls: "" },
-  stuck: { text: "受阻", icon: "close", cls: "" },
-  failed: { text: "失败", icon: "close", cls: "" },
-  stopped: { text: "已停止", icon: "stop", cls: "" },
-};
-
 /** 结束了的任务用了多久；没开始跑就结束的（排队时被停）不显示。 */
 function took(job: Job): string | undefined {
   const ms = job.durationMs ?? (job.startedAt && job.endedAt ? Date.parse(job.endedAt) - Date.parse(job.startedAt) : undefined);
@@ -180,8 +171,6 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
   const [text, setText] = useState("");
   const [swapped, setSwapped] = useState(false); // 状态刚变过：图标播淡出／弹一下
   const reply = useLeave(replying, 200);
-  const st = STATUS[job.status];
-  const done = job.status === "done";
   const running = job.status === "running";
   const canReply = !past && (running || job.status === "waiting");
   const bad = job.status === "stuck" || job.status === "failed";
@@ -212,28 +201,16 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
         <div className="tt">
           {owner ? <span className="jav"><Avatar sprite={owner.sprite} prop={owner.prop} size={40} /></span> : null}
           <span className="jt">{job.routineId ? <Icon name="clock" size={14} /> : null}{job.title}</span>
-          <span className={`st${done ? " done" : ""}`}>
-            <span className="stico">
-              <Icon name="spin" size={14} w={2} className={`spin stspin${running ? "" : " off"}`} />
-              {running ? null : (
-                <Icon
-                  name={st.icon}
-                  size={14}
-                  w={2}
-                  className={`stic${done ? " pop" : ""}${swapped ? " anim" : ""}`}
-                />
-              )}
-            </span>
-            {st.text}
+          <StatusTag meta={JOB_STATUS[job.status]} card animated swapped={swapped}>
             {running ? ` · ${fmtElapsed(job.startedAt ?? job.createdAt)}` : took(job) ? ` · 用时 ${took(job)}` : null}
-          </span>
+          </StatusTag>
         </div>
         {reason ? <div className={`meta${bad ? " bad" : ""}`}>{reason}</div> : null}
         {canReply || running ? (
           <div className="acts">
             {canReply ? (
               <button
-                className={`btn job-reply${replying ? " selected" : ""}`}
+                className={`hob-btn job-reply${replying ? " selected" : ""}`}
                 aria-pressed={replying}
                 onClick={(event) => {
                   event.stopPropagation();
@@ -246,7 +223,7 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
             ) : null}
             {running ? (
               <button
-                className="btn job-stop"
+                className="hob-btn hob-btn-danger job-stop"
                 onClick={(event) => {
                   event.stopPropagation();
                   void stopJob(job.id);
@@ -277,7 +254,7 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
                   }}
                 />
                 <button
-                  className="pbtn solid"
+                  className="hob-btn hob-btn-primary"
                   onClick={() => {
                     if (text.trim()) void replyJob(job.id, text.trim());
                     setText("");
@@ -349,12 +326,11 @@ function DraftCard({ draft }: { draft: Draft }) {
         </div>
         <div className="acts swap" style={{ marginTop: 12 }}>
           <div className={created ? "off" : undefined}>
-            <button className="btn solid" onClick={() => void createDraft(draft.id)}>
+            <button className="hob-btn hob-btn-primary" onClick={() => void createDraft(draft.id)}>
               创建
             </button>
             <button
-              className="btn"
-              style={{ background: "var(--bubble)" }}
+              className="hob-btn"
               onClick={() => {
                 setText("请修改草稿：");
                 focusComposer();
@@ -364,7 +340,7 @@ function DraftCard({ draft }: { draft: Draft }) {
             </button>
           </div>
           <div className={created ? undefined : "off"}>
-            <button className="btn solid" disabled={archived} onClick={() => void select(draft.createdAssistantId!)}>
+            <button className="hob-btn hob-btn-primary" disabled={archived} onClick={() => void select(draft.createdAssistantId!)}>
               {archived ? "已归档" : "已创建 · 查看"}
             </button>
           </div>
@@ -376,9 +352,11 @@ function DraftCard({ draft }: { draft: Draft }) {
 function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: boolean }) {
   const s = useApp();
   const [expanded, setExpanded] = useState(false);
+  const previousStatus = useRef(delegation.status);
+  const changed = previousStatus.current !== delegation.status;
+  useEffect(() => { previousStatus.current = delegation.status; }, [delegation.status]);
   const target = s.assistants.find((a) => a.id === delegation.to);
   const name = target?.name ?? delegation.to;
-  const labels: Record<Delegation["status"], string> = { running: "进行中", waiting: "等你确认", done: "已完成", stuck: "受阻", interrupted: "已中断", returned: "已退回", takenOver: "已被你接手" };
   const approvals = Object.values(s.approvals).filter((approval) => approval.status === "pending" && ((delegation.approvalIds ?? []).includes(approval.id) || Boolean(approval.jobId && delegation.jobIds.includes(approval.jobId))));
   return (
     <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`}>
@@ -386,10 +364,7 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
         <div className="tt">
           {target ? <span className="jav"><Avatar sprite={target.sprite} prop={target.prop} size={40} /></span> : null}
           <span className="jt">交给「{name}」</span>
-          <span className={`st${delegation.status === "done" ? " done" : ""}${delegation.status === "stuck" || delegation.status === "interrupted" || delegation.status === "returned" ? " bad" : ""}`}>
-            <Icon name={delegation.status === "running" ? "spin" : delegation.status === "done" ? "check" : delegation.status === "waiting" ? "pause" : delegation.status === "takenOver" ? "user" : "close"} className={delegation.status === "running" ? "spin" : ""} size={14} />
-            {labels[delegation.status]}
-          </span>
+          <span key={delegation.status} className={changed ? "status-fade" : undefined}><StatusTag meta={DELEGATION_STATUS[delegation.status]} card /></span>
         </div>
         <button className={`delegation-text${expanded ? " expanded" : ""}`} onClick={() => setExpanded(!expanded)} title={expanded ? "收起" : "查看全文"}>{delegation.text}</button>
         {delegation.status === "returned" && delegation.reply ? <div className="note">{delegation.reply}</div> : null}
@@ -397,8 +372,8 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
           const job = s.jobs[id];
           // 卡头已经写了总状态，这里每个任务只给图标（悬停看文字），不再重复「待确认」这类字
           return job ? (
-            <button className={`delegation-job ${job.status}`} key={id} onClick={() => openJob(id)} title={STATUS[job.status].text}>
-              <Icon name={STATUS[job.status].icon} size={14} w={2} className={STATUS[job.status].cls} />
+            <button className={`delegation-job ${job.status}`} key={id} onClick={() => openJob(id)} title={JOB_STATUS[job.status].text}>
+              {jobStatusIcon(job.status, 14, 2)}
               <span>{job.title}</span>
               <Icon name="chev" size={14} className="go" />
             </button>
@@ -415,6 +390,9 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
 }
 
 function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  const previousStatus = useRef(approval.status);
+  const changed = previousStatus.current !== approval.status;
+  useEffect(() => { previousStatus.current = approval.status; }, [approval.status]);
   const chosen = approval.options.find((o) => o.key === approval.chosen);
   const done = approval.status === "answered" && chosen ? approval.chosen : undefined;
   // 刚点的那个选项：先亮一下，其余收起来，再出勾
@@ -435,14 +413,14 @@ function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean 
       {approval.detail ? <div className="qs">{approval.detail}</div> : null}
       <div className="opts">
         {approval.status === "expired" ? (
-          <div className="opt">已结束</div>
+          <div className={`opt${changed ? " status-fade" : ""}`}>已结束</div>
         ) : reply ? (
           <div className="opt chosen">
             <span className="key">
               <Icon name="user" size={12} />
             </span>
             {reply}
-            <span className="ck">
+            <span className={`ck${changed ? " check-enter" : ""}`}>
               <Icon name="check" size={16} />
             </span>
           </div>
@@ -492,7 +470,7 @@ function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean 
               }}
             />
             {typed ? (
-              <button className="ib other-send" title="发送" onClick={send}>
+              <button className="hob-icon-btn other-send" title="发送" onClick={send}>
                 <Icon name="send" size={16} />
               </button>
             ) : null}

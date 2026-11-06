@@ -1,4 +1,5 @@
 // 设置整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
+import { Empty } from "./Empty.tsx";
 import { Fragment, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
   AboutInfo,
@@ -244,7 +245,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
     return (
       <div className={`setpage narrow${leaving ? " leaving" : ""}`}>
         <div className="sethead">
-          <button className="ib" title="返回" onClick={closeSettings}>
+          <button className="hob-icon-btn" title="返回" onClick={closeSettings}>
             <Icon name="left" size={17} />
           </button>
           <span className="t">设置</span>
@@ -265,7 +266,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
     <div className={`setpage${narrow ? " narrow" : ""}${leaving ? " leaving" : ""}`}>
       {narrow ? (
         <div className="sethead">
-          <button className="ib" title="返回" onClick={s.sub ? closeSub : () => setSection(null)}>
+          <button className="hob-icon-btn" title="返回" onClick={s.sub ? closeSub : () => setSection(null)}>
             <Icon name="left" size={17} />
           </button>
           <span className="t">{s.sub?.title ?? SECTIONS.find((item) => item.id === current)?.label ?? "设置"}</span>
@@ -415,8 +416,8 @@ function DesktopSection() {
             <div className="lbl sub">启用</div>
             <div className="sline">{view?.enabled ? "已启用" : "未启用"}</div>
             <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-              <button className="pbtn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
-              <button className="pbtn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
+              <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
+              <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
               {statusLine}
             </div>
           </div>
@@ -440,18 +441,19 @@ function DesktopSection() {
                 <input value={url} disabled={!view || busy} onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:6080" />
               </div>
               <div className="lbl sub">令牌</div>
-              {changingToken ? (
+              <div className={`expand settings-motion${changingToken ? " open" : ""}`} inert={!changingToken}><div>
                 <div className="field">
                   <input type="password" value={token} disabled={!view || busy} onChange={(e) => setToken(e.target.value)} placeholder={view?.tokenConfigured ? "已保存，留空则沿用" : "云桌面的访问令牌"} />
                 </div>
-              ) : (
+              </div></div>
+              <div className={`expand settings-motion${changingToken ? "" : " open"}`} inert={changingToken}><div>
                 <div className="ctl">
                   <span className="note">已设置</span>
-                  <button className="pbtn" disabled={busy} onClick={() => setChangingToken(true)}>更换</button>
+                  <button className="hob-btn" disabled={busy} onClick={() => setChangingToken(true)}>更换</button>
                 </div>
-              )}
+              </div></div>
               <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-                <button className="pbtn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
+                <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
                 {statusLine ?? <span className="note">测试地址、令牌和云桌面是否可用。</span>}
               </div>
             </div>
@@ -459,8 +461,8 @@ function DesktopSection() {
             <div className="sfoot">
               {message ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
               <span className="sp" />
-              <button className="pbtn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
-              <button className="pbtn solid" disabled={busy || !view} onClick={() => void save()}>保存</button>
+              <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
+              <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
             </div>
           </Group>
         </>
@@ -474,8 +476,8 @@ function DesktopSection() {
             <span>{assistant.name}</span>
           </label>)}
           <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-            <button className="pbtn" disabled={!view?.enabled || busy} onClick={() => setShowDesktop("public")}>打开公共屏幕</button>
-            <button className="pbtn solid" disabled={!view || busy} onClick={() => void savePublic()}>保存公共屏幕设置</button>
+            <button className="hob-btn" disabled={!view?.enabled || busy} onClick={() => setShowDesktop("public")}>打开公共屏幕</button>
+            <button className="hob-btn hob-btn-primary" disabled={!view || busy} onClick={() => void savePublic()}>保存公共屏幕设置</button>
             {message ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
           </div>
         </div>
@@ -647,8 +649,8 @@ function PasswordSection({ onDone }: { onDone: (text: string) => void }) {
       </div>
       <SaveRow saved={false} error={null}>
         {old || next || again ? <span className="note">未保存的修改</span> : null}
-        <button className="pbtn" disabled={busy || !(old || next || again)} onClick={() => { setOld(""); setNext(""); setAgain(""); onDone(""); }}>取消</button>
-        <button className="pbtn solid" onClick={() => void submit()} disabled={busy || !old || !next || !again}>
+        <button className="hob-btn" disabled={busy || !(old || next || again)} onClick={() => { setOld(""); setNext(""); setAgain(""); onDone(""); }}>取消</button>
+        <button className="hob-btn hob-btn-primary" onClick={() => void submit()} disabled={busy || !old || !next || !again}>
           {busy ? "正在验证…" : "保存"}
         </button>
       </SaveRow>
@@ -829,7 +831,7 @@ function ThinkingLevels({
               ))}
             </select>
             <button
-              className="pbtn"
+              className="hob-btn"
               onClick={() => {
                 if (!pick) return;
                 save([...rows, { level: pick, text: "" }]);
@@ -841,7 +843,7 @@ function ThinkingLevels({
             </button>
             <span className="sp" />
             {info.custom ? (
-              <button className="pbtn" onClick={() => void commit(null)} disabled={busy || disabled}>
+              <button className="hob-btn" onClick={() => void commit(null)} disabled={busy || disabled}>
                 恢复默认
               </button>
             ) : null}
@@ -942,7 +944,7 @@ function ProvidersSection() {
   }, [view]);
 
   if (loadError) return <div className="note">{loadError}</div>;
-  if (!view) return <div className="empty">正在读取服务商…</div>;
+  if (!view) return <Empty>正在读取服务商…</Empty>;
 
   /** 改完回到列表，并给一行提示。 */
   const done = (next: ProvidersView, message: string) => {
@@ -994,15 +996,15 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
       <ClaudeProviderCard />
       <Group>
         <div className="ctl">
-          <button className="pbtn solid" onClick={() => openSub({ kind: "addProvider", title: "添加服务商" })}>
+          <button className="hob-btn hob-btn-primary" onClick={() => openSub({ kind: "addProvider", title: "添加服务商" })}>
             添加服务商
           </button>
         </div>
         <div className="lbl">已配置的服务商</div>
-        <div className="roster">
+        <div className="group-card settings-card">
           {view.providers.map((provider) => (
             <button
-              className="rrow"
+              className="list-row setting-row"
               key={provider.id}
               onClick={() => openSub({ kind: "provider", id: provider.id, title: label(provider) })}
             >
@@ -1022,7 +1024,7 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
           </button>
         </div>
         {view.providers.length ? null : (
-          <div className="note">尚未添加其他服务商。</div>
+          <Empty>尚未添加其他服务商。</Empty>
         )}
         <div className="note">从本机导入会只读本机配置并一次性复制到 Hob，不会修改来源。</div>
         {notice ? <div className="okline">{notice}</div> : null}
@@ -1076,8 +1078,8 @@ function ClaudeProviderCard() {
       <div className="field"><input value={draft.executable} disabled={busy || !view} onChange={(e) => setDraft({ ...draft, executable: e.target.value })} placeholder={status?.executable || "留空时自动查找"} /></div>
       <div className="note">用量计入你的 Claude 订阅额度，与 Claude Code 共用。Docker 镜像不支持此功能。</div>
       <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
-        <button className="pbtn" disabled={busy} onClick={() => void detect()}>重新检测</button>
-        <button className="pbtn solid" disabled={busy || !view} onClick={() => void save()}>保存</button>
+        <button className="hob-btn" disabled={busy} onClick={() => void detect()}>重新检测</button>
+        <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
         {message ? <span className="note" role="status">{message}</span> : null}
       </div>
     </div>
@@ -1162,8 +1164,8 @@ function AddProvider({
         <SubBack label="服务商" />
         <PageHead title="添加服务商" desc="内置服务商只需填写 API Key；兼容接口需填写服务地址、协议与模型。" />
         <Group>
-          <div className="mcard">
-            <button className="mrow" onClick={() => setKind("builtin")}>
+          <div className="group-card settings-card">
+            <button className="list-row model-row" onClick={() => setKind("builtin")}>
               <span className="mtop">
                 <span className="mname">内置服务商</span>
                 <span className="sp" />
@@ -1171,7 +1173,7 @@ function AddProvider({
               </span>
               <span className="mprev">提供完整的模型目录，填写 API Key 即可。</span>
             </button>
-            <button className="mrow" onClick={() => setKind("custom")}>
+            <button className="list-row model-row" onClick={() => setKind("custom")}>
               <span className="mtop">
                 <span className="mname">兼容接口</span>
                 <span className="sp" />
@@ -1188,7 +1190,7 @@ function AddProvider({
   if (kind === "builtin" && builtinId === null) {
     return <><button className="subback" onClick={() => setKind(null)}><Icon name="left" size={15} />添加服务商</button>
       <PageHead title="选择内置服务商" desc="选择服务商后填写 API Key。" />
-      <Group><div className="mcard">{available.length ? available.map((item) => <button className="mrow" key={item.id} onClick={() => setBuiltinId(item.id)}><span className="mtop"><span className="mname">{item.name}</span><span className="sp" /><Icon name="chev" size={14} /></span><span className="mprev">内置服务商</span></button>) : <div className="empty">所有内置服务商均已添加。</div>}</div></Group>
+      <Group><div className="group-card settings-card">{available.length ? available.map((item) => <button className="list-row model-row" key={item.id} onClick={() => setBuiltinId(item.id)}><span className="mtop"><span className="mname">{item.name}</span><span className="sp" /><Icon name="chev" size={14} /></span><span className="mprev">内置服务商</span></button>) : <Empty>所有内置服务商均已添加。</Empty>}</div></Group>
     </>;
   }
 
@@ -1249,14 +1251,14 @@ function ImportProviders({ onSaved }: { onSaved: (view: ProvidersView, message: 
         desc="读取本机其他客户端保存的服务商配置。来源文件只读，导入后 Key 存入 Hob，不再显示。"
       />
       {view === null ? (
-        error ? null : <div className="empty">正在读取…</div>
+        error ? null : <Empty>正在读取…</Empty>
       ) : (
         <Group>
           <div className="sline">来源：{view.source}</div>
           {view.items.length ? (
-            <div className="roster" style={{ marginTop: 8 }}>
+            <div className="group-card settings-card" style={{ marginTop: 8 }}>
               {view.items.map((item) => (
-                <label className={`rrow${item.selectable ? "" : " gone"}`} key={item.id}>
+                <label className={`list-row setting-row${item.selectable ? "" : " gone"}`} key={item.id}>
                   <input
                     type="checkbox"
                     className="rcheck"
@@ -1289,15 +1291,13 @@ function ImportProviders({ onSaved }: { onSaved: (view: ProvidersView, message: 
               ))}
             </div>
           ) : (
-            <div className="empty" style={{ marginTop: 8 }}>
-              未找到可导入的配置。
-            </div>
+            <Empty>未找到可导入的配置。</Empty>
           )}
           <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-            <button className="pbtn solid" onClick={() => void commit()} disabled={busy || !chosen.size}>
+            <button className="hob-btn hob-btn-primary" onClick={() => void commit()} disabled={busy || !chosen.size}>
               {busy ? "正在导入…" : "导入所选"}
             </button>
-            <button className="pbtn" onClick={closeSub} disabled={busy}>
+            <button className="hob-btn" onClick={closeSub} disabled={busy}>
               取消
             </button>
           </div>
@@ -1345,12 +1345,12 @@ function DeleteProvider({
   return (
     <Group>
       <div className="lbl">危险操作</div>
-      <div className="mcard">
+      <div className="group-card settings-card">
         {confirming ? (
           <div className="ctl" style={{ padding: 12, gap: 8, flexWrap: "wrap" }}>
             <span>删除「{label}」后，该服务商的模型将不可用。{affected.length ? `受影响的默认模型：${affected.map((role) => role === "conversation" ? "对话" : "任务执行").join("、")}。` : "当前默认模型不受影响。"}</span>
-            <button className="pbtn" onClick={() => setConfirming(false)} disabled={busy}>取消</button>
-            <button className="pbtn danger" onClick={() => void drop()} disabled={busy}>确认删除</button>
+            <button className="hob-btn" onClick={() => setConfirming(false)} disabled={busy}>取消</button>
+            <button className="hob-btn hob-btn-danger" onClick={() => void drop()} disabled={busy}>确认删除</button>
           </div>
         ) : (
           <button className="mline danger" onClick={() => setConfirming(true)} disabled={busy}>删除服务商</button>
@@ -1508,9 +1508,9 @@ function ProviderForm({
     return (
       <>
         <div className="lbl">模型</div>
-        <div className="roster">
+        <div className="group-card settings-card">
           {models.map((info) => (
-            <div className="rrow" key={info.id}>
+            <div className="list-row setting-row" key={info.id}>
               <div className="rmain">
                 <div className="rname">
                   {info.name}
@@ -1618,7 +1618,7 @@ function ProviderForm({
             </select>
           </div>
           <div className="lbl sub">API Key</div>
-          {!changingKey ? <div className="ctl"><span className="note">已保存</span><button className="pbtn" onClick={() => setChangingKey(true)}>更换</button></div> : <div className="field">
+          {!changingKey ? <div className="ctl"><span className="note">已保存</span><button className="hob-btn" onClick={() => setChangingKey(true)}>更换</button></div> : <div className="field">
             <input
               type="password"
               value={draft.key}
@@ -1631,7 +1631,7 @@ function ProviderForm({
               disabled={busy}
             />
           </div>}
-          <div className="ctl"><button className="pbtn" disabled={busy} onClick={() => void runConnectionTest()}>测试连接</button><span className="note">测试会请求模型，可能产生费用。</span>{testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}</div>
+          <div className="ctl"><button className="hob-btn" disabled={busy} onClick={() => void runConnectionTest()}>测试连接</button><span className="note">测试会请求模型，可能产生费用。</span>{testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}</div>
           <ProviderFoot busy={busy} error={error} dirty={dirty} onCancel={closeSub} onSave={() => void commit()} />
           </div>
         </Group>
@@ -1689,7 +1689,7 @@ function ProviderForm({
               />
             </div>
             <div className="lbl sub">API Key</div>
-            {!changingKey ? <div className="ctl"><span className="note">已保存</span><button className="pbtn" onClick={() => setChangingKey(true)}>更换</button></div> : <div className="field">
+            {!changingKey ? <div className="ctl"><span className="note">已保存</span><button className="hob-btn" onClick={() => setChangingKey(true)}>更换</button></div> : <div className="field">
               <input
                 type="password"
                 value={draft.key}
@@ -1703,9 +1703,9 @@ function ProviderForm({
               />
             </div>}
             <div className="ctl" style={{ gap: 8, flexWrap: "wrap" }}>
-              <button className="pbtn" disabled={busy || !draft.baseUrl.trim()} onClick={() => void runConnectionTest()}>测试连接</button>
+              <button className="hob-btn" disabled={busy || !draft.baseUrl.trim()} onClick={() => void runConnectionTest()}>测试连接</button>
               {testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}
-              <button className="pbtn" onClick={() => void runDiscover()} disabled={busy || !draft.baseUrl.trim()}>
+              <button className="hob-btn" onClick={() => void runDiscover()} disabled={busy || !draft.baseUrl.trim()}>
                 {busy ? "正在获取…" : "获取模型列表"}
               </button>
               <span className="note">
@@ -1741,9 +1741,9 @@ function ProviderForm({
           <Group>
             <div className="lbl">模型</div>
             {draft.models.length ? (
-              <div className="roster">
+              <div className="group-card settings-card">
                 {draft.models.map((model) => (
-                  <div className="rrow" key={model.id}>
+                  <div className="list-row setting-row" key={model.id}>
                     <div className="rmain">
                       <div className="rname mono">{model.id}</div>
                       <div className="rfoot">
@@ -1804,7 +1804,7 @@ function ProviderForm({
                 ))}
               </div>
             ) : (
-              <div className="empty">尚未添加模型。可获取模型列表后勾选，或手动填写模型 ID。</div>
+              <Empty>尚未添加模型。可获取模型列表后勾选，或手动填写模型 ID。</Empty>
             )}
             <ManualModel disabled={busy} onAdd={addModel} />
           </Group>
@@ -1839,7 +1839,7 @@ function ManualModel({ disabled, onAdd }: { disabled: boolean; onAdd: (id: strin
           disabled={disabled}
         />
       </div>
-      <button className="pbtn" onClick={submit} disabled={disabled || !text.trim()}>
+      <button className="hob-btn" onClick={submit} disabled={disabled || !text.trim()}>
         添加
       </button>
     </div>
@@ -1862,10 +1862,10 @@ function ProviderFoot({
   return (
     <SaveRow saved={false} error={error}>
       {!error && dirty ? <span className="note">未保存的修改</span> : null}
-      <button className="pbtn" onClick={onCancel} disabled={busy}>
+      <button className="hob-btn" onClick={onCancel} disabled={busy}>
         取消
       </button>
-      <button className="pbtn solid" onClick={onSave} disabled={busy || !dirty}>
+      <button className="hob-btn hob-btn-primary" onClick={onSave} disabled={busy || !dirty}>
         {busy ? "正在验证…" : "保存"}
       </button>
     </SaveRow>
@@ -1880,7 +1880,7 @@ function ModelsSection() {
     void loadModels().then(setView);
   }, []);
 
-  if (!view) return <div className="empty">正在读取模型列表…</div>;
+  if (!view) return <Empty>正在读取模型列表…</Empty>;
   if (s.sub?.kind === "model") return <ModelDetail view={view} modelRef={s.sub.ref} />;
   if (s.sub?.kind === "addModels") return <AddModels view={view} />;
   return <ModelsHome view={view} />;
@@ -1912,7 +1912,7 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
     const next = latest.current;
     if (!saved || entry.scoresConfirmed !== true || saved.smart !== next.smart || saved.cost !== next.cost || saved.speed !== next.speed) save(next);
   };
-  if (!expanded) return <div className="ctl"><span className="note">{scoreSummary(entry.scores ?? scores)}</span><button className="pbtn" onClick={() => setExpanded(true)}>修改</button></div>;
+  if (!expanded) return <div className="ctl"><span className="note">{scoreSummary(entry.scores ?? scores)}</span><button className="hob-btn" onClick={() => setExpanded(true)}>修改</button></div>;
   const names = { smart: "聪明程度", cost: "成本", speed: "速度" } as const;
   return (
     <div className="group">
@@ -1936,7 +1936,7 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
         </div>
       ))}
       <div className="field"><input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note !== entry.note) update({ note }); }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} placeholder="补充说明（选填），如「中文写作特别好」" /></div>
-      {collapsible ? <div className="ctl"><button className="pbtn" onClick={() => setExpanded(false)}>收起</button></div> : null}
+      {collapsible ? <div className="ctl"><button className="hob-btn" onClick={() => setExpanded(false)}>收起</button></div> : null}
     </div>
   );
 }
@@ -2003,7 +2003,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
 
       <Group>
         <div className="lbl">默认模型</div>
-        <div className="mcard">
+        <div className="group-card settings-card">
           {role("conversation", "对话", "对话模型")}
           {role("work", "任务执行", "默认任务模型")}
         </div>
@@ -2015,14 +2015,14 @@ function ModelsHome({ view }: { view: ModelsView }) {
 
       <Group>
         <div className="lbl">可用模型</div>
-        <div className="mcard">
+        <div className="group-card settings-card">
           {models.roster.map((entry) => {
             const info = byRef.get(entry.ref);
             const name = info?.name ?? entry.ref;
             const usage = modelUseState(entry, info);
             return (
               <button
-                className={`mrow${info ? "" : " gone"}`}
+                className={`list-row model-row${info ? "" : " gone"}`}
                 key={entry.ref}
                 onClick={() => openSub({ kind: "model", ref: entry.ref, title: name })}
               >
@@ -2080,7 +2080,7 @@ function ModelDetail({ view, modelRef }: { view: ModelsView; modelRef: string })
 
       {info?.reasoning ? (
         <Group>
-          <div className="mcard">
+          <div className="group-card settings-card">
             <div className="mline">
               <span className="k">分派时的思考强度</span>
               <ThinkingPicker
@@ -2128,8 +2128,8 @@ function ModelDetail({ view, modelRef }: { view: ModelsView; modelRef: string })
 
       <Group>
         <div className="lbl">危险操作</div>
-        <div className="mcard">
-          {confirming ? <div className="ctl" style={{ flexWrap: "wrap", padding: 12 }}><span>确定从可用模型中移除？</span><button className="pbtn" onClick={() => setConfirming(false)}>取消</button><button className="pbtn danger" onClick={() => setRoster(models.roster.filter((item) => item.ref !== modelRef))}>确认移除</button></div> : <button className="mline danger" disabled={used.length > 0} onClick={() => setConfirming(true)}>从可用模型中移除</button>}
+        <div className="group-card settings-card">
+          {confirming ? <div className="ctl" style={{ flexWrap: "wrap", padding: 12 }}><span>确定从可用模型中移除？</span><button className="hob-btn" onClick={() => setConfirming(false)}>取消</button><button className="hob-btn hob-btn-danger" onClick={() => setRoster(models.roster.filter((item) => item.ref !== modelRef))}>确认移除</button></div> : <button className="mline danger" disabled={used.length > 0} onClick={() => setConfirming(true)}>从可用模型中移除</button>}
         </div>
         {used.length ? (
           <div className="note">这是{used.join("和")}的默认模型。要移除，请先在「默认模型」中更换。</div>
@@ -2168,21 +2168,21 @@ function AddModels({ view }: { view: ModelsView }) {
       <SaveFeedback message={feedback.message} toast />
       {view.models.length === 0 ? (
         <Group>
-          <div className="empty">尚无可用模型。请先在「服务商」中配置服务商并填写 API Key。</div>
+          <Empty>尚无可用模型。请先在「服务商」中配置服务商并填写 API Key。</Empty>
           <div className="ctl">
-            <button className="pbtn" onClick={() => setSection("providers")}>
+            <button className="hob-btn" onClick={() => setSection("providers")}>
               配置服务商
             </button>
           </div>
         </Group>
       ) : (
-        <div className="mcard">
+        <div className="group-card settings-card">
           <label className="mfind">
             <Icon name="search" size={15} />
             <input value={query} placeholder="搜索名称或引用，如 claude" onChange={(e) => setQuery(e.target.value)} />
           </label>
           {groups.length === 0 ? (
-            <div className="mempty">没有匹配的模型。</div>
+            <Empty>没有匹配的模型。</Empty>
           ) : (
             groups.map((group) => {
               const open = searching || openGroups.includes(group.provider);
@@ -2276,7 +2276,7 @@ function WorkSection() {
       <Group>
         <div className="lbl">任务记录</div>
         <div className="ctl">
-          <button className="pbtn" onClick={() => openJobs()}>
+          <button className="hob-btn" onClick={() => openJobs()}>
             查看全部任务
           </button>
         </div>
@@ -2308,7 +2308,7 @@ function PushSection() {
   }, []);
 
   if (loadError) return <div className="note">{loadError}</div>;
-  if (!view) return <div className="empty">正在读取推送设置…</div>;
+  if (!view) return <Empty>正在读取推送设置…</Empty>;
 
   const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
   const on = Boolean(endpoint && view.devices.some((device) => device.endpoint === endpoint));
@@ -2402,14 +2402,14 @@ function PushSection() {
               <span className="n">{device.label}</span>
               <span className="tm">{fmtWhen(device.createdAt)}</span>
               <span className="sp" />
-              {confirmEndpoint === device.endpoint ? <><span className="note">确认删除？</span><button className="pbtn" onClick={() => setConfirmEndpoint(null)}>取消</button><button className="pbtn danger" onClick={() => void drop(device.endpoint)}>确认删除</button></> : <button className="del" title="删除这台设备" onClick={() => setConfirmEndpoint(device.endpoint)}>删除</button>}
+              {confirmEndpoint === device.endpoint ? <><span className="note">确认删除？</span><button className="hob-btn" onClick={() => setConfirmEndpoint(null)}>取消</button><button className="hob-btn hob-btn-danger" onClick={() => void drop(device.endpoint)}>确认删除</button></> : <button className="del" title="删除这台设备" onClick={() => setConfirmEndpoint(device.endpoint)}>删除</button>}
             </div>
           ))
         ) : (
-          <div className="empty">暂无已订阅的设备</div>
+          <Empty>暂无已订阅的设备</Empty>
         )}
         <div className="ctl">
-          <button className="pbtn" onClick={() => void test()} disabled={busy || !view.devices.length}>
+          <button className="hob-btn" onClick={() => void test()} disabled={busy || !view.devices.length}>
             发送测试通知
           </button>
           {done && !error ? <span className="okline">{done}</span> : null}
@@ -2501,7 +2501,7 @@ function MemorySection() {
   }, []);
 
   if (loadError) return <div className="note">{loadError}</div>;
-  if (!config) return <div className="empty">正在读取记忆设置…</div>;
+  if (!config) return <Empty>正在读取记忆设置…</Empty>;
 
   const shown = provider ?? config.provider;
   // 存的 Token 只对存的地址生效：换了地址就要重新填
@@ -2687,15 +2687,15 @@ function MemorySection() {
               />
             </div>
             <div className="ctl" style={{ gap: 10, flexWrap: "wrap" }}>
-              <button className="pbtn" onClick={() => void runTest()} disabled={busy || baseUrl.trim() === ""}>
+              <button className="hob-btn" onClick={() => void runTest()} disabled={busy || baseUrl.trim() === ""}>
                 测试连接
               </button>
               {test ? <span className={test.ok ? "okline" : "badline"}>{test.text}</span> : null}
             </div>
             <SaveRow saved={saved && !dirty} error={error}>
               {!error && dirty ? <span className="note">未保存的修改</span> : null}
-              <button className="pbtn" onClick={() => void loadMemory().then((r) => (r.ok ? reset(r.config) : setLoadError(r.error)))} disabled={busy || !dirty}>取消</button>
-              <button className="pbtn solid" onClick={() => void commit()} disabled={busy || !dirty}>{busy ? "正在验证…" : "保存"}</button>
+              <button className="hob-btn" onClick={() => void loadMemory().then((r) => (r.ok ? reset(r.config) : setLoadError(r.error)))} disabled={busy || !dirty}>取消</button>
+              <button className="hob-btn hob-btn-primary" onClick={() => void commit()} disabled={busy || !dirty}>{busy ? "正在验证…" : "保存"}</button>
             </SaveRow>
             </div>
           </Group>
@@ -2703,7 +2703,7 @@ function MemorySection() {
           <Group>
             <div className="lbl">本机配置</div>
             <div className="ctl" style={{ gap: 10, flexWrap: "wrap" }}>
-              <button className="pbtn" onClick={() => void importFromLocal()} disabled={busy}>
+              <button className="hob-btn" onClick={() => void importFromLocal()} disabled={busy}>
                 {busy ? "正在导入…" : "从本机导入"}
               </button>
               {loreImported ? <span className="okline">已导入本机的连接</span> : null}
@@ -2763,10 +2763,10 @@ function KnowledgeSection() {
       <div className="lbl">服务地址</div><div className="field"><input aria-label="服务地址" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={busy} placeholder="http://127.0.0.1:8080/v1" /></div>
       <div className="lbl">模型名称</div><div className="field"><input aria-label="模型名称" value={model} onChange={(e) => setModel(e.target.value)} disabled={busy} /></div>
       <div className="lbl">API Key</div><div className="field"><input aria-label="API Key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} disabled={busy} placeholder={configured ? "已设置，留空保持不变" : "请输入 API Key"} /></div>
-      <button className="pbtn" disabled={busy} onClick={() => void run(false)}>测试连接</button>
+      <button className="hob-btn" disabled={busy} onClick={() => void run(false)}>测试连接</button>
     </div></Group> : null}
     <Group><div className="dim">建索引和查询时，文件内容和问题会发给这个接口。</div></Group>
-    <SaveRow saved={message?.ok === true} error={message?.ok === false ? message.text : null}><button className="pbtn solid" disabled={busy} onClick={() => void run(true)}>保存</button></SaveRow>
+    <SaveRow saved={message?.ok === true} error={message?.ok === false ? message.text : null}><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(true)}>保存</button></SaveRow>
     {message?.ok && message.text !== "已保存" ? <div className="okline" role="status">{message.text}</div> : null}
   </>;
 }
@@ -2942,7 +2942,7 @@ function ImageSection() {
           </div>
           <div className="lbl">测试</div>
           <div className="testrow">
-            <button className="pbtn" onClick={() => void runTest()} disabled={busy}>
+            <button className="hob-btn" onClick={() => void runTest()} disabled={busy}>
               {busy ? "正在生成…" : "生成测试图片"}
             </button>
             {test ? (
@@ -2962,7 +2962,7 @@ function ImageSection() {
           </div>
       <SaveRow saved={savedNote !== null && !dirty} error={error}>
         {!error && dirty ? <span className="note">未保存的修改</span> : null}
-        <button className="pbtn" disabled={busy || !dirty} onClick={() => {
+        <button className="hob-btn" disabled={busy || !dirty} onClick={() => {
           setSource(saved.source);
           setBaseUrl(saved.source === "openai" ? saved.baseUrl : "");
           setModel(saved.source === "openai" ? saved.model : "");
@@ -2972,7 +2972,7 @@ function ImageSection() {
           setTestedForm(null);
           setError(null);
         }}>取消</button>
-        <button className="pbtn solid" onClick={() => void commit()} disabled={busy || !dirty}>
+        <button className="hob-btn hob-btn-primary" onClick={() => void commit()} disabled={busy || !dirty}>
           {busy ? "正在验证…" : "保存"}
         </button>
       </SaveRow>
@@ -3012,13 +3012,13 @@ function SkillsSection() {
   };
   const done = (message: string) => { void refresh(); setNotice(message); closeSub(); };
 
-  if (!view) return error ? <div className="badline">{error}</div> : <div className="empty">正在读取技能…</div>;
+  if (!view) return error ? <div className="badline">{error}</div> : <Empty>正在读取技能…</Empty>;
   if (sub?.kind === "skill") return <SkillDetail skill={view.skills.find((skill) => skillKey(skill) === sub.key)} onDeleted={done} />;
   if (sub?.kind === "importSkills") return <ImportSkills onDone={done} />;
 
   const rows = (skills: SkillView[], empty: string) =>
     skills.length ? skills.map((skill) => (
-      <div className={`rrow${skill.enabled ? "" : " gone"}`} key={skillKey(skill)}>
+      <div className={`list-row setting-row${skill.enabled ? "" : " gone"}`} key={skillKey(skill)}>
         <button className="rmain rbtn" onClick={() => openSub({ kind: "skill", key: skillKey(skill), title: skill.name })}>
           <div className="rname">
             {skill.name}
@@ -3028,14 +3028,14 @@ function SkillsSection() {
         </button>
         <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={`${skill.name}启用`} aria-pressed={skill.enabled} onClick={() => void toggle(skill)} />
       </div>
-    )) : <div className="rempty">{empty}</div>;
+    )) : <Empty>{empty}</Empty>;
   const hob = view.skills.filter((x) => x.source === "hob");
   return (
     <>
       <PageHead title="技能" desc="技能是写好的做法说明，任务按需读取。同名时 Hob 的技能优先，其次是 Lore，最后是通用技能。" />
       <Group>
         <div className="lbl">Hob 的技能</div>
-        <div className="roster">
+        <div className="group-card settings-card">
           {rows(hob, "还没有技能，可以从其他工具导入")}
           <button className="maddrow" onClick={() => openSub({ kind: "importSkills", title: "导入技能" })}>
             <Icon name="plus" size={16} />
@@ -3046,12 +3046,12 @@ function SkillsSection() {
       </Group>
       <Group>
         <div className="lbl">通用技能 <span className="lbl-aside">~/.agents/skills</span></div>
-        <div className="roster">{rows(view.skills.filter((x) => x.source === "common"), "目录中没有技能")}</div>
+        <div className="group-card settings-card">{rows(view.skills.filter((x) => x.source === "common"), "目录中没有技能")}</div>
       </Group>
       <Group>
         <div className="lbl">Lore 技能{view.loreActive && view.loreUrl ? <a className="lbl-aside" href={view.loreUrl} target="_blank" rel="noreferrer">在 Lore 控制台管理</a> : null}</div>
         {view.loreActive
-          ? <div className="roster">{rows(view.skills.filter((x) => x.source === "lore"), "Lore 中没有技能")}</div>
+          ? <div className="group-card settings-card">{rows(view.skills.filter((x) => x.source === "lore"), "Lore 中没有技能")}</div>
           : <div className="note">在 设置 → 记忆 中连接 Lore 后，这里会列出 Lore 中的技能。</div>}
       </Group>
       {error ? <div className="badline" role="alert">{error}</div> : null}
@@ -3074,7 +3074,7 @@ function SkillDetail({ skill, onDeleted }: { skill: SkillView | undefined; onDel
       <Markdown className="skill-doc fp-md markdown-body" text={skill.content} />
       {skill.source === "hob" ? (
         <SaveRow saved={false} error={error}>
-          <button className="pbtn danger" onClick={() => void remove()}>删除技能</button>
+          <button className="hob-btn hob-btn-danger" onClick={() => void remove()}>删除技能</button>
         </SaveRow>
       ) : null}
     </>
@@ -3111,12 +3111,12 @@ function ImportSkills({ onDone }: { onDone: (message: string) => void }) {
         <Seg items={SKILL_IMPORT_SOURCES} value={source} onChange={setSource} disabled={busy} />
       </Group>
       <Group>
-        {view === null ? (error ? null : <div className="empty">正在读取…</div>) : !view.found ? (
-          <div className="empty">未找到这个工具的技能目录。</div>
+        {view === null ? (error ? null : <Empty>正在读取…</Empty>) : !view.found ? (
+          <Empty>未找到这个工具的技能目录。</Empty>
         ) : (
-          <div className="roster">
+          <div className="group-card settings-card">
             {view.skills.length ? view.skills.map((skill) => (
-              <label className="rrow" key={skill.id}>
+              <label className="list-row setting-row" key={skill.id}>
                 <input type="checkbox" className="rcheck" checked={chosen.includes(skill.id)} disabled={busy}
                   onChange={(e) => setChosen(e.target.checked ? [...chosen, skill.id] : chosen.filter((id) => id !== skill.id))} />
                 <div className="rmain">
@@ -3124,7 +3124,7 @@ function ImportSkills({ onDone }: { onDone: (message: string) => void }) {
                   <div className="rprov rclamp">{skill.description}</div>
                 </div>
               </label>
-            )) : <div className="rempty">目录中没有技能</div>}
+            )) : <Empty>目录中没有技能</Empty>}
           </div>
         )}
         {view?.skipped.map((message) => <div className="note" key={message}>{message}</div>)}
@@ -3136,8 +3136,8 @@ function ImportSkills({ onDone }: { onDone: (message: string) => void }) {
         </label>
       ) : null}
       <SaveRow saved={false} error={error}>
-        <button className="pbtn" onClick={closeSub} disabled={busy}>取消</button>
-        <button className="pbtn solid" disabled={busy || !chosen.length} onClick={() => void commit()}>{busy ? "正在导入…" : chosen.length ? `导入 ${chosen.length} 个` : "导入所选"}</button>
+        <button className="hob-btn" onClick={closeSub} disabled={busy}>取消</button>
+        <button className="hob-btn hob-btn-primary" disabled={busy || !chosen.length} onClick={() => void commit()}>{busy ? "正在导入…" : chosen.length ? `导入 ${chosen.length} 个` : "导入所选"}</button>
       </SaveRow>
     </>
   );
@@ -3212,7 +3212,7 @@ function McpSection() {
   };
 
   if (loadError) return <><PageHead title="MCP" desc="任务可以调用 MCP 服务提供的工具。" /><div className="badline" role="alert">{loadError}</div><div className="note">请修复数据目录 engine/mcp.json 后重试；修复前任务不会加载 MCP 服务。</div></>;
-  if (!view) return <div className="empty">正在读取 MCP 服务…</div>;
+  if (!view) return <Empty>正在读取 MCP 服务…</Empty>;
 
   if (sub?.kind === "mcpServer") {
     return <McpDetail server={view.servers.find((item) => item.name === sub.name)} setView={setView} probe={probes[sub.name]} onProbe={probe} onDone={done} />;
@@ -3239,14 +3239,14 @@ function McpSection() {
       />
       <Group>
         <div className="ctl">
-          <button className="pbtn solid" onClick={() => openSub({ kind: "addMcp", title: "添加 MCP 服务" })}>添加服务</button>
+          <button className="hob-btn hob-btn-primary" onClick={() => openSub({ kind: "addMcp", title: "添加 MCP 服务" })}>添加服务</button>
           <span className="sp" />
-          <button className="pbtn" onClick={() => openSub({ kind: "importMcp", title: "从本机导入 MCP 服务" })}>从本机导入</button>
+          <button className="hob-btn" onClick={() => openSub({ kind: "importMcp", title: "从本机导入 MCP 服务" })}>从本机导入</button>
         </div>
         <div className="lbl">已配置的服务</div>
-        <div className="roster">
+        <div className="group-card settings-card">
           {view.servers.map((server) => (
-            <div className={`rrow${server.enabled && server.valid ? "" : " gone"}`} key={server.name}>
+            <div className={`list-row setting-row${server.enabled && server.valid ? "" : " gone"}`} key={server.name}>
               <button className="rmain rbtn" onClick={() => openSub({ kind: "mcpServer", name: server.name, title: server.name })}>
                 <div className="rname">{server.name}{server.valid ? null : <span className="rtag">配置无效</span>}</div>
                 <div className="rprov rclamp">{server.valid ? (server.kind === "http" ? server.url : [server.command, ...(server.args ?? [])].join(" ")) : server.invalidReason}</div>
@@ -3257,7 +3257,7 @@ function McpSection() {
               ) : null}
             </div>
           ))}
-          {!view.servers.length ? <div className="rempty">还没有配置 MCP 服务</div> : null}
+          {!view.servers.length ? <Empty>还没有配置 MCP 服务</Empty> : null}
         </div>
         {notice ? <div className={notice.startsWith("已") ? "okline" : "badline"} role="status">{notice}</div> : null}
         <div className="note">环境变量和请求头的值只保存在本机，保存后不再显示。远程服务需要 OAuth 登录时这版暂不支持。</div>
@@ -3301,11 +3301,11 @@ function SecretPairs({ rows, onChange, keyLabel, valueLabel }: { rows: PairDraft
         <div className="pairrow" key={index}>
           <label className="field"><input className="mono" value={row.key} placeholder={keyLabel} onChange={(e) => update(index, { key: e.target.value })} /></label>
           <label className="field"><input className="mono" type="password" value={row.value} placeholder={row.secret && row.value === "" ? "已保存，留空则沿用" : valueLabel} onChange={(e) => update(index, { value: e.target.value })} /></label>
-          <button className="ib" title="删除这一项" onClick={() => onChange(rows.filter((_, i) => i !== index))}><Icon name="close" size={15} /></button>
+          <button className="hob-icon-btn" title="删除这一项" onClick={() => onChange(rows.filter((_, i) => i !== index))}><Icon name="close" size={15} /></button>
         </div>
       ))}
       <div>
-        <button className="pbtn" onClick={() => onChange([...rows, { key: "", value: "", secret: false }])}>添加一项</button>
+        <button className="hob-btn" onClick={() => onChange([...rows, { key: "", value: "", secret: false }])}>添加一项</button>
       </div>
     </div>
   );
@@ -3388,8 +3388,8 @@ function McpForm({ initial, name, onName, fixedName, onSaved, saveLabel }: { ini
       {fixedName ? null : <div className="note">字母、数字、_ 和 -；- 和 _ 视为同名。改名请删除后重新添加。</div>}
       <div className="lbl">类型</div>
       <Seg items={[{ key: "stdio", label: "本地命令" }, { key: "http", label: "远程地址" }]} value={draft.kind} onChange={(kind) => patch({ kind })} disabled={busy} />
-      {draft.kind === "stdio" ? (
-        <>
+      <div className={`expand settings-motion${draft.kind === "stdio" ? " open" : ""}`} inert={draft.kind !== "stdio"}>
+        <div>
           <div className="lbl">命令</div>
           <div className="field"><input className="mono" value={draft.command} placeholder="如 npx 或 uvx（一个可执行文件，不是整条命令行）" onChange={(e) => patch({ command: e.target.value })} /></div>
           <div className="lbl">参数</div>
@@ -3399,20 +3399,21 @@ function McpForm({ initial, name, onName, fixedName, onSaved, saveLabel }: { ini
           <SecretPairs rows={draft.env} onChange={(env) => patch({ env })} keyLabel="变量名" valueLabel="值" />
           <div className="lbl">工作目录</div>
           <div className="field"><input className="mono" value={draft.cwd} placeholder="可空；相对路径按任务的工作目录解析" onChange={(e) => patch({ cwd: e.target.value })} /></div>
-        </>
-      ) : (
-        <>
+        </div>
+      </div>
+      <div className={`expand settings-motion${draft.kind === "http" ? " open" : ""}`} inert={draft.kind !== "http"}>
+        <div>
           <div className="lbl">地址</div>
           <div className="field"><input className="mono" value={draft.url} placeholder="https://example.com/mcp（streamable HTTP，不支持 /sse 结尾）" onChange={(e) => patch({ url: e.target.value })} /></div>
           <div className="lbl">请求头</div>
           <SecretPairs rows={draft.headers} onChange={(headers) => patch({ headers })} keyLabel="名称" valueLabel="值" />
-        </>
-      )}
+        </div>
+      </div>
       <div className="lbl">说明</div>
       <div className="field"><input value={draft.description} placeholder="这个服务提供什么，一句话（可空）" onChange={(e) => patch({ description: e.target.value })} /></div>
       {error ? <div className="badline" role="alert">{error}</div> : null}
       <SaveRow saved={false} error={null}>
-        <button className="pbtn solid" disabled={busy} onClick={() => void submit()}>{busy ? "正在保存…" : saveLabel}</button>
+        <button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void submit()}>{busy ? "正在保存…" : saveLabel}</button>
       </SaveRow>
     </div>
   );
@@ -3522,7 +3523,7 @@ function McpDetail({
       {server.valid ? (
         <Group>
           <div className="testrow">
-            <button className="pbtn" onClick={() => void runTest()} disabled={testing}>{testing ? "正在测试…" : "测试连接"}</button>
+            <button className="hob-btn" onClick={() => void runTest()} disabled={testing}>{testing ? "正在测试…" : "测试连接"}</button>
             {probe ? (
               <span className={probe.state === "connected" ? "okline" : "badline"}>
                 {probe.state === "connected" ? `已连接 · ${probe.tools?.length ?? 0} 个工具` : probe.state === "needs_auth" ? "需要登录，暂不支持" : probe.error ?? "连接失败"}
@@ -3538,11 +3539,11 @@ function McpDetail({
             tools.length ? (
               <>
                 <div className="lbl">工具（{tools.length}）</div>
-                <div className="roster">
+                <div className="group-card settings-card">
                   {tools.map((tool) => {
                     const off = hiddenTools.includes(tool.name);
                     return (
-                      <div className={`rrow${off ? " gone" : ""}`} key={tool.name}>
+                      <div className={`list-row setting-row${off ? " gone" : ""}`} key={tool.name}>
                         <div className="rmain">
                           <div className="rname mono">{tool.name}</div>
                           <div className="rprov rclamp">{tool.description || "（没有说明）"}</div>
@@ -3572,7 +3573,7 @@ function McpDetail({
         <McpForm initial={mcpDraftFrom(server)} name={server.name} fixedName onSaved={onDone} saveLabel="保存" />
       </Group>
       <Group>
-        <button className="pbtn danger" disabled={busy} onClick={() => void remove()}>删除服务</button>
+        <button className="hob-btn hob-btn-danger" disabled={busy} onClick={() => void remove()}>删除服务</button>
         {error ? <div className="badline" role="alert">{error}</div> : null}
       </Group>
       <div className="note">环境变量和请求头的值不回显；留空表示沿用已保存的值。删除整行表示删掉这个值。</div>
@@ -3611,9 +3612,9 @@ function McpImport({ onDone }: { onDone: (message: string) => void }) {
       <PageHead title="从本机导入 MCP 服务" desc="读取本机 pi、Claude Code、Cursor 里已配置的 MCP 服务，复制到 Hob；来源只读，同名跳过。" />
       <Group>
         {view?.sources.length ? <div className="note">读取位置：{view.sources.join("；")}</div> : null}
-        <div className="roster">
+        <div className="group-card settings-card">
           {items.length ? items.map((item) => (
-            <label className="rrow" key={item.id}>
+            <label className="list-row setting-row" key={item.id}>
               <input type="checkbox" className="rcheck" checked={chosen.includes(item.id)} disabled={busy || !item.selectable}
                 onChange={(e) => setChosen(e.target.checked ? [...chosen, item.id] : chosen.filter((id) => id !== item.id))} />
               <div className="rmain">
@@ -3621,11 +3622,11 @@ function McpImport({ onDone }: { onDone: (message: string) => void }) {
                 <div className="rprov rclamp">{item.kind === "http" ? "远程地址" : "本地命令"}{item.note ? ` · ${item.note}` : ""}</div>
               </div>
             </label>
-          )) : <div className="rempty">没有找到可导入的 MCP 服务</div>}
+          )) : <Empty>没有找到可导入的 MCP 服务</Empty>}
         </div>
         <SaveRow saved={false} error={error}>
-          <button className="pbtn" onClick={closeSub} disabled={busy}>取消</button>
-          <button className="pbtn solid" disabled={busy || !chosen.length} onClick={() => void commit()}>{busy ? "正在导入…" : chosen.length ? `导入 ${chosen.length} 个` : "导入所选"}</button>
+          <button className="hob-btn" onClick={closeSub} disabled={busy}>取消</button>
+          <button className="hob-btn hob-btn-primary" disabled={busy || !chosen.length} onClick={() => void commit()}>{busy ? "正在导入…" : chosen.length ? `导入 ${chosen.length} 个` : "导入所选"}</button>
         </SaveRow>
       </Group>
     </>
@@ -3690,16 +3691,16 @@ function SearchSection() {
       <Group>
         <div className="lbl">已启用</div>
         {enabled.length ? (
-          <div className="roster">
+          <div className="group-card settings-card">
             {enabled.map((p, index) => (
-              <div className="rrow" key={p.name}>
+              <div className="list-row setting-row" key={p.name}>
                 <span className="rorder">{index + 1}</span>
                 <button className="rmain rbtn" onClick={() => openSub({ kind: "searchProvider", name: p.name, title: SEARCH_INFO[p.name].label })}>
                   <div className="rname">{SEARCH_INFO[p.name].label}</div>
                   <div className="rprov">{SEARCH_INFO[p.name].desc}</div>
                 </button>
-                <button className="ib rmove" title="上移" disabled={busy || index === 0} onClick={() => move(p.name, -1)}><Icon name="down" size={15} className="up" /></button>
-                <button className="ib rmove" title="下移" disabled={busy || index === enabled.length - 1} onClick={() => move(p.name, 1)}><Icon name="down" size={15} /></button>
+                <button className="hob-icon-btn rmove" title="上移" disabled={busy || index === 0} onClick={() => move(p.name, -1)}><Icon name="down" size={15} className="up" /></button>
+                <button className="hob-icon-btn rmove" title="下移" disabled={busy || index === enabled.length - 1} onClick={() => move(p.name, 1)}><Icon name="down" size={15} /></button>
               </div>
             ))}
           </div>
@@ -3708,9 +3709,9 @@ function SearchSection() {
       </Group>
       <Group>
         <div className="lbl">{enabled.length ? "其他服务商" : "选择服务商"}</div>
-        <div className="roster">
+        <div className="group-card settings-card">
           {providers.filter((p) => !p.enabled).map((p) => (
-            <button className="rrow" key={p.name} onClick={() => openSub({ kind: "searchProvider", name: p.name, title: SEARCH_INFO[p.name].label })}>
+            <button className="list-row setting-row" key={p.name} onClick={() => openSub({ kind: "searchProvider", name: p.name, title: SEARCH_INFO[p.name].label })}>
               <div className="rmain">
                 <div className="rname">{SEARCH_INFO[p.name].label}</div>
                 <div className="rprov">{SEARCH_INFO[p.name].desc}</div>
@@ -3779,12 +3780,12 @@ function SearchProviderDetail({ provider, configured, busy, save }: { provider: 
           </div>
           <div className="note">API Key 只保存在本机，保存后不再显示。</div>
           <div className="testrow">
-            <button className="pbtn" onClick={() => void runTest()} disabled={busy || testing}>{testing ? "正在搜索…" : "测试搜索"}</button>
+            <button className="hob-btn" onClick={() => void runTest()} disabled={busy || testing}>{testing ? "正在搜索…" : "测试搜索"}</button>
             {test ? <span className={test.ok ? "okline" : "badline"}>{test.text}</span> : null}
           </div>
           <SaveRow saved={saved && !dirty} error={error}>
-            {configured ? <button className="pbtn" disabled={busy} onClick={() => void apply(provider, "")}>删除 Key</button> : null}
-            <button className="pbtn solid" disabled={busy || testing || !dirty} onClick={() => void commit()}>保存</button>
+            {configured ? <button className="hob-btn" disabled={busy} onClick={() => void apply(provider, "")}>删除 Key</button> : null}
+            <button className="hob-btn hob-btn-primary" disabled={busy || testing || !dirty} onClick={() => void commit()}>保存</button>
           </SaveRow>
         </div>
       </Group>
@@ -3798,7 +3799,7 @@ function AboutSection() {
     void loadAbout().then(setAbout);
   }, []);
 
-  if (!about) return <div className="empty">正在读取版本信息…</div>;
+  if (!about) return <Empty>正在读取版本信息…</Empty>;
   const rows: [string, string][] = [
     ["Hob 版本", about.version],
     ["数据目录", about.home],

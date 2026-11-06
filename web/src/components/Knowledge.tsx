@@ -1,3 +1,4 @@
+import { Empty } from "./Empty.tsx";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry, type KnowledgeGroup } from "../../../shared/knowledge.ts";
@@ -169,7 +170,7 @@ function Filters({ knowledge, assistants, uploading, upload }: { knowledge: Know
       </select>
       {collection && <>
         <input ref={input} type="file" multiple hidden onChange={(e) => { upload(Array.from(e.target.files ?? [])); e.target.value = ""; }} />
-        <button className="knowledge-upload" disabled={uploading} onClick={() => input.current?.click()}>
+        <button className="hob-btn hob-btn-upload" disabled={uploading} onClick={() => input.current?.click()}>
           {uploading ? "正在上传…" : "上传"}
         </button>
       </>}
@@ -302,12 +303,12 @@ function EntryList({ knowledge, assistants, previewPath, upload }: { knowledge: 
       }}
     >
       {knowledge.error ? (
-        <div className="knowledge-empty">加载失败：{knowledge.error} <button onClick={() => void loadKnowledge()}>重试</button></div>
-      ) : !knowledge.entries.length && !knowledge.loading ? <div className="knowledge-empty">{empty}</div> : null}
+        <Empty large action={{ label: "重试", onClick: () => void loadKnowledge() }}>加载失败：{knowledge.error}</Empty>
+      ) : !knowledge.entries.length && !knowledge.loading ? <Empty large>{empty}</Empty> : null}
       {knowledge.entries.map((entry) => (
         <EntryRow key={entry.id} entry={entry} collections={knowledge.collections} assistants={assistants} selected={entry.path === previewPath} category={knowledge.category} />
       ))}
-      {knowledge.loading ? <div className="knowledge-empty">正在加载…</div> : null}
+      {knowledge.loading ? <Empty large>正在加载…</Empty> : null}
       {knowledge.hasMore && !knowledge.loading ? <button className="knowledge-more" onClick={() => void loadKnowledge(true)}>加载更多</button> : null}
     </div>
   );
@@ -353,7 +354,7 @@ export function Knowledge({ narrow, leaving }: { narrow: boolean; leaving: boole
     <main className={`setpage knowledge${narrow ? " narrow" : ""}${preview && !narrow ? " has-preview" : ""}${preview?.full && !narrow ? " preview-full" : ""}${leaving ? " leaving" : ""}`}>
       {narrow ? (
         <div className="sethead">
-          <button className="ib" title="返回" onClick={closeKnowledge}><Icon name="left" size={17} /></button>
+          <button className="hob-icon-btn" title="返回" onClick={closeKnowledge}><Icon name="left" size={17} /></button>
           <span className="t">知识库</span>
         </div>
       ) : null}

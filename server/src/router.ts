@@ -287,6 +287,7 @@ export class RouterManager {
           models: this.promptModels(assistant.id),
           skills: availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled, this.runtime.settings.memory().provider === "lore" ? this.runtime.pi.loreSkillPaths : []),
           assistantSkills: usableAssistantSkills(this.runtime.home, assistant.id),
+          assistantSkillsDir: resolve(this.runtime.home, "assistants", assistant.id, "skills"),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
           knowledgeNames: state.knowledgeNames,
         });

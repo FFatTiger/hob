@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { JobStep } from "../../shared/types.ts";
-import { groupThinking, visibleSteps } from "./steps.ts";
+import type { Job, JobStep } from "../../shared/types.ts";
+import { groupThinking, jobDetailRounds, visibleSteps } from "../src/steps.ts";
 
 describe("执行过程折叠", () => {
   const steps = (count: number): JobStep[] => Array.from({ length: count }, (_, i) => ({ id: String(i), kind: "tool", at: "2026-11-05", name: "read" }));
@@ -18,4 +18,12 @@ describe("执行过程折叠", () => {
     expect(rows[0].thinking).toBe("思考");
     expect(visibleSteps(rows, true, false).remaining).toBe(1);
   });
+});
+
+it("前几轮不沿用任务最后的停止原因", () => {
+  const job = { id: "t", title: "t", status: "stopped", statusReason: "你叫停了", createdAt: "2026-11-05", rounds: [{ status: "done", endedAt: "2026-11-05" }] } as unknown as Job;
+  const [first, last] = jobDetailRounds(job, undefined);
+  expect(first.job.status).toBe("done");
+  expect(first.job.statusReason).toBeUndefined();
+  expect(last.job.statusReason).toBe("你叫停了");
 });

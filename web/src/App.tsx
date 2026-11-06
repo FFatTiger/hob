@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useState } from "react";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
 import { FilePreviewOverlay } from "./components/FilePreview.tsx";
@@ -11,12 +11,26 @@ import { SettingsPage } from "./components/Settings.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
+import { gonePages, layerList, pageKey, type GonePage } from "./panel-stack.ts";
 import { backPanel, clearNotice, start, tick, useApp, type PanelPage } from "./store.ts";
 import { updateStatusColor } from "./theme.ts";
 import { Avatar } from "./sprites.tsx";
 
-function pageKey(page: PanelPage): string {
-  return `${page.kind}:${"id" in page ? page.id : "path" in page ? page.liveId ?? page.path : ""}`;
+/** 右栏的页一层层盖上去：新页从右边滑进来，下面的页不动也不隐藏；退掉的页滑出去以后再卸。换了助手直接换，不滑。 */
+function useLayers(stack: PanelPage[], owner: string | null) {
+  const [shown, setShown] = useState({ stack, owner });
+  const [gone, setGone] = useState<GonePage[]>([]);
+  if (shown.stack !== stack || shown.owner !== owner) {
+    const keys = new Set(stack.map(pageKey));
+    setGone(shown.owner !== owner ? [] : [...gone.filter((g) => !keys.has(pageKey(g.page))), ...gonePages(shown.stack, stack)]);
+    setShown({ stack, owner });
+  }
+  useEffect(() => {
+    if (!gone.length) return;
+    const timer = setTimeout(() => setGone([]), 240);
+    return () => clearTimeout(timer);
+  }, [gone]);
+  return layerList(stack, gone);
 }
 
 /** 页面已经写了「无法连接 Hob」，原始错误里重复的前缀去掉。 */
@@ -32,10 +46,14 @@ export function App() {
   const knowledge = useLeave(s.page === "knowledge", 180);
   const sheet = useLeave(s.sheet, 180);
   const top = s.panelStack.at(-1);
-  const key = top ? pageKey(top) : "root";
-  const previous = useRef({ key, depth: s.panelStack.length, direction: "" });
-  if (previous.current.key !== key) previous.current = { key, depth: s.panelStack.length, direction: s.panelStack.length > previous.current.depth ? "from-right" : "from-left" };
-  if (narrow && !s.sheet && !top) previous.current.direction = "";
+  const layers = useLayers(s.panelStack, s.sel);
+  const mobileLayers = layers.map(({ page, leaving }) => (
+    <div key={pageKey(page)} className={`mlayer${leaving ? " leaving" : ""}`}>
+      {page.kind === "file" ? <FilePreviewOverlay page={page} />
+        : page.kind === "job" || page.kind === "jobs" ? <JobOverlay page={page} />
+        : <Sheet page={page} leaving={false} />}
+    </div>
+  ));
 
   useLayoutEffect(() => {
     updateStatusColor(s, narrow);
@@ -83,7 +101,7 @@ export function App() {
         <div className="boot-card">
           <div className="t">无法连接 Hob</div>
           <div className="d">请检查网络，或确认 Hob 服务已启动。</div>
-          <button className="btn solid" onClick={() => location.reload()}>
+          <button className="hob-btn hob-btn-primary" onClick={() => location.reload()}>
             重试
           </button>
           {s.error ? <div className="raw">{rawError(s.error)}</div> : null}
@@ -107,8 +125,7 @@ export function App() {
       <>
         <SettingsPage narrow={narrow} leaving={settings.leaving} />
         {/* 设置 → 工作 → 查看全部任务：任务记录直接盖在设置页上 */}
-        <JobOverlay direction={narrow ? previous.current.direction : ""} />
-        <FilePreviewOverlay direction={narrow ? previous.current.direction : ""} />
+        {narrow ? mobileLayers : <><JobOverlay /><FilePreviewOverlay /></>}
         {toast}
       </>
     );
@@ -118,14 +135,13 @@ export function App() {
     return (
       <>
         <Knowledge narrow={narrow} leaving={knowledge.leaving} />
-        {narrow ? <FilePreviewOverlay direction={previous.current.direction} /> : null}
+        {narrow ? mobileLayers : null}
         {toast}
       </>
     );
   }
 
   const filePreview = top?.kind === "file" ? top : null;
-  const detail = top?.kind === "job" || top?.kind === "jobs";
 
   if (narrow) {
     return (
@@ -139,16 +155,8 @@ export function App() {
               <ChatPage />
             </div>
           ) : null}
-          {sheet.mounted ? <div style={{ display: top ? "none" : undefined }}><Sheet leaving={sheet.leaving} page={null} layered={!top && previous.current.direction === "from-left"} direction="from-left" /></div> : null}
-          {s.panelStack.map((page, index) => {
-            const active = index === s.panelStack.length - 1;
-            const direction = active ? previous.current.direction : "";
-            return <div key={pageKey(page)} style={{ display: active ? undefined : "none" }}>
-              {page.kind === "file" ? <FilePreviewOverlay page={page} direction={direction} />
-                : page.kind === "job" || page.kind === "jobs" ? <JobOverlay page={page} direction={direction} />
-                : <Sheet page={page} leaving={false} layered direction={direction} />}
-            </div>;
-          })}
+          {sheet.mounted ? <Sheet leaving={sheet.leaving} page={null} /> : null}
+          {mobileLayers}
         </div>
         <AssistantMenu />
         {toast}
@@ -160,16 +168,16 @@ export function App() {
     <div className={`app${filePreview?.full ? " preview-full" : ""}`}>
       <Sidebar />
       <Chat />
-      <div className={`panelwrap${filePreview?.full ? " full" : ""}${filePreview || detail || (!top && s.nowWide) ? " wide" : ""}${!top && s.collapsed ? " off" : ""}`}>
-        <div className={`panel-page${!top && previous.current.direction ? ` ${previous.current.direction}` : ""}`} style={{ display: top ? "none" : undefined }}><Panel page={null} /></div>
-        {s.panelStack.map((page, index) => {
-          const active = index === s.panelStack.length - 1;
-          return <div key={pageKey(page)} className={`panel-page${active && previous.current.direction ? ` ${previous.current.direction}` : ""}`} style={{ display: active ? undefined : "none" }}>
+      {/* 右栏宽度只跟根页走（收起、云桌面展开）；上面的页盖上去，宽页直接盖在对话区上，不挤对话区 */}
+      <div className={`panelwrap${filePreview?.full ? " full" : s.collapsed ? " off" : s.nowWide ? " wide" : ""}`}>
+        <Panel page={null} />
+        {layers.map(({ page, leaving }) => (
+          <div key={pageKey(page)} className={`panel-layer${page.kind === "file" || page.kind === "job" || page.kind === "jobs" ? " wide" : ""}${leaving ? " leaving" : ""}`}>
             {page.kind === "file" ? <FilePreviewOverlay embedded page={page} />
               : page.kind === "job" || page.kind === "jobs" ? <JobOverlay embedded page={page} />
               : <Panel page={page} />}
-          </div>;
-        })}
+          </div>
+        ))}
       </div>
       <AssistantMenu />
       {s.offline ? <div className="toast">{s.offline}</div> : null}

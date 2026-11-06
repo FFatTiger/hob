@@ -38,15 +38,15 @@ describe("桌面文件预览", () => {
     state.panelStack = [{ kind: "file", path: "/mock/page.html", full: false }];
   });
 
-  it("嵌入右栏，收起的右栏也能显示；全宽保留聊天组件", () => {
+  it("盖在右栏上，收起的右栏也能显示；全宽保留聊天组件", () => {
     let html = renderToStaticMarkup(<App />);
-    expect(html).toContain('class="panelwrap wide"');
-    expect(html).toContain('class="fp-embedded"');
+    expect(html).toContain('class="panelwrap off"');
+    expect(html).toContain('<div class="panel-layer wide"><div class="fp-embedded">');
     expect(html).not.toContain("fpwrap");
     state.panelStack[0]!.full = true;
     html = renderToStaticMarkup(<App />);
     expect(html).toContain('class="app preview-full"');
-    expect(html).toContain('class="panelwrap full wide"');
+    expect(html).toContain('class="panelwrap full"');
     expect(html).toContain('value="草稿"');
   });
 
@@ -75,12 +75,14 @@ describe("桌面文件预览", () => {
     expect(renderToStaticMarkup(<App />)).toContain("任务详情");
   });
 
-  it("覆盖任务详情，关闭预览后恢复详情", () => {
+  it("预览盖在任务详情上，下面那页照常显示；关掉预览露出详情", () => {
     state.panelStack.unshift({ kind: "job", id: "t-1" });
-    expect(renderToStaticMarkup(<App />)).toContain('<div class="panel-page" style="display:none"><div class="jd-embedded">任务详情</div></div>');
+    let html = renderToStaticMarkup(<App />);
+    expect(html).toContain('<div>右栏</div><div class="panel-layer wide"><div class="jd-embedded">任务详情</div></div><div class="panel-layer wide"><div class="fp-embedded">');
+    expect(html).not.toContain("display:none");
     backPanel();
-    const html = renderToStaticMarkup(<App />);
-    expect(html).toContain('class="panelwrap wide"');
-    expect(html).toContain("任务详情");
+    html = renderToStaticMarkup(<App />);
+    expect(html).toContain('<div class="panel-layer wide"><div class="jd-embedded">任务详情</div></div></div>');
+    expect(html).not.toContain("fp-embedded");
   });
 });

@@ -6,9 +6,9 @@ export function PanelHead({ title, children, root = false, close = false, classN
   const s = useApp();
   const mobileOnly = root || (s.page !== "main" && s.panelStack.length <= 1);
   return <div className={`panel-head ${className}`}>
-    <button className={`ib${mobileOnly ? " panel-mobile-back" : ""}`} title="返回" onClick={root ? closeSheet : backPanel}><Icon name="left" size={18} /></button>
+    <button className={`hob-icon-btn${mobileOnly ? " panel-mobile-back" : ""}`} title="返回" onClick={root ? closeSheet : backPanel}><Icon name="left" size={18} /></button>
     {title}
     {children}
-    {close ? <button className="ib panel-close" title="关闭" onClick={closePanelPages}><Icon name="close" size={17} /></button> : null}
+    {close ? <button className="hob-icon-btn panel-close" title="关闭" onClick={closePanelPages}><Icon name="close" size={17} /></button> : null}
   </div>;
 }

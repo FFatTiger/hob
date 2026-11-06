@@ -26,7 +26,7 @@ export function sidebarJobs(jobs: Job[], assistantId: string) {
   const active = own.filter((job) => ["running", "queued", "waiting"].includes(job.status)).sort((a, b) => (b.startedAt ?? b.createdAt).localeCompare(a.startedAt ?? a.createdAt))[0];
   const last = own.filter((job) => !["running", "queued", "waiting"].includes(job.status) && job.endedAt).sort((a, b) => b.endedAt!.localeCompare(a.endedAt!))[0];
   const running = own.filter((job) => job.status === "running").sort((a, b) => (b.startedAt ?? b.createdAt).localeCompare(a.startedAt ?? a.createdAt))[0];
-  return { active, running, last, recent: own.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 5) };
+  return { active, running, last, recent: own.sort((a, b) => b.createdAt.localeCompare(a.createdAt)).slice(0, 20) };
 }
 
 export function formatNext(at: Date, timezone: string, now = new Date()): string {

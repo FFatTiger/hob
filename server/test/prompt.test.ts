@@ -90,7 +90,7 @@ describe("批准的提示词原文", () => {
       job: () => ({ assistantId: "hob", cwd: "/work" }),
     } as never;
     const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "小林", language: "中文", notes: "简洁" }, memory: "lore" as const, skills: [{ name: "搜索", description: "不显示" }] };
-    const common = ["用简洁、规范的书面中文回复，先给结论。", "", "## 你手里有什么", "你能直接看：文件和图片、任务的结果和产出、网页、记忆。", "跑命令、改文件、操作设备这些动手的事在后台任务手里：任务在自己的会话和目录里做，做完把完整结果发回给你。", "任务结束后还能接着做。一件事交给任务或其他助手后由它负责到底，跟进也交给它。", "任务能用的技能：搜索", "", "## 用户", "- 称呼：小林", "- 语言：中文", "- 其他：简洁"];
+    const common = ["用简洁、规范的书面中文回复，先给结论。", "", "## 你手里有什么", "你能直接看：文件和图片、任务的过程和结果、产出、网页、记忆。", "跑命令、改文件、操作设备这些动手的事交给后台任务。任务是你手上的活，在自己的会话和目录里做，做完把完整结果交给你；对用户负责的是你。", "任务做完还能接着做，补充和纠正交给原来那个任务，它接得上之前的上下文。", "任务能用的技能：搜索", "", "## 用户", "- 称呼：小林", "- 语言：中文", "- 其他：简洁"];
     const memory = ["", "## 记忆", "长期记忆在 Lore：过去的偏好、决定和约定先查 Lore；值得长期记住的新事实记进 Lore。读到的记忆和你刚核实的事实对不上（过时或有错），当场改对；整条已经不成立或没用了，就删掉。"];
     expect(buildSystemPrompt(store, "hob", settings)).toBe(["你是「Hob」，用户的主助手。", "你和用户在一对一的对话里合作，用户的每条消息都是对你说的。", ...common, "", "## 用户定的规则", "- 执行前确认：重启", "- 直接执行：查看", "", "## 补充说明", "主说明", ...memory, "", "## 定时", "- 日报 · 每天 09:00：写日报", "", "## 其他助手", "- 运维（ops）：服务器。维护机器"].join("\n"));
     expect(buildSystemPrompt(store, "ops", settings)).toBe(["你是「运维」，用户的助手，负责服务器。", "详细职责：维护机器", "你和用户在一对一的对话里合作。主助手 Hob 会把归你管的事转给你：转来的消息带着用户的原话，等同用户本人的要求，结果会自动回到 Hob。", ...common, "", "## 用户定的规则", "- 执行前确认：发布", "", "## 补充说明", "副说明", ...memory].join("\n"));
@@ -136,13 +136,24 @@ describe("系统提示词", () => {
       const primary = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...primary, id: "other", primary: false, name: "其他助手" });
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
-      const expected = "任务结束后还能接着做。一件事交给任务或其他助手后由它负责到底，跟进也交给它。";
+      const expected = "任务做完还能接着做，补充和纠正交给原来那个任务，它接得上之前的上下文。";
       for (const id of ["hob", "other"]) {
         expect(buildSystemPrompt(hob.runtime.store, id, { timezone, aboutYou, memory: "local" })).toContain(expected);
       }
     } finally {
       hob.close();
     }
+  });
+
+  it("列出启用的助手技能和配置时区的更新时间", () => {
+    const hob = makeHob();
+    try {
+      const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+      const skill = { name: "dir-size", title: "目录大小", description: "统计目录", version: 2, updatedAt: "2026-11-05T15:57:00Z" };
+      const prompt = buildSystemPrompt(hob.runtime.store, "hob", { ...settings, assistantSkillsDir: "/tmp/skills", assistantSkills: [skill] });
+      expect(prompt).toContain("文件在 /tmp/skills/<名字>/SKILL.md：\n- dir-size「目录大小」· 第 2 版 · 11-05 23:57 更新：统计目录");
+      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...settings, assistantSkills: [] })).not.toContain("你的技能是做同类事的做法");
+    } finally { hob.close(); }
   });
 
   it("Router 提示词里没有现在时间", () => {
@@ -189,7 +200,7 @@ describe("系统提示词", () => {
       const prompt = promptOf(hob);
       expect(prompt).not.toContain("外部工作台");
       expect(prompt).not.toContain("via");
-      expect(prompt).toContain("任务在自己的会话和目录里做");
+      expect(prompt).toContain("在自己的会话和目录里做");
     } finally {
       hob.close();
     }

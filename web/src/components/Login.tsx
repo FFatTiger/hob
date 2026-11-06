@@ -37,7 +37,7 @@ export function Login() {
             }}
           />
         </label>
-        <button className="btn solid" onClick={go} disabled={s.loggingIn}>
+        <button className="hob-btn hob-btn-primary" onClick={go} disabled={s.loggingIn}>
           {s.loggingIn ? "正在登录…" : "登录"}
         </button>
         {s.error ? (

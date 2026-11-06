@@ -306,7 +306,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
         <span className="desktop-title">云桌面</span>
         <span className={`desktop-tag${control.mine ? " live" : ""}`}>{control.mine ? "你在操作" : "只看"}</span>
         {takenByOther ? <span className="desktop-note">其他人正在接管</span> : null}
-        {control.mine && clipboard ? <span className="desktop-clipboard">云桌面复制了文字 <button className="pbtn" onClick={() => {
+        {control.mine && clipboard ? <span className="desktop-clipboard">云桌面复制了文字 <button className="hob-btn" onClick={() => {
           if (!navigator.clipboard) return setError("复制失败，请使用支持剪贴板的安全连接。");
           void navigator.clipboard.writeText(clipboard).then(() => setClipboard("")).catch(() => setError("复制失败，请检查浏览器的剪贴板权限。"));
         }}>复制到本机</button></span> : null}
@@ -321,16 +321,16 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
           })}
           <option value="public">公共屏幕 · {desktop.screens.some((entry) => entry.id === "public" && entry.running) ? "运行中" : "未启动"}</option>
         </select>
-        {control.mine && touch ? <button className="pbtn" onClick={() => input.current?.focus()}>键盘</button> : null}
+        {control.mine && touch ? <button className="hob-btn" onClick={() => input.current?.focus()}>键盘</button> : null}
         <button
-          className="pbtn solid"
+          className="hob-btn hob-btn-primary"
           disabled={!canToggle}
           title={takenByOther ? "其他人正在接管" : undefined}
           onClick={() => void toggle()}
         >
           {control.mine ? "交还" : "接管"}
         </button>
-        <button className="ib" title="关闭" aria-label="关闭云桌面" onClick={onClose}>
+        <button className="hob-icon-btn" title="关闭" aria-label="关闭云桌面" onClick={onClose}>
           <Icon name="close" size={18} />
         </button>
       </div>
@@ -387,7 +387,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
               ) : (
                 <>
                   <div className="badline" role="alert">{error}</div>
-                  <button className="pbtn" onClick={() => setAttempt((n) => n + 1)}>重试</button>
+                  <button className="hob-btn" onClick={() => setAttempt((n) => n + 1)}>重试</button>
                 </>
               )}
             </div>

@@ -11,8 +11,9 @@ import { Avatar, type AvatarMark } from "../sprites.tsx";
 import { closePanelPages, openJob, openJobs, openRoutine, select, useApp } from "../store.ts";
 import { cronText, fmtElapsed, fmtList } from "../util.ts";
 import { useAssistantMenu } from "./AssistantMenu.tsx";
-import { StatusTag } from "./JobDetail.tsx";
-import { activityParts, STATUS_TEXT } from "./Panel.tsx";
+import { JOB_STATUS, StatusTag } from "./status-meta.tsx";
+import { Empty } from "./Empty.tsx";
+import { activityParts } from "./Panel.tsx";
 
 /**
  * 首页头像动不动：在忙的助手进页面时看一圈，之后每 30 秒再看一圈，几个在忙的轮流看、不同时动；一个助手只在一处动，免得桌面左栏加对话页满屏都在动。
@@ -89,7 +90,7 @@ export function AssistantRow({
   const mark = useMark(a, busy);
   return (
     <button
-      className={`row${sel ? " sel" : ""}`}
+      className={`list-row home-row${sel ? " sel" : ""}`}
       {...menu.handlers}
       onClick={() => {
         if (menu.takeHeld()) return;
@@ -147,12 +148,12 @@ function JobRow({
   onClick: () => void;
 }) {
   return (
-    <button className="row job" onClick={onClick}>
+    <button className="list-row home-row job" onClick={onClick}>
       <Face owner={owner} size={size} moving={moving} />
       <span className="nm">{job.routineId ? <Icon name="clock" size={14} /> : null}{job.title}</span>
       <span className="tm">{time}</span>
       <span className="pv">{plainText(text)}</span>
-      <StatusTag job={job} />
+      <StatusTag meta={JOB_STATUS[job.status]} />
     </button>
   );
 }
@@ -175,11 +176,11 @@ function Face({ owner, size, moving }: { owner: AssistantSummary | undefined; si
   return <Avatar sprite={owner.sprite} prop={owner.prop} size={size} motion={moving ? "peek" : undefined} slot={slot} />;
 }
 
-/** 空的那一组：虚线框占住位置，框里写这里会出现什么。 */
+/** 空的那一组显示提示。 */
 function Slot({ title, text }: { title: string; text: string }) {
   return (
     <Section title={title}>
-      <div className="slot">{text}</div>
+      <Empty>{text}</Empty>
     </Section>
   );
 }
@@ -208,9 +209,9 @@ export function HomeSections({ size = 42, markSel = false }: { size?: number; ma
   return (
     <>
       {g.asks.length ? (
-        <Section title="待确认">
+        <Section title="等你确认">
           {g.asks.map((ap) => (
-            <button className="row" key={ap.id} onClick={() => void select(ap.assistantId)}>
+            <button className="list-row home-row" key={ap.id} onClick={() => void select(ap.assistantId)}>
               <Face owner={owner(ap.assistantId)} size={size} />
               <div className="main">
                 <div className="l1">
@@ -292,7 +293,7 @@ export function HomeSections({ size = 42, markSel = false }: { size?: number; ma
             const run = r.runs[0];
             return (
               <button
-                className="row"
+                className="list-row home-row"
                 key={r.id}
                 onClick={() => {
                   closePanelPages();
@@ -307,7 +308,7 @@ export function HomeSections({ size = 42, markSel = false }: { size?: number; ma
                     <span className="tm">{cronText(r.schedules[0] ?? "")}</span>
                   </div>
                   <div className="pv">
-                    {run ? `上次运行 ${fmtList(run.at)} · ${STATUS_TEXT[run.status]}` : "尚未运行"}
+                    {run ? <>上次运行 {fmtList(run.at)} · <StatusTag meta={JOB_STATUS[run.status]} /></> : "尚未运行"}
                   </div>
                 </div>
               </button>

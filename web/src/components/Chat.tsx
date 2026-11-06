@@ -120,7 +120,7 @@ function EmptyChat({ a }: { a: AssistantSummary }) {
             {EXAMPLES.map((text) => (
               <button
                 key={text}
-                className="btn"
+                className="hob-btn"
                 onClick={() => {
                   setText(text);
                   focusComposer();
@@ -135,7 +135,7 @@ function EmptyChat({ a }: { a: AssistantSummary }) {
         <div className="setup">
           <div>开始使用前，请先添加模型服务商并选择模型。</div>
           <button
-            className="btn solid"
+            className="hob-btn hob-btn-primary"
             onClick={() => {
               openSettings();
               setSection("providers");
@@ -183,7 +183,7 @@ export function Chat() {
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
         {s.collapsed ? (
-          <button className="ib" title="展开右栏" onClick={expandPanel}>
+          <button className="hob-icon-btn" title="展开右栏" onClick={expandPanel}>
             <Icon name="panel" size={18} />
           </button>
         ) : null}
@@ -234,7 +234,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
       {quote.mounted ? (
         <div className={`comp-quote${quote.leaving ? " leaving" : ""}`}>
           <div className="quote">{s.quote?.text}</div>
-          <button className="ib" style={{ width: 20, height: 20 }} onClick={() => setQuote(null)} title="取消引用">
+          <button className="hob-icon-btn" style={{ width: 20, height: 20 }} onClick={() => setQuote(null)} title="取消引用">
             <Icon name="close" size={13} />
           </button>
         </div>
@@ -334,13 +334,13 @@ export function ChatPage() {
   return (
     <>
       <div className="mchat-head">
-        <button className="ib" style={{ marginLeft: -8 }} title="返回" onClick={() => setMobile("list")}>
+        <button className="hob-icon-btn" style={{ marginLeft: -8 }} title="返回" onClick={() => setMobile("list")}>
           <Icon name="left" size={22} />
         </button>
         {a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} /> : null}
         <span className="nm">{a?.name ?? ""}</span>
         <span className="sp" />
-        <button className="ib" title="助手信息" onClick={openSheet}>
+        <button className="hob-icon-btn" title="助手信息" onClick={openSheet}>
           <Icon name="more" size={20} />
         </button>
       </div>

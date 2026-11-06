@@ -29,6 +29,11 @@ describe("右栏数据", () => {
     expect(sidebarJobs([], "a")).toMatchObject({ active: undefined, running: undefined, last: undefined, recent: [] });
     expect(sidebarJobs([job("failed")], "a").last?.status).toBe("failed");
   });
+  it("最近任务只显示当前助手最新的 20 条", () => {
+    const jobs = Array.from({ length: 25 }, (_, i) => ({ ...job("done", String(i)), createdAt: new Date(Date.UTC(2026, 0, 1, 0, i)).toISOString() }));
+    const other = { ...job("done", "other"), assistantId: "other", createdAt: "2027-01-01T00:00:00Z" };
+    expect(sidebarJobs([...jobs, other], "a").recent.map((item) => item.id)).toEqual(Array.from({ length: 20 }, (_, i) => String(24 - i)));
+  });
   it("助手状态统一计算并按确认、执行、排队排序", () => {
     const a = { id: "a", busy: false };
     const approval: Approval = { id: "p", assistantId: "a", title: "确认", options: [], status: "pending", source: "router", createdAt: "2026-01-01T00:00:00Z" };

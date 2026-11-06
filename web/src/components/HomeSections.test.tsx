@@ -10,8 +10,7 @@ const state = vi.hoisted(() => ({
 }));
 vi.mock("../store.ts", () => ({ useApp: () => state }));
 vi.mock("./AssistantMenu.tsx", () => ({ useAssistantMenu: () => ({ handlers: {}, takeHeld: () => false }) }));
-vi.mock("./JobDetail.tsx", () => ({ StatusTag: () => null }));
-vi.mock("./Panel.tsx", () => ({ activityParts: () => [], STATUS_TEXT: {} }));
+vi.mock("./Panel.tsx", () => ({ activityParts: () => [] }));
 
 import { AssistantRow, Pin } from "./HomeSections.tsx";
 
@@ -26,11 +25,11 @@ describe("首页头像状态", () => {
   });
 
   it("最近结束的任务完成且有未读时显示 SVG 对勾", () => {
-    for (const html of render()) expect(html).toMatch(/class="av-mark done" aria-label="已完成，未读"><svg[^>]*><path/);
+    for (const html of render()) expect(html).toMatch(/class="av-mark present done" aria-label="已完成，未读"[^>]*><span[^>]*><svg[^>]*><path/);
   });
 
   it("未读清零后不显示完成状态", () => {
-    for (const html of render({ ...assistant, unread: 0 })) expect(html).not.toContain("av-mark done");
+    for (const html of render({ ...assistant, unread: 0 })) expect(html).not.toContain("av-mark present done");
   });
 
   it("忙碌时优先显示 busy，未读角标仍在", () => {
@@ -38,8 +37,8 @@ describe("首页头像状态", () => {
     state.assistants = [busy];
     const [pin, row] = render(busy);
     for (const html of [pin, row]) {
-      expect(html).toContain('class="av-mark busy"');
-      expect(html).not.toContain('class="av-mark done"');
+      expect(html).toContain('class="av-mark present busy"');
+      expect(html).not.toContain('class="av-mark present done"');
     }
     expect(pin).toContain('class="badge">1</span>');
   });
@@ -48,7 +47,7 @@ describe("首页头像状态", () => {
     state.jobs.failed = { assistantId: "a", status: "failed", endedAt: "2026-01-03" };
     const busy = { ...assistant, busy: true };
     state.assistants = [busy];
-    for (const html of render(busy)) expect(html).toContain('class="av-mark stuck"');
+    for (const html of render(busy)) expect(html).toContain('class="av-mark present stuck"');
   });
 
   it("待确认优先于受阻和忙碌", () => {
@@ -56,6 +55,6 @@ describe("首页头像状态", () => {
     state.approvals.ask = { assistantId: "a", status: "pending" };
     const busy = { ...assistant, busy: true };
     state.assistants = [busy];
-    for (const html of render(busy)) expect(html).toContain('class="av-mark ask"');
+    for (const html of render(busy)) expect(html).toContain('class="av-mark present ask"');
   });
 });

@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -20,6 +20,21 @@ describe("助手技能存储", () => {
     expect(result.version).toBe(8);
     expect(readFileSync(result.path, "utf8")).toContain("步骤 6");
     expect(result.fromJobId).toBe("job-1");
+  });
+  it("覆盖当前版本更新日期并保留历史", () => {
+    const dir = home();
+    vi.useFakeTimers();
+    try {
+      vi.setSystemTime(new Date("2026-01-01T00:00:00Z"));
+      saveAssistantSkill(dir, "hob", input);
+      const version = saveAssistantSkill(dir, "hob", { ...input, content: "第二版" });
+      vi.setSystemTime(new Date("2026-01-02T00:00:00Z"));
+      const saved = saveAssistantSkill(dir, "hob", { ...input, content: "覆盖版" }, "job-1", false, { overwriteVersion: true });
+      expect(saved.version).toBe(version.version);
+      expect(saved.updatedAt).toBe("2026-01-02T00:00:00.000Z");
+      expect(saved.createdAt).toBe(version.createdAt);
+      expect(readdirSync(join(dir, "assistants/hob/skills/daily-check/.history"))).toEqual(["1"]);
+    } finally { vi.useRealTimers(); }
   });
   it("累计附件和路径冲突在修改前拒绝", () => {
     const dir = home();

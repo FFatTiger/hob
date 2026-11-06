@@ -27,13 +27,13 @@ export function MobileList() {
           </div>
         ) : (
           <>
-            <button className="ib" title="知识库" onClick={openKnowledge}>
+            <button className="hob-icon-btn" title="知识库" onClick={openKnowledge}>
               <Icon name="archive" size={19} />
             </button>
-            <button className="ib" title="搜索助手" onClick={() => setSearch(true)}>
+            <button className="hob-icon-btn" title="搜索助手" onClick={() => setSearch(true)}>
               <Icon name="search" size={19} />
             </button>
-            <button className="ib" title="创建专属助手" onClick={newAssistant}>
+            <button className="hob-icon-btn" title="创建专属助手" onClick={newAssistant}>
               <Icon name="plus" size={21} />
             </button>
           </>
@@ -51,9 +51,9 @@ export function MobileList() {
   );
 }
 
-export function Sheet({ leaving, layered = false, direction = "", page }: { leaving: boolean; layered?: boolean; direction?: string; page?: PanelPage | null }) {
+export function Sheet({ leaving, page }: { leaving: boolean; page?: PanelPage | null }) {
   return (
-    <div className={`mfull${leaving ? " leaving" : ""}${layered ? ` layered ${direction}` : ""}`}>
+    <div className={`mfull${leaving ? " leaving" : ""}`}>
       <Panel mobile page={page} />
     </div>
   );

@@ -380,6 +380,7 @@ export interface Job {
   endedAt?: Iso;
   usage?: JobUsage; // 输入/输出 token 和花费
   durationMs?: number; // 用时（结束时间 − 开始时间）
+  expect?: { minutes: number; source: "assistant" | "routine" | "default"; runs?: number };
   stats: { reads: number; commands: number; edits: number };
   summary?: string; // report 的完整结果
   reportPath?: string; // 完整报告

@@ -1,4 +1,5 @@
 // 任务详情（桌面右侧宽抽屉 / 手机全屏）和任务记录（全部任务）。
+import { DelayedText, Empty } from "./Empty.tsx";
 import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Job, JobFilesView, JobStatus, JobStep, ModelInfo } from "../../../shared/types.ts";
 import { Icon, type IconName } from "../icons.tsx";
@@ -25,18 +26,9 @@ import {
 import { fmtBytes, fmtDuration, fmtElapsed, fmtTokens, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
 import { PanelHead } from "./PanelHead.tsx";
+import { JOB_STATUS, StatusTag } from "./status-meta.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })));
 
-
-const STATUS: Record<JobStatus, { text: string; icon: IconName; spin?: boolean; bad?: boolean }> = {
-  queued: { text: "排队中", icon: "clock" },
-  running: { text: "进行中", icon: "spin", spin: true },
-  waiting: { text: "待确认", icon: "pause" },
-  done: { text: "已完成", icon: "check" },
-  stuck: { text: "受阻", icon: "close", bad: true },
-  failed: { text: "失败", icon: "close", bad: true },
-  stopped: { text: "已停止", icon: "stop" },
-};
 
 const THINKING: Record<string, string> = {
   off: "关",
@@ -70,20 +62,8 @@ function active(job: Job): boolean {
   return job.status === "running" || job.status === "queued" || job.status === "waiting";
 }
 
-export function StatusTag({ job }: { job: Job }) {
-  const st = STATUS[job.status];
-  return (
-    <span
-      className={`jt-st${st.bad ? " bad" : ""}${job.status === "done" ? " ok" : ""}${job.status === "running" ? " live" : ""}`}
-    >
-      <Icon name={st.icon} size={13} className={`${st.spin ? "spin " : ""}${st.bad ? "bad" : ""}`} />
-      {st.text}
-    </span>
-  );
-}
-
 /** 桌面主界面嵌入右栏；手机和设置页保留全屏 / 覆盖层。 */
-export function JobOverlay({ embedded = false, direction = "", page }: { embedded?: boolean; direction?: string; page?: PanelPage }) {
+export function JobOverlay({ embedded = false, page }: { embedded?: boolean; page?: PanelPage }) {
   const s = useApp();
   const top = page ?? s.panelStack.at(-1);
   const detail = top?.kind === "job" || top?.kind === "jobs" ? top : null;
@@ -94,7 +74,7 @@ export function JobOverlay({ embedded = false, direction = "", page }: { embedde
   const shown = detail ?? last.current;
   if (!presence.mounted || !shown) return null;
   return (
-    <div className={`${embedded ? "jd-embedded" : "jd-overlay"}${direction ? ` ${direction}` : ""}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
+    <div className={`${embedded ? "jd-embedded" : "jd-overlay"}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
       <div className="jd" onClick={(event) => event.stopPropagation()}>
         {shown.kind === "jobs" ? <><PanelHead className="jdhead" title={<span className="t">任务记录</span>} close /><WorklogPage /></> : <JobDetail key={`${shown.id}-${shown.round ?? "default"}`} id={shown.id} round={shown.round} />}
       </div>
@@ -143,7 +123,7 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
     return (
       <div className="jdbody">
         <PanelHead className="jdhead" title={<span className="t">任务</span>} close />
-        <div className="empty">无法读取这个任务。</div>
+        <Empty>无法读取这个任务。</Empty>
       </div>
     );
   }
@@ -158,13 +138,13 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
   return (
     <>
       <PanelHead className="jdhead" title={<span className="t">任务</span>} close>
-        {job.status === "done" ? <button className="panel-action" disabled={!!s.sedimenting[job.id]} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{s.sedimenting[job.id] ? "正在沉淀…" : "沉淀成技能"}</button> : null}
-        {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="panel-action" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />看桌面</button> : null}
+        {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={!!s.sedimenting[job.id]} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{s.sedimenting[job.id] ? "正在沉淀…" : "沉淀成技能"}</button> : null}
+        {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="hob-btn hob-btn-compact" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />看桌面</button> : null}
       </PanelHead>
       <div className="jdbody" ref={body}>
         <div className="jd-title">{job.title}</div>
         <div className="jd-meta">
-          <StatusTag job={job} />
+          <StatusTag meta={JOB_STATUS[job.status]} />
           {owner || job.assistantName ? (
             <span className="jd-owner">
               {owner ? <Avatar sprite={owner.sprite} prop={owner.prop} size={16} /> : null}
@@ -203,7 +183,8 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
                 </button>
               ))}
             </div>
-            <RoundBody key={current} part={parts[current]!} last={current === parts.length - 1} index={current} />
+            {/* 点了别的轮次才淡入；刚打开这一页时只有整页滑进来 */}
+            <div key={current} className={picked !== round ? "jd-round-content" : undefined}><RoundBody part={parts[current]!} last={current === parts.length - 1} index={current} /></div>
           </>;
         })() : <>
           <RoundBody part={{ job, instruction: job.instruction, steps }} last index={0} />
@@ -222,11 +203,12 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
   const timeline = part.steps === undefined ? undefined : groupThinking(part.steps);
   const reason = jobReason(part.job);
   const ended = !active(part.job);
+  const initiallyVisible = new Set(timeline ? visibleSteps(timeline.rows, ended, false).rows.map((row) => row.id) : []);
   return (
     <>
       {last ? null : (
         <div className="jd-meta">
-          <StatusTag job={part.job} />
+          <StatusTag meta={JOB_STATUS[part.job.status]} />
           {part.job.durationMs !== undefined ? <span>用时 {fmtDuration(part.job.durationMs)}</span> : null}
         </div>
       )}
@@ -235,11 +217,11 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
       {part.instruction ? <><div className="lbl">{index === 0 ? "任务内容" : "这一轮的要求"}</div><div className="jd-instruction">{part.instruction}</div></> : null}
       <div className="lbl">执行过程</div>
       <div className="jd-timeline">
-        {timeline === undefined ? <div className="empty">正在读取执行过程…</div> : timeline.rows.length || timeline.thinking ? <>
-          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+        {timeline === undefined ? <Empty><DelayedText text="正在读取执行过程…" /></Empty> : timeline.rows.length || timeline.thinking ? <>
+          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => expanded && !initiallyVisible.has(step.id) ? <div className="jd-unfold" key={step.id}><div><Step step={step} cwd={part.job.cwd} /></div></div> : <Step key={step.id} step={step} cwd={part.job.cwd} />)}
           {visibleSteps(timeline.rows, ended, expanded).remaining ? <div className="jd-tool"><button className="jd-tool-head" onClick={() => setExpanded(true)}><span className="ico"><Icon name="more" size={14} /></span><span className="tt">还有 {visibleSteps(timeline.rows, ended, expanded).remaining} 步</span></button></div> : null}
           {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}
-        </> : <div className="empty">还没有执行步骤。</div>}
+        </> : <Empty>还没有执行步骤。</Empty>}
       </div>
       {last ? <Directory jobId={part.job.id} /> : null}
     </>
@@ -266,11 +248,11 @@ function ReplyBox({ job }: { job: Job }) {
           if (event.key === "Enter" && !event.nativeEvent.isComposing) submit();
         }}
       />
-      <button className="pbtn solid" disabled={!sendable} onClick={submit}>
+      <button className="hob-btn hob-btn-primary" disabled={!sendable} onClick={submit}>
         发送
       </button>
       {job.status === "running" ? (
-        <button className="pbtn" onClick={() => void stopJob(job.id)}>
+        <button className="hob-btn" onClick={() => void stopJob(job.id)}>
           停止
         </button>
       ) : null}
@@ -580,7 +562,7 @@ function WorklogPage() {
           <option value="">全部状态</option>
           {FILTER_STATUS.map((value) => (
             <option key={value} value={value}>
-              {STATUS[value].text}
+              {JOB_STATUS[value].text}
             </option>
           ))}
         </select>
@@ -589,7 +571,7 @@ function WorklogPage() {
       </div>
 
       {log === null ? (
-        <div className="empty">正在读取任务记录…</div>
+        <Empty><DelayedText text="正在读取任务记录…" /></Empty>
       ) : log.jobs.length ? (
         <div className="jd-rows">
           {log.jobs.map((row) => {
@@ -597,7 +579,7 @@ function WorklogPage() {
             const owner = s.assistants.find((assistant) => assistant.id === job.assistantId);
             return (
               <button
-                className="jd-row"
+                className="list-row history-row"
                 key={job.id}
                 onClick={() => {
                   // 和首页一样：先进这个任务的助手的对话，再展开详情
@@ -606,26 +588,21 @@ function WorklogPage() {
                 }}
               >
                 {owner ? <Avatar sprite={owner.sprite} prop={owner.prop} size={26} /> : <span style={{ width: 26 }} />}
-                <span className="n">{job.title}</span>
-                <StatusTag job={job} />
-                <span className="tm">{fmtWhen(job.startedAt ?? job.createdAt)}</span>
-                <span className="du">
-                  {job.durationMs !== undefined
-                    ? fmtDuration(job.durationMs)
-                    : active(job)
-                      ? fmtElapsed(job.startedAt ?? job.createdAt)
-                      : ""}
+                <span className="history-content">
+                  <span className="n">{job.title}</span>
+                  <span className="tm">{fmtWhen(job.startedAt ?? job.createdAt)}{job.durationMs !== undefined ? ` · ${fmtDuration(job.durationMs)}` : active(job) ? ` · ${fmtElapsed(job.startedAt ?? job.createdAt)}` : ""}</span>
                 </span>
+                <StatusTag meta={JOB_STATUS[job.status]} />
               </button>
             );
           })}
         </div>
       ) : (
-        <div className="empty">没有符合条件的任务。</div>
+        <Empty>没有符合条件的任务。</Empty>
       )}
 
       {log?.hasMore ? (
-        <button className="pbtn jd-morebtn" onClick={() => void moreWorklog()}>
+        <button className="hob-btn jd-morebtn" onClick={() => void moreWorklog()}>
           {log.loading ? "正在读取…" : "加载更多"}
         </button>
       ) : null}

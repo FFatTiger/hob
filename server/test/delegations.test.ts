@@ -117,7 +117,7 @@ describe("委派", () => {
       expect(prompt).toContain("转来的消息带着用户的原话，等同用户本人的要求，结果会自动回到 Hob。");
       expect(prompt).toContain("用简洁、规范的书面中文回复，先给结论。");
       const primary = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
-      expect(primary).toContain("一件事交给任务或其他助手后由它负责到底");
+      expect(primary).toContain("对用户负责的是你");
       expect(primary).not.toContain("结果回来之前，不要自己 start_job 做同一件事");
       expect(prompt).not.toContain("转交时把用户原话转过去");
     } finally { hob.close(); }

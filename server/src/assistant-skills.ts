@@ -46,6 +46,17 @@ function description(file: string): string {
   if (!line) throw new Error("技能说明缺失");
   return JSON.parse(line.slice("description: ".length));
 }
+export function readAssistantSkillBody(path: string): string {
+  const text = readFileSync(path, "utf8");
+  const end = text.indexOf("\n---\n");
+  if (!text.startsWith("---\n") || end < 0) throw new Error("技能 frontmatter 无效");
+  return text.slice(end + 5).replace(/^\n/, "");
+}
+
+export function skillInstruction(title: string, instruction: string): string {
+  return `按技能「${title}」做（先读它的 SKILL.md）。\n${instruction}`;
+}
+
 export function listAssistantSkills(home: string, assistantId: string): AssistantSkill[] {
   const dir = checkedDir(home, assistantId);
   return Object.entries(metadata(dir)).map(([name, data]) => {
@@ -72,8 +83,11 @@ export function readSkillFiles(cwd: string, files: unknown): SkillInput["files"]
   let root: string | undefined;
   return files.map((file) => {
     const { path, content, from } = (file ?? {}) as { path?: unknown; content?: unknown; from?: unknown };
-    if ((content === undefined) === (from === undefined)) throw new Error("附件要给 content 或 from，只给一个");
-    if (from === undefined) return { path, content } as { path: string; content: string };
+    // 有的模型会把每个字段都填上，没用的那个给空串：空串当没给
+    const hasFrom = from !== undefined && from !== "";
+    const hasContent = content !== undefined && !(hasFrom && content === "");
+    if (hasContent === hasFrom) throw new Error("附件要给 content 或 from，只给一个");
+    if (!hasFrom) return { path, content } as { path: string; content: string };
     if (typeof from !== "string" || !from.trim()) throw new Error("附件的 from 无效");
     let real: string;
     try { root ??= realpathSync(cwd); real = realpathSync(resolve(root, from)); }
@@ -86,7 +100,7 @@ export function readSkillFiles(cwd: string, files: unknown): SkillInput["files"]
     return { path, content: readFileSync(real, "utf8") } as { path: string; content: string };
   });
 }
-export function saveAssistantSkill(home: string, assistantId: string, input: SkillInput, jobId?: string, replaceFiles = false): AssistantSkill {
+export function saveAssistantSkill(home: string, assistantId: string, input: SkillInput, jobId?: string, replaceFiles = false, options?: { overwriteVersion?: boolean }): AssistantSkill {
   validName(input.name);
   if (typeof input.title !== "string" || !input.title.trim() || typeof input.description !== "string" || !input.description.trim() || [...input.description].length > 120 || typeof input.content !== "string") throw new Error("技能内容无效");
   const body = `---\nname: ${JSON.stringify(input.name)}\ndescription: ${JSON.stringify(input.description)}\nmetadata:\n  title: ${JSON.stringify(input.title)}\n---\n\n${input.content}`;
@@ -125,7 +139,7 @@ export function saveAssistantSkill(home: string, assistantId: string, input: Ski
     const parts = path.split("/");
     for (let i = 2; i < parts.length; i++) if (combined.has(parts.slice(0, i).join("/"))) throw new Error("附件路径冲突");
   }
-  if (old) {
+  if (old && !options?.overwriteVersion) {
     const history = join(target, ".history");
     mkdirSync(history, { recursive: true });
     const snapshot = join(history, String(old.version));
@@ -133,7 +147,7 @@ export function saveAssistantSkill(home: string, assistantId: string, input: Ski
     for (const entry of readdirSync(target)) if (entry !== ".history") cpSync(join(target, entry), join(snapshot, entry), { recursive: true });
     const versions = readdirSync(history).filter((n) => /^\d+$/.test(n)).map(Number).sort((a, b) => b - a);
     for (const version of versions.slice(5)) rmSync(join(history, String(version)), { recursive: true, force: true });
-  } else mkdirSync(target);
+  } else if (!old) mkdirSync(target);
   if (replaceFiles) for (const folder of ["scripts", "references"]) rmSync(join(target, folder), { recursive: true, force: true });
   writeFileSync(join(target, "SKILL.md"), body);
   for (const file of files) {
@@ -142,7 +156,7 @@ export function saveAssistantSkill(home: string, assistantId: string, input: Ski
     writeFileSync(dest, file.content);
   }
   const now = new Date().toISOString();
-  all[input.name] = { title: input.title, version: (old?.version ?? 0) + 1, createdAt: old?.createdAt ?? now, updatedAt: now, ...(jobId ? { fromJobId: jobId } : old?.fromJobId ? { fromJobId: old.fromJobId } : {}), uses: old?.uses ?? 0, ...(old?.lastUsedAt ? { lastUsedAt: old.lastUsedAt } : {}), enabled: old?.enabled ?? true };
+  all[input.name] = { title: input.title, version: old && options?.overwriteVersion ? old.version : (old?.version ?? 0) + 1, createdAt: old?.createdAt ?? now, updatedAt: now, ...(jobId ? { fromJobId: jobId } : old?.fromJobId ? { fromJobId: old.fromJobId } : {}), uses: old?.uses ?? 0, ...(old?.lastUsedAt ? { lastUsedAt: old.lastUsedAt } : {}), enabled: old?.enabled ?? true };
   saveMetadata(dir, all);
   return listAssistantSkills(home, assistantId).find((skill) => skill.name === input.name)!;
 }

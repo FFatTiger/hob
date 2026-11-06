@@ -9,6 +9,7 @@ import { useLeave } from "../motion.ts";
 import { copyText } from "../clipboard.ts";
 import { closePanelPages, fetchFileMeta, fileUrl, photoUrl, setNotice, togglePreviewFull, useApp, type PanelPage } from "../store.ts";
 import { PanelHead } from "./PanelHead.tsx";
+import { DelayedText } from "./Empty.tsx";
 import { fmtBytes, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
 import { matchKnowledgeText } from "../knowledge-highlight.ts";
@@ -21,7 +22,7 @@ type Load =
   | { state: "error"; outside: boolean; message: string }
   | { state: "ok"; meta: FileMeta };
 
-export function FilePreviewOverlay({ embedded = false, direction = "", page }: { embedded?: boolean; direction?: string; page?: PanelPage }) {
+export function FilePreviewOverlay({ embedded = false, page }: { embedded?: boolean; page?: PanelPage }) {
   const s = useApp();
   const top = page ?? s.panelStack.at(-1);
   const preview = top?.kind === "file" ? top : null;
@@ -32,7 +33,7 @@ export function FilePreviewOverlay({ embedded = false, direction = "", page }: {
   const shown = preview ?? last.current;
   if (!presence.mounted || !shown) return null;
   return (
-    <div className={`${embedded ? "fp-embedded" : "fpwrap"}${direction ? ` ${direction}` : ""}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
+    <div className={`${embedded ? "fp-embedded" : "fpwrap"}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
       <div className={`fp${shown.full ? " full" : ""}`} onClick={(event) => event.stopPropagation()}>
         {shown.liveId && s.livePages[shown.liveId] ? <LivePreview page={s.livePages[shown.liveId]} /> : <FilePreview path={shown.path} title={shown.title} find={shown.find} page={shown.page} />}
       </div>
@@ -105,14 +106,14 @@ function FilePreview({ path, title, find, page }: { path: string; title?: string
       <Head name={name} meta={meta} path={path} />
       <div className="fp-body">
         {load.state === "loading" ? (
-          <div className="fp-center dim">正在读取文件信息…</div>
+          <div className="fp-center dim"><DelayedText text="正在读取文件信息…" /></div>
         ) : load.state === "error" ? (
           <div className="fp-center">
             <div className="fp-nofile">
               <Icon name="doc" size={22} />
               <div>{load.outside ? "这个文件不在 Hob 的数据目录或任务的工作目录里，无法预览" : load.message}</div>
               <button
-                className="pbtn"
+                className="hob-btn"
                 onClick={() =>
                   void copyText(path).then((ok) => setNotice(ok ? "路径已复制" : "复制失败：浏览器不允许写入剪贴板"))
                 }
@@ -146,18 +147,18 @@ function Head({ name, meta, path, liveStatus, disabled }: { name: string; meta: 
           </div>
         ) : null}
       </div>
-      {disabled ? <button className="ib fp-act" title="下载" disabled><Icon name="dl" size={17} /></button> : <a className="ib fp-act" title="下载" href={fileUrl(path)} download={name}>
+      {disabled ? <button className="hob-icon-btn fp-act" title="下载" disabled><Icon name="dl" size={17} /></button> : <a className="hob-icon-btn fp-act" title="下载" href={fileUrl(path)} download={name}>
         <Icon name="dl" size={17} />
       </a>}
       <button
-        className="ib fp-act"
+        className="hob-icon-btn fp-act"
         title="在新窗口打开"
         disabled={disabled}
         onClick={() => window.open(fileUrl(path, { inline: true }), "_blank", "noopener")}
       >
         <Icon name="out" size={17} />
       </button>
-      <button className="ib fp-act fp-wide-btn" title="切换全宽" onClick={togglePreviewFull}>
+      <button className="hob-icon-btn fp-act fp-wide-btn" title="切换全宽" onClick={togglePreviewFull}>
         <Icon name={full ? "shrink" : "expand"} size={17} />
       </button>
     </PanelHead>
@@ -209,7 +210,7 @@ function Body({ meta, find, page }: { meta: FileMeta; find?: string; page?: numb
           <div className="fp-nofile">
             <Icon name="doc" size={22} />
             <div>这种文件不在浏览器里预览，可以下载后打开。</div>
-            <a className="pbtn solid" href={fileUrl(meta.path)} download={meta.name}>
+            <a className="hob-btn hob-btn-primary" href={fileUrl(meta.path)} download={meta.name}>
               下载
             </a>
           </div>
@@ -282,7 +283,7 @@ function TextBody({ meta, find }: { meta: FileMeta; find?: string }) {
   }, [meta.path]);
 
   if (error) return <div className="fp-center fp-nofile">{error}</div>;
-  if (text === null) return <div className="fp-center dim">正在读取内容…</div>;
+  if (text === null) return <div className="fp-center dim"><DelayedText text="正在读取内容…" /></div>;
 
   const notice =
     meta.size > MAX_TEXT ? (
@@ -354,7 +355,7 @@ function CodeView({ text }: { text: string }) {
     <>
       <div className="fp-codebar">
         <span className="dim">{lines.length} 行</span>
-        <button className="pbtn" onClick={() => setWrap(!wrap)}>
+        <button className="hob-btn" onClick={() => setWrap(!wrap)}>
           {wrap ? "不自动换行" : "自动换行"}
         </button>
       </div>

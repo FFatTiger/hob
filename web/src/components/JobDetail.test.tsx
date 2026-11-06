@@ -38,7 +38,7 @@ describe("任务详情回复", () => {
       state.status = "done";
       await store.sedimentJob("t-1");
       state.sedimenting = store.getState().sedimenting;
-      expect(renderToStaticMarkup(<JobOverlay />)).toContain('<button class="panel-action" disabled="">');
+      expect(renderToStaticMarkup(<JobOverlay />)).toContain('<button class="hob-btn hob-btn-compact" disabled="">');
       expect(renderToStaticMarkup(<JobOverlay />)).toContain("正在沉淀…");
       store.applyEvent({ type: "sediment-finished", jobId: "another" });
       expect(store.getState().sedimenting["t-1"]).toBe(true);
@@ -46,7 +46,7 @@ describe("任务详情回复", () => {
       state.sedimenting = store.getState().sedimenting;
       const html = renderToStaticMarkup(<JobOverlay />);
       expect(html).toContain("沉淀成技能");
-      expect(html).toContain('<button class="panel-action">');
+      expect(html).toContain('<button class="hob-btn hob-btn-compact">');
     } finally {
       state.sedimenting = {};
       vi.unstubAllGlobals();

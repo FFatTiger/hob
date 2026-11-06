@@ -25,7 +25,8 @@ export interface PromptSettings {
   memory: MemoryProvider;
   models?: PromptModel[];
   skills?: { name: string; description: string }[];
-  assistantSkills?: { title: string; description: string }[];
+  assistantSkills?: { name: string; title: string; description: string; version: number; updatedAt: string }[];
+  assistantSkillsDir?: string;
   knowledgeNames?: string[];
   thinkingChoice?: "auto" | "fixed";
   abilities?: Abilities;
@@ -56,11 +57,15 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   lines.push(
     "用简洁、规范的书面中文回复，先给结论。",
     "", "## 你手里有什么",
-    "你能直接看：文件和图片、任务的结果和产出、网页、记忆。",
-    "跑命令、改文件、操作设备这些动手的事在后台任务手里：任务在自己的会话和目录里做，做完把完整结果发回给你。",
-    "任务结束后还能接着做。一件事交给任务或其他助手后由它负责到底，跟进也交给它。",
+    "你能直接看：文件和图片、任务的过程和结果、产出、网页、记忆。",
+    "跑命令、改文件、操作设备这些动手的事交给后台任务。任务是你手上的活，在自己的会话和目录里做，做完把完整结果交给你；对用户负责的是你。",
+    "任务做完还能接着做，补充和纠正交给原来那个任务，它接得上之前的上下文。",
   );
-  if (settings.assistantSkills?.length) lines.push(`你沉淀过的技能：${settings.assistantSkills.map((skill) => `${skill.title}：${skill.description}`).join("、")}。派同类的活时在指令里写明按哪个技能做。`);
+  if (settings.assistantSkills?.length) {
+    lines.push(`你的技能是做同类事的做法，派活时可以让任务照着做。文件在 ${settings.assistantSkillsDir}/<名字>/SKILL.md：`);
+    const format = new Intl.DateTimeFormat("sv-SE", { timeZone: settings.timezone, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hour12: false });
+    for (const skill of settings.assistantSkills) lines.push(`- ${skill.name}「${skill.title}」· 第 ${skill.version} 版 · ${format.format(new Date(skill.updatedAt)).slice(5)} 更新：${skill.description}`);
+  }
   if (settings.knowledgeNames?.length) lines.push(`能查的知识库：${settings.knowledgeNames.join("、")}。问到可能写在这些库里的内容，先用 search_knowledge 查。`);
   if (settings.skills?.length) lines.push(`任务能用的技能：${settings.skills.map((skill) => skill.name).join("、")}`);
   lines.push(...aboutSection(settings.aboutYou));

@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
@@ -16,6 +16,7 @@ import { makeHob } from "./helpers.ts";
 import { DesktopService, checkDesktopUrl } from "../src/desktop.ts";
 import { SettingsStore } from "../src/settings.ts";
 import { writeSecret } from "../src/secrets.ts";
+import { lookupFile } from "../src/files.ts";
 
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
@@ -48,6 +49,28 @@ describe("云桌面配置", () => {
       const settings = await app.request("/api/settings", { headers: { cookie } });
       expect(await settings.text()).not.toContain("sensitive-token");
       expect(hob.runtime.desktop.token()).toBe("sensitive-token");
+    } finally { hob.close(); }
+  });
+  it("只有当前屏幕的接管者能提交文字，失败不会伪报成功", async () => {
+    const hob = makeHob();
+    const owner = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const other = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    try {
+      const request = vi.spyOn(hob.runtime.desktop, "request").mockResolvedValue(new Response("{}"));
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const paste = (client: string, text = "中文\n第二行") => app.request("/api/desktop/paste", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ client, screen: "hob", text }) });
+      hob.runtime.desktopControl.connected(owner);
+      hob.runtime.desktopControl.take(owner);
+      expect((await paste(other)).status).toBe(403);
+      expect((await paste(owner, "bad\0text")).status).toBe(400);
+      expect((await paste(owner)).status).toBe(200);
+      expect(request).toHaveBeenCalledWith("/api/screens/hob/paste", expect.objectContaining({ body: JSON.stringify({ text: "中文\n第二行" }) }));
+      request.mockRejectedValueOnce(new Error("剪贴板未就绪"));
+      const failed = await paste(owner);
+      expect(failed.status).toBe(502);
+      expect(await failed.text()).toContain("剪贴板未就绪");
     } finally { hob.close(); }
   });
   it("环境优先且每次读取令牌文件", () => {
@@ -231,6 +254,52 @@ describe("云桌面配置", () => {
       const screens = await (await app.request("/api/desktop/screens", { headers: { cookie } })).json() as { profiles: Record<string, string> };
       expect(screens.profiles.hob).toBe("hob");
     } finally { hob.close(); }
+  });
+  it("两种截图按身份落盘并返回精确文字，不能看图时仍保存", async () => {
+    const hob = makeHob();
+    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
+    try {
+      for (const router of [true, false]) for (const canSee of [true, false]) for (const name of ["browser_screenshot", "desktop_screenshot"]) {
+        const dir = router ? join(hob.home, "assistants", "hob", "screenshots") : join(hob.runtime.store.workDir("t-1234"), "screenshots");
+        const session = new DesktopToolSession(hob.runtime, "hob", canSee, router ? undefined : "任务", router, dir);
+        vi.spyOn(session as any, "getPage").mockResolvedValue({ screenshot: async () => Buffer.from("image") });
+        try {
+          const result = await session.tools().find((tool) => tool.name === name)!.execute("test", {});
+          expect(result.isError).not.toBe(true);
+          const file = readdirSync(dir).sort().at(-1)!;
+          const path = join(dir, file);
+          expect(file).toMatch(/^\d{8}T\d{9}\.png$/);
+          expect(readFileSync(path).toString()).toBe("image");
+          expect(lookupFile(hob.home, path).ok).toBe(true);
+          const send = router ? "用 send_file 发它" : "report 时放进 files";
+          expect(result.content).toEqual(canSee
+            ? [{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" }, { type: "text", text: `截图已存到 ${path}。要给用户看，${send}。` }]
+            : [{ type: "text", text: `当前模型不能看图。截图已存到 ${path}：要给用户看，${send}；要自己读页面内容，用 browser_snapshot。` }]);
+        } finally { await session.dispose(); }
+      }
+    } finally { request.mockRestore(); hob.close(); }
+  });
+  it("截图在同一毫秒也不覆盖，超过 20 张删除最旧文件", async () => {
+    const hob = makeHob();
+    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
+    const clock = vi.spyOn(Date, "now").mockReturnValue(1793979012123);
+    const session = new DesktopToolSession(hob.runtime, "hob", true, undefined, true);
+    const dir = join(hob.home, "assistants", "hob", "screenshots");
+    try {
+      expect(existsSync(dir)).toBe(false);
+      const screenshot = session.tools().find((tool) => tool.name === "desktop_screenshot")!;
+      for (let i = 0; i < 22; i++) {
+        const result = await screenshot.execute(String(i), {});
+        expect(result.isError).not.toBe(true);
+        const text = (result.content[1] as { text: string }).text;
+        const path = text.slice("截图已存到 ".length, text.indexOf("。"));
+        expect(existsSync(path)).toBe(true);
+      }
+      const files = readdirSync(dir).sort();
+      expect(files).toHaveLength(20);
+      expect(files[0]).toBe("20261106T153012125.png");
+      expect(files[19]).toBe("20261106T153012144.png");
+    } finally { clock.mockRestore(); request.mockRestore(); await session.dispose(); hob.close(); }
   });
   it("公共屏幕权限决定工具参数且硬传也拒绝", async () => {
     const hob = makeHob();
@@ -429,6 +498,56 @@ describe("云桌面配置", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
       hob.close();
     }
+  });
+  it("助手工具随配置变化，并在任务占用时拒绝操作，释放时断开连接", async () => {
+    const hob = makeHob();
+    const page = { isClosed: () => false, setDefaultTimeout: vi.fn(), ariaSnapshot: vi.fn().mockResolvedValue("Example Domain") };
+    const browser = { isConnected: () => true, contexts: () => [{ newPage: vi.fn().mockResolvedValue(page) }], close: vi.fn().mockResolvedValue(undefined) };
+    const connect = vi.spyOn(chromium, "connectOverCDP").mockResolvedValue(browser as never);
+    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response('{"cdp":"/cdp/hob"}'));
+    const worker = new DesktopToolSession(hob.runtime, "hob", true, "查资料");
+    try {
+      let state = await hob.runtime.router.ensure("hob");
+      expect(state.session!.getActiveToolNames().filter((name) => name.startsWith("browser_"))).toHaveLength(0);
+      hob.runtime.settings.setDesktop(1, { url: "http://localhost:6080", enabled: true });
+      writeSecret(hob.home, "desktop:token", "token");
+      hob.runtime.router.releaseSessions();
+      state = await hob.runtime.router.ensure("hob");
+      expect(state.session!.getActiveToolNames().filter((name) => name.startsWith("browser_"))).toHaveLength(7);
+      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).not.toHaveProperty("screen");
+      await worker.tools().find((tool) => tool.name === "browser_snapshot")!.execute("worker", {});
+      const snapshot = state.desktop!.tools().find((tool) => tool.name === "browser_snapshot")!;
+      expect((await snapshot.execute("router", {})).content[0]).toMatchObject({ text: "任务「查资料」正在用浏览器，等它做完，或者用 reply_job 让它停下来。" });
+      await worker.dispose();
+      expect((await snapshot.execute("router", {})).isError).not.toBe(true);
+      hob.runtime.router.releaseSessions();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(browser.close).toHaveBeenCalledTimes(2);
+      hob.runtime.settings.setDesktop(hob.runtime.settings.get().revision, { url: "http://localhost:6080", enabled: true, publicAssistants: ["hob"] });
+      state = await hob.runtime.router.ensure("hob");
+      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).toHaveProperty("screen");
+      const client = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+      hob.runtime.desktopControl.connected(client); hob.runtime.desktopControl.take(client);
+      expect((await state.desktop!.tools().find((tool) => tool.name === "browser_snapshot")!.execute("taken", {})).content[0]).toMatchObject({ text: expect.stringContaining("用户正在操作云桌面") });
+      expect(request).toHaveBeenCalled();
+    } finally { await worker.dispose(); connect.mockRestore(); hob.close(); }
+  });
+  it("助手不持有公共屏幕锁，不妨碍任务使用", async () => {
+    const hob = makeHob();
+    hob.runtime.settings.setDesktop(1, { url: "http://localhost:6080", enabled: true, publicAssistants: ["hob"] });
+    writeSecret(hob.home, "desktop:token", "token");
+    vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response('{"cdp":"/cdp/public"}'));
+    const page = { isClosed: () => false, setDefaultTimeout: vi.fn(), ariaSnapshot: vi.fn().mockResolvedValue("页面") };
+    const browser = { isConnected: () => true, contexts: () => [{ newPage: vi.fn().mockResolvedValue(page) }], close: vi.fn().mockResolvedValue(undefined) };
+    const connect = vi.spyOn(chromium, "connectOverCDP").mockResolvedValue(browser as never);
+    const router = new DesktopToolSession(hob.runtime, "hob", true, undefined, true);
+    const worker = new DesktopToolSession(hob.runtime, "hob", true, "公共任务");
+    try {
+      const tool = (session: DesktopToolSession) => session.tools().find((entry) => entry.name === "browser_snapshot")!;
+      expect((await tool(router).execute("router", { screen: "public" })).isError).not.toBe(true);
+      expect((await tool(worker).execute("worker", { screen: "public" })).isError).not.toBe(true);
+      expect((await tool(router).execute("busy", { screen: "public" })).content[0]).toMatchObject({ text: expect.stringContaining("任务「公共任务」正在用浏览器") });
+    } finally { await worker.dispose(); await router.dispose(); connect.mockRestore(); hob.close(); }
   });
   it("过长助手 id 映射成稳定且符合 desktopd 约束的 profile", async () => {
     const hob = makeHob();

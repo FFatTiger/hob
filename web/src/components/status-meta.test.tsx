@@ -11,7 +11,7 @@ describe("任务和转交状态元数据", () => {
       expect(meta.spin, status).toBe(status === "running");
       expect(renderToStaticMarkup(<StatusTag meta={meta} />)).toContain(meta.text);
     }
-    expect(JOB_STATUS.waiting.text).toBe("等你确认");
+    expect(JOB_STATUS.waiting.text).toBe("等助手回复");
     expect(JOB_STATUS.stopped.icon).toBe("stop");
     expect(JOB_STATUS.queued.icon).toBe("clock");
     expect(renderToStaticMarkup(jobStatusIcon("queued", 16))).toContain('M12 7.5V12l3 2');

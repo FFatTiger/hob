@@ -1,4 +1,4 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { Approval, JobStep } from "../../shared/types.ts";
@@ -21,6 +21,69 @@ async function appWithCookie(runtime: HobRuntime, home: string) {
   const app = createApp(runtime, { home });
   return { app, cookie: await signIn(app) };
 }
+
+describe("全局规则", () => {
+  it("文件缺失时读取为空且不重建，提示词仍可构建", async () => {
+    const hob = makeHob();
+    try {
+      const path = join(hob.home, "rules.json");
+      rmSync(path);
+      expect(hob.runtime.store.globalRules()).toEqual([]);
+      expect(existsSync(path)).toBe(false);
+      const { buildSystemPrompt, buildWorkerPrompt } = await import("../src/prompt.ts");
+      const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+      expect(buildSystemPrompt(hob.runtime.store, "hob", settings)).toContain("你是「Hob」");
+      hob.runtime.store.saveJob({ id: "missing-rules", assistantId: "hob", title: "测试", instruction: "测试", status: "queued", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
+      expect(buildWorkerPrompt(hob.runtime.store, "missing-rules", settings)).toContain("后台任务");
+      expect(existsSync(path)).toBe(false);
+    } finally { hob.close(); }
+  });
+
+  it("保留未变规则的 changedAt，只更新新增或修改的规则", async () => {
+    const hob = makeHob();
+    try {
+      const old = "2020-01-01T00:00:00.000Z";
+      hob.runtime.store.saveGlobalRules([
+        { id: "a", text: "保留", mode: "ask", changedAt: old },
+        { id: "b", text: "改文字", mode: "ask", changedAt: old },
+        { id: "c", text: "改模式", mode: "ask", changedAt: old },
+      ]);
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const response = await app.request("/api/rules", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rules: [
+        { id: "a", text: " 保留 ", mode: "ask" }, { id: "b", text: "新文字", mode: "ask" },
+        { id: "c", text: "改模式", mode: "allow" }, { text: "新增", mode: "allow" },
+      ] }) });
+      expect(response.status).toBe(200);
+      const { rules } = await response.json() as { rules: { changedAt: string }[] };
+      expect(rules[0].changedAt).toBe(old);
+      for (const rule of rules.slice(1)) expect(Date.parse(rule.changedAt)).toBeGreaterThan(Date.parse(old));
+    } finally { hob.close(); }
+  });
+
+  it("首次和升级补默认值，空数组保留；接口鉴权、校验、保存并发事件", async () => {
+    const hob = makeHob();
+    try {
+      const { store, bus } = hob.runtime;
+      expect(store.globalRules()).toHaveLength(7);
+      expect(store.globalRules().map((rule) => rule.mode)).toEqual(["ask", "ask", "ask", "ask", "allow", "allow", "allow"]);
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      expect((await app.request("/api/rules")).status).toBe(401);
+      const events: string[] = [];
+      bus.subscribe((event) => events.push(event.type));
+      const put = (rules: unknown) => app.request("/api/rules", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rules }) });
+      expect((await put([{ text: "   ", mode: "ask" }])).status).toBe(400);
+      expect((await put([{ text: "测试", mode: "bad" }])).status).toBe(400);
+      const response = await put([{ text: "  检查  ", mode: "allow" }]);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({ rules: [{ text: "检查", mode: "allow", id: expect.any(String), changedAt: expect.any(String) }] });
+      expect(events).toContain("rules");
+      expect(await (await app.request("/api/rules", { headers: { cookie } })).json()).toEqual({ rules: store.globalRules() });
+      await put([]);
+      store.init();
+      expect(store.globalRules()).toEqual([]);
+    } finally { hob.close(); }
+  });
+});
 
 describe("助手规则编辑", () => {
   it("通过助手设置新增规则，校验内容、模式及重复项", async () => {

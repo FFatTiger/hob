@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { newId } from "./ids.ts";
 import type {
   Approval,
   Assistant,
@@ -56,6 +57,25 @@ export class Store {
     for (const dir of ["assistants", "jobs", "uploads"]) {
       mkdirSync(join(this.home, dir), { recursive: true });
     }
+    if (!existsSync(join(this.home, "rules.json"))) {
+      const changedAt = new Date().toISOString();
+      this.saveGlobalRules([
+        ...["删除或覆盖文件、数据和备份", "对外发送（消息、邮件、发布）、付费、充值、改计费", "停止或重启别人正在使用的服务和设备", "修改可能让你失去远程访问的设置（网络、防火墙、登录方式）"].map((text) => ({ id: newId("r-"), text, mode: "ask" as const, changedAt })),
+        ...["过去的记录是线索不是现状：动手前先核实实际状态。", "改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。", "凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。"].map((text) => ({ id: newId("r-"), text, mode: "allow" as const, changedAt })),
+      ]);
+    }
+  }
+
+  globalRules(): Rule[] {
+    const path = join(this.home, "rules.json");
+    if (!existsSync(path)) return [];
+    const rules = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (!Array.isArray(rules)) throw new Error("全局规则文件格式无效");
+    return rules as Rule[];
+  }
+
+  saveGlobalRules(rules: Rule[]): void {
+    writeJsonAtomic(join(this.home, "rules.json"), rules);
   }
 
   // ---------- 助手 ----------

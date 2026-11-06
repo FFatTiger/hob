@@ -28,11 +28,18 @@ describe("首页头像状态", () => {
     for (const html of render()) expect(html).toMatch(/class="av-mark present done" aria-label="已完成，未读"[^>]*><span[^>]*><svg[^>]*><path/);
   });
 
+  it("上次看过之前就结束的任务不挂标记，也没有数字角标", () => {
+    state.jobs = { old: { assistantId: "a", status: "stuck", endedAt: "2026-01-02T01:00:00Z" } };
+    const [pin] = render({ ...assistant, readAt: "2026-01-02T02:00:00Z" });
+    expect(pin).not.toContain("av-mark present");
+    expect(pin).not.toContain('class="badge"');
+  });
+
   it("未读清零后不显示完成状态", () => {
     for (const html of render({ ...assistant, unread: 0 })) expect(html).not.toContain("av-mark present done");
   });
 
-  it("忙碌时优先显示 busy，未读角标仍在", () => {
+  it("忙碌时优先显示 busy", () => {
     const busy = { ...assistant, busy: true };
     state.assistants = [busy];
     const [pin, row] = render(busy);
@@ -40,7 +47,7 @@ describe("首页头像状态", () => {
       expect(html).toContain('class="av-mark present busy"');
       expect(html).not.toContain('class="av-mark present done"');
     }
-    expect(pin).toContain('class="badge">1</span>');
+    expect(pin).not.toContain('class="badge"');
   });
 
   it("以最近结束任务为准，受阻优先于忙碌", () => {

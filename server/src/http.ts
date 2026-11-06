@@ -110,6 +110,24 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.get("/api/bootstrap", (c) => c.json(router.bootstrap()));
 
+  app.get("/api/rules", (c) => c.json({ rules: store.globalRules() }));
+  app.put("/api/rules", async (c) => {
+    const body = await c.req.json().catch(() => null) as { rules?: unknown } | null;
+    if (!Array.isArray(body?.rules) || body.rules.some((rule) => !rule || typeof rule.text !== "string" || !rule.text.trim() || (rule.mode !== "ask" && rule.mode !== "allow") || (rule.id !== undefined && (typeof rule.id !== "string" || !rule.id.trim())))) {
+      return c.json({ error: "规则格式无效，文字不能为空" }, 400);
+    }
+    const changedAt = new Date().toISOString();
+    const existing = new Map(store.globalRules().map((rule) => [rule.id, rule]));
+    const rules = body.rules.map((rule) => {
+      const previous = existing.get(rule.id);
+      const text = rule.text.trim();
+      return { id: rule.id ?? newId("r-"), text, mode: rule.mode as "ask" | "allow", changedAt: previous && previous.text === text && previous.mode === rule.mode ? previous.changedAt : changedAt };
+    });
+    store.saveGlobalRules(rules);
+    bus.emit({ type: "rules" });
+    return c.json({ rules });
+  });
+
   // 设置页：整份设置（带 revision）与按节合并的写入（revision 不对 → 409）
   app.get("/api/settings", (c) => c.json(runtime.settings.get()));
 
@@ -152,6 +170,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const saved = runtime.settings.setDesktop(body.revision, { url, enabled: body.enabled });
       if (!saved) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
       if (body.token !== undefined) writeSecret(options.home, "desktop:token", body.token);
+      router.releaseSessions();
       runtime.desktopEvents.restart();
       return c.json(runtime.desktop.view());
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
@@ -162,6 +181,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const current = runtime.settings.settings.desktop ?? { url: "", enabled: false };
     const saved = runtime.settings.setDesktop(body.revision, { ...current, publicAssistants: [...new Set(body.assistants)] });
     if (!saved) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
+    router.releaseSessions();
     return c.json(runtime.desktop.view());
   });
   const validScreen = (id: string) => id === "public" || runtime.store.assistants().some((assistant) => desktopProfile(assistant.id) === id);
@@ -189,6 +209,15 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json(runtime.desktopControl.state(body.client ?? "", screen));
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409); }
   });
+  app.post("/api/desktop/paste", async (c) => {
+    const body = await c.req.json().catch(() => ({})) as { client?: unknown; screen?: unknown; text?: unknown };
+    if (typeof body.client !== "string" || typeof body.screen !== "string" || !validScreen(body.screen) || typeof body.text !== "string" || !body.text || body.text.includes("\0") || new TextEncoder().encode(body.text).length > 512 * 1024) return c.json({ error: "文字或屏幕无效。" }, 400);
+    if (!runtime.desktopControl.state(body.client, body.screen).mine) return c.json({ error: "当前设备没有接管云桌面。" }, 403);
+    try {
+      await runtime.desktop.request(`/api/screens/${body.screen}/paste`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ text: body.text }) });
+      return c.json({ ok: true });
+    } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 502); }
+  });
   // 接管后要自己登录网站：在云桌面里打开某个助手的浏览器（每个助手的登录状态分开）
   app.post("/api/desktop/browser", async (c) => {
     const body = await c.req.json().catch(() => ({})) as { assistantId?: unknown };
@@ -204,9 +233,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.get("/api/skills", async (c) => {
     const memory = runtime.settings.memory();
+    let loreError: string | undefined;
     try { if (memory.provider === "lore" && !runtime.pi.loreSkillPaths.length) await runtime.pi.discoverLoreSkills(); }
-    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 503); }
-    return c.json({ skills: skillViews(options.home, runtime.settings.settings.skills?.disabled ?? [], memory.provider === "lore" ? runtime.pi.loreSkillPaths : []), loreActive: memory.provider === "lore", loreUrl: memory.lore.baseUrl });
+    catch (error) { loreError = error instanceof Error ? error.message : String(error); }
+    return c.json({ skills: skillViews(options.home, runtime.settings.settings.skills?.disabled ?? [], memory.provider === "lore" ? runtime.pi.loreSkillPaths : []), loreActive: memory.provider === "lore", loreUrl: memory.lore.baseUrl, loreError });
   });
   app.get("/api/skills/import/:source", (c) => {
     try { return c.json(listImportSkills(options.home, c.req.param("source") as SkillImportSource)); }

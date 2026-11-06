@@ -18,13 +18,13 @@
 
 **Work that can continue.** Assistants can read files, inspect job status, activity and results without interrupting the work, and resume a finished job with separate cards and reports for each round. They estimate job duration and receive reminders when work runs over; completion notices include actual and expected time.
 
-**Asks first, then remembers.** Each assistant has "confirm before running" rules. Pick "always allow" once and it becomes a rule, so you won't be asked about that again.
+**Rules you control.** Set global rules for every assistant and job in Settings, with separate lists for actions that need confirmation and instructions to follow. Each assistant can also have its own rules; pick "always allow" once to save an exception.
 
 **Schedules.** Daily briefs, weekly reports, month-end checks: routines run on cron-style schedules and post job cards and results into the assistant's conversation. A routine can also use a saved assistant skill.
 
 **Knowledge bases.** Organize, search and preview files, bind collections to assistants, and follow citations to source passages. An optional embedding model enables hybrid search; PDF text can also be indexed.
 
-**Cloud desktop.** An optional separate container gives each assistant its own screen and browser, with a shared screen for selected assistants. Watch or take control, sync the clipboard, and type with your local input method.
+**Cloud desktop.** An optional separate container gives each assistant its own screen and browser, with a shared screen for selected assistants. Assistants can browse directly, share login state with their jobs and send screenshots in chat. Watch or take control, sync the clipboard, use your local input method and keyboard shortcuts.
 
 **A clearer workspace.** The right panel brings assistant details, jobs and files together; its two lists load more as you scroll, and nested pages retain their address on refresh. Completed unread work is marked on the assistant's avatar. Archive an assistant when no longer needed while keeping its conversations and job history.
 
@@ -42,7 +42,7 @@
 
 **Made for the phone too.** Hob is an installable web app with a mobile layout and Telegram-style gestures: swipe a message to reply, long-press for actions. Light and dark themes follow your system.
 
-![Hob on a phone: assistant list, a delegation card, an approval question](docs/screenshots/mobile.png)
+![Hob on a phone: assistant list, a delegation card and assistant settings](docs/screenshots/mobile.png)
 
 ## Quick start
 
@@ -114,7 +114,7 @@ Jobs run inside the container (git, curl, python3, ripgrep and fd are installed)
 
 ### Cloud desktop
 
-The optional cloud desktop is a separate Linux container. Each assistant has its own screen and browser profile, started on first use. An additional public screen can be enabled for selected assistants in Settings → Cloud desktop; by default no assistant can use it. Only one job uses the public screen at a time, and others wait up to 10 minutes. Screens with no viewers, browser connections or activity are reclaimed after 30 minutes by default; browser login data persists. With the root `compose.yaml` and `HOB_PASSWORD` set in `.env`, start both services with:
+The optional cloud desktop is a separate Linux container. Each assistant has its own screen and browser profile, started on first use. Assistants can operate their browser directly and share its login state with their jobs; when a job is using the browser, the assistant is asked to wait or coordinate with it. Browser and desktop screenshots can be sent in chat. An additional public screen can be enabled for selected assistants in Settings → Cloud desktop; by default no assistant can use it. Only one job uses the public screen at a time, and others wait up to 10 minutes. Screens with no viewers, browser connections or activity are reclaimed after 30 minutes by default; browser login data persists. With the root `compose.yaml` and `HOB_PASSWORD` set in `.env`, start both services with:
 
 ```bash
 docker compose --profile desktop up -d

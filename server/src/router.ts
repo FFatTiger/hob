@@ -1,6 +1,6 @@
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
@@ -30,6 +30,7 @@ import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
 import { monthDayTimeText } from "./time.ts";
+import { DesktopToolSession } from "./desktop-tools.ts";
 
 export const ITEM_TYPE = "hob.item";
 export const ITEM_UPDATE_TYPE = "hob.item.update";
@@ -65,7 +66,7 @@ interface RouterState {
   /** 这一轮最后一次有动静的时间，看门狗用它判断“没响应” */
   lastEventAt: number;
   stallTimer?: NodeJS.Timeout;
-  /** 已经因为没响应被叫停：这一轮的错误不再写一条重复的 note */
+  /** 这一轮已经被叫停（没响应，或用户按了停止）：之后的报错不再写「回复失败」 */
   stalled: boolean;
   /** 记忆提供者换了：跑着的这一轮结束就释放会话，下一轮按新提供者重新打开 */
   releaseAfterTurn?: boolean;
@@ -78,6 +79,7 @@ interface RouterState {
   knowledgeNames?: string[];
   delegationReply?: string[];
   terminatingTools?: Set<string>;
+  desktop?: DesktopToolSession;
 }
 
 function readEntries(file: string): SessionEntry[] {
@@ -186,6 +188,7 @@ export function deriveItems(entries: SessionEntry[]): Item[] {
 
 export class RouterManager {
   private routers = new Map<string, RouterState>();
+  private itemCache = new Map<string, { manager?: SessionManager; version: string; result: ReturnType<typeof walk>; positions: Map<string, number>; assistantTimes: string[]; last?: { text: string; at: Iso } }>();
   private livePages = new Map<string, Map<string, { page: PageLive; timer?: NodeJS.Timeout; last: number }>>();
   private liveJson = new Map<string, string>();
 
@@ -250,6 +253,37 @@ export class RouterManager {
     return readEntries(this.store.routerFile(assistantId));
   }
 
+  private derived(assistantId: string) {
+    const manager = this.routers.get(assistantId)?.manager;
+    const file = this.store.routerFile(assistantId);
+    let version: string;
+    if (manager) version = String(manager.getEntryCount());
+    else {
+      try {
+        const stat = statSync(file);
+        version = `${stat.size}:${stat.mtimeMs}`;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+        version = "missing";
+      }
+    }
+    const cached = this.itemCache.get(assistantId);
+    if (cached && cached.manager === manager && cached.version === version) return cached;
+    const result = walk(manager ? manager.getEntries() : readEntries(file));
+    const positions = new Map<string, number>();
+    const assistantTimes: string[] = [];
+    let last: { text: string; at: Iso } | undefined;
+    result.items.forEach((item, index) => {
+      positions.set(item.id, index);
+      if (item.kind === "assistant") assistantTimes.push(item.at);
+      if (item.kind === "assistant" || item.kind === "user" || item.kind === "note") last = { text: item.text, at: item.at };
+    });
+    assistantTimes.sort();
+    const next = { manager, version, result, positions, assistantTimes, last };
+    this.itemCache.set(assistantId, next);
+    return next;
+  }
+
   async ensure(assistantId: string): Promise<RouterState> {
     const assistant = this.assistant(assistantId);
     let state = this.routers.get(assistantId);
@@ -271,6 +305,10 @@ export class RouterManager {
     await this.runtime.models.get();
     const pick = conversationPick(this.runtime.settings.settings.models, assistant);
     state.knowledgeNames = (await boundKnowledge(this.runtime, assistant.id)).map((collection) => collection.name);
+    state.desktop = new DesktopToolSession(this.runtime, assistant.id, () => !!state.session?.model?.input.includes("image"), undefined, true);
+    const tools = [...buildRouterTools(this.runtime, assistant.id), ...state.desktop.tools().filter((tool) => tool.name.startsWith("browser_"))];
+    const desktop = this.runtime.desktop.view();
+    const enabled = desktop.enabled && !!desktop.url && desktop.tokenConfigured;
     const opened = await this.runtime.pi.open({
       file: this.store.routerFile(assistant.id),
       spillDir: join(dirname(this.store.routerFile(assistant.id)), "spill"),
@@ -280,10 +318,15 @@ export class RouterManager {
       memory: this.runtime.settings.memory().provider,
       systemPrompt: () => {
         const { timezone, aboutYou } = this.runtime.settings.settings.general;
+        const desktop = this.runtime.desktop.view();
         return buildSystemPrompt(this.store, assistant.id, {
           timezone,
           aboutYou,
           memory: this.runtime.settings.memory().provider,
+          searchEnabled: this.runtime.settings.settings.search.some((provider) => provider.enabled),
+          imageEnabled: this.runtime.settings.settings.image.source !== "off",
+          desktopEnabled: desktop.enabled && !!desktop.url && desktop.tokenConfigured,
+          publicDesktop: desktop.publicAssistants.includes(assistant.id),
           models: this.promptModels(assistant.id),
           skills: availableSkills(this.runtime.home, undefined, this.runtime.settings.settings.skills?.disabled, this.runtime.settings.memory().provider === "lore" ? this.runtime.pi.loreSkillPaths : []),
           assistantSkills: usableAssistantSkills(this.runtime.home, assistant.id),
@@ -292,8 +335,8 @@ export class RouterManager {
           knowledgeNames: state.knowledgeNames,
         });
       },
-      tools: buildRouterTools(this.runtime, assistant.id).map((tool) => tool.name),
-      customTools: buildRouterTools(this.runtime, assistant.id),
+      tools: tools.filter((tool) => enabled || !tool.name.startsWith("browser_")).map((tool) => tool.name),
+      customTools: tools,
     });
     state.session = opened.session;
     if (!state.knowledgeNames.length) refreshSystemPrompt(opened.session, opened.session.getActiveToolNames().filter((name) => name !== "search_knowledge"));
@@ -305,8 +348,10 @@ export class RouterManager {
 
   private async refreshTools(state: RouterState): Promise<void> {
     state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
-    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge");
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && !name.startsWith("browser_"));
     if (state.knowledgeNames.length) names.push("search_knowledge");
+    const desktop = this.runtime.desktop.view();
+    if (desktop.enabled && desktop.url && desktop.tokenConfigured) names.push(...state.desktop!.tools().filter((tool) => tool.name.startsWith("browser_")).map((tool) => tool.name));
     refreshSystemPrompt(state.session!, names);
   }
 
@@ -392,7 +437,7 @@ export class RouterManager {
     }
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       const details = event.message.details as EventDetails | undefined;
-      const users = deriveItems(this.entries(assistantId)).filter((item) => item.kind === "user");
+      const users = this.derived(assistantId).result.items.filter((item) => item.kind === "user");
       const source = details?.sourceUserId ? users.find((item) => item.id === details.sourceUserId) : undefined;
       state.currentUserId = (source ?? users.at(-1))?.id;
       if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
@@ -471,7 +516,7 @@ export class RouterManager {
             at: new Date().toISOString(),
             text: "",
             streaming: true,
-            ...(walk(this.entries(assistantId)).lead ? { lead: true } : {}),
+            ...(this.derived(assistantId).result.lead ? { lead: true } : {}),
           },
         });
       }
@@ -502,7 +547,7 @@ export class RouterManager {
   }
 
   private emitSettledAssistant(assistantId: string, text: string, expectedId?: string): void {
-    const list = deriveItems(this.entries(assistantId)).filter((item) => item.kind === "assistant");
+    const list = this.derived(assistantId).result.items.filter((item) => item.kind === "assistant");
     const item = list.find((entry) => entry.id === expectedId) ?? list.filter((entry) => entry.text === text).pop();
     if (item) this.bus.emit({ type: "item", assistantId, item });
     this.touch(assistantId);
@@ -580,8 +625,11 @@ export class RouterManager {
     if (state.idleTimer) clearTimeout(state.idleTimer);
     state.idleTimer = undefined;
     state.session?.dispose();
+    void state.desktop?.dispose();
+    state.desktop = undefined;
     state.session = undefined;
     state.manager = undefined;
+    this.itemCache.delete(state.assistantId);
   }
 
   /**
@@ -597,6 +645,7 @@ export class RouterManager {
 
   /** 助手没了（归档）：关掉它的会话，内存里也不留 —— 它的目录随后会被移进归档。 */
   forget(assistantId: string): void {
+    this.itemCache.delete(assistantId);
     const state = this.routers.get(assistantId);
     if (!state) return;
     this.close(state);
@@ -618,7 +667,7 @@ export class RouterManager {
   // ---------- 事件与条目 ----------
   async addItem(assistantId: string, item: NewItem): Promise<Item> {
     const state = await this.ensure(assistantId);
-    const lead = walk(this.entries(assistantId)).lead;
+    const lead = this.derived(assistantId).result.lead;
     const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
     const full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
     this.bus.emit({ type: "item", assistantId, item: full });
@@ -632,7 +681,7 @@ export class RouterManager {
 
   async updateImage(assistantId: string, id: string, update: { status: "done" | "failed"; path?: string; error?: string }): Promise<void> {
     const state = await this.ensure(assistantId);
-    const item = deriveItems(this.entries(assistantId)).find((entry) => entry.id === id && entry.kind === "image");
+    const item = this.derived(assistantId).result.items.find((entry) => entry.id === id && entry.kind === "image");
     if (!item) throw new Error(`图片条目不存在：${id}`);
     state.manager!.appendCustomEntry(ITEM_UPDATE_TYPE, { id, ...update });
     this.bus.emit({ type: "item", assistantId, item: { ...item, ...update } });
@@ -647,7 +696,7 @@ export class RouterManager {
 
   /** 取当前回合来源及其之前的可见对话；事件取最近用户消息。 */
   originalWords(assistantId: string, note?: string, recent = false, extraFiles: string[] = []): { text: string; files: string[] } {
-    const items = deriveItems(this.entries(assistantId));
+    const items = this.derived(assistantId).result.items;
     const state = this.routers.get(assistantId);
     const source = items.find((item) => item.kind === "user" && item.id === state?.currentUserId)
       ?? items.findLast((item) => item.kind === "user");
@@ -743,7 +792,8 @@ export class RouterManager {
    */
   private async reportTurnError(state: RouterState): Promise<void> {
     const last = state.session?.messages.findLast((message) => message.role === "assistant");
-    if (!last || last.role !== "assistant" || last.stopReason !== "error") return;
+    // 停下的那一轮：有的服务商（Claude 订阅桥）把停止报成 error，不是回复失败
+    if (state.stalled || !last || last.role !== "assistant" || last.stopReason !== "error") return;
     await this.addItem(state.assistantId, { kind: "note", icon: "info", text: `回复失败：${briefModelError(last.errorMessage)}。发送任意消息即可重试。` });
   }
 
@@ -876,7 +926,10 @@ export class RouterManager {
 
   async stop(assistantId: string): Promise<void> {
     const state = this.routers.get(assistantId);
-    if (state) this.setActivity(state, null);
+    if (state) {
+      state.stalled = true;
+      this.setActivity(state, null);
+    }
     if (state?.session) await state.session.abort();
   }
 
@@ -908,14 +961,12 @@ export class RouterManager {
   }
 
   items(assistantId: string, options: { before?: string; limit?: number } = {}): ItemsPage {
-    const all = deriveItems(this.entries(assistantId));
+    const derived = this.derived(assistantId);
+    const all = derived.result.items;
     const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
-    let list = all;
-    if (options.before) {
-      const index = all.findIndex((item) => item.id === options.before);
-      if (index !== -1) list = all.slice(0, index);
-    }
-    const page = list.slice(-limit);
+    const end = options.before ? derived.positions.get(options.before) ?? all.length : all.length;
+    const start = Math.max(0, end - limit);
+    const page = all.slice(start, end);
     const jobIds = new Set(page.filter((item) => item.kind === "job").map((item) => (item as { jobId: string }).jobId));
     const draftIds = new Set(
       page.filter((item) => item.kind === "draft").map((item) => (item as { draftId: string }).draftId),
@@ -929,15 +980,14 @@ export class RouterManager {
       for (const id of delegation.jobIds) jobIds.add(id);
       for (const id of delegation.approvalIds ?? []) approvalIds.add(id);
     }
-    for (const approval of this.store.approvals()) if (approval.jobId && jobIds.has(approval.jobId)) approvalIds.add(approval.id);
     return {
       ...(!options.before ? { pageLive: [...(this.livePages.get(assistantId)?.values() ?? [])].map((live) => live.page) } : {}),
       items: page,
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
-      jobs: this.store.jobs().filter((job) => jobIds.has(job.id)),
+      jobs: [...jobIds].flatMap((id) => { const job = this.store.job(id); return job ? [job] : []; }),
       drafts: this.store.drafts().filter((draft) => draftIds.has(draft.id)),
       delegations,
-      hasMore: list.length > page.length,
+      hasMore: start > 0,
     };
   }
 
@@ -947,21 +997,23 @@ export class RouterManager {
 
   unread(assistantId: string): number {
     const readAt = this.store.state(assistantId).readAt;
-    if (!readAt) return 0;
-    return deriveItems(this.entries(assistantId)).filter(
-      (item) => item.kind === "assistant" && item.at > readAt,
-    ).length;
+    // 从没记过已读：从现在开始算，以前的都当读过。不记的话未读永远是 0，前端也就永远不会来标已读
+    if (!readAt) {
+      this.read(assistantId);
+      return 0;
+    }
+    const times = this.derived(assistantId).assistantTimes;
+    let lo = 0, hi = times.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (times[mid] <= readAt) lo = mid + 1;
+      else hi = mid;
+    }
+    return times.length - lo;
   }
 
   last(assistantId: string): { text: string; at: Iso } | undefined {
-    const items = deriveItems(this.entries(assistantId));
-    for (let i = items.length - 1; i >= 0; i -= 1) {
-      const item = items[i];
-      if (item.kind === "user" || item.kind === "assistant" || item.kind === "note") {
-        return { text: item.text, at: item.at };
-      }
-    }
-    return undefined;
+    return this.derived(assistantId).last;
   }
 
   summary(assistant: Assistant): AssistantSummary {
@@ -970,6 +1022,7 @@ export class RouterManager {
       ...assistant,
       ...(last ? { last } : {}),
       unread: this.unread(assistant.id),
+      ...(this.store.state(assistant.id).readAt ? { readAt: this.store.state(assistant.id).readAt } : {}),
       busy: this.isBusy(assistant.id),
       activity: this.routers.get(assistant.id)?.activity ?? null,
     };
@@ -993,7 +1046,7 @@ export class RouterManager {
         .jobs()
         .filter((job) => job.status === "running" || job.status === "queued" || job.status === "waiting" || (job.endedAt ?? job.createdAt) > jobCutoff),
       routines: this.store.routines(),
-      approvals: this.store.approvals().filter((approval) => approval.status === "pending"),
+      approvals: this.store.approvals().filter((approval) => approval.status === "pending" && approval.source !== "job"),
       delegations: this.store.delegations(),
       settings: this.runtime.settings.get(),
     };
@@ -1001,11 +1054,9 @@ export class RouterManager {
 
   /** 进程退出或测试收尾：释放所有 Router 会话。 */
   disposeAll(): void {
-    for (const state of this.routers.values()) {
-      if (state.idleTimer) clearTimeout(state.idleTimer);
-      state.session?.dispose();
-    }
+    for (const state of this.routers.values()) this.close(state);
     this.routers.clear();
+    this.itemCache.clear();
   }
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */

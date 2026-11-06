@@ -21,7 +21,7 @@ RUN apt-get update \
     ca-certificates curl gnupg tini tzdata locales \
     tigervnc-standalone-server \
     openbox \
-    xdotool scrot x11-utils \
+    xdotool xclip scrot x11-utils \
     tint2 hsetroot \
     lxterminal pcmanfm mousepad ristretto galculator \
     adwaita-icon-theme \

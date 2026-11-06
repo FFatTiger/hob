@@ -83,6 +83,7 @@ describe("任务耗时督办", () => {
       vi.setSystemTime(start + 30_000);
       const answer = hob.runtime.jobs.askQuestion(job.id, { title: "继续吗", options: [{ key: "A", label: "继续" }] });
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "waiting");
+      event.mockClear();
       vi.setSystemTime(start + 630_000);
       hob.runtime.jobs.checkStalls();
       expect(event).not.toHaveBeenCalled();

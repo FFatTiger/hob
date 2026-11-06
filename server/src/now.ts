@@ -22,7 +22,7 @@ export function nowBlock(runtime: HobRuntime, assistantId: string): string {
       .map((item) => `${runtime.store.assistant(item.to)?.name ?? item.to}「${short(item.text)}」，${clock(item.createdAt)} 起`);
     if (delegations.length) lines.push(`转交中：${delegations.join("；")}`);
   }
-  const approvals = runtime.store.approvals().filter((item) => item.assistantId === assistantId && item.status === "pending").map((item) => item.title);
+  const approvals = runtime.store.approvals().filter((item) => item.assistantId === assistantId && item.status === "pending" && item.source !== "job").map((item) => item.title);
   if (approvals.length) lines.push(`等用户选：${approvals.join("；")}`);
   const names = { done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" } as const;
   const recent = jobs.filter((job) => job.endedAt && !job.routineId && job.status in names && new Date(job.endedAt).getTime() >= now.getTime() - 86_400_000 && new Date(job.endedAt).getTime() <= now.getTime())

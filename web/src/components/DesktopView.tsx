@@ -4,7 +4,7 @@ import RFB from "@novnc/novnc";
 import { Icon } from "../icons.tsx";
 import { desktopMockScene } from "../mock.ts";
 import { MOCK, useApp } from "../store.ts";
-import { characterKeysym, isPasteShortcut, keyboardKeysym, textInputMethod } from "../desktop-input.ts";
+import { characterKeysym, compositionInput, isPasteShortcut, keyboardKeysym, textInputMethod } from "../desktop-input.ts";
 import { startDesktopScreen, useDesktopScreens } from "../desktop-screens.ts";
 
 type Control = { taken: boolean; mine: boolean };
@@ -78,7 +78,12 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
   const composing = useRef(false);
   const committed = useRef("");
   const pressed = useRef(new Map<string, { keysym: number; code: string }>());
+  const sentPressed = useRef(new Map<string, { keysym: number; code: string | null }>());
+  const inputQueue = useRef(Promise.resolve());
+  const keyGeneration = useRef(0);
   const clipboardSequence = useRef(0);
+  /** 自己刚提交的文字：远端剪贴板会把它原样发回来，不再写进本机剪贴板 */
+  const sentText = useRef("");
   const [clipboard, setClipboard] = useState("");
   const [id] = useState(clientId);
   const [control, setControl] = useState<Control>(MOCK && takeOver ? { taken: true, mine: true } : { taken: false, mine: false });
@@ -103,15 +108,26 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
   }, [control.mine, touch]);
 
   useEffect(() => {
+    if (!control.mine) releaseKeys();
     mine.current = control.mine;
     if (rfb.current) rfb.current.viewOnly = !control.mine;
     if (!control.mine) {
       clipboardSequence.current++;
-      pressed.current.clear();
       setClipboard("");
       input.current?.blur();
     }
   }, [control.mine]);
+
+  useEffect(() => {
+    const onVisibility = () => { if (document.hidden) releaseKeys(); };
+    window.addEventListener("blur", releaseKeys);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("blur", releaseKeys);
+      document.removeEventListener("visibilitychange", onVisibility);
+      releaseKeys();
+    };
+  }, []);
 
   useEffect(() => {
     if (!clipboard) return;
@@ -128,8 +144,8 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
         : event.inputType === "insertLineBreak" || event.inputType === "insertParagraph" ? [0xff0d, "Enter"] as const : null;
       if (!key) return;
       event.preventDefault();
-      rfb.current?.sendKey(key[0], key[1], true);
-      rfb.current?.sendKey(key[0], key[1], false);
+      sendKey(key[0], key[1], true);
+      sendKey(key[0], key[1], false);
     };
     element.addEventListener("beforeinput", beforeInput);
     return () => element.removeEventListener("beforeinput", beforeInput);
@@ -196,6 +212,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
         client.addEventListener("clipboard", (event: Event) => {
           if (!mine.current) return;
           const text = (event as CustomEvent<{ text: string }>).detail.text;
+          if (text === sentText.current) return;
           const sequence = ++clipboardSequence.current;
           setClipboard("");
           void navigator.clipboard?.writeText(text).then(() => {
@@ -249,34 +266,63 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
   }
 
   function releaseKeys() {
-    for (const { keysym, code } of pressed.current.values()) rfb.current?.sendKey(keysym, code, false);
+    keyGeneration.current++;
+    for (const { keysym, code } of sentPressed.current.values()) rfb.current?.sendKey(keysym, code, false);
+    sentPressed.current.clear();
     pressed.current.clear();
   }
 
-  function pasteText(text: string) {
+  function enqueueInput(action: () => void | Promise<void>) {
     const client = rfb.current;
-    if (!client || !mine.current) return;
-    releaseKeys();
-    client.clipboardPasteFrom(text);
-    client.sendKey(0xffe3, "ControlLeft", true);
-    client.sendKey(0x76, "KeyV", true);
-    client.sendKey(0x76, "KeyV", false);
-    client.sendKey(0xffe3, "ControlLeft", false);
+    const targetScreen = currentScreen.current;
+    inputQueue.current = inputQueue.current.then(async () => {
+      if (mine.current && rfb.current === client && currentScreen.current === targetScreen) await action();
+    }).catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+  }
+
+  function sendKey(keysym: number, code: string | null, down: boolean) {
+    const generation = keyGeneration.current;
+    enqueueInput(() => {
+      if (generation !== keyGeneration.current) return;
+      rfb.current?.sendKey(keysym, code, down);
+      const key = code ?? String(keysym);
+      if (down) sentPressed.current.set(key, { keysym, code });
+      else sentPressed.current.delete(key);
+    });
+  }
+
+  function pasteText(text: string) {
+    if (!text || !rfb.current || !mine.current) return;
+    sentText.current = text;
+    for (const { keysym, code } of pressed.current.values()) sendKey(keysym, code, false);
+    pressed.current.clear();
+    const targetScreen = currentScreen.current;
+    enqueueInput(async () => {
+      const res = await fetch("/api/desktop/paste", {
+        method: "POST", headers: { "content-type": "application/json" },
+        body: JSON.stringify({ client: id, screen: targetScreen, text }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({})) as { error?: string };
+        throw new Error(body.error ?? "云桌面粘贴失败。");
+      }
+    });
   }
 
   function sendText(text: string) {
     if (!text || !mine.current) return;
-    if (textInputMethod(text) === "paste") return pasteText(text);
+    if (/[^\x20-\x7e]/.test(text) || textInputMethod(text) === "paste") return pasteText(text);
     for (const character of text) {
       const keysym = characterKeysym(character);
-      rfb.current?.sendKey(keysym, null, true);
-      rfb.current?.sendKey(keysym, null, false);
+      sendKey(keysym, null, true);
+      sendKey(keysym, null, false);
     }
   }
 
   function keyDown(event: React.KeyboardEvent<HTMLTextAreaElement>) {
     if (!mine.current || composing.current || event.nativeEvent.isComposing || event.keyCode === 229) return;
     committed.current = "";
+    if (MAC && event.metaKey && ["KeyW", "KeyT", "KeyN", "KeyQ"].includes(event.code)) { releaseKeys(); return; }
     if (isPasteShortcut(event.nativeEvent)) return;
     const isText = Array.from(event.key).length === 1;
     if (isText && !event.ctrlKey && !event.metaKey && !event.altKey) return;
@@ -284,8 +330,15 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
     if (keysym === null) return;
     event.preventDefault();
     const code = event.code || event.key;
+    if (MAC && event.metaKey && event.key !== "Meta" && event.key !== "Shift" && event.key !== "Control" && event.key !== "Alt") {
+      if (!event.repeat) {
+        sendKey(keysym, code, true);
+        sendKey(keysym, code, false);
+      }
+      return;
+    }
     pressed.current.set(code, { keysym, code });
-    rfb.current?.sendKey(keysym, code, true);
+    sendKey(keysym, code, true);
   }
 
   function keyUp(event: React.KeyboardEvent<HTMLTextAreaElement>) {
@@ -293,7 +346,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
     const key = pressed.current.get(code);
     if (!key) return;
     event.preventDefault();
-    rfb.current?.sendKey(key.keysym, key.code, false);
+    sendKey(key.keysym, key.code, false);
     pressed.current.delete(code);
   }
 
@@ -336,7 +389,17 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
       </div>
       <div className="desktop-stage">
         <div className="desktop-frame">
-          <div className="desktop-canvas" ref={target} onPointerUp={() => { if (mine.current && !touch) input.current?.focus({ preventScroll: true }); }} />
+          <div className="desktop-canvas" ref={target} onPointerDownCapture={(event) => {
+            if (mine.current && !touch && input.current) {
+              const bounds = event.currentTarget.getBoundingClientRect();
+              input.current.style.left = `${Math.max(0, Math.min(bounds.width - 1, event.clientX - bounds.left))}px`;
+              input.current.style.top = `${Math.max(0, Math.min(bounds.height - 1, event.clientY - bounds.top))}px`;
+              input.current.focus({ preventScroll: true });
+            }
+          }} onFocus={() => {
+            // noVNC 点击时会把焦点抢到它的画布上：画布唤不起输入法，按键也走它自己那套（⌘ 当 Alt）
+            if (mine.current && !touch) input.current?.focus({ preventScroll: true });
+          }} />
           {control.mine ? <textarea
             ref={input}
             className="desktop-input"
@@ -363,14 +426,14 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob" }
               const native = event.nativeEvent as InputEvent;
               if (composing.current || native.isComposing) return;
               if (native.inputType === "deleteContentBackward") {
-                rfb.current?.sendKey(0xff08, "Backspace", true);
-                rfb.current?.sendKey(0xff08, "Backspace", false);
+                sendKey(0xff08, "Backspace", true);
+                sendKey(0xff08, "Backspace", false);
               } else if (native.inputType === "insertLineBreak" || native.inputType === "insertParagraph") {
-                rfb.current?.sendKey(0xff0d, "Enter", true);
-                rfb.current?.sendKey(0xff0d, "Enter", false);
+                sendKey(0xff0d, "Enter", true);
+                sendKey(0xff0d, "Enter", false);
               } else if (native.inputType === "insertText" || native.inputType === "insertFromComposition") {
                 const text = native.data ?? event.currentTarget.value;
-                if (!committed.current || text !== committed.current) sendText(text);
+                sendText(compositionInput(committed.current, text));
               }
               committed.current = "";
               event.currentTarget.value = "";

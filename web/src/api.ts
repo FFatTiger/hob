@@ -111,6 +111,8 @@ export interface HobApi {
   logout(): Promise<void>;
   bootstrap(): Promise<Bootstrap>;
   settings(): Promise<SettingsFile>;
+  rules(): Promise<{ rules: Rule[] }>;
+  saveRules(rules: { id?: string; text: string; mode: Rule["mode"] }[]): Promise<{ rules: Rule[] }>;
   models(): Promise<ModelsView>;
   putSettings(revision: number, patch: SettingsPatch): Promise<SettingsFile>;
   providers(): Promise<ProvidersView>;
@@ -196,6 +198,7 @@ export interface HobApi {
 }
 
 const EVENT_TYPES: HobEvent["type"][] = [
+  "rules",
   "assistant",
   "assistant_removed",
   "item",
@@ -239,6 +242,8 @@ export const realApi: HobApi = {
   logout: () => req<void>("/api/logout", { method: "POST" }),
   bootstrap: () => req<Bootstrap>("/api/bootstrap"),
   settings: () => req<SettingsFile>("/api/settings"),
+  rules: () => req<{ rules: Rule[] }>("/api/rules"),
+  saveRules: (rules) => req<{ rules: Rule[] }>("/api/rules", json({ rules }, "PUT")),
   models: () => req<ModelsView>("/api/models"),
   putSettings: (revision, patch) => req<SettingsFile>("/api/settings", json({ revision, patch }, "PUT")),
   providers: () => req<ProvidersView>("/api/providers"),

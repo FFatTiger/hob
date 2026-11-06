@@ -29,7 +29,7 @@ function hits(files: string[], words: string[]): string[] {
   for (const file of files) {
     for (const line of readFileSync(file, "utf8").split("\n")) {
       for (const word of words) {
-        if (file.endsWith("server/src/worker-tools.ts") && word === "派活" && line.includes("完整结果：结论、数据、链接、文件路径；写给派活的助手。")) continue;
+        if (file.endsWith("server/src/worker-tools.ts") && word === "派活" && line.includes("带上数据、链接和文件路径，写给派活的助手。")) continue;
         if (file.endsWith("server/src/prompt.ts") && word === "派活" && line.includes("你的技能是做同类事的做法，派活时可以让任务照着做。")) continue;
         if ((file.endsWith("server/src/router-tools.ts") || file.endsWith("server/src/worker-tools.ts")) && word === "直接做" && (line.includes("同类事以后可以不再问时，填这类事的简称") || line.includes("以后「${remember}」直接做") || line.includes("记下用户对某类事的确认方式：ask 先问，allow 直接做。"))) continue;
         if (file.endsWith("server/src/worker-tools.ts") && word === "拍板" && line.includes("done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板")) continue;

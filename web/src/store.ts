@@ -32,6 +32,7 @@ import type {
   ProvidersView,
   PushView,
   Routine,
+  Rule,
   SendMessageBody,
   Settings,
   SettingsFile,
@@ -114,12 +115,14 @@ export interface State {
   approvals: Record<string, Approval>;
   drafts: Record<string, Draft>;
   settings: SettingsFile;
+  globalRules: { rules: Rule[] | null; error: string | null; busy: boolean };
   page: "main" | "settings" | "knowledge";
   knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
   items: Record<string, Item[]>;
   itemGen: Record<string, number>; // 每次重新拉这段对话 +1，聊天区据此判断“整批换了”而不是“新到一条”
+  itemPages: Record<string, { hasMore: boolean; loading: boolean; error: string | null }>;
   profiles: Record<string, Profile>;
   assistantSkills: Record<string, { skills: AssistantSkill[]; loaded: boolean; loading: boolean; error: string | null }>;
   sidebarJobs: Record<string, SidebarPage<Job>>;
@@ -189,12 +192,14 @@ function initial(): State {
     approvals: {},
     drafts: {},
     settings: { revision: 0, settings: EMPTY_SETTINGS },
+    globalRules: { rules: null, error: null, busy: false },
     page: "main",
     knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], collectionsLoaded: false, hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
     items: {},
     itemGen: {},
+    itemPages: {},
     profiles: {},
     assistantSkills: {},
     sidebarJobs: {},
@@ -377,6 +382,33 @@ export async function loadModels(): Promise<ModelsView | null> {
   } catch (e) {
     set({ notice: `无法读取模型列表：${errText(e)}` });
     return null;
+  }
+}
+
+/* ---------------- 全局规则 ---------------- */
+
+let rulesGeneration = 0;
+export async function loadRules() {
+  const generation = ++rulesGeneration;
+  try {
+    const { rules } = await api.rules();
+    if (generation === rulesGeneration) set((s) => ({ globalRules: { ...s.globalRules, rules, error: null } }));
+  } catch (e) {
+    if (generation === rulesGeneration) set((s) => ({ globalRules: { ...s.globalRules, error: `无法读取全局规则：${errText(e)}` } }));
+  }
+}
+
+export async function saveRules(rules: { id?: string; text: string; mode: Rule["mode"] }[]): Promise<boolean> {
+  if (state.globalRules.busy) return false;
+  set((s) => ({ globalRules: { ...s.globalRules, busy: true, error: null } }));
+  try {
+    const saved = await api.saveRules(rules);
+    ++rulesGeneration;
+    set({ globalRules: { rules: saved.rules, error: null, busy: false } });
+    return true;
+  } catch (e) {
+    set((s) => ({ globalRules: { ...s.globalRules, busy: false, error: `保存失败：${errText(e)}` } }));
+    return false;
   }
 }
 
@@ -833,7 +865,11 @@ async function loadBootstrap() {
 
 const closedLivePages = new Set<string>();
 export function applyEvent(ev: HobEvent) {
+  if (ev.type === "item" || ev.type === "delta") itemEvents.get(ev.assistantId)?.push(ev);
   switch (ev.type) {
+    case "rules":
+      if (state.page === "settings" && state.section === "rules") void loadRules();
+      break;
     case "sediment-finished":
       set((s) => ({ sedimenting: { ...s.sedimenting, [ev.jobId]: false } }));
       break;
@@ -847,8 +883,11 @@ export function applyEvent(ev: HobEvent) {
       break;
     }
     case "assistant": {
+      // 正看着这个助手的对话：新回复直接算已读，不亮未读
+      const read = ev.assistant.unread > 0 && viewing(ev.assistant.id);
+      if (read) void api.markRead(ev.assistant.id).catch(() => {});
       // 设置页读的是档案里的助手：头像、名字在别处改了也跟着变
-      const assistant = ev.assistant;
+      const assistant = read ? { ...ev.assistant, unread: 0 } : ev.assistant;
       set((s) => ({
         assistants: upsert(s.assistants, assistant),
         profiles: s.profiles[assistant.id]
@@ -950,6 +989,17 @@ function endedStatus(status: JobStatus): boolean {
 /** 页面在前台就不推（服务端根据这个决定）。只存内存，SSE 断开会自动清掉。 */
 function reportVisibility(): void {
   void api.visibility(CLIENT_ID, document.visibilityState === "visible").catch(() => undefined);
+  // 切回来时正开着的那个助手攒下的未读算看过了
+  const a = state.assistants.find((x) => x.id === state.sel);
+  if (a && a.unread > 0 && viewing(a.id)) {
+    set((s) => ({ assistants: s.assistants.map((x) => (x.id === a.id ? { ...x, unread: 0 } : x)) }));
+    void api.markRead(a.id).catch(() => {});
+  }
+}
+
+/** 用户正看着这个助手的对话：页面在前台、在主界面，手机上要进了对话页。 */
+function viewing(id: string): boolean {
+  return state.sel === id && state.page === "main" && globalThis.document?.visibilityState === "visible" && (window.innerWidth >= 768 || state.mobile === "chat");
 }
 
 function watchVisibility(): void {
@@ -977,10 +1027,22 @@ export async function select(id: string, nav = true, keepStack = false) {
   await Promise.all([loadItems(id), loadProfile(id)]);
 }
 
+const itemRequests = new Map<string, number>();
+const olderRequests = new Map<string, Promise<void>>();
+const itemEvents = new Map<string, HobEvent[]>();
+
 async function loadItems(id: string) {
+  const request = (itemRequests.get(id) ?? 0) + 1;
+  itemRequests.set(id, request);
+  olderRequests.delete(id);
+  itemEvents.set(id, []);
+  set((s) => ({ itemPages: { ...s.itemPages, [id]: { hasMore: false, loading: false, error: null } } }));
   const knownLive = new Set(Object.keys(state.livePages));
   try {
     const page = await api.items(id);
+    if (itemRequests.get(id) !== request) return;
+    const events = itemEvents.get(id) ?? [];
+    itemEvents.delete(id);
     clearFresh(); // 这一批是历史，不播入场
     const active = new Set((page.pageLive ?? []).map((live) => live.callId));
     set((s) => {
@@ -991,14 +1053,49 @@ async function loadItems(id: string) {
     set((s) => ({
       items: { ...s.items, [id]: page.items },
       itemGen: { ...s.itemGen, [id]: (s.itemGen[id] ?? 0) + 1 },
+      itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
       jobs: { ...s.jobs, ...index(page.jobs) },
       approvals: { ...s.approvals, ...index(page.approvals) },
       drafts: { ...s.drafts, ...index(page.drafts) },
       delegations: { ...s.delegations, ...index(page.delegations ?? []) },
     }));
+    for (const event of events) applyEvent(event);
   } catch (e) {
+    if (itemRequests.get(id) !== request) return;
+    itemEvents.delete(id);
     set({ notice: `无法加载对话：${errText(e)}` });
   }
+}
+
+export function loadOlderItems(id: string, retry = false): Promise<void> {
+  const existing = olderRequests.get(id);
+  if (existing) return existing;
+  const paging = state.itemPages[id];
+  const before = state.items[id]?.[0]?.id;
+  if (!paging?.hasMore || !before || (paging.error && !retry)) return Promise.resolve();
+  const request = itemRequests.get(id);
+  set((s) => ({ itemPages: { ...s.itemPages, [id]: { ...paging, loading: true, error: null } } }));
+  const work = (async () => {
+    try {
+      const page = await api.items(id, before);
+      if (itemRequests.get(id) !== request || state.sel !== id) return;
+      set((s) => {
+        const current = s.items[id] ?? [];
+        const known = new Set(current.map((item) => item.id));
+        return {
+          items: { ...s.items, [id]: [...page.items.filter((item) => !known.has(item.id)), ...current] },
+          itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
+          jobs: { ...index(page.jobs), ...s.jobs }, approvals: { ...index(page.approvals), ...s.approvals },
+          drafts: { ...index(page.drafts), ...s.drafts }, delegations: { ...index(page.delegations ?? []), ...s.delegations },
+        };
+      });
+    } catch (e) {
+      if (itemRequests.get(id) === request && state.sel === id) set((s) => ({ itemPages: { ...s.itemPages, [id]: { ...s.itemPages[id], loading: false, error: errText(e) } } }));
+    }
+  })();
+  olderRequests.set(id, work);
+  void work.finally(() => { if (olderRequests.get(id) === work) olderRequests.delete(id); });
+  return work;
 }
 
 export async function loadProfile(id: string) {
@@ -1218,15 +1315,13 @@ export async function jumpToDelegation(assistantId: string, id: string, forwarde
 }
 
 async function findConversationItem(assistantId: string, matches: (item: Item) => boolean): Promise<boolean> {
-  let list = state.items[assistantId] ?? [];
-  while (!list.some(matches) && list.length) {
-    const page = await api.items(assistantId, list[0].id);
-    if (!page.items.length) break;
-    list = [...page.items, ...list];
-    set((s) => ({ items: { ...s.items, [assistantId]: list }, jobs: { ...s.jobs, ...index(page.jobs) }, approvals: { ...s.approvals, ...index(page.approvals) }, drafts: { ...s.drafts, ...index(page.drafts) }, delegations: { ...s.delegations, ...index(page.delegations ?? []) } }));
-    if (!page.hasMore) break;
+  while (state.sel === assistantId && !(state.items[assistantId] ?? []).some(matches) && state.itemPages[assistantId]?.hasMore) {
+    const first = state.items[assistantId]?.[0]?.id;
+    await loadOlderItems(assistantId);
+    if (state.itemPages[assistantId]?.error) throw new Error(state.itemPages[assistantId].error!);
+    if (!first || state.items[assistantId]?.[0]?.id === first) break;
   }
-  return list.some(matches);
+  return (state.items[assistantId] ?? []).some(matches);
 }
 
 async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback") {

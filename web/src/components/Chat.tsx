@@ -20,12 +20,14 @@ import {
   stopAssistant,
   attach,
   chatItems,
+  loadOlderItems,
   photoUrl,
   useApp,
 } from "../store.ts";
 import { useLeave } from "../motion.ts";
 import { isStreamingTail } from "../merge.ts";
 import { ItemList } from "./Items.tsx";
+import { DelayedText } from "./Empty.tsx";
 
 /** 忙、但字还没出来时显示当前活动。 */
 function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: AssistantSummary }) {
@@ -47,9 +49,9 @@ function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: Assi
  * 只有用户往上滚才算离开底部：平滑滚动途中的滚动事件、内容变高都不会误判（iPhone 上发完消息不跟着往上顶就是这个）。
  * 新到一条时平滑滚过去；自己刚发的那条无论在哪都滚到底；首次加载、切换助手、重新拉整批对话时瞬间到底。
  */
-function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number, mineLast: boolean) {
+function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number, firstId: string | undefined, mineLast: boolean) {
   const pinned = useRef(true);
-  const seen = useRef({ key: "", len: 0 });
+  const seen = useRef<{ key: string; len: number; firstId?: string }>({ key: "", len: 0 });
 
   useEffect(() => {
     const el = ref.current;
@@ -79,15 +81,48 @@ function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey:
     const el = ref.current;
     if (!el) return;
     const last = seen.current;
-    seen.current = { key: resetKey, len };
+    seen.current = { key: resetKey, len, firstId };
     if (last.key !== resetKey || len < last.len) {
       pinned.current = true;
       el.scrollTop = el.scrollHeight;
-    } else if (len > last.len && (pinned.current || mineLast)) {
+    } else if (len > last.len && last.firstId === firstId && (pinned.current || mineLast)) {
       pinned.current = true;
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [ref, resetKey, len, mineLast]);
+  }, [ref, resetKey, len, firstId, mineLast]);
+}
+
+function useOlderMessages(ref: React.RefObject<HTMLDivElement | null>, id: string | null, key: string, firstId: string | undefined) {
+  const anchor = useRef<{ id: string; top: number; key: string } | null>(null);
+  const lastFirst = useRef<{ key: string; id?: string }>({ key: "" });
+  const capture = () => {
+    const el = ref.current;
+    if (!el) return;
+    const top = el.getBoundingClientRect().top;
+    const node = Array.from(el.querySelectorAll<HTMLElement>("[data-item-id]")).find((item) => item.getBoundingClientRect().bottom > top);
+    anchor.current = node ? { id: node.dataset.itemId!, top: node.getBoundingClientRect().top, key } : null;
+  };
+  useLayoutEffect(() => {
+    const el = ref.current;
+    const old = lastFirst.current;
+    if (el && old.key === key && old.id && old.id !== firstId && anchor.current?.key === key) {
+      const node = Array.from(el.querySelectorAll<HTMLElement>("[data-item-id]")).find((item) => item.dataset.itemId === anchor.current?.id);
+      if (node) el.scrollTop += node.getBoundingClientRect().top - anchor.current.top;
+    }
+    lastFirst.current = { key, id: firstId };
+  }, [ref, key, firstId]);
+  return () => {
+    const el = ref.current;
+    if (!el || !id) return;
+    capture();
+    if (el.scrollTop < 120) void loadOlderItems(id);
+  };
+}
+
+function OlderStatus({ id }: { id: string | null }) {
+  const page = useApp().itemPages[id ?? ""];
+  if (!page?.hasMore && !page?.loading && !page?.error) return null;
+  return <div className="older-messages" role="status">{page.error ? <button onClick={() => id && void loadOlderItems(id, true)}>读取失败：{page.error} · 重试</button> : page.loading ? <DelayedText text="正在读取更早的消息…" /> : null}</div>;
 }
 
 /** 最后一条是不是自己刚发的（转自别的助手的不算）。 */
@@ -174,7 +209,8 @@ export function Chat() {
   const thinking = Boolean(a?.busy) && !isStreamingTail(items);
   const think = useLeave(thinking, 180);
 
-  useStickToBottom(scrollRef, key, items.length, isMine(items.at(-1)));
+  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id);
+  useStickToBottom(scrollRef, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
     <main className="chat">
@@ -188,8 +224,9 @@ export function Chat() {
           </button>
         ) : null}
       </div>
-      <div className="msgs" ref={scrollRef}>
+      <div className="msgs" ref={scrollRef} onScroll={onScroll}>
         <div className={`col${empty ? " mid" : ""}`}>
+          <OlderStatus id={s.sel} />
           {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
           {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>
@@ -329,7 +366,8 @@ export function ChatPage() {
   const think = useLeave(thinking, 180);
   const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
 
-  useStickToBottom(scrollRef, key, items.length, isMine(items.at(-1)));
+  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id);
+  useStickToBottom(scrollRef, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
     <>
@@ -344,8 +382,9 @@ export function ChatPage() {
           <Icon name="more" size={20} />
         </button>
       </div>
-      <div className="mmsgs" ref={scrollRef}>
+      <div className="mmsgs" ref={scrollRef} onScroll={onScroll}>
         <div className={`col${empty ? " mid" : ""}`}>
+          <OlderStatus id={s.sel} />
           {empty && a ? <EmptyChat a={a} /> : <ItemList items={items} />}
           {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>

@@ -247,6 +247,7 @@ export type RouterActivity = { state: "thinking" | "tool"; label: string };
 export interface AssistantSummary extends Assistant {
   last?: { text: string; at: Iso }; // 对话最后一条（列表第二行）
   unread: number; // 未读条数（>0 时大头像右上角橙点）
+  readAt?: Iso; // 上次看这个助手的时间：之前结束的任务不再挂完成/受阻标记
   busy: boolean; // Router 正在回复（在跑的任务不算，任务状态看任务卡）
   activity?: RouterActivity | null;
 }
@@ -688,6 +689,7 @@ export interface Bootstrap {
 }
 
 export type HobEvent =
+  | { type: "rules" }
   | { type: "desktop-control"; screen: string; taken: boolean }
   | { type: "desktop-screens"; screens: DesktopScreen[] }
   | ({ type: "page-live" } & PageLive)

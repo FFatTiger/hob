@@ -55,17 +55,18 @@ describe("展示页面", () => {
     } finally { hob.close(); }
   });
 
-  it("Worker 调用不发送实时页面事件", async () => {
+  it("任务没有页面工具：只交 Markdown 和文件，展示交给助手", async () => {
     const hob = makeHob();
     try {
-      const events: HobEvent[] = [];
-      hob.runtime.bus.subscribe((event) => { if (event.type === "page-live") events.push(event); });
-      hob.faux.setResponses([call("show_page", { title: "TCP", summary: "握手", html }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
+      const open = vi.spyOn(hob.runtime.pi, "open");
+      hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
       hob.faux.appendResponses([text("完成")]);
       await hob.runtime.jobs.start("hob", { title: "画图", instruction: "画一页" });
       await hob.runtime.jobs.waitIdle();
       await hob.runtime.router.waitIdle("hob");
-      expect(events).toEqual([]);
+      const worker = open.mock.calls.map(([options]) => options).find((options) => options.customTools.some((tool) => tool.name === "report"));
+      expect(worker!.customTools.map((tool) => tool.name)).not.toContain("show_page");
+      expect(worker!.customTools.map((tool) => tool.name)).not.toContain("make_page");
     } finally { hob.close(); }
   });
 
@@ -92,22 +93,24 @@ describe("展示页面", () => {
     } finally { hob.close(); }
   });
 
-  it("Router 出卡后结束，Worker 出卡后继续", async () => {
+  it("助手出卡后结束，send_file 发页面带标题和摘要", async () => {
     const hob = makeHob();
     try {
       const params = { title: "TCP 握手", summary: "三次交换建立连接", html };
-      const router = await pageTool(hob.runtime, "hob", true).execute("r", params);
+      const router = await pageTool(hob.runtime, "hob").execute("r", params);
       expect(router.terminate).toBe(true);
-      const worker = await pageTool(hob.runtime, "hob", false).execute("w", params);
-      expect(worker.terminate).toBeUndefined();
-      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "file")).toHaveLength(2);
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "file")).toHaveLength(1);
+      const send = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "send_file")!;
+      const special = await renderPage(hob.home, 'A & <B>', '摘要 "&"', html);
+      await send.execute("send", { path: special });
+      expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "file" && item.path === special)).toMatchObject({ name: "A & <B>", meta: '摘要 "&"' });
     } finally { hob.close(); }
   });
 
   it("整页文档、超长、空内容都报错且不发卡", async () => {
     const hob = makeHob();
     try {
-      const tool = pageTool(hob.runtime, "hob", true);
+      const tool = pageTool(hob.runtime, "hob");
       const result = await tool.execute("x", { title: "错", summary: "错", html: "<html><body>整页</body></html>" });
       expect(result.isError).toBe(true);
       expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "file")).toHaveLength(0);
@@ -120,7 +123,7 @@ describe("展示页面", () => {
     const hob = makeHob({}, { settings: { general: { showPage: false } } });
     try {
       expect(buildRouterTools(hob.runtime, "hob").some((tool) => tool.name === "show_page")).toBe(false);
-      const result = await pageTool(hob.runtime, "hob", false).execute("x", { title: "标题", summary: "摘要", html });
+      const result = await pageTool(hob.runtime, "hob").execute("x", { title: "标题", summary: "摘要", html });
       expect(result.isError).toBe(true);
       const open = vi.spyOn(hob.runtime.pi, "open");
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);

@@ -1,7 +1,7 @@
 import { Type } from "@earendil-works/pi-ai";
 import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, extname, join, resolve } from "node:path";
+import { basename, dirname, extname, join, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
 import { lookupFile } from "./files.ts";
@@ -432,13 +432,21 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "send_file",
       label: "发送文件",
-      description: "把任务产出的文件作为文件卡片发送到对话里。",
+      description: "把一个文件（任务产出、截图、生成的图）作为卡片发到对话里，图片直接显示。",
       parameters: Type.Object({ path: Type.String({ description: "文件的绝对路径" }) }),
       execute: async (_id, params: any) => {
         const path = String(params.path);
         if (!existsSync(path)) return fail(`文件不存在：${path}`);
-        const meta = fileMeta(path);
-        await router.addItem(assistantId, { kind: "file", path, name: basename(path), ...(meta ? { meta } : {}) });
+        let name = basename(path);
+        let meta = fileMeta(path);
+        if (dirname(resolve(path)) === resolve(runtime.home, "pages") && extname(path).toLowerCase() === ".html") {
+          const html = await readFile(path, "utf8");
+          const title = html.match(/<title>([\s\S]*?)<\/title>/)?.[1];
+          const summary = html.match(/<header class="hd"><h1>[\s\S]*?<\/h1><p>([\s\S]*?)<\/p><\/header>/)?.[1];
+          const unescape = (value: string) => value.replace(/&(amp|lt|gt|quot);/g, (_, key: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"' })[key]!);
+          if (title !== undefined && summary !== undefined) { name = unescape(title); meta = unescape(summary); }
+        }
+        await router.addItem(assistantId, { kind: "file", path, name, ...(meta ? { meta } : {}) });
         return ok("已发送。");
       },
     },
@@ -545,7 +553,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     });
   }
 
-  if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId, true));
+  if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId));
 
   if (assistant().primary) {
     tools.push(
@@ -553,7 +561,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       {
         name: "propose_assistant",
         label: "提议创建专属助手",
-        description: "同类事情反复出现、又没有合适的助手时，提议新建一个专属助手。生成草稿卡，用户点「创建」才会建。",
+        description: "同类事情反复出现、又没有合适的助手时，提议新建一个专属助手。生成草稿卡，用户点「创建」才会建。怎么做事是所有助手共用的模板和全局规则定的，草稿里只写这个助手特有的东西。",
         parameters: Type.Object({
           name: Type.String({ description: "助手名字：职责加一个亲切的昵称，四五个字，如「运维小子」「写稿搭子」「代理管家」；不要只写「代理」「运维」这种光秃秃的词" }),
           duty: Type.String({ description: "左栏头像下面那行小字，最多 8 个字，如「线上和机器」「模型和 agent」" }),
@@ -586,10 +594,9 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
               { description: "可选。根据上下文判断这个助手需不需要定期做的事，不是每个助手都要有。拿不准就先问用户，问清楚再加。" },
             ),
           ),
-          askFirst: Type.Optional(Type.Array(Type.String(), { description: "执行前需确认的事项" })),
-          instructions: Type.Optional(
-            Type.Array(Type.String(), { description: "这个助手特有的做法（每项一行，写进新助手的补充说明）" }),
-          ),
+          askFirst: Type.Optional(Type.Array(Type.String(), { description: "这个领域特有、做之前要先问用户的事，每项一条；全局规则已经列的不重复。" })),
+          // 必填：可选时模型第一次总是漏掉，被打回再补，白走一轮（评测 G5 三次都这样）
+          facts: Type.Array(Type.String(), { description: "这个助手特有的事实，每项一行：管什么、不管什么（归谁管）、东西在哪（目录、服务）。只写事实，不写做法和规矩。例：「博客源码在 ~/sites/blog，用 Hugo 构建」「报销归「财务」助手管，这里不碰」" }),
           conversations: Type.Optional(Type.Integer({ description: "需要迁移的对话段数，默认 0" })),
         }),
         execute: async (_id, params: any) => {
@@ -603,6 +610,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           if (given?.prop === "custom" && !checked?.ok) {
             return fail("sprite 是 custom 时要同时给 prop_art（art、pal、dx）画一件。");
           }
+          const facts = Array.isArray(params.facts) ? params.facts.filter((fact: unknown): fact is string => typeof fact === "string").map((fact: string) => fact.trim()).filter(Boolean) : [];
+          if (!facts.length) return fail("facts 至少写一条：这个助手管什么、不管什么。");
           const routinesInput: { name: string; instruction: string; schedule: string }[] =
             params.routines ?? [];
           const taken = store.assistants().map((a) => a.sprite);
@@ -621,7 +630,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             routines: routinesInput,
             routinesText: routinesInput.map((item) => `${item.name} · ${cronToChinese(item.schedule)}`).join("、"),
             askFirst: (params.askFirst as string[]) ?? [],
-            instructions: (params.instructions as string[]) ?? [],
+            instructions: facts,
             carry: { conversations: Number(params.conversations ?? 0) },
             createdAt: new Date().toISOString(),
           };

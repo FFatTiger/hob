@@ -252,7 +252,7 @@ describe("Router", () => {
           sprite: "page",
           routines: [{ name: "周报", instruction: "写本周周报", schedule: "0 17 * * 5" }],
           askFirst: ["发公众号"],
-          instructions: ["标题不超过 20 字"],
+          facts: ["标题不超过 20 字"],
           conversations: 3,
         }),
         text("做了个草稿。"),
@@ -381,6 +381,7 @@ describe("Router", () => {
           dutyLong: "每周写周报。",
           sprite: "page",
           routines: [{ name: "周报", instruction: "写周报", schedule: "0 17 * * 5" }],
+          facts: ["负责周报"],
           conversations: 2,
         }),
         text("草稿好了。"),
@@ -432,11 +433,12 @@ describe("Router", () => {
           duty: "盯着模型发布和 agent 产品的最新动态",
           dutyLong: "盯模型发布、agent 产品和开源项目，每天挑 6 条。",
           sprite: "bird",
+          facts: ["负责模型动态"],
         }),
       ).toContain("草稿卡已显示给用户。");
       expect(hob.runtime.store.drafts()[0]?.duty).toBe("盯着模型发布和");
       // 模型给的头像只认内置的，不能指到生成的头像文件上
-      await run("propose_assistant", { name: "旁门", duty: "试试", dutyLong: "试试。", sprite: "img:img-abc123.png" });
+      await run("propose_assistant", { name: "旁门", duty: "试试", dutyLong: "试试。", sprite: "img:img-abc123.png", facts: ["负责测试"] });
       expect(hob.runtime.store.drafts().find((draft) => draft.name === "旁门")?.sprite).toBe("page");
       await hob.runtime.jobs.waitIdle();
     } finally {
@@ -504,6 +506,7 @@ describe("Router", () => {
           dutyLong: "每周写周报。",
           sprite: "page",
           routines: [],
+          facts: ["负责周报"],
           conversations: 1,
         }),
         text("草稿好了。"),
@@ -572,6 +575,19 @@ describe("Router", () => {
     }
   });
 
+  it("从没标过已读的助手，新回复也算未读", async () => {
+    const hob = makeHob();
+    try {
+      expect(hob.runtime.router.unread("hob")).toBe(0);
+      hob.faux.setResponses([text("做完了。")]);
+      await hob.runtime.router.event("hob", "任务「查资料」已完成：结果在这里");
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.router.unread("hob")).toBe(1);
+    } finally {
+      hob.close();
+    }
+  });
+
   it("未读数是最后 read 之后的助手条目数", async () => {
     const hob = makeHob();
     try {
@@ -582,6 +598,26 @@ describe("Router", () => {
       expect(hob.runtime.router.unread("hob")).toBe(1);
       hob.runtime.router.read("hob");
       expect(hob.runtime.router.unread("hob")).toBe(0);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("手动停止后这一轮报错不算回复失败（Claude 订阅桥把停止报成 error）", async () => {
+    const hob = makeHob();
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([async () => { await gate; return fauxAssistantMessage([], { stopReason: "error", errorMessage: "This operation was aborted" }); }]);
+      const turn = hob.runtime.router.event("hob", "任务「查资料」已停止。\n你叫停了");
+      await waitFor(() => hob.runtime.router.bootstrap().assistants[0].activity?.state === "thinking");
+      // 假模型收到停止会自己报 aborted；这里让停止不传到模型，模拟订阅桥停下后回一条 error
+      (hob.runtime.router as never as { routers: Map<string, { session: { abort: () => Promise<void> } }> }).routers.get("hob")!.session.abort = async () => {};
+      await hob.runtime.router.stop("hob");
+      release();
+      await turn;
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "note")).toEqual([]);
     } finally {
       hob.close();
     }

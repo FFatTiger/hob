@@ -481,7 +481,7 @@ describe("图片进对话", () => {
     expect(isImagePath("/tmp/a/cat.png.bak")).toBe(false);
   });
 
-  it("任务 report 里的图片作为 file 条目进对话，非图片文件不进", async () => {
+  it("任务文件只交给助手，不直接发到对话", async () => {
     const hob = makeHob();
     const dir = tempDir("hob-img-");
     const image = join(dir, "cat.png");
@@ -500,14 +500,9 @@ describe("图片进对话", () => {
         hob.runtime.router
           .items("hob", { limit: 50 })
           .items.filter((item): item is Extract<Item, { kind: "file" }> => item.kind === "file");
-      await waitFor(() => files().length > 0);
-      expect(files()).toHaveLength(1);
-      // 第一张图开新的一组，助手的回复接在图后面
-      expect(files()[0]).toMatchObject({ path: image, name: "cat.png", lead: true });
-      // 助手收到的结果里写明图已经发了、别的文件在哪，免得它再派任务去取
+      expect(files()).toHaveLength(0);
       const routerLog = () => readFileSync(hob.runtime.store.routerFile("hob"), "utf8");
-      await waitFor(() => routerLog().includes("图片已发到对话里：cat.png"));
-      expect(routerLog()).toContain(doc);
+      await waitFor(() => routerLog().includes(`任务交来的文件：${image}、${doc}。要给用户看，用 send_file 发。`));
     } finally {
       hob.close();
       rmSync(dir, { recursive: true, force: true });

@@ -1,4 +1,6 @@
 import { createHash } from "node:crypto";
+import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { join, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { chromium, type Browser, type Page } from "playwright-core";
@@ -17,6 +19,7 @@ const action = Type.Object({
 });
 
 type PageConnection = { browser?: Browser; page?: Page; opening?: Promise<Page> };
+const jobConnections = new WeakMap<HobRuntime, Map<string, Map<DesktopToolSession, string>>>();
 
 export class DesktopToolSession {
   private connections = new Map<string, PageConnection>();
@@ -24,13 +27,16 @@ export class DesktopToolSession {
   private active = new Set<Promise<unknown>>();
   private disposed = false;
   private profile: string;
-  constructor(private runtime: HobRuntime, private assistantId: string, private canSeeImages: boolean) {
+  constructor(private runtime: HobRuntime, private assistantId: string, private canSeeImages: boolean | (() => boolean), private jobTitle?: string, private router = false, private screenshotDir = join(runtime.home, "assistants", assistantId, "screenshots")) {
     this.profile = desktopProfile(assistantId);
   }
 
   private check(screen: string) {
     if (this.disposed) throw new Error("任务已结束。");
     if (this.runtime.desktopControl.state("", screen).taken) throw new Error(TAKEN);
+    if (this.router) for (const [session, title] of jobConnections.get(this.runtime)?.get(screen) ?? []) {
+      if (session.connections.get(screen)?.browser?.isConnected()) throw new Error(`任务「${title}」正在用浏览器，等它做完，或者用 reply_job 让它停下来。`);
+    }
   }
   private async screen(value: unknown): Promise<string> {
     if (value !== undefined && value !== "own" && value !== "public") throw new Error("屏幕参数无效。");
@@ -38,11 +44,13 @@ export class DesktopToolSession {
     this.check(screen);
     if (screen === "public") {
       if (!this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId)) throw new Error("这个助手没有使用公共屏幕的权限。");
-      if (!this.publicWait) {
-        const name = this.runtime.store.assistant(this.assistantId)?.name ?? this.assistantId;
-        this.publicWait = this.runtime.desktopPublic.acquire(this, name).catch((error) => { this.publicWait = undefined; throw error; });
+      if (!this.router) {
+        if (!this.publicWait) {
+          const name = this.runtime.store.assistant(this.assistantId)?.name ?? this.assistantId;
+          this.publicWait = this.runtime.desktopPublic.acquire(this, name).catch((error) => { this.publicWait = undefined; throw error; });
+        }
+        await this.publicWait;
       }
-      await this.publicWait;
       this.check(screen);
       if (!this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId)) throw new Error("这个助手没有使用公共屏幕的权限。");
     }
@@ -73,6 +81,13 @@ export class DesktopToolSession {
       page.setDefaultTimeout(15_000);
       connection.browser = browser;
       connection.page = page;
+      if (this.jobTitle) {
+        let screens = jobConnections.get(this.runtime);
+        if (!screens) jobConnections.set(this.runtime, screens = new Map());
+        let jobs = screens.get(screen);
+        if (!jobs) screens.set(screen, jobs = new Map());
+        jobs.set(this, this.jobTitle);
+      }
       return page;
     } catch (error) { await browser.close().catch(() => undefined); throw error; }
   }
@@ -85,6 +100,11 @@ export class DesktopToolSession {
       await connection.browser?.close().catch(() => undefined);
     }));
     this.runtime.desktopPublic.release(this);
+    const screens = jobConnections.get(this.runtime);
+    for (const [screen, jobs] of screens ?? []) {
+      jobs.delete(this);
+      if (!jobs.size) screens!.delete(screen);
+    }
     this.connections.clear();
   }
   tools(): ToolDefinition<any, any>[] {
@@ -99,8 +119,23 @@ export class DesktopToolSession {
             const screen = await this.screen(values.screen);
             const value = await run(values, screen);
             if (Buffer.isBuffer(value)) {
-              if (!this.canSeeImages) return { content: [{ type: "text" as const, text: "当前模型不能看图，请使用页面快照或请用户查看云桌面。" }], details: undefined };
-              return { content: [{ type: "image" as const, data: value.toString("base64"), mimeType: "image/png" }], details: undefined };
+              const dir = resolve(this.screenshotDir);
+              mkdirSync(dir, { recursive: true });
+              const existing = readdirSync(dir).filter((name) => /^\d{8}T\d{9}\.png$/.test(name)).sort();
+              const last = existing.at(-1);
+              const lastTime = last ? Date.parse(`${last.slice(0, 4)}-${last.slice(4, 6)}-${last.slice(6, 8)}T${last.slice(9, 11)}:${last.slice(11, 13)}:${last.slice(13, 15)}.${last.slice(15, 18)}Z`) : 0;
+              let time = Math.max(Date.now(), lastTime + 1);
+              let path: string;
+              while (true) {
+                path = join(dir, `${new Date(time++).toISOString().replace(/[-:.Z]/g, "")}.png`);
+                try { writeFileSync(path, value, { flag: "wx" }); break; }
+                catch (error) { if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error; }
+              }
+              const files = readdirSync(dir).filter((name) => /^\d{8}T\d{9}\.png$/.test(name)).sort();
+              for (const name of files.slice(0, -20)) unlinkSync(join(dir, name));
+              const send = this.router ? "用 send_file 发它" : "report 时放进 files";
+              if (!(typeof this.canSeeImages === "function" ? this.canSeeImages() : this.canSeeImages)) return { content: [{ type: "text" as const, text: `当前模型不能看图。截图已存到 ${path}：要给用户看，${send}；要自己读页面内容，用 browser_snapshot。` }], details: undefined };
+              return { content: [{ type: "image" as const, data: value.toString("base64"), mimeType: "image/png" }, { type: "text" as const, text: `截图已存到 ${path}。要给用户看，${send}。` }], details: undefined };
             }
             return { content: [{ type: "text" as const, text: value }], details: undefined };
           } catch (error) {
@@ -112,7 +147,7 @@ export class DesktopToolSession {
       },
     });
     return [
-      make("browser_open", "打开网页", "在助手的浏览器中打开 HTTP(S) 网页。", Type.Object({ url: Type.String() }), async ({ url }, screen) => {
+      make("browser_open", "打开网页", this.router ? "在你的云桌面浏览器里打开 HTTP(S) 网页。要边看边和用户确认的操作自己做；步骤多、不需要用户盯着的交给任务。" : "在助手的浏览器中打开 HTTP(S) 网页。" , Type.Object({ url: Type.String() }), async ({ url }, screen) => {
         const target = new URL(url);
         if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("只支持 HTTP(S) 网页。");
         const page = await this.getPage(screen); this.check(screen); await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }); return `已打开 ${page.url()}`;
@@ -155,7 +190,7 @@ export async function openDesktopBrowser(runtime: HobRuntime, assistantId: strin
   await runtime.desktop.request(`/api/screens/${profile}/browser/focus`, { method: "POST" });
 }
 
-export async function availableDesktopTools(runtime: HobRuntime, profile: string, canSeeImages: boolean): Promise<DesktopToolSession | undefined> {
-  try { await runtime.desktop.request("/api/health"); return new DesktopToolSession(runtime, profile, canSeeImages); }
+export async function availableDesktopTools(runtime: HobRuntime, profile: string, canSeeImages: boolean, jobTitle?: string, screenshotDir?: string): Promise<DesktopToolSession | undefined> {
+  try { await runtime.desktop.request("/api/health"); return new DesktopToolSession(runtime, profile, canSeeImages, jobTitle, false, screenshotDir); }
   catch { return undefined; }
 }

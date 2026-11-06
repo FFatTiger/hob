@@ -19,8 +19,8 @@ export function registerReportTool(runtime: HobRuntime, jobId: string): ToolDefi
       outcome: Type.Unsafe<"done" | "stuck" | "need_approval">(
         Type.String({ description: "done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板" }),
       ),
-      result: Type.String({ description: "完整结果：结论、数据、链接、文件路径；写给派活的助手。" }),
-      files: Type.Optional(Type.Array(Type.String(), { description: "要给用户看的文件（绝对路径）" })),
+      result: Type.String({ description: "完整结果，按这个顺序写：结论；做了什么；验证了什么、怎么验证的；没验证或不确定的；需要用户决定的。带上数据、链接和文件路径，写给派活的助手。" }),
+      files: Type.Optional(Type.Array(Type.String(), { description: "交给助手的文件（绝对路径），比如要给用户看的图" })),
     }),
     execute: async (_id, params: any) => {
       // 不认识的结果不能当成已完成：退回让模型重新调用
@@ -46,7 +46,7 @@ export function registerAskTool(runtime: HobRuntime, jobId: string): ToolDefinit
   return {
     name: "ask_user",
     label: "询问用户",
-    description: "在对话里出选择题卡片（2 到 3 个选项），等用户选，返回用户的选择。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。",
+    description: "问你的助手，等它回复：它会自己答，或者去问用户。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。其他拿不准的不问，按合理的假设做下去，把假设写进 result。",
     promptSnippet: "规则要求执行前确认的事，执行前必须调用 ask_user。",
     parameters: Type.Object({
       title: Type.String({ description: "问题，一句话" }),
@@ -57,27 +57,20 @@ export function registerAskTool(runtime: HobRuntime, jobId: string): ToolDefinit
         }),
         { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
       ),
-      remember: Type.Optional(Type.String({ description: "同类事以后可以不再问时，填这类事的简称（如「清理临时目录」）；卡片会多一个「以后直接做」的选项。" })),
     }),
     execute: async (_id, params: any) => {
       const labels: { label: string }[] = Array.isArray(params.options) ? params.options : [];
       if (labels.length < 2 || labels.length > 3) {
         return { content: [{ type: "text" as const, text: "选项要 2 到 3 个。" }], details: undefined, isError: true };
       }
-      const remember = typeof params.remember === "string" ? params.remember.trim() : "";
-      if (remember && labels.length > 2) {
-        return { content: [{ type: "text" as const, text: "带 remember 时最多给 2 个选项。" }], details: undefined, isError: true };
-      }
       const options: ApprovalOption[] = labels.map((option, index) => ({
         key: (["A", "B", "C"] as const)[index],
         label: String(option.label),
       }));
-      if (remember) options.push({ key: "C", label: `以后「${remember}」直接做`, always: true });
       const answer = await runtime.jobs.askQuestion(jobId, {
         title: String(params.title),
         ...(params.detail ? { detail: String(params.detail) } : {}),
         options,
-        ...(remember ? { ruleText: remember } : {}),
       });
       // 用户可能没选给出的选项，而是自己写了一段：answer 已经是回给模型的整句
       return ok(answer);

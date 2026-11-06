@@ -370,7 +370,7 @@ describe("set_avatar 工具", () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([
-        call("propose_assistant", { name: "代理", duty: "代理转发", dutyLong: "负责代理和转发。", sprite: "custom", prop_art: GOOD }),
+        call("propose_assistant", { name: "代理", duty: "代理转发", dutyLong: "负责代理和转发。", sprite: "custom", prop_art: GOOD, facts: ["负责代理"] }),
         text("草稿好了。"),
       ]);
       await hob.runtime.router.send("hob", { text: "代理和转发的事多，分个助手吧" });

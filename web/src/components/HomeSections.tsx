@@ -38,8 +38,9 @@ function useHomeBusy(a: AssistantSummary | undefined): { busy: boolean; slot: nu
 function useMark(a: AssistantSummary, busy: boolean): AvatarMark | undefined {
   const s = useApp();
   if (assistantStatus(a, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) === "等你确认") return "ask";
+  // 只看你上次看过之后结束的任务：早就结束的任务不代表现在的状态
   const last = Object.values(s.jobs)
-    .filter((j) => j.assistantId === a.id && j.endedAt)
+    .filter((j) => j.assistantId === a.id && j.endedAt && (!a.readAt || j.endedAt > a.readAt))
     .sort((x, y) => (y.endedAt ?? "").localeCompare(x.endedAt ?? ""))[0];
   if (a.unread > 0 && last && (last.status === "stuck" || last.status === "failed")) return "stuck";
   if (busy) return "busy";
@@ -60,7 +61,6 @@ export function Pin({ a, sel, size = 52 }: { a: AssistantSummary; sel?: boolean;
       }}
     >
       <Avatar sprite={a.sprite} prop={a.prop} size={size} motion={busy && !sel ? "peek" : undefined} slot={slot} mark={mark} />
-      {a.unread > 0 ? <span className="badge">{a.unread > 99 ? "99+" : a.unread}</span> : null}
       <div className="nm">{a.name}</div>
       <div className="sub">{a.duty}</div>
     </button>

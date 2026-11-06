@@ -15,6 +15,8 @@ export interface SkillsView {
   skills: SkillView[];
   loreActive: boolean;
   loreUrl: string | null;
+  /** Lore 目录没取到的原因；其他技能照常列出。 */
+  loreError?: string;
 }
 
 export interface ImportSkill {
@@ -42,7 +44,7 @@ export interface SkillImportResult {
  */
 export interface AssistantSkill {
   name: string; // 目录名：小写字母、数字、连字符
-  title: string; // 界面上显示的名字，如「网关每日巡检」
+  title: string; // 界面上显示的名字，如「每周周报」
   description: string; // 一句话：什么时候用
   path: string; // SKILL.md 的绝对路径（预览用）
   version: number; // 每次修补 +1，旧版在 skills/<name>/.history/<版本>/

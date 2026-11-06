@@ -115,7 +115,7 @@ describe("委派", () => {
       const prompt = buildSystemPrompt(hob.runtime.store, "ops", { timezone, aboutYou, memory: "local" });
       expect(prompt).not.toContain("## 转来的事");
       expect(prompt).toContain("转来的消息带着用户的原话，等同用户本人的要求，结果会自动回到 Hob。");
-      expect(prompt).toContain("用简洁、规范的书面中文回复，先给结论。");
+      expect(prompt).toContain("先给结论，用规范的书面中文；长短跟着事情的分量走");
       const primary = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
       expect(primary).toContain("对用户负责的是你");
       expect(primary).not.toContain("结果回来之前，不要自己 start_job 做同一件事");
@@ -329,24 +329,25 @@ describe("委派", () => {
     } finally { hob.close(); }
   });
 
-  it("通过现有答复接口处理关联任务审批，两边读取同一结果", async () => {
+  it("转交任务的提问交回目标助手，不生成用户问题卡", async () => {
     const hob = setup();
+    let release = () => {};
     try {
+      const relay = vi.spyOn(hob.runtime.router, "relay").mockResolvedValue();
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
-      const delegation = { ...record(), jobIds: ["a"] };
-      hob.runtime.store.saveDelegation(delegation);
-      hob.runtime.store.saveJob(job("a", "running"));
-      await hob.runtime.router.addItem("hob", { kind: "delegation", delegationId: delegation.id });
-      await hob.runtime.jobs.askQuestion("a", { title: "继续吗", options: [{ key: "A", label: "继续" }, { key: "B", label: "停止" }] });
-      const approval = hob.runtime.store.approvals()[0];
-      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe("waiting");
-      expect(hob.runtime.router.items("hob").approvals[0].id).toBe(approval.id);
-      expect((await answerApproval(hob.runtime, approval.id, { key: "A" })).status).toBe(200);
-      expect(hob.runtime.router.items("hob").approvals[0].status).toBe("answered");
-      expect(hob.runtime.router.items("ops").approvals[0].status).toBe("answered");
-      expect(hob.runtime.store.job("a")?.status).toBe("running");
-      expect((await answerApproval(hob.runtime, approval.id, { key: "B" })).status).toBe(409);
-    } finally { hob.close(); }
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([async () => { await gate; return call("report", { outcome: "done", result: "完成" }); }, text("完成")]);
+      hob.runtime.store.saveDelegation(record());
+      const started = await hob.runtime.jobs.start("ops", { title: "检查", instruction: "检查", delegationId: "dg-test" });
+      hob.runtime.delegations.addJob("dg-test", started.id);
+      await waitFor(() => hob.faux.state.callCount > 0);
+      const answer = hob.runtime.jobs.askQuestion(started.id, { title: "继续吗", options: [{ key: "A", label: "继续" }, { key: "B", label: "停止" }] });
+      expect(relay).toHaveBeenCalledWith("ops", "任务「检查」在等你回复：继续吗。选项：A 继续、B 停止。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。", "dg-test");
+      expect(hob.runtime.store.delegation("dg-test")?.status).toBe("waiting");
+      expect(hob.runtime.router.items("ops").items.some((item) => item.kind === "question")).toBe(false);
+      await hob.runtime.jobs.reply(started.id, "继续", "router");
+      expect(await answer).toBe("助手转达：继续");
+    } finally { release(); hob.close(); }
   });
 
   it("恢复时中断未运行的记录，不中断仍在运行的任务", () => {

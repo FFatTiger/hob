@@ -1,5 +1,5 @@
 // 设置整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
-import { Empty } from "./Empty.tsx";
+import { DelayedText, Empty } from "./Empty.tsx";
 import { Fragment, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type {
   AboutInfo,
@@ -24,6 +24,7 @@ import type {
   ProvidersView,
   PushView,
   RosterEntry,
+  Rule,
   SettingsFile,
   SettingsPatch,
   ThinkingLevel,
@@ -56,6 +57,8 @@ import {
   saveEmbedding,
   testEmbedding,
   loadSearch,
+  loadRules,
+  saveRules,
   loadSkills,
   loadSkillImports,
   importSelectedSkills,
@@ -206,6 +209,7 @@ function AutoField({ value, placeholder, multiline, onSave }: { value: string; p
 
 const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "general", label: "通用" },
+  { id: "rules", label: "规则" },
   { id: "providers", label: "服务商" },
   { id: "models", label: "模型" },
   { id: "memory", label: "记忆" },
@@ -290,7 +294,9 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
         </div>
       )}
       <div className="setmain" ref={main}>
-        {current === "providers" ? (
+        {current === "rules" ? (
+          <RulesSection />
+        ) : current === "providers" ? (
           <ProvidersSection />
         ) : current === "models" ? (
           <ModelsSection />
@@ -320,6 +326,53 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
       </div>
     </div>
   );
+}
+
+function RulesSection() {
+  const { rules, error, busy } = useApp().globalRules;
+  useEffect(() => { void loadRules(); }, []);
+
+  const change = (next: { id?: string; text: string; mode: Rule["mode"] }[]) => saveRules(next);
+  return <>
+    <PageHead title="全局规则" desc="所有助手和任务都遵守的规则。「执行前确认」的事项，助手执行前会征求你的确认；「一律照做」是做事的规则。每个助手自己的规则在它的档案里修改。" />
+    {error ? <div className="badline" role="status">{error}</div> : null}
+    {rules === null ? error ? <button className="hob-btn" onClick={() => void loadRules()}>重试</button> : <Empty><DelayedText text="正在读取全局规则…" /></Empty> :
+      ([{ mode: "ask", label: "执行前确认" }, { mode: "allow", label: "一律照做" }] as const).map(({ mode, label }) => <Group key={mode}>
+        <div className="lbl">{label}</div>
+        <div className="group-card settings-card rules-card">
+          {rules.filter((rule) => rule.mode === mode).map((rule) => <GlobalRuleRow key={rule.id} rule={rule} busy={busy} onSave={(text) => change(rules.map((item) => item.id === rule.id ? { ...item, text } : item))} onDelete={() => void change(rules.filter((item) => item.id !== rule.id))} />)}
+          <RuleAdd label={label} busy={busy} onAdd={(text) => change([...rules, { text, mode }])} />
+        </div>
+      </Group>)}
+  </>;
+}
+
+function GlobalRuleRow({ rule, busy, onSave, onDelete }: { rule: Rule; busy: boolean; onSave: (text: string) => Promise<boolean>; onDelete: () => void }) {
+  const [editing, setEditing] = useState(false);
+  const [text, setText] = useState(rule.text);
+  const cancel = useRef(false);
+  const commit = () => {
+    if (cancel.current) { cancel.current = false; return; }
+    const value = text.trim();
+    if (!value || value === rule.text) { setEditing(false); return; }
+    void onSave(value).then((ok) => { if (ok) setEditing(false); });
+  };
+  const age = Date.now() - Date.parse(rule.changedAt);
+  return <div className="rule">
+    {editing ? <input className="rule-input" aria-label="编辑规则" autoFocus maxLength={1000} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} onBlur={commit} onKeyDown={(e) => {
+      if (e.key === "Enter") e.currentTarget.blur();
+      if (e.key === "Escape") { cancel.current = true; setText(rule.text); setEditing(false); }
+    }} /> : <button className="rule-text" title="编辑规则" disabled={busy} onClick={() => { cancel.current = false; setText(rule.text); setEditing(true); }}>{rule.text}</button>}
+    <span className="v">{age >= 0 && age < 86400000 ? <span className="rule-recent">最近修改</span> : null}<button className="del" aria-label={`删除规则：${rule.text}`} title="删除这条规则" disabled={busy} onClick={onDelete}><Icon name="close" size={13} /></button></span>
+  </div>;
+}
+
+function RuleAdd({ label, busy, onAdd }: { label: string; busy: boolean; onAdd: (text: string) => Promise<boolean> }) {
+  const [text, setText] = useState("");
+  return <form className="rule-add-form" onSubmit={(e) => { e.preventDefault(); const value = text.trim(); if (value && !busy) void onAdd(value).then((ok) => { if (ok) setText(""); }); }}>
+    <input className="rule-input" aria-label={`${label}添加规则`} placeholder="＋ 添加规则" maxLength={1000} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
+    <button className="hob-btn" type="submit" disabled={busy || !text.trim()}>添加</button>
+  </form>;
 }
 
 function DesktopSection() {
@@ -3050,7 +3103,8 @@ function SkillsSection() {
       </Group>
       <Group>
         <div className="lbl">Lore 技能{view.loreActive && view.loreUrl ? <a className="lbl-aside" href={view.loreUrl} target="_blank" rel="noreferrer">在 Lore 控制台管理</a> : null}</div>
-        {view.loreActive
+        {view.loreError ? <div className="badline" role="alert">{view.loreError} <button onClick={() => void refresh()}>重试</button></div>
+          : view.loreActive
           ? <div className="group-card settings-card">{rows(view.skills.filter((x) => x.source === "lore"), "Lore 中没有技能")}</div>
           : <div className="note">在 设置 → 记忆 中连接 Lore 后，这里会列出 Lore 中的技能。</div>}
       </Group>

@@ -42,7 +42,7 @@ export function overviewText(runtime: HobRuntime, sinceHours = 24): string {
   const since = new Date(Date.now() - hours * 3600 * 1000).toISOString();
   const timezone = runtime.settings.settings.general.timezone;
   const jobs = runtime.store.jobs();
-  const pending = runtime.store.approvals().filter((approval) => approval.status === "pending");
+  const pending = runtime.store.approvals().filter((approval) => approval.status === "pending" && approval.source !== "job");
 
   const blocks: string[] = [];
   let endedCount = 0;

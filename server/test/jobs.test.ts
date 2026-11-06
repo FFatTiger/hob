@@ -266,6 +266,8 @@ describe("任务", () => {
   it("ask_user 阻塞等答复，答完继续跑并 report", async () => {
     const hob = makeHob();
     try {
+      const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      const push = vi.spyOn(hob.runtime.push, "send");
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
         call("report", { outcome: "done", result: "删了 3 个旧报告" }),
@@ -276,8 +278,10 @@ describe("任务", () => {
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "waiting");
       const approval = hob.runtime.store.approvals()[0];
       expect(approval).toMatchObject({ source: "job", jobId: job.id, status: "pending" });
-      // 任务半路来问是单独的一组
-      expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "question")).toMatchObject({ lead: true });
+      expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "question")).toBeUndefined();
+      expect(hob.runtime.router.bootstrap().approvals).toEqual([]);
+      expect(push).not.toHaveBeenCalled();
+      expect(event).toHaveBeenCalledWith("hob", "任务「清旧报告」在等你回复：删掉旧报告吗？选项：A 删、B 别删。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。");
       // 等用户答多久都不算「无响应」（以前 15 分钟后被看门狗标成受阻，审批卡跟着作废）
       hob.runtime.jobs.checkStalls(Date.now() + 24 * 3600_000);
       expect(hob.runtime.store.job(job.id)?.status).toBe("waiting");
@@ -293,9 +297,29 @@ describe("任务", () => {
     }
   });
 
+  it("任务提问的标题和说明保留原有句末标点，缺标点才补句号", async () => {
+    const hob = makeHob();
+    let release = () => {};
+    try {
+      const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([async () => { await gate; return call("report", { outcome: "done", result: "完成" }); }, text("完成")]);
+      const job = await hob.runtime.jobs.start("hob", { title: "测试", instruction: "测试" });
+      await waitFor(() => hob.faux.state.callCount > 0);
+      for (const end of ["。", "！", "？", ".", "!", "?", ""]) {
+        const answer = hob.runtime.jobs.askQuestion(job.id, { title: `问题${end}`, detail: `说明${end}`, options: [{ key: "A", label: "好" }] });
+        const expected = end || "。";
+        expect(event).toHaveBeenLastCalledWith("hob", `任务「测试」在等你回复：问题${expected}说明${expected}选项：A 好。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。`);
+        hob.runtime.jobs.resolveAsk(hob.runtime.store.approvals().find((item) => item.status === "pending")!, "好");
+        await answer;
+      }
+    } finally { release(); hob.close(); }
+  });
+
   it("ask_user 用自己写的一段话回答：工具结果说明没选给出的选项，任务接着跑", async () => {
     const hob = makeHob();
     try {
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
         call("report", { outcome: "done", result: "只删了三个月前的旧报告" }),
@@ -323,6 +347,7 @@ describe("任务", () => {
   it("ask_user 等答复时用户在对话里回（reply）：当作答复，卡片结束，任务接着跑", async () => {
     const hob = makeHob();
     try {
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
         call("report", { outcome: "done", result: "只删了旧的" }),
@@ -347,6 +372,7 @@ describe("任务", () => {
   it("助手转达任务提问的答复：卡片结束而不冒充用户原话，任务继续", async () => {
     const hob = makeHob();
     try {
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([
         call("ask_user", { title: "删掉旧报告吗？", options: [{ label: "删" }, { label: "别删" }] }),
         call("report", { outcome: "done", result: "只删了旧的" }),

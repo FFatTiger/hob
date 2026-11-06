@@ -33,7 +33,8 @@ html 只写正文的 HTML 片段（不要 <html>、<head>、<body>），标题�
 - 先给结论再展开；能用图、表、卡片说清的就别堆长段落；强调色只点最重要的一两处。
 - 需要特别的版式可以加 <style>（颜色仍用上面的变量），可以用 <script> 做交互。最多 ${MAX} 字。`;
 
-export function pageTool(runtime: HobRuntime, assistantId: string, router: boolean): ToolDefinition<any, any> {
+// 只给助手：任务和助手之间用 report 的 Markdown 和文件沟通，给用户怎么展示由助手决定
+export function pageTool(runtime: HobRuntime, assistantId: string): ToolDefinition<any, any> {
   return {
     name: "show_page", label: "展示页面", description,
     parameters: Type.Object({ title: Type.String(), summary: Type.String(), html: Type.String({ maxLength: MAX }) }),
@@ -45,7 +46,7 @@ export function pageTool(runtime: HobRuntime, assistantId: string, router: boole
         if (!title || !summary) throw new Error("标题和摘要不能为空。");
         const path = await renderPage(runtime.home, title, summary, String(params.html ?? ""));
         await runtime.router.addItem(assistantId, { kind: "file", path, name: title, meta: summary });
-        return { content: [{ type: "text" as const, text: `页面已展示：${path}` }], details: { path }, ...(router ? { terminate: true } : {}) };
+        return { content: [{ type: "text" as const, text: `页面已展示：${path}` }], details: { path }, terminate: true };
       } catch (error) {
         return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true };
       }

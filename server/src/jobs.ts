@@ -24,8 +24,7 @@ import { MCP_SESSION_TOOLS, mcpEnabled, mcpServerDisplay } from "./mcp.ts";
 import { jobModel } from "./models.ts";
 import { duration, jobProcessLines } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
-import { pageTool } from "./pages.ts";
-import { pushApproval, pushJobEnd } from "./push.ts";
+import { pushJobEnd } from "./push.ts";
 import { buildWorkerPrompt, type Abilities, type PromptSettings } from "./prompt.ts";
 import { availableSkills } from "./skills.ts";
 import { enabledAssistantSkills, listAssistantSkills, readSkillFiles, recordAssistantSkillUse, saveAssistantSkill, usableAssistantSkills } from "./assistant-skills.ts";
@@ -331,9 +330,8 @@ export class JobManager {
     const customTools = [registerReportTool(this.runtime, running.id), registerAskTool(this.runtime, running.id), findKnowledgeTool(this.runtime)];
     if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, running.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, running.id));
-    if (this.runtime.settings.settings.general.showPage !== false) customTools.push(pageTool(this.runtime, running.assistantId, false));
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
-    const desktop = await availableDesktopTools(this.runtime, running.assistantId, !!this.runtime.models.find(running.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"));
+    const desktop = await availableDesktopTools(this.runtime, running.assistantId, !!this.runtime.models.find(running.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"), running.title, join(this.store.workDir(running.id), "screenshots"));
     if (this.store.job(running.id)?.status !== "running") { await desktop?.dispose(); return; }
     if (desktop) customTools.push(...desktop.tools());
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报
@@ -586,7 +584,7 @@ export class JobManager {
   reportFromTool(jobId: string, data: { outcome: "done" | "stuck" | "need_approval"; result: string; files?: string[] }): void {
     const worker = this.workers.get(jobId);
     if (!worker) return;
-    worker.reported = data;
+    worker.reported = { ...data, ...(data.files ? { files: data.files.map((path) => resolve(worker.job.cwd ?? this.store.workDir(jobId), path)) } : {}) };
     worker.finishTimer ??= setTimeout(() => void this.applyReport(jobId), 200);
   }
 
@@ -679,9 +677,7 @@ export class JobManager {
       jobId: job.id,
     });
     this.bus.emit({ type: "profile", assistantId: job.assistantId });
-    const { note: filesNote, posted } = await this.postFiles(next);
-    // 图片已经开了这一组，回复接在图片后面
-    const cont = posted ? ({ cont: true } as const) : undefined;
+    const filesNote = next.files?.length ? `\n任务交来的文件：${next.files.join("、")}。要给用户看，用 send_file 发。` : "";
 
     if (job.routineId) {
       const routine = this.store.routine(job.routineId);
@@ -699,42 +695,14 @@ export class JobManager {
         await this.runtime.router
           .event(job.assistantId, `${jobResultEvent(next, `定时任务「${routine.name}」`)}${filesNote}`, {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
-            ...cont,
           })
           .catch(() => undefined);
       }
     } else if (assistant) {
       const text = `${jobResultEvent(next)}${filesNote}`;
-      if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId, cont).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
-      else await this.runtime.router.event(job.assistantId, text, cont).catch(() => undefined);
+      if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
+      else await this.runtime.router.event(job.assistantId, text).catch(() => undefined);
     }
-  }
-
-  /**
-   * 任务产出的图片先直接发到对话里（前端渲染成缩略图），再告诉助手发了什么、还有哪些别的文件，
-   * 免得它再派一个任务去"取回"图片。
-   */
-  private async postFiles(job: Job): Promise<{ note: string; posted: number }> {
-    const posted: string[] = [];
-    const others: string[] = [];
-    for (const path of job.files ?? []) {
-      if (isImagePath(path) && existsSync(path)) {
-        // 第一张开新的一组：任务结果不跟在派任务那轮回复后面
-        await this.runtime.router.addItem(job.assistantId, {
-          kind: "file",
-          path,
-          name: basename(path),
-          ...(posted.length ? {} : { lead: true as const }),
-        });
-        posted.push(basename(path));
-      } else {
-        others.push(path);
-      }
-    }
-    const lines: string[] = [];
-    if (posted.length) lines.push(`图片已发到对话里：${posted.join("、")}`);
-    if (others.length) lines.push(`文件：${others.join("、")}`);
-    return { note: lines.length ? `\n${lines.join("\n")}` : "", posted: posted.length };
   }
 
   async reply(jobId: string, text: string, source: "user" | "router" = "user"): Promise<void> {
@@ -825,8 +793,8 @@ export class JobManager {
       name: "save_skill", label: "保存技能",
       description: "保存或修补这个助手的技能。name 只用小写字母、数字和连字符，和已有技能同名就是修补，旧版会保留。content 是 SKILL.md 的正文，不用写开头的 name 和 description。files 放脚本和参考资料，路径以 scripts/ 或 references/ 开头。",
       parameters: Type.Object({
-        name: Type.String({ description: "技能的目录名，如 gateway-daily-check。" }),
-        title: Type.String({ description: "中文名，如「网关每日巡检」。" }),
+        name: Type.String({ description: "技能的目录名，如 weekly-report。" }),
+        title: Type.String({ description: "中文名，如「每周周报」。" }),
         description: Type.String({ description: "一句话写什么时候用，120 字以内。" }),
         content: Type.String({ description: "SKILL.md 正文。" }),
         files: Type.Optional(Type.Array(Type.Object({ path: Type.String(), content: Type.Optional(Type.String()), from: Type.Optional(Type.String()) }), { description: "可选，脚本和参考资料：path 加 content，或 path 加 from（工作目录里已有文件的路径，直接复制）。" })),
@@ -929,18 +897,19 @@ export class JobManager {
       createdAt: new Date().toISOString(),
     };
     this.store.saveApproval(approval);
-    // 任务半路来问，是单独的一组，不贴着上一轮回复
-    await this.runtime.router.addItem(job.assistantId, { kind: "question", approvalId: approval.id, lead: true });
-    this.bus.emit({ type: "approval", approval });
-    pushApproval({ push: this.runtime.push, store: this.store }, approval);
+    if (!worker) { this.store.saveApproval({ ...approval, status: "expired" }); return "（任务未在运行）"; }
+    const answer = new Promise<string>((resolve) => { worker.ask = resolve; });
+    const delegationId = !job.routineId && job.delegationId && this.runtime.delegations.resume(job.delegationId) ? job.delegationId : undefined;
     const waiting: Job = { ...job, status: "waiting" };
     this.store.saveJob(waiting);
+    worker.job = waiting;
+    worker.pausedAt = Date.now();
     this.bus.emit({ type: "job", job: waiting });
-    if (worker) { worker.job = waiting; worker.pausedAt = Date.now(); }
-    return await new Promise<string>((resolve) => {
-      if (worker) worker.ask = resolve;
-      else resolve("（任务未在运行）");
-    });
+    const sentence = (value: string) => /[。！？.!?]\s*$/.test(value) ? value : `${value}。`;
+    const text = `任务「${job.title}」在等你回复：${sentence(input.title)}${input.detail ? sentence(input.detail) : ""}选项：${input.options.map((option) => `${option.key} ${option.label}`).join("、")}。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。`;
+    if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
+    else void this.runtime.router.event(job.assistantId, text).catch((error) => console.error("任务提问投递失败：", error));
+    return await answer;
   }
 
   /** Worker 的 ask_user 等答案时，审批被答复（answer 是回给模型的那句）。 */

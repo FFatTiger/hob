@@ -127,6 +127,12 @@ describe("技能来源", () => {
       const result = await response.json() as { skills: { name: string; source: string }[]; loreActive: boolean };
       expect(result.loreActive).toBe(false);
       expect(result.skills).toContainEqual(expect.objectContaining({ name: "mine", source: "hob" }));
+      const memory = hob.runtime.settings.memory();
+      hob.runtime.settings.memory = () => ({ ...memory, provider: "lore" });
+      hob.runtime.pi.discoverLoreSkills = async () => { throw new Error("Lore 连不上"); };
+      const broken = await (await app.request("/api/skills", { headers: { cookie } })).json() as { skills: { name: string }[]; loreError?: string };
+      expect(broken.loreError).toBe("Lore 连不上");
+      expect(broken.skills).toContainEqual(expect.objectContaining({ name: "mine" }));
       expect((await app.request("/api/skills/mine", { method: "DELETE", headers: { cookie } })).status).toBe(200);
       expect(existsSync(dir)).toBe(false);
     } finally { hob.close(); }

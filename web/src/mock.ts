@@ -969,6 +969,7 @@ const MCP_MOCK: McpView = {
 
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
+  let globalRules: Rule[] = [];
   if (new URLSearchParams(globalThis.location?.search ?? "").has("citation")) (db.items.hob ??= []).push({ kind: "assistant", id: "mock-citation", at: new Date().toISOString(), text: "这里是资料里的结论：[工作记录.md](#k/k-2/0)。" });
   let collections: KnowledgeCollection[] = [{ id: "kc-1", name: "工作资料", createdAt: minsAgo(1000), count: 0 }, { id: "kc-2", name: "灵感收藏", createdAt: minsAgo(900), count: 0 }];
   let entries: KnowledgeEntry[] = ["项目封面.png", "产品设计页面.html", "工作记录.md", "数据汇总.csv", "参考文档.pdf", "插画.png", "会议纪要.md", "网站方案.html", "预算表.csv", "资料.txt", "附件.json", "录音.mp3"].map((name, i) => ({
@@ -1095,6 +1096,12 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       settings: clone(db.settings),
     }),
     settings: async () => clone(db.settings),
+    rules: async () => ({ rules: clone(globalRules) }),
+    saveRules: async (rules) => {
+      globalRules = rules.map((rule) => ({ ...rule, id: rule.id ?? `rule-${crypto.randomUUID()}`, changedAt: globalRules.find((old) => old.id === rule.id && old.text === rule.text && old.mode === rule.mode)?.changedAt ?? new Date().toISOString() }));
+      emit({ type: "rules" });
+      return { rules: clone(globalRules) };
+    },
     models: async () => ({ ...clone(MOCK_MODELS), roster: clone(db.settings.settings.models.roster) }),
     providers: async () => providersView(),
     claude: async () => ({ settings: clone(db.settings), status: { found: false, loggedIn: false } }),

@@ -167,14 +167,14 @@ function childEnv() {
   return { ...env, DISPLAY: screen?.display, DESKTOP_SCREEN: screen?.id, DESKTOP_DOCK_TOKEN: screen ? dockToken(screen.id) : "", DESKTOP_PORT: String(PORT), TZ, LANG: process.env.LANG || "zh_CN.UTF-8", LANGUAGE: process.env.LANGUAGE || "zh_CN:zh" };
 }
 
-function run(cmd, args, { timeoutMs = 15000 } = {}) {
+function run(cmd, args, { timeoutMs = 15000, input, maxOutput = 65536 } = {}) {
   return new Promise((resolve) => {
     let settled = false;
     const child = spawn(cmd, args, { env: childEnv() });
-    let out = "";
+    let out = Buffer.alloc(0);
     let err = "";
     child.stdout.on("data", (d) => {
-      out = (out + d).slice(-65536);
+      out = Buffer.concat([out, d]).subarray(-maxOutput);
     });
     child.stderr.on("data", (d) => {
       err = (err + d).slice(-65536);
@@ -184,13 +184,15 @@ function run(cmd, args, { timeoutMs = 15000 } = {}) {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      resolve({ code, out, err });
+      resolve({ code, out: out.toString("utf8"), err });
     };
     child.on("error", (e) => {
       err = (err + "\n" + String(e.message || e)).slice(-65536);
       finish(-1);
     });
-    child.on("exit", (code) => finish(code ?? -1));
+    child.on(cmd === "xclip" && args.includes("-out") ? "close" : "exit", (code) => finish(code ?? -1));
+    child.stdin.on("error", () => {});
+    child.stdin.end(input);
   });
 }
 
@@ -639,6 +641,19 @@ function doInput(actions) {
   return screen.inputQueue;
 }
 
+function pasteText(text) {
+  const screen = context.getStore();
+  screen.inputQueue = screen.inputQueue.catch(() => {}).then(async () => {
+    const written = await run("xclip", ["-selection", "clipboard", "-in"], { input: text });
+    if (written.code !== 0) throw new HttpError(500, "clipboard_failed", `写入剪贴板失败：${firstLine(written.err)}`);
+    const read = await run("xclip", ["-selection", "clipboard", "-out"], { maxOutput: 1024 * 1024 });
+    if (read.code !== 0 || read.out !== text) throw new HttpError(500, "clipboard_failed", "无法确认云桌面剪贴板内容。");
+    const pasted = await run("xdotool", ["key", "--clearmodifiers", "ctrl+v"]);
+    if (pasted.code !== 0) throw new HttpError(500, "input_failed", `粘贴失败：${firstLine(pasted.err)}`);
+  });
+  return screen.inputQueue;
+}
+
 // ---------- HTTP / WS ----------
 function sendJson(res, status, obj) {
   const body = JSON.stringify(obj);
@@ -687,7 +702,7 @@ function listProfiles() {
 const server = http.createServer(async (req, res) => {
   const pathname = new URL(req.url, "http://localhost").pathname;
   if (!authorized(req) && !dockAuthorized(req, pathname)) return sendError(res, 401, "unauthorized", "缺 Bearer 令牌");
-  const route = /^\/api\/screens\/([a-z0-9-]{1,64})\/(start|stop|screenshot|input|browser\/(?:start|stop|focus))$/.exec(pathname);
+  const route = /^\/api\/screens\/([a-z0-9-]{1,64})\/(start|stop|screenshot|input|paste|browser\/(?:start|stop|focus))$/.exec(pathname);
   try {
     if (req.method === "GET" && pathname === "/api/health") {
       return sendJson(res, 200, {
@@ -728,6 +743,14 @@ const server = http.createServer(async (req, res) => {
             const png = await screenshot();
             res.writeHead(200, { "content-type": "image/png" });
             return res.end(png);
+          }
+          if (req.method === "POST" && action === "paste") {
+            const body = await readJson(req);
+            if (typeof body?.text !== "string" || !body.text || body.text.includes("\0") || Buffer.byteLength(body.text) > 512 * 1024) {
+              return sendError(res, 400, "bad_request", "文字须为非空文本，且不能超过 512KB 或包含空字符。");
+            }
+            await pasteText(body.text);
+            return sendJson(res, 200, {});
           }
           if (req.method === "POST" && action === "input") {
             const body = await readJson(req);

@@ -7,7 +7,7 @@ type StatusMeta = { text: string; icon: IconName; color: "" | "live" | "ok" | "b
 export const JOB_STATUS: Record<JobStatus, StatusMeta> = {
   queued: { text: "排队中", icon: "clock", color: "", spin: false },
   running: { text: "进行中", icon: "spin", color: "live", spin: true },
-  waiting: { text: "等你确认", icon: "pause", color: "", spin: false },
+  waiting: { text: "等助手回复", icon: "pause", color: "", spin: false },
   done: { text: "已完成", icon: "check", color: "ok", spin: false },
   stuck: { text: "受阻", icon: "close", color: "bad", spin: false },
   failed: { text: "失败", icon: "close", color: "bad", spin: false },

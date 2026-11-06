@@ -25,6 +25,13 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "search_knowledge": label = withValue("正在查知识库", value("query")); break;
     case "web_search": label = withValue("搜索", value("query")); break;
     case "web_fetch": label = "读取网页"; break;
+    case "browser_open": { let target = value("url"); try { target = new URL(target).hostname; } catch { /* 保留原地址 */ } label = `浏览器 · 打开 ${target}`; break; }
+    case "browser_snapshot": label = "浏览器 · 读取页面"; break;
+    case "browser_click": label = "浏览器 · 点击"; break;
+    case "browser_type": label = "浏览器 · 输入"; break;
+    case "browser_press": label = "浏览器 · 按键"; break;
+    case "browser_back": label = "浏览器 · 返回"; break;
+    case "browser_screenshot": label = "浏览器 · 截图"; break;
     case "generate_image": label = "画图"; break;
     case "overview": label = "查看工作概况"; break;
     case "read_skill": label = withValue("看技能", value("name")); break;

@@ -415,15 +415,15 @@ svg.i {
   margin: 14px 0 4px;
 }
 .pins > .srow,
-.mpins > .pin {
+.mpins > .pinslot {
   width: 33.333%;
 }
 .pins.n2 > .srow,
-.mpins.n2 > .pin {
+.mpins.n2 > .pinslot {
   width: 40%;
 }
 .pins.n1 > .srow,
-.mpins.n1 > .pin {
+.mpins.n1 > .pinslot {
   width: 56%;
 }
 .n1 .pin .nm,
@@ -475,6 +475,33 @@ svg.i {
 .home-row {
   user-select: none;
   -webkit-touch-callout: none;
+}
+/*
+ * 置顶头像可以按住拖着换位置：拖动时浏览器别先把它当成滚动（触摸），松开手指也不会弹出系统菜单；
+ * 抬起的那一格跟着指针走，所以它的位移不能有过渡，也不能被外面的行动画裁掉。
+ */
+.pins .pin,
+.mpins .pin {
+  cursor: grab;
+  touch-action: none;
+}
+/* 搜索时置顶只显示筛出来的几位，这时候不接拖动：光标也别装成能拖 */
+.pins.locked .pin,
+.mpins.locked .pin {
+  cursor: default;
+}
+.pins > .srow.lift,
+.mpins > .pinslot.lift {
+  position: relative;
+  z-index: 5;
+  transition: none;
+  cursor: grabbing;
+}
+.pins > .srow.lift .pin,
+.mpins > .pinslot.lift .pin {
+  background: var(--sel);
+  box-shadow: 0 8px 20px rgb(0 0 0 / 18%);
+  transition: none;
 }
 .gt {
   display: flex;

@@ -1,18 +1,20 @@
 // 左栏：搜索 + 置顶助手 + 首页各组（待确认 / 进行中 / 日常 / 最近任务 / 定时任务）+ 底部设置。
-// 置顶跟着整栏一起滚，「设置」固定在底部。
+// 置顶跟着整栏一起滚，「设置」固定在底部；置顶头像可以按住拖着换位置。
 import type { AssistantSummary } from "../../../shared/types.ts";
-import { matches } from "../home.ts";
+import { pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
 import { newAssistant, openKnowledge, openSettings, setQuery, useApp } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
+import { usePinDrag } from "./PinDrag.ts";
 
 const assistantKey = (a: AssistantSummary) => a.id;
 
 export function Sidebar() {
   const s = useApp();
-  const pins = s.assistants.filter((a) => a.pinned && !a.hidden && matches(a, s.query));
-  const pinRows = useRows(pins, assistantKey);
+  const pins = pinList(s.assistants, s.query);
+  const drag = usePinDrag(pins, s.query.trim().length > 0);
+  const pinRows = useRows(drag.order, assistantKey);
   const layout = pinLayout(pins.length);
 
   return (
@@ -27,11 +29,15 @@ export function Sidebar() {
         </button>
       </div>
       <div className="side-scroll">
-        <div className={`pins${layout.cls}`}>
+        <div className={`pins${layout.cls}${drag.locked ? " locked" : ""}`} ref={drag.grid}>
           {pinRows.map((row) => (
-            <div className={`srow${row.state === "still" ? "" : ` ${row.state}`}`} key={row.key}>
+            <div
+              className={["srow", row.state === "still" ? "" : row.state, drag.className(row.item.id)].filter(Boolean).join(" ")}
+              key={row.key}
+              data-pin={row.key}
+            >
               <div className="srowclip">
-                <Pin a={row.item} sel={row.item.id === s.sel} size={layout.size} />
+                <Pin a={row.item} sel={row.item.id === s.sel} size={layout.size} drag={drag.target(row.item.id)} />
               </div>
             </div>
           ))}

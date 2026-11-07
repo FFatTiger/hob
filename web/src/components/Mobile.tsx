@@ -1,13 +1,15 @@
 // 手机（宽 < 768px）：列表页 + 右栏内容的整页。
-import { matches } from "../home.ts";
+import { pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { newAssistant, openKnowledge, openSettings, setQuery, setSearch, useApp, type PanelPage } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { Panel } from "./Panel.tsx";
+import { usePinDrag } from "./PinDrag.ts";
 
 export function MobileList() {
   const s = useApp();
-  const pins = s.assistants.filter((a) => a.pinned && !a.hidden && matches(a, s.query));
+  const pins = pinList(s.assistants, s.query);
+  const drag = usePinDrag(pins, s.query.trim().length > 0);
   const layout = pinLayout(pins.length);
 
   return (
@@ -39,9 +41,11 @@ export function MobileList() {
           </>
         )}
       </div>
-      <div className={`mpins${layout.cls}`}>
-        {pins.map((a) => (
-          <Pin key={a.id} a={a} size={layout.size} />
+      <div className={`mpins${layout.cls}${drag.locked ? " locked" : ""}`} ref={drag.grid}>
+        {drag.order.map((a) => (
+          <div className={["pinslot", drag.className(a.id)].filter(Boolean).join(" ")} key={a.id} data-pin={a.id}>
+            <Pin a={a} size={layout.size} drag={drag.target(a.id)} />
+          </div>
         ))}
       </div>
       <div className="mlist">

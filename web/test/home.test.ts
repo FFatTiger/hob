@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Approval, AssistantSummary, Job, Routine } from "../../shared/types.ts";
-import { homeGroups, RECENT } from "../src/home.ts";
+import { homeGroups, pinList, RECENT } from "../src/home.ts";
 
 const NOW = Date.UTC(2026, 10, 2, 12, 0, 0);
 /** n 分钟前（ISO，和接口给的一致用 Z）。 */
@@ -146,5 +146,56 @@ describe("首页分组", () => {
     const paused = { ...bare, routines: [routine("r-1", false)] };
     expect(homeGroups(paused, NOW).routines).toEqual([]);
     expect(homeGroups(paused, NOW).empty).toBe(true);
+  });
+});
+
+describe("置顶先后", () => {
+  const at = (list: AssistantSummary[]) => pinList(list, "").map((a) => a.id);
+
+  it("都没排过时按创建时间，先建的在前", () => {
+    expect(at([
+      asst("later", { pinned: true, createdAt: minsAgo(10) }),
+      asst("earlier", { pinned: true, createdAt: minsAgo(90) }),
+    ])).toEqual(["earlier", "later"]);
+  });
+
+  it("排过的按位置数字，和创建时间无关", () => {
+    expect(at([
+      asst("hob", { pinned: true, pinOrder: 1, createdAt: minsAgo(900) }),
+      asst("wifi", { pinned: true, pinOrder: 0, createdAt: minsAgo(1) }),
+    ])).toEqual(["wifi", "hob"]);
+  });
+
+  it("新置顶的还没有位置，排在排过的后面", () => {
+    expect(at([
+      asst("fresh", { pinned: true, createdAt: minsAgo(1) }),
+      asst("first", { pinned: true, pinOrder: 0, createdAt: minsAgo(500) }),
+      asst("second", { pinned: true, pinOrder: 1, createdAt: minsAgo(400) }),
+    ])).toEqual(["first", "second", "fresh"]);
+  });
+
+  it("没置顶的、收起的都不进这一排，搜索时只留匹配的", () => {
+    const list = [
+      asst("hob", { pinned: true, pinOrder: 0 }),
+      asst("off", { pinned: false }),
+      asst("folded", { pinned: true, hidden: true }),
+      asst("wifi", { pinned: true, pinOrder: 1, name: "网络管家", duty: "网络" }),
+    ];
+    expect(pinList(list, "").map((a) => a.id)).toEqual(["hob", "wifi"]);
+    expect(pinList(list, "网络").map((a) => a.id)).toEqual(["wifi"]);
+  });
+
+  it("首页分组里的置顶也跟着位置走", () => {
+    const groups = homeGroups({
+      assistants: [
+        asst("a", { pinned: true, pinOrder: 1, createdAt: minsAgo(600) }),
+        asst("b", { pinned: true, pinOrder: 0, createdAt: minsAgo(30) }),
+      ],
+      jobs: {},
+      approvals: {},
+      routines: [],
+      query: "",
+    });
+    expect(groups.pins.map((a) => a.id)).toEqual(["b", "a"]);
   });
 });

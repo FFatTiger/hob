@@ -19,6 +19,20 @@ export function byLast(a: AssistantSummary, b: AssistantSummary): number {
   return (b.last?.at ?? "").localeCompare(a.last?.at ?? "");
 }
 
+/**
+ * 置顶头像的先后：排过的按位置数字从小到大，没排过的排在后面，都还没排过就看创建时间（老的在前）。
+ * 拖动头像换位置时把新先后写成 0、1、2…，所以后来才置顶的助手总在最后，拖过一次就跟着走。
+ */
+export function byPinOrder(a: AssistantSummary, b: AssistantSummary): number {
+  const at = (x: AssistantSummary) => x.pinOrder ?? Number.MAX_SAFE_INTEGER;
+  return at(a) - at(b) || a.createdAt.localeCompare(b.createdAt);
+}
+
+/** 顶部那排置顶头像：去掉收起的、按搜索词过一遍，再按排好的先后。左栏和手机首页共用这一份。 */
+export function pinList(assistants: AssistantSummary[], query: string): AssistantSummary[] {
+  return assistants.filter((a) => a.pinned && !a.hidden && matches(a, query)).sort(byPinOrder);
+}
+
 /** 还在跑的（含排队、等确认）。 */
 export const isLive = (j: Job) => j.status === "running" || j.status === "queued" || j.status === "waiting";
 
@@ -66,7 +80,7 @@ export function homeGroups(s: HomeSource, now = Date.now()): HomeGroups {
   const searching = s.query.trim().length > 0;
   const since = new Date(now - RECENT_MS).toISOString();
   const jobs = Object.values(s.jobs);
-  const pins = s.assistants.filter((a) => a.pinned && !a.hidden && matches(a, s.query));
+  const pins = pinList(s.assistants, s.query);
   const rows = s.assistants.filter((a) => !a.pinned && !a.hidden && matches(a, s.query)).sort(byLast);
   const hidden = s.assistants.filter((a) => a.hidden && matches(a, s.query)).sort(byLast);
   const asks: Approval[] = searching

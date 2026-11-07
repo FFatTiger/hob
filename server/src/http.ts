@@ -832,6 +832,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       ...(typeof body.dutyLong === "string" ? { dutyLong: body.dutyLong } : {}),
       ...(typeof body.sprite === "string" ? { sprite: body.sprite } : {}),
       ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
+      // 置顶区里的位置：拖动头像换位置后按 0、1、2… 存，取整且不为负
+      ...(typeof body.pinOrder === "number" && Number.isFinite(body.pinOrder) ? { pinOrder: Math.max(0, Math.round(body.pinOrder)) } : {}),
       ...(typeof body.hidden === "boolean" ? { hidden: body.hidden } : {}),
       ...(typeof body.notify === "boolean" ? { notify: body.notify } : {}),
       ...(models ? { models } : {}),

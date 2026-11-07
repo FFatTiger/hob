@@ -225,6 +225,8 @@ export interface Assistant {
   prop?: CustomProp;
   primary: boolean; // 只有 hob 为 true
   pinned: boolean; // 左栏顶部大头像
+  /** 置顶区里的位置：小的在前，拖动头像换位置时改它；没排过的排在排过的后面，再按创建时间 */
+  pinOrder?: number;
   hidden: boolean; // 收起的助手
   notify: boolean; // 需要确认时通知我
   instructions: string; // 补充说明：用户可直接编辑该助手需要知道的专属事实

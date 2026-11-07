@@ -72,7 +72,7 @@ export function DropFiles() {
     <div className="dropmask" role="status">
       <div className="dropcard">
         <div className="t">松开即可上传</div>
-        <div className="d">{a ? `文件会加进和${a.name}的输入框，发送时一起发出去` : "文件会加进输入框，发送时一起发出去"}</div>
+        <div className="d">{a ? `文件会加进和 ${a.name} 的输入框，发送时一起发出去` : "文件会加进输入框，发送时一起发出去"}</div>
       </div>
     </div>
   );

@@ -139,9 +139,9 @@ export function App() {
   if (knowledge.mounted) {
     return (
       <>
+        {/* 知识库自己能拖文件进分类，这里不接管，免得一次拖放传两份 */}
         <Knowledge narrow={narrow} leaving={knowledge.leaving} />
         {narrow ? mobileLayers : null}
-        {drop}
         {toast}
       </>
     );

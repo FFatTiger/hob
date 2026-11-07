@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useState } from "react";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
+import { DropFiles } from "./components/DropFiles.tsx";
 import { FilePreviewOverlay } from "./components/FilePreview.tsx";
 import { JobOverlay } from "./components/JobDetail.tsx";
 import { Login } from "./components/Login.tsx";
@@ -120,12 +121,16 @@ export function App() {
     </button>
   ) : null;
 
+  // 拖文件进窗口：只在界面里接管，登录页/连不上时不管
+  const drop = <DropFiles />;
+
   if (settings.mounted) {
     return (
       <>
         <SettingsPage narrow={narrow} leaving={settings.leaving} />
         {/* 设置 → 工作 → 查看全部任务：任务记录直接盖在设置页上 */}
         {narrow ? mobileLayers : <><JobOverlay /><FilePreviewOverlay /></>}
+        {drop}
         {toast}
       </>
     );
@@ -134,6 +139,7 @@ export function App() {
   if (knowledge.mounted) {
     return (
       <>
+        {/* 知识库自己能拖文件进分类，这里不接管，免得一次拖放传两份 */}
         <Knowledge narrow={narrow} leaving={knowledge.leaving} />
         {narrow ? mobileLayers : null}
         {toast}
@@ -159,6 +165,7 @@ export function App() {
           {mobileLayers}
         </div>
         <AssistantMenu />
+        {drop}
         {toast}
       </>
     );
@@ -181,6 +188,7 @@ export function App() {
       </div>
       <AssistantMenu />
       {s.offline ? <div className="toast">{s.offline}</div> : null}
+      {drop}
       {toast}
     </div>
   );

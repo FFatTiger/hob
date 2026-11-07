@@ -1814,6 +1814,117 @@ svg.i {
   color: var(--text3);
   margin-top: 1px;
 }
+
+/* 助手列表卡 / 详情卡：list_assistants、get_assistant 出的卡片，点一下打开右栏编辑面板 */
+.adir {
+  background: var(--card);
+  border-radius: 14px;
+  padding: 12px 12px 10px;
+  margin: 10px 0 4px;
+}
+.adirhead {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 4px 6px;
+  font-size: 13px;
+  color: var(--text2);
+}
+.adirhead .sp {
+  flex: 1;
+}
+.adirhead small {
+  color: var(--text3);
+  font-size: 12px;
+}
+.adirrow,
+.adirtop {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 8px 4px;
+  border: 0;
+  border-radius: 10px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background var(--t-fast);
+}
+.adirrow:hover,
+.adirtop:hover {
+  background: var(--field);
+}
+.adirtop {
+  gap: 12px;
+  padding: 0 2px 8px;
+  border-radius: 8px;
+}
+.adirmain {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  flex: 1;
+  min-width: 0;
+}
+.adirname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 14px;
+  font-weight: 600;
+}
+.adirname em {
+  font-style: normal;
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text2);
+  background: var(--field);
+  border-radius: 20px;
+  padding: 1px 6px;
+}
+.adirduty {
+  font-size: 12.5px;
+  color: var(--text3);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.adirflags {
+  display: flex;
+  gap: 4px;
+  flex: none;
+}
+.adirflags em {
+  font-style: normal;
+  font-size: 11px;
+  color: var(--text2);
+  background: var(--field);
+  border-radius: 20px;
+  padding: 2px 7px;
+  white-space: nowrap;
+}
+.adirgo {
+  flex: none;
+  color: var(--text3);
+  font-weight: normal;
+}
+.adirgone {
+  padding: 8px 4px 2px;
+  font-size: 12.5px;
+  color: var(--text3);
+}
+.adetail {
+  padding: 14px 14px 12px;
+}
+.adiractions {
+  display: flex;
+  justify-content: flex-end;
+  padding-top: 10px;
+  border-top: 1px solid var(--line);
+}
 .kv {
   display: flex;
   gap: 14px;

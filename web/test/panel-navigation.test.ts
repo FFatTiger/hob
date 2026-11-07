@@ -21,6 +21,15 @@ describe("右栏状态切换", () => {
     expect(store.getState().panelStack).toEqual([{ kind: "routine", id: "r" }]);
   });
 
+  it("对话里的助手卡能打开指定助手的编辑面板", async () => {
+    const store = await import("../src/store.ts");
+    store.closePanelPages();
+    store.openAssistantPanel("bird");
+    expect(store.getState().panelStack).toEqual([{ kind: "assistant", id: "bird" }]);
+    store.openAssistantPanel();
+    expect(store.getState().panelStack).toEqual([{ kind: "assistant", id: store.getState().sel ?? "hob" }]);
+  });
+
   it("进入知识库或设置清空栈", async () => {
     const store = await import("../src/store.ts");
     store.openFilePreview("/a");

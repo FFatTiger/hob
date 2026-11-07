@@ -498,6 +498,8 @@ export type Item = (
   | { kind: "job"; id: string; at: Iso; jobId: string; round?: number } // 第几轮（续做一次 +1），缺省是第 0 轮
   | { kind: "delegation"; id: string; at: Iso; delegationId: string }
   | { kind: "draft"; id: string; at: Iso; draftId: string }
+  | { kind: "assistants"; id: string; at: Iso; ids: string[] } // 助手列表卡（list_assistants）：点一行打开右栏编辑面板
+  | { kind: "assistantDetail"; id: string; at: Iso; assistantId: string } // 单个助手详情卡（get_assistant）
   | { kind: "image"; id: string; at: Iso; prompt: string; size?: string; startedAt: Iso; status: "pending" | "done" | "failed"; path?: string; error?: string }
   | { kind: "file"; id: string; at: Iso; path: string; name: string; meta?: string } // meta 如 "3200 字 · 4 张图"
 ) & {

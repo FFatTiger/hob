@@ -10,7 +10,7 @@ export interface FilePreviewState {
 export type PanelPage =
   | { kind: "routine"; id: string }
   | { kind: "newRoutine" }
-  | { kind: "assistant" }
+  | { kind: "assistant"; id?: string } // id 缺省是当前选中的助手；从卡片打开时带上是哪个
   | { kind: "routines" | "skills" | "knowledge" | "rules" }
   | { kind: "jobs" }
   | { kind: "job"; id: string; round?: number }

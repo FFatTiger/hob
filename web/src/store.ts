@@ -1656,8 +1656,11 @@ export function openNewRoutine() {
   set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "newRoutine" }) }));
 }
 
-export function openAssistantPanel() {
-  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "assistant" }) }));
+/** 打开助手编辑面板；不传 id 就是当前选中的那个。档案没读过时顺手读一份。 */
+export function openAssistantPanel(id?: string) {
+  const aid = id ?? state.sel ?? "hob";
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "assistant", id: aid }) }));
+  if (!state.profiles[aid]) void loadProfile(aid);
 }
 
 export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules") {

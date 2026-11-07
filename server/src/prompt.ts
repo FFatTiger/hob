@@ -91,6 +91,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
     for (const other of others) lines.push(`- ${other.name}（${other.id}）：${other.duty}。${other.dutyLong?.trim() ?? ""}`);
     if (others.length) lines.push("一件事明显归某个助手管，用 message_assistant 转给它，由它负责到底，结果会回到你这里。转出去以后就等它的结果，同一件事你这边不再另派任务，免得两边撞车。");
     lines.push("同类的事反复出现，又没有合适的助手管，可以用 propose_assistant 提议新建一个专属助手，用户点了创建才会建。");
+    lines.push("用户要改某个助手的名字、职责、补充说明、置顶或收起，用 list_assistants 找到 id（这个列表包含收起的助手），再用 update_assistant 改；旧档案会自动留一份备份，不用自己抄。");
   }
   return lines.join("\n");
 }

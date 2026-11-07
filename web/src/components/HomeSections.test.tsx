@@ -52,6 +52,15 @@ describe("首页头像状态", () => {
     expect(pin).not.toContain('class="badge"');
   });
 
+  it("忙碌标记是三个独立的点，供依次跳动的动画使用", () => {
+    const busy = { ...assistant, busy: true };
+    state.assistants = [busy];
+    for (const html of render(busy)) {
+      const icon = html.slice(html.indexOf('class="av-mark present busy"'));
+      expect(icon.match(/class="av-dot"/g)).toHaveLength(3);
+    }
+  });
+
   it("以最近结束任务为准，受阻优先于忙碌", () => {
     state.jobs.failed = { assistantId: "a", status: "failed", endedAt: "2026-01-03" };
     const busy = { ...assistant, busy: true };

@@ -758,6 +758,23 @@ svg.i {
 .av-mark-icon { display: grid; place-items: center; width: 100%; height: 100%; animation: enter-fade var(--t-fast) var(--ease-in); }
 .av-mark.busy { background: #5aaeff; }
 .av-mark svg { width: 70%; fill: currentColor; }
+/* 忙碌标记里的三个点从左到右依次上跳，表示正在运行；上跳会超出 svg 的 viewBox，所以放开裁剪。减少动态效果时由文件末尾的全局规则停掉，只剩静止的三点 */
+.av-mark.busy svg { overflow: visible; }
+.av-mark.busy .av-dot { animation: mark-dot 1.1s ease-in-out infinite; }
+.av-mark.busy .av-dot:nth-child(1) { animation-delay: -0.28s; }
+.av-mark.busy .av-dot:nth-child(2) { animation-delay: -0.14s; }
+@keyframes mark-dot {
+  0%,
+  62%,
+  100% {
+    opacity: 0.8;
+    transform: translateY(0);
+  }
+  31% {
+    opacity: 1;
+    transform: translateY(-1.6px);
+  }
+}
 .av-mark.ask { background: #f5a524; }
 .av-mark.stuck { background: var(--danger); }
 .av-mark.done { background: var(--ok); }

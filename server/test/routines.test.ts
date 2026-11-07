@@ -27,7 +27,7 @@ describe("定时", () => {
         text("简报好了。"),
         text("好"),
       ]);
-      const job = await hob.runtime.routines.runNow(routine.id);
+      const job = (await hob.runtime.routines.runNow(routine.id)).job!;
       expect(job.routineId).toBe(routine.id);
       expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "job" && item.jobId === job.id)).toHaveLength(1);
       await hob.runtime.jobs.waitIdle();

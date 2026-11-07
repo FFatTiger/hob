@@ -1,4 +1,4 @@
-// MCP 服务配置：读写的目标就是引擎自己读的那份 HOB_HOME/engine/mcp.json（SDK 的 MCP 扩展
+// MCP 服务配置：读写的目标就是引擎自己读的那份 HOB_HOME/system/engine/mcp.json（SDK 的 MCP 扩展
 // 在会话启动时连服务）。设置页的所有接口都经过这里；密钥（环境变量 / 请求头的值）只在
 // 本模块和文件之间流动，接口只回「已设置」或不含密钥的整值 ${VAR} / !command 引用。
 import { exec as execCallback } from "node:child_process";
@@ -28,6 +28,7 @@ import type {
   McpView,
 } from "../../shared/mcp.ts";
 import { localPiDir } from "./imports.ts";
+import { engineDir } from "./config.ts";
 
 const exec = promisify(execCallback);
 
@@ -49,7 +50,7 @@ const PROBE_CONCURRENCY = 4;
 const CLIENT_INFO = { name: "hob", version: "1.0" };
 
 export function mcpConfigPath(home: string): string {
-  return join(home, "engine", "mcp.json");
+  return join(engineDir(home), "mcp.json");
 }
 
 /** 服务名身份：- 和 _ 是同一个服务（引擎规则），重名按这个比。 */

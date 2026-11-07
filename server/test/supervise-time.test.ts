@@ -23,7 +23,7 @@ describe("任务耗时督办", () => {
     try {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "做", schedules: ["0 9 * * *"] });
       vi.spyOn(hob.runtime.jobs, "pump").mockImplementation(() => {});
-      const empty = await hob.runtime.routines.runNow(routine.id);
+      const empty = (await hob.runtime.routines.runNow(routine.id)).job!;
       expect(empty.expect).toEqual({ minutes: 10, source: "default" });
       hob.runtime.store.saveRoutine({ ...routine, runs: [
         { jobId: "a", at: "", status: "done", durationMs: 61_000 }, { jobId: "b", at: "", status: "failed", durationMs: 999_000 },
@@ -31,7 +31,7 @@ describe("任务耗时督办", () => {
         { jobId: "e", at: "", status: "done", durationMs: 180_000 }, { jobId: "f", at: "", status: "done", durationMs: 300_000 },
         { jobId: "g", at: "", status: "done", durationMs: 1 },
       ] });
-      const job = await hob.runtime.routines.runNow(routine.id);
+      const job = (await hob.runtime.routines.runNow(routine.id)).job!;
       expect(job.expect).toEqual({ minutes: 3, source: "routine", runs: 5 });
       hob.runtime.store.saveJob({ ...job, status: "done" });
       await hob.runtime.jobs.reply(job.id, "继续");

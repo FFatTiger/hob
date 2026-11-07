@@ -154,7 +154,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["readme-chat", "readme-cards", "readme-dark", "readme-rules", "readme-desktop", "readme-page", "readme-knowledge", "readme-list", "readme-question", "readme-profile", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
+const SCENES: SceneId[] = ["readme-chat", "readme-cards", "readme-dark", "readme-rules", "readme-desktop", "readme-page", "readme-knowledge", "readme-list", "readme-question", "readme-profile", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const api: HobApi = MOCK ? createMock(scene) : realApi;
@@ -1154,9 +1154,9 @@ function patchAttachment(id: string, patch: Partial<Attachment>) {
   }));
 }
 
-function startUpload(att: Attachment): Promise<string> {
+function startUpload(att: Attachment, assistantId: string): Promise<string> {
   const file = uploadFiles.get(att.id)!;
-  const job = api.upload(file).then(
+  const job = api.upload(file, assistantId).then(
     (path) => {
       const preview = previews.get(localPath(att));
       if (preview) previews.set(path, preview);
@@ -1174,8 +1174,8 @@ function startUpload(att: Attachment): Promise<string> {
   return job;
 }
 
-/** 选了文件：立刻出现在输入框里（图片用本地缩略图），后台开始传。 */
-export function attach(files: FileList | File[]) {
+/** 选了文件：立刻出现在输入框里（图片用本地缩略图），后台开始传。传进当前选中的助手目录。 */
+export function attach(files: FileList | File[], assistantId: string) {
   const added: Attachment[] = Array.from(files).map((file) => {
     const att: Attachment = { id: `att-${Math.random().toString(36).slice(2, 10)}`, name: file.name, status: "uploading" };
     uploadFiles.set(att.id, file);
@@ -1183,7 +1183,7 @@ export function attach(files: FileList | File[]) {
     return att;
   });
   set((s) => ({ attachments: [...s.attachments, ...added] }));
-  added.forEach((att) => void startUpload(att));
+  added.forEach((att) => void startUpload(att, assistantId));
 }
 
 export function removeAttachment(id: string) {
@@ -1192,7 +1192,7 @@ export function removeAttachment(id: string) {
 
 /** 等这条消息的附件都传好（失败过的重传），拿到服务器路径。 */
 async function uploadedPaths(p: PendingMessage): Promise<string[]> {
-  return Promise.all(p.attachments.map((a) => uploads.get(a.id) ?? startUpload(a)));
+  return Promise.all(p.attachments.map((a) => uploads.get(a.id) ?? startUpload(a, p.assistantId)));
 }
 
 function setPending(assistantId: string, localId: string, patch: Partial<PendingMessage> | null) {
@@ -1435,7 +1435,10 @@ export async function deleteRoutine(id: string) {
 
 export async function runRoutine(id: string) {
   try {
-    await api.runRoutine(id);
+    const result = await api.runRoutine(id);
+    if (result?.outcome === "quiet") set({ notice: "检查过了，没有变化" });
+    else if (result?.outcome === "failed") set({ notice: `检查失败：${result.reason ?? "原因未知"}` });
+    else if (result?.outcome === "notify") set({ notice: "检查有新内容，已发到对话" });
   } catch (e) {
     set({ notice: `运行失败：${errText(e)}` });
   }

@@ -560,7 +560,7 @@ describe("Router", () => {
 
       hob.runtime.router.disposeAll();
       const config = hob.runtime.config;
-      const pi = new PiHost({ engineDir: join(hob.home, "engine"), modelsPath: null, nativeProviders: [hob.faux.provider] });
+      const pi = new PiHost({ engineDir: join(hob.home, "system", "engine"), modelsPath: null, nativeProviders: [hob.faux.provider] });
       const restarted = createRuntime({ home: hob.home, config, pi });
       try {
         const after = restarted.router.items("hob").items;

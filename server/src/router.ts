@@ -2,7 +2,7 @@ import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import type {
@@ -21,6 +21,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
 import { conversationPick, defaultWorkRef, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
 import { buildRouterTools } from "./router-tools.ts";
+import { isInPagesDir } from "./files.ts";
 import { boundKnowledge, formatKnowledge, KNOWLEDGE_INTRO } from "./knowledge-tools.ts";
 import { MEMORY_WRITE_TOOLS, memoryNoteText } from "./memory.ts";
 import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
@@ -673,8 +674,7 @@ export class RouterManager {
     const full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
     this.bus.emit({ type: "item", assistantId, item: full });
     if (full.kind === "file") {
-      const rel = relative(join(this.runtime.home, "pages"), resolve(full.path));
-      const page = rel !== ".." && !rel.startsWith(`..${sep}`);
+      const page = isInPagesDir(relative(this.runtime.home, resolve(full.path)));
       void this.runtime.knowledge.collect({ origin: "output", path: full.path, assistantId, itemId: id, ...(page ? { name: full.name, description: full.meta } : {}) }).catch((error) => console.error("知识库收集失败：", error));
     }
     return full;

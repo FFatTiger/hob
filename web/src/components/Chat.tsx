@@ -325,7 +325,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
     const files = pastedFiles(event.clipboardData);
     if (!files.length) return;
     event.preventDefault();
-    attach(files);
+    if (s.sel) attach(files, s.sel);
   };
 
   // 输入框浮在消息上：量出它的高度写到 .chat 上，消息区底部照这个留白
@@ -388,7 +388,7 @@ export function Composer({ variant = "desktop" }: { variant?: "desktop" | "mobil
             onChange={(e) => {
               const files = Array.from(e.target.files ?? []);
               e.target.value = "";
-              if (files.length) attach(files);
+              if (files.length && s.sel) attach(files, s.sel);
             }}
           />
         </label>

@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { engineDir, loadConfig, resolveHome } from "./config.ts";
 import { createApp } from "./http.ts";
+import { prepareHome } from "./layout.ts";
 import { attachDesktopWebSocket } from "./desktop-control.ts";
 import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
@@ -23,6 +24,8 @@ export interface HobServer {
 /** 起一个 Hob 进程内全部服务（HTTP + Router + 任务 + 定时）。试跑和测试都走这里。 */
 export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   const home = options.home ?? resolveHome();
+  // 从 boot.ts 进来时已经迁过（幂等）；直接从 main 起的路径也补上
+  prepareHome(home);
   const env = process.env;
   const pi = options.pi ?? new PiHost({ engineDir: engineDir(home) });
   // config.json 里的旧模型字段在 loadConfig 里被清掉，所以先读出来搬进设置

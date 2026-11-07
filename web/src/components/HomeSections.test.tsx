@@ -3,6 +3,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { AssistantSummary, JobStatus } from "../../../shared/types.ts";
 
 const state = vi.hoisted(() => ({
+  query: "",
+  menu: null,
   assistants: [] as AssistantSummary[],
   jobs: {} as Record<string, { assistantId: string; status: JobStatus; endedAt?: string }>,
   approvals: {} as Record<string, { assistantId: string; status: string }>,

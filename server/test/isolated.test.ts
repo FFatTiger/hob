@@ -124,7 +124,7 @@ describe("不碰本机的 pi / lore 配置", () => {
       expect(snapshot(localPiDir)).toEqual(piBefore);
       expect(snapshot(localLoreHome)).toEqual(loreBefore);
       // 数据全在 HOB_HOME
-      expect(readFileSync(join(hob.home, "secrets.json"), "utf8")).toContain("sk-home");
+      expect(readFileSync(join(hob.home, "system", "secrets.json"), "utf8")).toContain("sk-home");
     } finally {
       hob.close();
       for (const [key, value] of Object.entries(envBefore)) {

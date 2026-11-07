@@ -4,20 +4,20 @@ import { realApi } from "../src/api.ts";
 afterEach(() => vi.unstubAllGlobals());
 
 describe("上传文件", () => {
-  it("读取服务端返回的文件路径", async () => {
+  it("读取服务端返回的文件路径，并带上当前助手", async () => {
     const fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
-      files: ["/tmp/hob/uploads/u-test.txt"],
-      file: { path: "/tmp/hob/uploads/u-test.txt", name: "test.txt" },
+      files: ["/tmp/hob/assistants/hob/files/uploads/u-test.txt"],
+      file: { path: "/tmp/hob/assistants/hob/files/uploads/u-test.txt", name: "test.txt" },
     })));
     vi.stubGlobal("fetch", fetch);
 
-    await expect(realApi.upload(new File(["test"], "test.txt"))).resolves.toBe("/tmp/hob/uploads/u-test.txt");
-    expect(fetch).toHaveBeenCalledWith("/api/uploads", expect.objectContaining({ method: "POST" }));
+    await expect(realApi.upload(new File(["test"], "test.txt"), "hob")).resolves.toBe("/tmp/hob/assistants/hob/files/uploads/u-test.txt");
+    expect(fetch).toHaveBeenCalledWith("/api/uploads?assistantId=hob", expect.objectContaining({ method: "POST" }));
   });
 
   it("响应没有路径时报告错误", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("{}")));
-    await expect(realApi.upload(new File(["test"], "test.txt"))).rejects.toThrow("上传响应缺少文件路径");
+    await expect(realApi.upload(new File(["test"], "test.txt"), "hob")).rejects.toThrow("上传响应缺少文件路径");
   });
 });
 

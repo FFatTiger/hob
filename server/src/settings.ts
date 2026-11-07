@@ -1,4 +1,4 @@
-// HOB_HOME/settings.json：界面可改的设置，带 revision（写入走 CAS）。
+// HOB_HOME/system/settings.json：界面可改的设置，带 revision（写入走 CAS）。
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
@@ -26,6 +26,7 @@ import type { ModelScores } from "../../shared/types.ts";
 import { isMemoryProvider, LORE_PLUGIN_VERSION, loreConnection, resolveMemoryProvider } from "./memory.ts";
 import { checkProvider } from "./providers.ts";
 import { checkTimezone } from "./time.ts";
+import { systemDir } from "./config.ts";
 import { checkPrice } from "./usage-prices.ts";
 
 const FILE = "settings.json";
@@ -41,9 +42,9 @@ export interface LegacyModels {
   workThinking?: string;
 }
 
-/** 读 HOB_HOME/config.json 里还没搬走的模型字段（启动在建 settings 之前调）。 */
+/** 读 HOB_HOME/system/config.json 里还没搬走的模型字段（启动在建 settings 之前调）。 */
 export function readLegacyModels(home: string): LegacyModels | undefined {
-  const file = join(home, "config.json");
+  const file = join(systemDir(home), "config.json");
   if (!existsSync(file)) return undefined;
   let stored: Record<string, unknown>;
   try {
@@ -262,7 +263,7 @@ function normalize(raw: unknown, base: Settings): Settings {
  * 之后 config.json 里再出现这些键也不会被读。
  */
 function legacySeed(home: string): SettingsPatch {
-  const file = join(home, "config.json");
+  const file = join(systemDir(home), "config.json");
   if (!existsSync(file)) return {};
   let stored: Record<string, unknown>;
   try {
@@ -301,7 +302,7 @@ export class SettingsStore {
     options: SettingsStoreOptions = {},
   ) {
     this.base = defaultSettings(systemTimezone(), seedModels(options.legacyModels));
-    const path = join(home, FILE);
+    const path = join(systemDir(home), FILE);
     if (!existsSync(path)) {
       this.file = { revision: 1, settings: normalize(legacySeed(home), this.base) };
       this.write();
@@ -327,7 +328,7 @@ export class SettingsStore {
 
   private write(): void {
     // 记忆提供者单独一个顶层键：没写过就不写，别把“没选过”写成“选了本地记忆”
-    writeJsonAtomic(join(this.home, FILE), {
+    writeJsonAtomic(join(systemDir(this.home), FILE), {
       ...this.file,
       ...(this.memoryProvider ? { memory: { provider: this.memoryProvider } } : {}),
     });

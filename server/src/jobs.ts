@@ -18,6 +18,7 @@ import type {
 } from "../../shared/types.ts";
 import { IMAGE_TYPES, isImagePath } from "../../shared/media.ts";
 import { newId } from "./ids.ts";
+import { resolveMovedPath } from "./layout.ts";
 import { availableDesktopTools, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
@@ -220,6 +221,8 @@ export class JobManager {
       cwd: job.cwd ?? "",
       save: (stepId, text) => this.store.writeStepOutput(jobId, stepId, text),
       mcpServers: mcpServerDisplay(this.runtime.home),
+      // 迁移前写进会话的绝对路径：换成新位置后，详情页里还是短文件名
+      resolvePath: (path) => resolveMovedPath(this.runtime.home, path),
     });
     return [...steps, ...(this.workers.get(jobId)?.queued ?? [])];
   }

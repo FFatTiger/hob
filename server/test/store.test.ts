@@ -155,7 +155,7 @@ describe("配置", () => {
       expect(loadConfig(home, {} as NodeJS.ProcessEnv).cookieSecret).toBe(config.cookieSecret);
 
       // 文件里存的是哈希，没有明文
-      const raw = JSON.parse(readFileSync(join(home, "config.json"), "utf8")) as Record<string, unknown>;
+      const raw = JSON.parse(readFileSync(join(home, "system", "config.json"), "utf8")) as Record<string, unknown>;
       expect(raw.password).toBeUndefined();
       expect(String(raw.passwordHash)).toMatch(/^scrypt\$/);
       // 不再需要明文或环境变量：哈希验得过去
@@ -188,7 +188,7 @@ describe("配置", () => {
     try {
       const system = Intl.DateTimeFormat().resolvedOptions().timeZone;
       expect(new SettingsStore(home).settings.general.timezone).toBe(system);
-      const file = join(home, "settings.json");
+      const file = join(home, "system", "settings.json");
       const raw = JSON.parse(readFileSync(file, "utf8")) as { revision: number; settings: { general: { timezone: string } } };
       raw.settings.general.timezone = "Asia/ShangHaii";
       writeFileSync(file, JSON.stringify(raw));
@@ -213,13 +213,14 @@ describe("配置", () => {
       expect(plain.work.ref).toBe("");
 
       // 旧 config.json 里的 routerModel/workerModel 搬进设置，搬完从 config.json 删掉
+      mkdirSync(join(legacyHome, "system"), { recursive: true });
       writeFileSync(
-        join(legacyHome, "config.json"),
+        join(legacyHome, "system", "config.json"),
         JSON.stringify({ password: "abc", routerModel: "x/fast", routerThinking: "low", workerModel: "x/smart", workerThinking: "high" }),
       );
       const legacy = readLegacyModels(legacyHome);
       loadConfig(legacyHome, {} as NodeJS.ProcessEnv);
-      const raw = JSON.parse(readFileSync(join(legacyHome, "config.json"), "utf8")) as Record<string, unknown>;
+      const raw = JSON.parse(readFileSync(join(legacyHome, "system", "config.json"), "utf8")) as Record<string, unknown>;
       expect(raw.routerModel).toBeUndefined();
       expect(raw.workerModel).toBeUndefined();
 
@@ -240,8 +241,9 @@ describe("配置", () => {
     const { SettingsStore } = await import("../src/settings.ts");
     const home = mkdtempSync(join(tmpdir(), "hob-set-"));
     try {
+      mkdirSync(join(home, "system"), { recursive: true });
       writeFileSync(
-        join(home, "settings.json"),
+        join(home, "system", "settings.json"),
         JSON.stringify({ revision: 2, settings: { general: { timezone: "Europe/Berlin" } } }),
       );
       new SettingsStore(home, { legacyModels: { conversation: "x/fast", work: "x/smart" } });
@@ -262,8 +264,9 @@ describe("配置", () => {
     const { SettingsStore } = await import("../src/settings.ts");
     const home = mkdtempSync(join(tmpdir(), "hob-set-"));
     try {
+      mkdirSync(join(home, "system"), { recursive: true });
       writeFileSync(
-        join(home, "config.json"),
+        join(home, "system", "config.json"),
         JSON.stringify({ theme: "dark", timezone: "Europe/Berlin", maxJobs: 4, routerStallMs: 120_000 }),
       );
       const settings = new SettingsStore(home).settings;

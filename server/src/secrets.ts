@@ -1,11 +1,12 @@
-// HOB_HOME/secrets.json：密钥只写不读回界面，文件 0600，原子写。
+// HOB_HOME/system/secrets.json：密钥只写不读回界面，文件 0600，原子写。
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { systemDir } from "./config.ts";
 
 export type Secrets = Record<string, string>;
 
 function file(home: string): string {
-  return join(home, "secrets.json");
+  return join(systemDir(home), "secrets.json");
 }
 
 export function readSecrets(home: string): Secrets {

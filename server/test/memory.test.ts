@@ -26,7 +26,7 @@ function tempHome(): string {
 }
 
 function loreConfigFile(home: string): string {
-  return join(home, "lore", "config.json");
+  return join(home, "system", "lore", "config.json");
 }
 
 describe("记忆提供者的缺省解析", () => {
@@ -211,7 +211,7 @@ describe("Lore 连接配置", () => {
 
   it("保留文件里不认识的兄弟键", () => {
     const home = tempHome();
-    mkdirSync(join(home, "lore"), { recursive: true });
+    mkdirSync(join(home, "system", "lore"), { recursive: true });
     writeFileSync(loreConfigFile(home), JSON.stringify({ installed_version: "1.0.0", base_url: "http://127.0.0.1:18901" }));
     saveLoreConnection(home, { baseUrl: "http://127.0.0.1:18901", token: "lm_k" });
     expect(JSON.parse(readFileSync(loreConfigFile(home), "utf8"))).toMatchObject({ installed_version: "1.0.0" });
@@ -370,13 +370,14 @@ describe("memories.json 迁移", () => {
       ]),
     );
     // 老草稿：memories 字段（前端按 instructions 渲染，不迁移会白屏）
+    mkdirSync(join(home, "assistants", "hob"), { recursive: true });
     writeFileSync(
-      join(home, "drafts.json"),
+      join(home, "assistants", "hob", "drafts.json"),
       JSON.stringify([
         { id: "d-1", name: "写作", askFirst: [], memories: ["口语、短句"], carry: { conversations: 3, memories: 1 } },
       ]),
     );
-    const pi = new PiHost({ engineDir: join(home, "engine"), modelsPath: null, nativeProviders: [] });
+    const pi = new PiHost({ engineDir: join(home, "system", "engine"), modelsPath: null, nativeProviders: [] });
     const runtime = createRuntime({
       home,
       config: {

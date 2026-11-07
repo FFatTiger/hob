@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { chromium, type Browser, type Page } from "playwright-core";
+import { assistantFilesDir } from "./config.ts";
 import type { HobRuntime } from "./runtime.ts";
 
 const TAKEN = "用户正在操作云桌面，等用户操作完再试；着急的话，用 ask_user 问一声。";
@@ -26,7 +27,7 @@ export class DesktopToolSession {
   private active = new Set<Promise<unknown>>();
   private disposed = false;
   private profile: string;
-  constructor(private runtime: HobRuntime, private assistantId: string, private canSeeImages: boolean | (() => boolean), private jobTitle?: string, private router = false, private screenshotDir = join(runtime.home, "assistants", assistantId, "screenshots")) {
+  constructor(private runtime: HobRuntime, private assistantId: string, private canSeeImages: boolean | (() => boolean), private jobTitle?: string, private router = false, private screenshotDir = assistantFilesDir(runtime.home, assistantId, "screenshots")) {
     this.profile = desktopProfile(assistantId);
   }
 

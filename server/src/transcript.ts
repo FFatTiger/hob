@@ -1,5 +1,6 @@
 // 任务过程（transcript）：从任务的 worker.jsonl 推导步骤列表，实时事件和落盘推导共用一套拼装。
 import { existsSync, readFileSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import { commandSummary } from "../../shared/command.ts";
 import type { JobStep } from "../../shared/types.ts";
 import { showPath } from "./text.ts";
@@ -48,8 +49,10 @@ function clipEdit(edits: unknown): { oldText: string; newText: string }[] {
 }
 
 /** 只留详情页要看的那几个参数（write 的正文不整段传，只给长度）。 */
-export function toolArgs(name: string, raw: Record<string, unknown>, cwd = ""): Record<string, unknown> {
-  const path = showPath(String(raw.path ?? ""), cwd);
+export function toolArgs(name: string, raw: Record<string, unknown>, cwd = "", resolvePath?: (path: string) => string): Record<string, unknown> {
+  const given = String(raw.path ?? "");
+  // 迁移前写进会话的绝对路径先按 moves.json 换成新位置再和 cwd 比：老步骤照样显示成短文件名
+  const path = showPath(isAbsolute(given) && resolvePath ? resolvePath(given) : given, cwd);
   switch (name) {
     case "bash":
       return { command: String(raw.command ?? "") };
@@ -207,11 +210,13 @@ export interface ToolStepInput {
   running?: boolean;
   /** MCP 工具的显示名映射（转义后的服务名 → 配置里的原名） */
   mcpServers?: Record<string, string>;
+  /** 会话里的老绝对路径换到新位置（迁移后显示老步骤用） */
+  resolvePath?: (path: string) => string;
 }
 
 /** 一次工具调用 → 一个步骤（还没有结果）。实时事件和落盘推导都用它，页面按 id 合并。 */
 export function toolStep(input: ToolStepInput): JobStep {
-  const args = toolArgs(input.name, input.args, input.cwd ?? "");
+  const args = toolArgs(input.name, input.args, input.cwd ?? "", input.resolvePath);
   const mcp = mcpToolDisplay(input.name, input.mcpServers);
   return {
     id: input.id,
@@ -255,6 +260,8 @@ export interface DeriveOptions {
   save?: (stepId: string, text: string) => string;
   /** MCP 工具的显示名映射（转义后的服务名 → 配置里的原名） */
   mcpServers?: Record<string, string>;
+  /** 会话里的老绝对路径换到新位置（迁移后显示老步骤用） */
+  resolvePath?: (path: string) => string;
 }
 
 /** 从任务会话文件推导整个过程：说明文字、思考摘要、工具调用（含结果）。 */
@@ -300,6 +307,7 @@ export function deriveSteps(file: string, options: DeriveOptions = {}): JobStep[
             at,
             cwd: options.cwd ?? "",
             mcpServers: options.mcpServers,
+            resolvePath: options.resolvePath,
             running: true,
           });
           toolIndex.set(step.id, steps.length);

@@ -10,10 +10,23 @@ function weekday(token: string): string | undefined {
 }
 
 /**
+ * 具体时间点（2026-11-08T09:00，可带秒）转成「11月8日 09:00」，跨年的带年份；不是时间点就是 undefined。
+ * 时间点本身就是设置时区里的钟点，不需要再做时区换算。
+ */
+export function timePointText(expression: string, now: Date = new Date()): string | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?$/.exec(expression.trim());
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute] = match;
+  return `${Number(year) === now.getFullYear() ? "" : `${Number(year)}年`}${Number(month)}月${Number(day)}日 ${hour}:${minute}`;
+}
+
+/**
  * cron 转中文：覆盖常见的每天 / 每周 / 每月 / 每隔几分钟，认不出的原样返回。
- * 只处理 5 段表达式（分 时 日 月 周）。
+ * 只处理 5 段表达式（分 时 日 月 周）；具体时间点只说那一刻，标上只跑一次。
  */
 export function cronToChinese(expression: string): string {
+  const point = timePointText(expression);
+  if (point) return `${point}（一次）`;
   const parts = expression.trim().split(/\s+/);
   if (parts.length !== 5) return expression;
   const [minute, hour, day, month, dow] = parts;

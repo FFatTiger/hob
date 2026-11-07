@@ -4,16 +4,18 @@ import { join } from "node:path";
 import { Type } from "@earendil-works/pi-ai";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { HobRuntime } from "./runtime.ts";
+import { assistantFilesDir } from "./config.ts";
 import { pageHtml } from "../../shared/page-shell.ts";
 export { pageHtml } from "../../shared/page-shell.ts";
 
 const MAX = 80_000;
 
-export async function renderPage(home: string, title: string, summary: string, html: string): Promise<string> {
+/** 展示页面存进这个助手的 files/pages，和其他产出分开。 */
+export async function renderPage(home: string, assistantId: string, title: string, summary: string, html: string): Promise<string> {
   if (!html.trim()) throw new Error("页面内容不能为空。");
   if (html.length > MAX) throw new Error(`页面内容不能超过 ${MAX} 字。`);
   if (/<\s*(!doctype|html|head|body)\b/i.test(html)) throw new Error("html 只写正文片段，不要包含 <!doctype>、<html>、<head> 或 <body>；标题和摘要由 Hob 放在页头。");
-  const dir = join(home, "pages");
+  const dir = assistantFilesDir(home, assistantId, "pages");
   await mkdir(dir, { recursive: true });
   const path = join(dir, `${randomUUID()}.html`);
   await writeFile(path, pageHtml(title, summary, html), "utf8");
@@ -44,7 +46,7 @@ export function pageTool(runtime: HobRuntime, assistantId: string): ToolDefiniti
         const title = String(params.title ?? "").trim();
         const summary = String(params.summary ?? "").trim();
         if (!title || !summary) throw new Error("标题和摘要不能为空。");
-        const path = await renderPage(runtime.home, title, summary, String(params.html ?? ""));
+        const path = await renderPage(runtime.home, assistantId, title, summary, String(params.html ?? ""));
         await runtime.router.addItem(assistantId, { kind: "file", path, name: title, meta: summary });
         return { content: [{ type: "text" as const, text: `页面已展示：${path}` }], details: { path }, terminate: true };
       } catch (error) {

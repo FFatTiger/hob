@@ -6,6 +6,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { engineDir, loreDir, memoryDir, resolveHome } from "./config.ts";
+import { prepareHome } from "./layout.ts";
 
 /** 从本机导入时要读的目录（只记路径，不记密钥）。 */
 export interface LocalConfigDirs {
@@ -70,6 +71,13 @@ export function applyEngineEnv(env: NodeJS.ProcessEnv, home: string): LocalConfi
 /** 命令行入口：`tsx server/src/boot.ts` 和 npm 包的 `hob` 命令都走这里。 */
 export function boot(): void {
   const home = resolveHome();
+  // 迁移要在设置引擎目录之前：engine / lore / memory 都在这次搬迁里换位置
+  try {
+    prepareHome(home);
+  } catch (error) {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  }
   applyEngineEnv(process.env, home);
   import("./main.ts")
     .then(({ startHob }) => startHob({ home }))

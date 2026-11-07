@@ -105,7 +105,7 @@ describe("消耗统计", () => {
       twoDays(hob);
       writeSession(join(hob.home, "assistants", "page", "router.jsonl"), [assistantLine("2026-11-06T02:00:00.000Z", { input: 1000, output: 100 })]);
       addJob(hob, "t-1", "page");
-      writeSession(join(hob.home, "jobs", "t-1", "worker.jsonl"), [assistantLine("2026-11-06T03:00:00.000Z", { input: 5000, output: 500 }, "openai", "gpt-5")]);
+      writeSession(join(hob.home, "assistants", "hob", "jobs", "t-1", "worker.jsonl"), [assistantLine("2026-11-06T03:00:00.000Z", { input: 5000, output: 500 }, "openai", "gpt-5")]);
       // 归档的助手：目录挪进 archive/assistants/<id>-<时间>，名字从归档里的档案读
       addAssistant(hob, "bird", "行业动态");
       writeSession(join(hob.home, "assistants", "bird", "router.jsonl"), [assistantLine("2026-11-04T02:00:00.000Z", { input: 700, output: 70 })]);

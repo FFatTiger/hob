@@ -43,7 +43,7 @@ import {
   useApp,
   type PanelPage,
 } from "../store.ts";
-import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, WEEK, type Schedule } from "../util.ts";
+import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, timePointText, WEEK, type Schedule } from "../util.ts";
 import { PanelHead } from "./PanelHead.tsx";
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
 
@@ -170,10 +170,17 @@ function PanelNow() {
   );
 }
 
+/** 停了的定时任务怎么说：列表和详情用同一句，详情后面再带时间。 */
+function stoppedText(routine: Routine): string | undefined {
+  if (routine.stopReason === "hit") return "已触发，已停";
+  if (routine.stopReason === "finished") return "已跑完";
+  return undefined;
+}
+
 function RoutineList() {
   const s = useApp();
   const routines = s.routines.filter((r) => r.assistantId === (s.sel ?? "hob"));
-  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <button className="list-row sidebar-row" key={r.id} onClick={() => openRoutine(r.id)}><Icon name={r.active ? "clock" : "pause"} size={18} /><span><strong>{r.name}</strong><small>{r.active ? <>{cronText(r.schedules[0] ?? "")}{r.runs[0] ? <> · 上次 <StatusTag meta={JOB_STATUS[r.runs[0].status]} /> {fmtWhen(r.runs[0].at)}</> : null}</> : "已暂停"}</small></span><b>›</b></button>)}</div> : <Empty>这个助手还没有定时任务</Empty>;
+  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <button className="list-row sidebar-row" key={r.id} onClick={() => openRoutine(r.id)}><Icon name={r.active ? "clock" : "pause"} size={18} /><span><strong>{r.name}</strong><small>{r.active ? <>{cronText(r.schedules[0] ?? "")}{r.check ? r.checks?.failing ? <> · <span className="rt-bad">检查失败</span></> : ` · 检查 ${r.checks?.total ?? 0} 次 · 触发 ${r.checks?.hits ?? 0} 次` : r.runs[0] ? <> · 上次 <StatusTag meta={JOB_STATUS[r.runs[0].status]} /> {fmtWhen(r.runs[0].at)}</> : null}</> : stoppedText(r) ?? "已暂停"}</small></span><b>›</b></button>)}</div> : <Empty>这个助手还没有定时任务</Empty>;
 }
 
 function AssistantRules({ aid }: { aid: string }) {
@@ -193,6 +200,21 @@ function ScheduleRow({
 }) {
   const [open, setOpen] = useState(false);
   const sch = parseCron(value);
+
+  // 具体时间点只显示、能删；cron 编辑器改不了它
+  if (timePointText(value)) {
+    return (
+      <div className="w">
+        <Icon name="clock" size={15} />
+        {cronText(value)}
+        {onRemove ? (
+          <button className="hob-btn hob-btn-danger" style={{ marginLeft: "auto" }} onClick={onRemove}>
+            删除
+          </button>
+        ) : null}
+      </div>
+    );
+  }
 
   if (!open) {
     return (
@@ -387,6 +409,11 @@ function RoutineEditor({ id }: { id: string }) {
           添加执行时间
         </button>
       </div>
+      {r.once || stoppedText(r) ? (
+        <div className="rt-when-note">
+          {[r.once ? "触发一次就停" : "", stoppedText(r) ? `${stoppedText(r)}${r.stoppedAt ? ` · ${fmtWhen(r.stoppedAt)}` : ""}` : ""].filter(Boolean).join(" · ")}
+        </div>
+      ) : null}
 
       <div className="lbl">技能</div>
       {s.assistantSkills[r.assistantId]?.error ? <div className="badline">加载失败：{s.assistantSkills[r.assistantId].error} <button onClick={() => void loadAssistantSkills(r.assistantId)}>重试</button></div> : null}
@@ -395,6 +422,22 @@ function RoutineEditor({ id }: { id: string }) {
         {r.skill && !s.assistantSkills[r.assistantId]?.skills.some((skill) => skill.name === r.skill && skill.enabled) ? <option value={r.skill} disabled>{r.skill}</option> : null}
         {(s.assistantSkills[r.assistantId]?.skills ?? []).filter((skill) => skill.enabled).map((skill) => <option key={skill.name} value={skill.name}>{skill.title}</option>)}
       </select></div>
+
+      {r.check ? (
+        <>
+          <div className="lbl">检查</div>
+          <div className="group-card sidebar-card-group">
+            <div className="rt-check-line">
+              检查 {r.checks?.total ?? 0} 次 · 触发 {r.checks?.hits ?? 0} 次{r.checks?.lastAt ? ` · 上次 ${fmtWhen(r.checks.lastAt)}` : ""}
+            </div>
+            {r.checks?.failing ? <div className="rt-check-line badline">失败原因：{r.checks.failing}</div> : null}
+          </div>
+          <details className="rt-script">
+            <summary>检查脚本</summary>
+            <pre className="mono">{r.check.script}</pre>
+          </details>
+        </>
+      ) : null}
 
       <div className="lbl">运行记录</div>
       <div className="group-card sidebar-card-group sidebar-runs">

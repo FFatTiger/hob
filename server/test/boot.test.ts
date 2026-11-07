@@ -14,9 +14,9 @@ describe("启动时把环境指向 HOB_HOME", () => {
     const home = tempHome();
     const env: NodeJS.ProcessEnv = {};
     applyEngineEnv(env, home);
-    expect(env.PI_CODING_AGENT_DIR).toBe(join(home, "engine"));
-    expect(env.PI_MEMORY_DIR).toBe(join(home, "memory"));
-    expect(env.LORE_HOME).toBe(join(home, "lore"));
+    expect(env.PI_CODING_AGENT_DIR).toBe(join(home, "system", "engine"));
+    expect(env.PI_MEMORY_DIR).toBe(join(home, "system", "memory"));
+    expect(env.LORE_HOME).toBe(join(home, "system", "lore"));
   });
 
   it("从 shell 继承的 Lore 凭据全部删掉", () => {

@@ -18,7 +18,7 @@ Hob 是一个自己部署、真正动手处理事务的私人助手。你只和 
 
 每个助手有自己的对话、职责、规则、技能、定时任务和工作日志。同类工作反复出现时，Hob 会提议创建专门的助手；向其他助手转交时，对话中的转交卡会跟踪状态、带上你的原话，你也可以在接收助手的对话中接手。
 
-任务可查看过程、停止或续做，每轮记录分别保留；超出预计用时后，助手会收到督办提醒。定时任务把任务卡和结果发到对应的对话里。助手输出时对话会跟着往下滚，输入框里也可以直接粘贴截图。
+任务可查看过程、停止或续做，每轮记录分别保留；超出预计用时后，助手会收到督办提醒。定时任务把任务卡和结果发到对应的对话里。定时任务可以只在某个时间跑一次，也可以带一个检查脚本：到点先跑脚本，有变化才叫起助手或直接给你留一条提醒，还可以设成触发一次就停。助手输出时对话会跟着往下滚，截图可以直接粘贴，文件可以直接拖进窗口。
 
 手机上可查看助手列表、对话和档案，支持滑动回复和长按操作。助手需要你确认，或任务受阻、失败时，可以收到推送通知。
 
@@ -75,7 +75,7 @@ docker compose up -d
 2. 到 **设置 → 模型** 选好对话和任务使用的模型。
 3. 给 Hob 发一条消息。收到回复，或者出现一张任务卡，就说明配置好了。
 
-首次启动时密码会转成哈希写进 `~/.hob/config.json`，之后启动不用再带 `HOB_PASSWORD`。改密码在 **设置 → 通用**。
+首次启动时密码会转成哈希写进 `~/.hob/system/config.json`，之后启动不用再带 `HOB_PASSWORD`。改密码在 **设置 → 通用**。
 
 ## 配置
 
@@ -93,7 +93,18 @@ docker compose up -d
 
 `config.json` 也可设置 `host`、`port` 和初始 `password`；host 和 port 以环境变量优先。Hob 将引擎和记忆目录隔离到 `HOB_HOME`，并从运行环境移除继承的模型及 Lore 凭据。
 
-对话、任务、记忆、技能、Key 和引擎数据都在 `HOB_HOME` 里。想沿用本机已有的服务商或 Lore 连接，可以在设置里主动导入。备份 `HOB_HOME` 即可保留 Hob 的数据。
+对话、任务、记忆、技能、Key 和引擎数据都在 `HOB_HOME` 里，按归属放：`system/`（配置、密钥、引擎、Lore、记忆）、`cache/`（删了能重建）、`assistants/<id>/`（每个助手的档案、对话、定时、任务和文件）、`archive/`。想沿用本机已有的服务商或 Lore 连接，可以在设置里主动导入。备份 `HOB_HOME` 即可保留 Hob 的数据。
+
+**数据目录迁移。** 旧版本把东西平铺在 `HOB_HOME` 根上（`jobs/`、`pages/`、`images/` …… 再加几个 json）。新版本启动时会自动迁移，并且发生在动引擎之前：先看空间够不够，把整个目录完整复制到 `HOB_HOME/backup-v1-<时间>/` 并逐个文件核对（保留权限和符号链接），再搬文件，最后才写 `system/moves.json`（旧路径 → 新路径）和 `layout.json`。中途断掉的话，下次启动先从备份恢复再重跑。备份**不会自动删**：确认新布局没问题后自己删 `backup-v1-*`（里面有整份密钥）。两条命令备用：
+
+```
+npm run layout -- --dry-run   # 只打印迁移计划，什么都不动
+npm run layout -- --restore   # 从备份恢复成老布局
+# npm 安装的：hob layout --dry-run / hob layout --restore
+# Docker（先停掉 Hob）：docker compose run --rm hob node bin/hob.mjs layout --restore
+```
+
+降级要先恢复成老布局：旧版本不认识新布局，不能让新旧版本同时写同一份数据。
 
 **Claude 订阅：** npm 或源码安装时，先安装 Claude Code 并在本机执行 `claude auth login`，然后在 **设置 → 服务商** 启用 Claude 订阅、选择 Pro 或 Max，再到 **设置 → 模型** 选择模型。用量计入 Claude 订阅额度，与 Claude Code 共用。Docker 镜像不支持此功能。Hob 不读取、复制、保存或转发 Claude 凭证，由官方 Claude Code 程序使用已有登录。Claude Code 会在 `~/.claude/projects/` 保存自己的会话记录，此目录不属于 `HOB_HOME`。
 
@@ -129,6 +140,8 @@ docker compose --profile desktop up -d
 桌面端口不会映射到宿主机；Hob 从共享卷读取自动生成的令牌，设置 → 云桌面会显示「由部署配置」。不加 profile 时 Hob 单独运行，云桌面显示未配置。
 
 也可用 [`desktop/compose.yaml`](desktop/compose.yaml) 或[桌面部署说明](desktop/README.md)中的 `docker run` 单独部署，再在 Hob 设置中填写地址和令牌。没有启动 desktop profile、共享令牌文件不存在或为空时，Hob 使用设置里填写的云桌面；令牌文件出现后，以 Compose 部署为准。登录 Hob 的人都可以观看和接管单块屏幕，网站登录由人自己完成，不让助手代登。受 Google 限制，开启远程调试的浏览器目前无法登录 Google 账号。桌面数据卷里的浏览器 Cookie 是敏感信息；令牌通过 HTTP 明文传输，跨机器连接请使用可信内网或 HTTPS，不要映射 VNC / CDP 端口。
+
+桌面容器的时区和语言由 `TZ`（IANA 时区名）和 `DESKTOP_LANG`（BCP 47 语言标签，如 `en-US`）决定，写在同一目录的 `.env` 里，默认 `UTC` 和 `zh-CN`。它们管桌面里所有程序的界面语言、浏览器界面语言，以及浏览器发给网站的 `Accept-Language` 和 `navigator.languages`；分辨率用 `DESKTOP_RESOLUTION`（默认 `1280x800`）。网站会对照出口 IP 所在地、时区和语言，出口不在国内时把这几项一起改，不然更容易被风控拦。已有的浏览器 profile 也按部署配置，在浏览器设置里自己改过的语言会被盖掉。
 
 云桌面 v2 在一台 amd64 机器上的实测：镜像占用 2.03 GB；不开屏幕时内存 23.5 MiB，一块 Chrome 屏幕打开 example.com 时 354.9 MiB，三块 Chrome 屏幕打开新标签页时 1017 MiB。页面负载不同，实际占用因机器和页面而异。
 

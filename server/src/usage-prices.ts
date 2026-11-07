@@ -1,7 +1,8 @@
-// 模型单价：默认从 models.dev 拉，一天最多更新一次；存在 HOB_HOME/usage-prices.json，拉不到就用上次的。
+// 模型单价：默认从 models.dev 拉，一天最多更新一次；存在 HOB_HOME/cache/usage-prices.json，拉不到就用上次的。
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { TokenPrice } from "../../shared/types.ts";
+import { cacheDir } from "./config.ts";
 
 const SOURCE = "https://models.dev/api.json";
 const FILE = "usage-prices.json";
@@ -13,7 +14,7 @@ const TIMEOUT = 10_000;
 /** 模型厂商自己那一家：同一个模型 id 出现在多个服务商里时优先它。 */
 const VENDOR_PROVIDERS = new Set(["openai", "anthropic", "deepseek", "google", "xai", "mistral", "zhipuai", "moonshotai"]);
 
-/** HOB_HOME/usage-prices.json：拉到的单价 + 上次更新和上次尝试的时间。 */
+/** HOB_HOME/cache/usage-prices.json：拉到的单价 + 上次更新和上次尝试的时间。 */
 interface PriceFile {
   fetchedAt: string | null;
   attemptAt: string | null;
@@ -24,7 +25,7 @@ interface PriceFile {
 const EMPTY: PriceFile = { fetchedAt: null, attemptAt: null, error: null, prices: {} };
 
 function readFile(home: string): PriceFile {
-  const path = join(home, FILE);
+  const path = join(cacheDir(home), FILE);
   if (!existsSync(path)) return EMPTY;
   try {
     const stored = JSON.parse(readFileSync(path, "utf8")) as Partial<PriceFile>;
@@ -156,7 +157,7 @@ export class UsagePrices {
   }
 
   private write(): void {
-    const path = join(this.options.home, FILE);
+    const path = join(cacheDir(this.options.home), FILE);
     mkdirSync(dirname(path), { recursive: true });
     const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, `${JSON.stringify(this.file, null, 2)}\n`);

@@ -28,7 +28,10 @@ services:
     shm_size: 1gb
     environment:
       DESKTOP_TOKEN_EXPORT: /shared/desktop-token
+      # 时区和桌面语言要和出口网络一致：网站会对照 IP 所在地、时区和语言，对不上更容易被风控拦。
+      # TZ 是 IANA 名（默认 UTC），DESKTOP_LANG 是 BCP 47 标签（默认 zh-CN）。分辨率另用 DESKTOP_RESOLUTION（默认 1280x800）。
       TZ: ${TZ:-UTC}
+      DESKTOP_LANG: ${DESKTOP_LANG:-zh-CN}
     volumes:
       - hob-desktop-data:/data
       - hob-shared:/shared

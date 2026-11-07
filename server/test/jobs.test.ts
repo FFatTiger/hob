@@ -530,7 +530,7 @@ describe("任务", () => {
       hob.faux.setResponses([call("report", { outcome: "done", result: "写好了" }), text("好")]);
       hob.faux.appendResponses([text("好了")]);
       const job = await hob.runtime.jobs.start("hob", { title: "写简报", instruction: "写一份简报" });
-      expect(job.cwd).toBe(join(hob.home, "jobs", job.id, "work"));
+      expect(job.cwd).toBe(join(hob.home, "assistants", "hob", "jobs", job.id, "work"));
       expect(existsSync(job.cwd!)).toBe(true);
       await hob.runtime.jobs.waitIdle();
 

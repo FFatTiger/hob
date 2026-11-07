@@ -2,7 +2,7 @@ import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync,
 import { deflateSync } from "node:zlib";
 import { resizeImage } from "@earendil-works/pi-coding-agent";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { dirname, basename, join } from "node:path";
 import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/http.ts";
@@ -30,7 +30,7 @@ describe("GET /api/files 的安全规则", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const work = join(hob.home, "jobs", "t-aaaa", "work");
+      const work = join(hob.home, "assistants", "hob", "jobs", "t-aaaa", "work");
       mkdirSync(work, { recursive: true });
       // 指向数据目录外的链接：解开 realpath 后不在 HOB_HOME 里
       symlinkSync(join(tmpdir(), "..", "etc", "hostname"), join(work, "escape"));
@@ -46,23 +46,26 @@ describe("GET /api/files 的安全规则", () => {
     }
   });
 
-  it("凭据和内部状态文件不给读：secrets/config/settings/push.json、engine/、lore/、*.bak*", async () => {
+  it("凭据和内部状态整个不给读：system/ 下面的都不给，根上的凭据和备份目录也不给", async () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      mkdirSync(join(hob.home, "engine"), { recursive: true });
-      mkdirSync(join(hob.home, "lore"), { recursive: true });
+      mkdirSync(join(hob.home, "system", "engine"), { recursive: true });
+      mkdirSync(join(hob.home, "system", "lore"), { recursive: true });
+      mkdirSync(join(hob.home, "backup-v1-2026-11-07T00-00-00-000Z"), { recursive: true });
       const secret = '{"provider:openai":"sk-x"}';
       for (const rel of [
-        "secrets.json",
-        "config.json",
-        "settings.json",
-        "push.json",
-        "engine/auth.json",
-        "lore/config.json",
+        "system/secrets.json",
+        "system/config.json",
+        "system/settings.json",
+        "system/push.json",
+        "system/engine/auth.json",
+        "system/lore/config.json",
+        "system/secrets.json.1234.tmp",
         "notes.bak",
-        "secrets.json.1234.tmp",
+        "backup-v1-2026-11-07T00-00-00-000Z/system/secrets.json",
       ]) {
+        mkdirSync(dirname(join(hob.home, rel)), { recursive: true });
         writeFileSync(join(hob.home, rel), secret);
         const response = await app.request(`/api/files?path=${encodeURIComponent(join(hob.home, rel))}`, { headers: { cookie } });
         expect(response.status, rel).toBe(403);
@@ -75,11 +78,31 @@ describe("GET /api/files 的安全规则", () => {
     }
   });
 
+  it("moves.json 记下的老路径能打开新位置", async () => {
+    const hob = makeHob();
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const from = join(hob.home, "pages", "11111111-1111-1111-1111-111111111111.html");
+      const to = join(hob.home, "assistants", "hob", "files", "pages", "11111111-1111-1111-1111-111111111111.html");
+      mkdirSync(dirname(to), { recursive: true });
+      writeFileSync(to, "<p>页面</p>");
+      mkdirSync(join(hob.home, "system"), { recursive: true });
+      writeFileSync(join(hob.home, "system", "moves.json"), JSON.stringify({ version: 2, entries: [{ from: join(hob.home, "pages"), to: join(hob.home, "assistants", "hob", "files", "pages") }] }));
+      const response = await app.request(`/api/files?path=${encodeURIComponent(from)}`, { headers: { cookie } });
+      expect(response.status).toBe(200);
+      expect(await response.text()).toBe("<p>页面</p>");
+      const meta = await app.request(`/api/files/meta?path=${encodeURIComponent(from)}`, { headers: { cookie } });
+      expect((await meta.json()) as { page?: boolean }).toMatchObject({ page: true });
+    } finally {
+      hob.close();
+    }
+  });
+
   it("能执行脚本的类型：默认附件下载 + sandbox CSP + nosniff，?inline=1 才内联", async () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const uploads = join(hob.home, "uploads");
+      const uploads = join(hob.home, "assistants", "hob", "files", "uploads");
       mkdirSync(uploads, { recursive: true });
       const html = join(uploads, "报告.html");
       writeFileSync(html, "<html><script>fetch('/api/settings')</script></html>");
@@ -110,7 +133,7 @@ describe("GET /api/files 的安全规则", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const uploads = join(hob.home, "uploads");
+      const uploads = join(hob.home, "assistants", "hob", "files", "uploads");
       mkdirSync(uploads, { recursive: true });
       const png = join(uploads, "图.png");
       writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
@@ -130,8 +153,8 @@ describe("POST /api/assistants/:id/messages 带附件", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const png = join(hob.home, "uploads", "u-abc-图.png");
-      mkdirSync(join(hob.home, "uploads"), { recursive: true });
+      const png = join(hob.home, "assistants", "hob", "files", "uploads", "u-abc-图.png");
+      mkdirSync(join(hob.home, "assistants", "hob", "files", "uploads"), { recursive: true });
       writeFileSync(png, Buffer.from([0x89, 0x50, 0x4e, 0x47]));
       hob.faux.setResponses([fauxAssistantMessage("收到图片。")]);
       const post = (body: unknown) => app.request("/api/assistants/hob/messages", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
@@ -155,8 +178,8 @@ describe("对话里发图片", () => {
     it(label, async () => {
       const hob = makeHob({}, { models: [{ id: "faux-1", input: [...input] }] });
       try {
-        const png = join(hob.home, "uploads", "u-abc123-饭.png");
-        mkdirSync(join(hob.home, "uploads"), { recursive: true });
+        const png = join(hob.home, "assistants", "hob", "files", "uploads", "u-abc123-饭.png");
+        mkdirSync(join(hob.home, "assistants", "hob", "files", "uploads"), { recursive: true });
         // 真的 1×1 PNG：引擎会检查 / 缩放图片，坏图会被丢掉
         writeFileSync(png, Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==", "base64"));
         let seen: unknown[] = [];
@@ -216,9 +239,9 @@ describe("对话里的缩略图", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      mkdirSync(join(hob.home, "uploads"), { recursive: true });
-      const big = join(hob.home, "uploads", "u-abc123-大.png");
-      const small = join(hob.home, "uploads", "u-abc123-小.png");
+      mkdirSync(join(hob.home, "assistants", "hob", "files", "uploads"), { recursive: true });
+      const big = join(hob.home, "assistants", "hob", "files", "uploads", "u-abc123-大.png");
+      const small = join(hob.home, "assistants", "hob", "files", "uploads", "u-abc123-小.png");
       writeFileSync(big, solidPng(2000, 1500));
       writeFileSync(small, solidPng(200, 150));
 
@@ -246,7 +269,7 @@ describe("GET /api/files/meta", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const work = join(hob.home, "jobs", "t-bbbb", "work");
+      const work = join(hob.home, "assistants", "hob", "jobs", "t-bbbb", "work");
       mkdirSync(work, { recursive: true });
       writeFileSync(join(work, "说明.md"), "# hi");
       writeFileSync(join(work, "README"), "plain text no ext");

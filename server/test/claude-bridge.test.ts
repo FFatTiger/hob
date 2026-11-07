@@ -11,11 +11,11 @@ describe("Claude 订阅模型", () => {
       writeFileSync(executable, `#!${process.execPath}\nif (process.argv.includes('--version')) console.log('2.1.296'); else console.log(JSON.stringify({loggedIn:true, subscriptionType:'max'}));\n`);
       chmodSync(executable, 0o755);
       expect((await hob.runtime.models.get()).some((m) => m.provider === "claude-bridge")).toBe(false);
-      expect(existsSync(join(hob.home, "engine", "claude-bridge.json"))).toBe(false);
+      expect(existsSync(join(hob.home, "system", "engine", "claude-bridge.json"))).toBe(false);
       hob.runtime.settings.setClaude(hob.runtime.settings.get().revision, { enabled: true, plan: "max", executable });
       await hob.runtime.providers.apply();
       expect((await hob.runtime.models.get()).some((m) => m.provider === "claude-bridge" && m.id.includes("sonnet"))).toBe(true);
-      const config = JSON.parse(readFileSync(join(hob.home, "engine", "claude-bridge.json"), "utf8"));
+      const config = JSON.parse(readFileSync(join(hob.home, "system", "engine", "claude-bridge.json"), "utf8"));
       expect(config).toEqual({ provider: { plan: "max", strictMcpConfig: true, autoMemoryEnabled: false, pathToClaudeCodeExecutable: executable }, askClaude: { enabled: false } });
       mkdirSync(join(hob.home, ".pi"));
       writeFileSync(join(hob.home, ".pi", "claude-bridge.json"), JSON.stringify({ provider: { strictMcpConfig: false }, askClaude: { enabled: true } }));

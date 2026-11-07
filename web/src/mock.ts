@@ -46,7 +46,7 @@ import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "readme-chat" | "readme-cards" | "readme-dark" | "readme-rules" | "readme-desktop" | "readme-page" | "readme-knowledge" | "readme-list" | "readme-question" | "readme-profile" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
+export type SceneId = "readme-chat" | "readme-cards" | "readme-dark" | "readme-rules" | "readme-desktop" | "readme-page" | "readme-knowledge" | "readme-list" | "readme-question" | "readme-profile" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
 
 /** 每个截图场景对应的界面状态（选中哪个助手、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -74,6 +74,10 @@ export const SCENE_UI: Record<
   "bubbles-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "card-130": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "card-130-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "routine-check-dark": { sel: "hob", panel: "routine:r-pr-watch", collapsed: false, dark: true, mobile: "chat" },
+  "routine-once": { sel: "hob", panel: "routine:r-pay-rent", collapsed: false, dark: false, mobile: "chat" },
+  "routine-once-dark": { sel: "hob", panel: "routine:r-watch-files", collapsed: false, dark: true, mobile: "chat" },
+  "routine-once-list": { sel: "hob", panel: "routines", collapsed: false, dark: false, mobile: "chat" },
   s1: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   s2: { sel: "bird", panel: "routine:r-daily", collapsed: false, dark: false, mobile: "list" },
   s3: { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "list" },
@@ -109,6 +113,13 @@ function at(daysAgo: number, h: number, m = 0): string {
 
 function minsAgo(n: number): string {
   return new Date(Date.now() - n * 60000).toISOString();
+}
+
+/** 具体时间点的写法（设置时区里的钟点）：相对今天的那一天几点几分，形如 2026-11-08T09:00。 */
+function point(daysAgo: number, h: number, m = 0): string {
+  const d = new Date();
+  d.setDate(d.getDate() - daysAgo);
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}T${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
 }
 
 function clone<T>(v: T): T {
@@ -552,6 +563,76 @@ function buildDb(scene: SceneId): Db {
       createdAt: at(0, 10, 21),
       runs: [],
     },
+    {
+      id: "r-pr-watch",
+      assistantId: "hob",
+      name: "盯新 PR",
+      instruction: "有新的 PR 就看改了哪些文件、值不值得细看，告诉我要不要评审。",
+      schedules: ["*/10 * * * *"],
+      active: true,
+      createdAt: at(3, 14, 20),
+      runs: [{ jobId: "t-0901", at: at(1, 11, 20), status: "done" }],
+      check: {
+        then: "notify",
+        script: String.raw`#!/bin/bash
+# 只报上次之后新开的 PR
+seen=.seen
+touch "$seen"
+curl -s "https://api.github.com/repos/FFatTiger/hob/pulls?state=open&sort=created&direction=desc" |
+  jq -r '.[] | "#\(.number) \(.title) · \(.user.login)"' > now.txt
+grep -Fxv -f "$seen" now.txt
+cat now.txt >> "$seen"`,
+      },
+      checks: { total: 288, hits: 3, lastAt: minsAgo(4) },
+    },
+    {
+      id: "r-issue-watch",
+      assistantId: "hob",
+      name: "盯 issue 回复",
+      instruction: "有新回复的 issue 看一下，要我回的就拟一份回复草稿。",
+      schedules: ["*/30 * * * *"],
+      active: true,
+      createdAt: at(6, 9, 40),
+      runs: [],
+      check: { then: "job", script: "gh api repos/FFatTiger/hob/issues --jq '.[] | select(.comments | length > 0)'" },
+      checks: { total: 96, hits: 1, lastAt: minsAgo(6), failing: "退出码 128：fatal: could not read Username for 'https://github.com': terminal prompts disabled" },
+    },
+    {
+      id: "r-pay-rent",
+      assistantId: "hob",
+      name: "交房租",
+      instruction: "提醒我这个月交房租，别忘了把转账截图存下来。",
+      schedules: [point(1, 9)],
+      active: false,
+      createdAt: at(5, 20, 12),
+      runs: [{ jobId: "t-0902", at: at(1, 9, 0), status: "done", durationMs: 96000, tools: 12, tokens: 24000 }],
+      stoppedAt: at(1, 9, 1),
+      stopReason: "finished",
+    },
+    {
+      id: "r-watch-files",
+      assistantId: "hob",
+      name: "盯下载目录",
+      instruction: "下载目录里出现新的报销单就告诉我一声。",
+      schedules: ["*/15 * * * *"],
+      active: false,
+      createdAt: at(2, 10, 5),
+      runs: [],
+      once: true,
+      stoppedAt: minsAgo(31),
+      stopReason: "hit",
+      check: {
+        then: "notify",
+        script: String.raw`#!/bin/bash
+# 只报上次之后新放进来的报销单
+seen=.seen
+mkdir -p ~/Downloads
+ls ~/Downloads | grep 报销单 > now.txt
+comm -13 <(sort "$seen" 2>/dev/null) <(sort now.txt)
+cp now.txt "$seen"`,
+      },
+      checks: { total: 42, hits: 1, lastAt: minsAgo(31) },
+    },
   ];
 
   const asst = (id: string, time: string, text: string, routine?: { id: string; name: string; jobId?: string }): Item => ({
@@ -914,7 +995,7 @@ function buildDb(scene: SceneId): Db {
       revision: 1,
       settings: {
         general: {
-          theme: scene === "d-dark" || scene === "h-dark" || scene === "act-dark" || scene === "readme-dark" || scene === "card-130-dark" ? "dark" : "system",
+          theme: scene === "d-dark" || scene === "h-dark" || scene === "act-dark" || scene === "readme-dark" || scene === "card-130-dark" || scene === "routine-check-dark" || scene === "routine-once-dark" ? "dark" : "system",
           timezone: "Asia/Tokyo",
           aboutYou: { name: "小林", language: "中文", notes: "" },
         },
@@ -1786,6 +1867,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       emit({ type: "job", job: clone(job) });
       emit({ type: "routine", routine: clone(r) });
       touch(r.assistantId, `运行定时任务：${r.name}`);
+      return { outcome: "job" as const, job: clone(job) };
     },
     replyJob: async (jobId, text) => {
       const job = db.jobs[jobId];

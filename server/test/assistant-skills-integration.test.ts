@@ -112,7 +112,7 @@ describe("助手技能接入", () => {
       const sediment = vi.spyOn(hob.runtime.jobs, "startSediment");
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
-      const job = await hob.runtime.routines.runNow(routine.id);
+      const job = (await hob.runtime.routines.runNow(routine.id)).job!;
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "done");
       await hob.runtime.jobs.waitIdle();
       expect(sediment).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ describe("助手技能接入", () => {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
       hob.runtime.routines.update(routine.id, { skill: input.name });
       hob.faux.setResponses([call("read", { path: skill.path }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
-      const job = await hob.runtime.routines.runNow(routine.id);
+      const job = (await hob.runtime.routines.runNow(routine.id)).job!;
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "done");
       await hob.runtime.jobs.waitIdle();
       expect(hob.runtime.store.job(job.id)?.skillsUsed).toEqual([input.name]);

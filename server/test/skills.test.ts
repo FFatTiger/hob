@@ -37,7 +37,7 @@ describe("技能来源", () => {
   it("任务会话加载 Lore 发现的目录并按 Hob、Lore、通用顺序去重", async () => {
     const hob = makeHob();
     try {
-      const lore = join(hob.home, "lore");
+      const lore = join(hob.home, "system", "lore");
       const loreRoot = join(lore, "skills", "proj");
       const ownRoot = join(hob.home, "skills");
       const commonRoot = join(hob.home, "user", ".agents", "skills");
@@ -76,7 +76,7 @@ describe("技能来源", () => {
       saveLoreConnection(home, { baseUrl: "http://127.0.0.1:30198", token: "fake" });
       const fetchImpl: typeof fetch = async () => new Response(JSON.stringify({ capabilities: { skills: true } }), { status: 200 });
       expect(await testLoreConnection(home, {}, { fetchImpl })).toEqual({ ok: true, baseUrl: "http://127.0.0.1:30198" });
-      const config = JSON.parse(readFileSync(join(home, "lore", "config.json"), "utf8"));
+      const config = JSON.parse(readFileSync(join(home, "system", "lore", "config.json"), "utf8"));
       expect(config.server_profile).toEqual({ base_url: "http://127.0.0.1:30198", capabilities: { skills: true } });
     } finally { rmSync(home, { recursive: true, force: true }); }
   });

@@ -7,7 +7,10 @@ services:
     build: .
     restart: unless-stopped
     environment:
+      # 时区和语言要和出口网络一致：网站会对照 IP 所在地、时区和语言，对不上更容易被风控拦。
+      # 时区填 IANA 名（默认 UTC），语言填 BCP 47 标签（默认 zh-CN，如 en-US、ja-JP）。
       TZ: ${TZ:-UTC}
+      DESKTOP_LANG: ${DESKTOP_LANG:-zh-CN}
       # 分辨率（默认 1280x800）：DESKTOP_RESOLUTION: 1440x900
       # 令牌（默认首次启动自动生成并写进 /data/token）：DESKTOP_TOKEN: 自定义令牌
       # 空闲回收时间（分钟，可用小数）：DESKTOP_IDLE_MINUTES: 30

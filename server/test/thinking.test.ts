@@ -352,7 +352,7 @@ describe("思考档：编辑接口", () => {
       expect(saved.thinking.levels.map((item) => item.level)).toEqual(["off", "low", "medium", "high", "xhigh"]);
 
       // 引擎的模型配置读的是 Hob 自己的 models.json（HOB_HOME/engine），只放必要的键
-      const file = join(hob.home, "engine", "models.json");
+      const file = join(hob.home, "system", "engine", "models.json");
       const written = JSON.parse(readFileSync(file, "utf8")) as {
         providers: Record<string, { modelOverrides: Record<string, { thinkingLevelMap: ThinkingLevelMapSetting }> }>;
       };
@@ -406,8 +406,8 @@ describe("运行时只读 HOB_HOME", () => {
     const hob = makeHob({}, { models: [{ id: "smart", reasoning: true }] });
     try {
       // 引擎目录和模型配置都在 HOB_HOME 里
-      expect(hob.runtime.pi.engineDir).toBe(join(hob.home, "engine"));
-      expect(hob.runtime.pi.modelsPath).toBe(join(hob.home, "engine", "models.json"));
+      expect(hob.runtime.pi.engineDir).toBe(join(hob.home, "system", "engine"));
+      expect(hob.runtime.pi.modelsPath).toBe(join(hob.home, "system", "engine", "models.json"));
       // 本机那份没有进运行时：模型、思考档都还是 Hob 自己的
       const refs = (await hob.runtime.models.get()).map((model) => model.ref);
       expect(refs).toEqual(["hob-faux/smart"]);

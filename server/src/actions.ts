@@ -190,8 +190,9 @@ export async function archiveAssistant(runtime: HobRuntime, id: string): Promise
   }
   router.forget(id);
   const routines = store.routines().filter((routine) => routine.assistantId === id);
-  store.archiveAssistant(id, `${id}-${new Date().toISOString().replace(/[:.]/g, "-")}`, routines);
+  // 先停表并从列表里拿掉（归档后这条定时就不再属于还在的助手了）
   for (const routine of routines) runtime.routines.remove(routine.id);
+  store.archiveAssistant(id, `${id}-${new Date().toISOString().replace(/[:.]/g, "-")}`, routines);
   bus.emit({ type: "assistant_removed", id });
   return { status: 200, body: { ok: true } };
 }

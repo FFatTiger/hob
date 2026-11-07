@@ -1,9 +1,10 @@
-// HOB_HOME/push.json：VAPID 密钥 + 订阅设备（0600、原子写）。推送走 web-push。
+// HOB_HOME/system/push.json：VAPID 密钥 + 订阅设备（0600、原子写）。推送走 web-push。
 import { plainText } from "../../shared/plain-text.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import type { Approval, Job, PushDevice, PushSubscriptionJson, PushView } from "../../shared/types.ts";
+import { systemDir } from "./config.ts";
 import type { Store } from "./store.ts";
 
 const requirePush = createRequire(import.meta.url);
@@ -131,7 +132,7 @@ export class PushService {
   }
 
   private file(): string {
-    return join(this.options.home, FILE);
+    return join(systemDir(this.options.home), FILE);
   }
 
   /** 读磁盘；文件没有就生成 VAPID 密钥，坏的订阅丢掉。 */

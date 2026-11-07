@@ -7,9 +7,14 @@ import type { EmbeddingSettings } from "../../shared/types.ts";
 import { embed, embeddingKey, embeddingModel } from "./embedding.ts";
 import { extractChunks, UnsupportedIndex, type IndexedChunk } from "./knowledge-index.ts";
 import type { Bus } from "./bus.ts";
-import { looksText } from "./files.ts";
+import { looksText, isInPagesDir } from "./files.ts";
 import { newId } from "./ids.ts";
 import type { Store } from "./store.ts";
+
+/** 从数据目录内的相对路径推任务 id：老布局 jobs/<jid>/…，新布局 assistants/<aid>/jobs/<jid>/… */
+function jobIdFromPath(rel: string): string | undefined {
+  return /^(?:assistants[/\\][^/\\]+[/\\])?jobs[/\\]([^/\\]+)[/\\]/.exec(rel)?.[1];
+}
 
 type Entry = KnowledgeEntry & { sourceKey?: string };
 type CollectInput = { origin: "output" | "chat"; path: string; name?: string; description?: string; assistantId: string; itemId?: string; jobId?: string };
@@ -188,7 +193,7 @@ export class KnowledgeStore {
     const originalName = basename(input.path);
     const name = input.name || (input.origin === "chat" ? originalName.replace(/^u-[^-]+-/, "") : originalName);
     const kind = fileKind(originalName) ?? (looksText(data) ? "text" : "other");
-    const inPages = !relative(join(this.home, "pages"), resolve(input.path)).startsWith(`..${sep}`) && relative(join(this.home, "pages"), resolve(input.path)) !== "..";
+    const inPages = isInPagesDir(relative(this.home, resolve(input.path)));
     const ext = extname(originalName).toLowerCase().replace(/[^.a-z0-9]/g, "");
     const path = join(this.root, inPages ? "pages" : "blobs", `${hash}${inPages ? ".html" : ext}`);
     mkdirSync(dirname(path), { recursive: true });
@@ -201,8 +206,8 @@ export class KnowledgeStore {
         : content;
       writeFileSync(join(this.root, "text", `${hash}.txt`), Buffer.from(text).subarray(0, 64 * 1024), { mode: 0o600 });
     }
-    const rel = relative(join(this.home, "jobs"), resolve(input.path));
-    const jobId = input.jobId || (!rel.startsWith(`..${sep}`) && rel !== ".." && rel.includes(sep) ? rel.split(sep)[0] : undefined);
+    const rel = relative(this.home, resolve(input.path));
+    const jobId = input.jobId || jobIdFromPath(rel);
     const description = input.description || (jobId ? this.store.job(jobId)?.title : undefined);
     const now = this.timestamp(entries);
     if (previous) {

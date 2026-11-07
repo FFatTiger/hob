@@ -133,7 +133,7 @@ describe("GET /api/files", () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      const work = join(hob.home, "jobs", "t-aaaa", "work");
+      const work = join(hob.home, "assistants", "hob", "jobs", "t-aaaa", "work");
       mkdirSync(work, { recursive: true });
       const produced = join(work, "简报.md");
       writeFileSync(produced, "# 简报\n");
@@ -333,9 +333,9 @@ describe("GET /api/jobs/:id/transcript", () => {
         endedAt: "2026-11-01T01:01:00.000Z",
         stats: { reads: 0, commands: 1, edits: 0 },
         activity: [],
-        cwd: join(hob.home, "jobs", "t-aa01", "work"),
+        cwd: join(hob.home, "assistants", "hob", "jobs", "t-aa01", "work"),
       });
-      mkdirSync(join(hob.home, "jobs", "t-aa01"), { recursive: true });
+      mkdirSync(join(hob.home, "assistants", "hob", "jobs", "t-aa01"), { recursive: true });
       writeFileSync(
         hob.runtime.store.workerFile("t-aa01"),
         [

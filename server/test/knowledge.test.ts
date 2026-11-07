@@ -1,6 +1,6 @@
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { Bus } from "../src/bus.ts";
 import { KnowledgeStore } from "../src/knowledge.ts";
@@ -81,11 +81,11 @@ describe("知识库接入", () => {
   it("收集页面、文件卡片、对话图片、对话附件及任务报告", async () => {
     const hob = makeHob();
     try {
-      const pages = join(hob.home, "pages"); mkdirSync(pages, { recursive: true });
+      const pages = join(hob.home, "assistants", "hob", "files", "pages"); mkdirSync(pages, { recursive: true });
       const page = join(pages, "page.html"); writeFileSync(page, "<h1>页面内容</h1>");
       const file = join(hob.home, "output.txt"); writeFileSync(file, "文件内容");
       const image = join(hob.home, "picture.png"); writeFileSync(image, "图片内容");
-      const upload = join(hob.home, "uploads", "u-abcdef-附件.txt"); writeFileSync(upload, "附件内容");
+      const upload = join(hob.home, "assistants", "hob", "files", "uploads", "u-abcdef-附件.txt"); mkdirSync(dirname(upload), { recursive: true }); writeFileSync(upload, "附件内容");
       const report = join(hob.home, "report.txt"); writeFileSync(report, "报告内容");
       const pageItem = await hob.runtime.router.addItem("hob", { kind: "file", path: page, name: "标题", meta: "摘要" });
       await hob.runtime.router.addItem("hob", { kind: "file", path: file, name: "output.txt" });
@@ -109,7 +109,7 @@ describe("知识库接入", () => {
   it("未配置模型时也收集发出的对话附件", async () => {
     const hob = makeHob({}, { keepSettings: true });
     try {
-      const path = join(hob.home, "uploads", "u-abcdef-原文.txt"); writeFileSync(path, "没有模型");
+      const path = join(hob.home, "assistants", "hob", "files", "uploads", "u-abcdef-原文.txt"); mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, "没有模型");
       const item = await hob.runtime.router.send("hob", { text: "附件", files: [path] });
       const entries = (await hob.runtime.knowledge.list({ origin: "chat" })).entries;
       expect(entries).toHaveLength(1);
@@ -143,7 +143,7 @@ describe("知识库接入", () => {
       expect((await app.request("/api/knowledge/entries/missing", json("PATCH", { name: "x" }))).status).toBe(404);
       expect((await app.request("/api/knowledge/entries/missing", { method: "DELETE", headers: { cookie } })).status).toBe(404);
       expect((await app.request("/api/knowledge/upload?collection=missing", { method: "POST", headers: { cookie } })).status).toBe(404);
-      const pages = join(hob.home, "pages"); mkdirSync(pages, { recursive: true }); const page = join(pages, "original.html"); writeFileSync(page, "<p>页面</p>");
+      const pages = join(hob.home, "assistants", "hob", "files", "pages"); mkdirSync(pages, { recursive: true }); const page = join(pages, "original.html"); writeFileSync(page, "<p>页面</p>");
       const saved = (await hob.runtime.knowledge.collect({ origin: "output", path: page, assistantId: "hob" }))!;
       const meta = await app.request(`/api/files/meta?path=${encodeURIComponent(saved.path)}`, { headers: { cookie } });
       expect(await meta.json()).toMatchObject({ page: true });

@@ -39,6 +39,7 @@ import type {
   PushSubscriptionJson,
   PushView,
   Routine,
+  RoutineTick,
   Rule,
   SendMessageBody,
   SettingsFile,
@@ -184,12 +185,12 @@ export interface HobApi {
   createRoutine(body: Omit<Routine, "id" | "createdAt" | "runs">): Promise<Routine | undefined>;
   patchRoutine(routineId: string, patch: Omit<Partial<Routine>, "skill"> & { skill?: string | null }): Promise<void>;
   deleteRoutine(routineId: string): Promise<void>;
-  runRoutine(routineId: string): Promise<void>;
+  runRoutine(routineId: string): Promise<RoutineTick | undefined>;
   replyJob(jobId: string, text: string): Promise<void>;
   stopJob(jobId: string): Promise<void>;
   transcript(jobId: string): Promise<JobTranscript>;
   jobs(query?: { assistantId?: string; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
-  upload(file: File): Promise<string>;
+  upload(file: File, assistantId: string): Promise<string>;
   /** thumb：对话里显示的缩略图（长边 720），点开预览才拉原图 */
   fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean; thumb?: boolean }): string;
   fileMeta(path: string): Promise<FileMeta>;
@@ -345,7 +346,7 @@ export const realApi: HobApi = {
   deleteRoutine: (routineId) =>
     req<void>(`/api/routines/${encodeURIComponent(routineId)}`, { method: "DELETE" }),
   runRoutine: (routineId) =>
-    req<void>(`/api/routines/${encodeURIComponent(routineId)}/run`, { method: "POST" }),
+    req<RoutineTick | undefined>(`/api/routines/${encodeURIComponent(routineId)}/run`, { method: "POST" }),
   replyJob: (jobId, text) => req<void>(`/api/jobs/${encodeURIComponent(jobId)}/reply`, json({ text })),
   stopJob: (jobId) => req<void>(`/api/jobs/${encodeURIComponent(jobId)}/stop`, { method: "POST" }),
   transcript: (jobId) => req<JobTranscript>(`/api/jobs/${encodeURIComponent(jobId)}/transcript`),
@@ -358,10 +359,10 @@ export const realApi: HobApi = {
     const qs = params.toString();
     return req<JobsPage>(`/api/jobs${qs ? `?${qs}` : ""}`);
   },
-  upload: async (file) => {
+  upload: async (file, assistantId) => {
     const form = new FormData();
     form.append("file", file);
-    const out = await req<{ file: { path: string } }>("/api/uploads", { method: "POST", body: form });
+    const out = await req<{ file: { path: string } }>(`/api/uploads?assistantId=${encodeURIComponent(assistantId)}`, { method: "POST", body: form });
     if (!out.file?.path) throw new Error("上传响应缺少文件路径");
     return out.file.path;
   },

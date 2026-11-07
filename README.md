@@ -18,7 +18,7 @@ You talk to assistants, not jobs. An assistant handles small requests directly a
 
 Each assistant has a conversation, duties, rules, skills, schedules and a work log. When similar requests recur, Hob can propose a dedicated assistant. When it delegates to another assistant, a delegation card tracks the work, carries your original request and lets you take over in the receiving assistant's conversation.
 
-Jobs can be inspected, stopped or resumed, with each round retained; the assistant receives reminders when a job exceeds its expected duration. Routines put their job cards and results in the conversation. The conversation follows new output as the assistant writes, and a screenshot can be pasted straight into the input box.
+Jobs can be inspected, stopped or resumed, with each round retained; the assistant receives reminders when a job exceeds its expected duration. Routines put their job cards and results in the conversation. A routine can run once at a set time, or carry a check script that runs first and wakes the assistant (or just leaves you a note) only when something changed, optionally stopping after the first hit. The conversation follows new output as the assistant writes; screenshots can be pasted and files dropped straight into the window.
 
 On a phone, the assistant list, conversation and profile use a mobile layout; the app supports swipe-to-reply and long-press actions. Push notifications alert you when an assistant needs your decision or a job gets stuck or fails.
 
@@ -75,7 +75,7 @@ Open <http://127.0.0.1:30148> and sign in with that password. Then:
 2. Go to **设置 → 模型** (Settings → Models) and pick the models for chat and for jobs.
 3. Send Hob a message. A reply, or a job card for real work, means you are set.
 
-The password is hashed into `~/.hob/config.json` on first start, so later starts don't need `HOB_PASSWORD`. You can change it under **设置 → 通用**.
+The password is hashed into `~/.hob/system/config.json` on first start, so later starts don't need `HOB_PASSWORD`. You can change it under **设置 → 通用**.
 
 ## Configuration
 
@@ -93,7 +93,18 @@ Startup options are environment variables. Everything else, including providers,
 
 `config.json` can also set `host`, `port` and the initial `password`; environment variables take precedence for host and port. Hob isolates its engine and memory directories under `HOB_HOME` and removes inherited model and Lore credentials from its runtime environment.
 
-Conversations, jobs, memory, skills, keys and engine state live in `HOB_HOME`. To reuse providers or a Lore connection you already have on the machine, import them explicitly in settings. Back up `HOB_HOME` to preserve Hob's data.
+Conversations, jobs, memory, skills, keys and engine state live in `HOB_HOME`, grouped by ownership: `system/` (config, keys, engine, Lore, memory), `cache/` (regenerable), `assistants/<id>/` (each assistant's profile, conversation, routines, jobs and files) and `archive/`. To reuse providers or a Lore connection you already have on the machine, import them explicitly in settings. Back up `HOB_HOME` to preserve Hob's data.
+
+**Data layout migration.** Older versions kept everything flat in `HOB_HOME` (`jobs/`, `pages/`, `images/` … plus a few JSON files at the root). On start Hob migrates that layout automatically, before touching the engine: it checks free space, takes a full verified copy in `HOB_HOME/backup-v1-<time>/` (permissions and symlinks preserved), moves files, and only then writes `system/moves.json` (old path → new path) and `layout.json`. If the process dies mid-way, the next start restores from the backup and runs again. Backups are never deleted automatically — remove `backup-v1-*` yourself once you are happy with the new layout (it contains a copy of your keys). Two commands help:
+
+```
+npm run layout -- --dry-run   # print the migration plan, change nothing
+npm run layout -- --restore   # go back to the old layout from the backup
+# installed from npm: hob layout --dry-run / hob layout --restore
+# Docker (stop Hob first): docker compose run --rm hob node bin/hob.mjs layout --restore
+```
+
+Downgrading means restoring the old layout first: older versions do not understand the new one and must not write the same data directory.
 
 **Claude subscription:** For npm or source installs, install Claude Code and sign in locally with `claude auth login`, then enable Claude subscription under **Settings → Providers**, choose Pro or Max and select the models under **Settings → Models**. Usage counts against the same Claude subscription quota as Claude Code. Docker images do not support this feature. Hob does not read, copy, store or forward Claude credentials; the official Claude Code program uses its existing login. Claude Code writes its own session records under `~/.claude/projects/`, outside `HOB_HOME`.
 
@@ -129,6 +140,8 @@ docker compose --profile desktop up -d
 The desktop is not published to the host network. Hob reads the generated token from a shared volume and shows **由部署配置** in Settings → Cloud desktop. Without the profile Hob runs alone and the desktop is unconfigured.
 
 For an independent deployment, use [`desktop/compose.yaml`](desktop/compose.yaml) or the `docker run` command in [the desktop guide](desktop/README.md), then enter the service URL and token in Hob's settings. When the desktop profile is not running and its shared token file is absent or empty, Hob uses the desktop configured in settings; once the token file appears, the Compose deployment takes precedence. Anyone signed into Hob can view and take over an individual screen; log into websites yourself, not through the assistant. Google currently blocks Google account sign-in in a browser with remote debugging enabled. Browser cookies in the desktop data volume are sensitive. Bearer tokens travel in cleartext over HTTP: use a trusted private network or HTTPS for connections between machines, and do not expose VNC or CDP ports.
+
+`TZ` (IANA zone) and `DESKTOP_LANG` (BCP 47 tag, e.g. `en-US`) set the desktop container's timezone and language; both go in the `.env` file next to `compose.yaml` and default to `UTC` and `zh-CN`. They drive the UI language of every program on the desktop, the browser UI language, and the `Accept-Language` / `navigator.languages` the browser sends to websites; `DESKTOP_RESOLUTION` (default `1280x800`) sets the screen size. Sites compare the IP's location with timezone, language and screen, so change them together when the egress network is not in mainland China. Existing browser profiles follow the deployment setting, so a language chosen in browser settings is overridden.
 
 Measured for desktop v2 on an amd64 host: image disk usage was 2.03 GB; memory was 23.5 MiB without screens, 354.9 MiB with one Chrome screen on example.com, and 1017 MiB with three Chrome screens on new tabs. The page workloads differ, and actual usage depends on the host and pages.
 

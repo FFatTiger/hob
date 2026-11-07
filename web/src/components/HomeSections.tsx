@@ -2,6 +2,7 @@
 // 手机首页（Mobile）和桌面左栏（Sidebar）共用这一份，筛选规则在 ../home.ts，
 // 两边的头部（我的 / 搜索框 / 新建）各自保留。
 import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import type { AssistantSummary, Job } from "../../../shared/types.ts";
 import { plainText } from "../../../shared/plain-text.ts";
 import { homeGroups } from "../home.ts";
@@ -11,7 +12,7 @@ import { Avatar, type AvatarMark } from "../sprites.tsx";
 import { closePanelPages, openJob, openJobs, openRoutine, select, useApp } from "../store.ts";
 import { cronText, fmtElapsed, fmtList } from "../util.ts";
 import { useAssistantMenu } from "./AssistantMenu.tsx";
-import type { PinDragTarget } from "./PinDrag.ts";
+import { useRowToPin, type PinDragTarget } from "./PinDrag.ts";
 import { JOB_STATUS, StatusTag } from "./status-meta.tsx";
 import { Empty } from "./Empty.tsx";
 import { activityParts } from "./Panel.tsx";
@@ -81,6 +82,7 @@ export function Pin({
         void select(a.id);
       }}
     >
+      {drag ? <Icon name="grip" size={14} className="grip" /> : null}
       <Avatar sprite={a.sprite} prop={a.prop} size={size} motion={busy && !sel ? "peek" : undefined} slot={slot} mark={mark} />
       <div className="nm">{a.name}</div>
       <div className="sub">{a.duty}</div>
@@ -109,12 +111,19 @@ export function AssistantRow({
   const menu = useAssistantMenu(a);
   const { busy, slot } = useHomeBusy(a);
   const mark = useMark(a, busy);
+  // 没置顶的才能往上拖进置顶区（收起的助手也算日常这一组）
+  const toPin = useRowToPin(a);
   return (
     <button
-      className={`list-row home-row${sel ? " sel" : ""}`}
+      className={`list-row home-row${sel ? " sel" : ""}${a.pinned ? "" : " can-pin"}`}
+      data-row={a.pinned || a.hidden ? undefined : a.id}
       {...menu.handlers}
+      onPointerDown={(e) => {
+        menu.handlers.onPointerDown(e);
+        if (!a.pinned) toPin.onPointerDown(e);
+      }}
       onClick={() => {
-        if (menu.takeHeld()) return;
+        if (toPin.takeMoved() || menu.takeHeld()) return;
         if (onClick) onClick();
         else void select(a.id);
       }}
@@ -127,6 +136,14 @@ export function AssistantRow({
         </div>
         <div className="pv">{a.last ? plainText(a.last.text) : a.duty}</div>
       </div>
+      {a.pinned ? null : <Icon name="grip" size={14} className="grip" />}
+      {toPin.ghost ? createPortal(
+        <div className={`pin-ghost${toPin.ghost.over ? " over" : ""}`} style={{ left: toPin.ghost.x, top: toPin.ghost.y }}>
+          <Avatar sprite={a.sprite} prop={a.prop} size={40} />
+          <span>{toPin.ghost.over ? "松手置顶" : a.name}</span>
+        </div>,
+        document.body,
+      ) : null}
     </button>
   );
 }

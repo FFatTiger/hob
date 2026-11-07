@@ -51,7 +51,7 @@ describe("服务商", () => {
       const saved = JSON.parse(raw) as ProvidersView;
       expect(saved.providers).toMatchObject([{ kind: "builtin", id: "deepseek", keyConfigured: true }]);
 
-      const secrets = join(hob.home, "secrets.json");
+      const secrets = join(hob.home, "system", "secrets.json");
       expect(readFileSync(secrets, "utf8")).toContain("provider:deepseek");
       // Key 套进了引擎：这个服务商的模型现在可用
       const models = await hob.runtime.models.get();
@@ -118,7 +118,7 @@ describe("服务商", () => {
       const removed = await app.request("/api/providers/my-proxy", { method: "DELETE", headers: { cookie } });
       expect(removed.status).toBe(200);
       expect(runtime.getModels("my-proxy")).toEqual([]);
-      expect(readFileSync(join(hob.home, "secrets.json"), "utf8")).not.toContain("sk-proxy");
+      expect(readFileSync(join(hob.home, "system", "secrets.json"), "utf8")).not.toContain("sk-proxy");
 
       const after = (await (await app.request("/api/models", { headers: { cookie } })).json()) as ModelsView;
       expect(after.roster.map((entry) => entry.ref)).toEqual(["hob-faux/faux-1", "my-proxy/gpt-x"]);
@@ -323,7 +323,7 @@ describe("没有服务商", () => {
     const home = mkdtempSync(join(tmpdir(), "hob-nomodel-"));
     try {
       const config: HobConfig = { passwordHash: hashPassword("test"), cookieSecret: "y", host: "127.0.0.1", port: 0 };
-      const runtime = createRuntime({ home, config, pi: new PiHost({ engineDir: join(home, "engine") }) });
+      const runtime = createRuntime({ home, config, pi: new PiHost({ engineDir: join(home, "system", "engine") }) });
       try {
         const app = createApp(runtime, { home });
         const cookie = await signIn(app);
@@ -360,10 +360,10 @@ describe("引擎目录", () => {
     delete process.env.PI_MEMORY_DIR;
     try {
       const config: HobConfig = { passwordHash: hashPassword("test"), cookieSecret: "y", host: "127.0.0.1", port: 0 };
-      const pi = new PiHost({ engineDir: join(home, "engine") });
+      const pi = new PiHost({ engineDir: join(home, "system", "engine") });
       const runtime = createRuntime({ home, config, pi });
-      expect(pi.engineDir).toBe(join(home, "engine"));
-      expect(process.env.PI_MEMORY_DIR).toBe(join(home, "memory"));
+      expect(pi.engineDir).toBe(join(home, "system", "engine"));
+      expect(process.env.PI_MEMORY_DIR).toBe(join(home, "system", "memory"));
       runtime.router.disposeAll();
       // 设置里的服务商套进引擎之后凭据也写在 engine 里
       expect(runtime.settings.get() as SettingsFile).toBeTruthy();

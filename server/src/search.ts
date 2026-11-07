@@ -62,7 +62,7 @@ export class WebSearch {
     const keys = this.keys();
     const signal = AbortSignal.timeout(15_000);
     try {
-      const github = new GitHubInterceptor({ enabled: true, clonePath: join(this.home, "github-cache") });
+      const github = new GitHubInterceptor({ enabled: true, clonePath: join(this.home, "cache", "github") });
       let result = await github.intercept(url, { raw, signal });
       if (!result) {
         const native = this.settings().find((p) => p.enabled && ["exa", "tavily", "jina", "firecrawl"].includes(p.name));

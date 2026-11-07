@@ -122,8 +122,20 @@ export function scheduleCron(s: Schedule): string {
   return s.raw.trim() || `${mi} ${ho} * * *`;
 }
 
-/** cron → 中文：每天 09:00 / 每周五 17:00 / 每月28日 09:00；不认识的写法原样显示。 */
+/** 具体时间点（2026-11-08T09:00，可带秒）→「11月8日 09:00」，跨年的带年份；不是时间点就是 undefined。 */
+export function timePointText(cron: string, now = new Date()): string | undefined {
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2})?$/.exec(cron.trim());
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute] = match;
+  return `${Number(year) === now.getFullYear() ? "" : `${Number(year)}年`}${Number(month)}月${Number(day)}日 ${hour}:${minute}`;
+}
+
+/** cron → 中文：每天 09:00 / 每周五 17:00 / 每月28日 09:00 / 11月8日 09:00（一次）；不认识的写法原样显示。 */
 export function cronText(cron: string): string {
+  const point = timePointText(cron);
+  if (point) return `${point}（一次）`;
+  const every = /^\*\/(\d+) \* \* \* \*$/.exec(cron.trim());
+  if (every) return `每 ${every[1]} 分钟`;
   const s = parseCron(cron);
   const t = `${String(s.hour).padStart(2, "0")}:${String(s.minute).padStart(2, "0")}`;
   if (s.kind === "daily") return `每天 ${t}`;

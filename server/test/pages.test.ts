@@ -73,7 +73,7 @@ describe("展示页面", () => {
   it("套上 Hob 页面外壳，文件接口隔离内联", async () => {
     const hob = makeHob();
     try {
-      const path = await renderPage(hob.home, "TCP <握手>", "三次交换", html);
+      const path = await renderPage(hob.home, "hob", "TCP <握手>", "三次交换", html);
       const page = readFileSync(path, "utf8");
       expect(page).toContain("<h1>TCP &lt;握手&gt;</h1>");
       expect(page).toContain(html);
@@ -101,7 +101,7 @@ describe("展示页面", () => {
       expect(router.terminate).toBe(true);
       expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "file")).toHaveLength(1);
       const send = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "send_file")!;
-      const special = await renderPage(hob.home, 'A & <B>', '摘要 "&"', html);
+      const special = await renderPage(hob.home, "hob", 'A & <B>', '摘要 "&"', html);
       await send.execute("send", { path: special });
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "file" && item.path === special)).toMatchObject({ name: "A & <B>", meta: '摘要 "&"' });
     } finally { hob.close(); }
@@ -114,8 +114,8 @@ describe("展示页面", () => {
       const result = await tool.execute("x", { title: "错", summary: "错", html: "<html><body>整页</body></html>" });
       expect(result.isError).toBe(true);
       expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "file")).toHaveLength(0);
-      await expect(renderPage(hob.home, "t", "s", "x".repeat(80001))).rejects.toThrow("80000");
-      await expect(renderPage(hob.home, "t", "s", "  ")).rejects.toThrow("不能为空");
+      await expect(renderPage(hob.home, "hob", "t", "s", "x".repeat(80001))).rejects.toThrow("80000");
+      await expect(renderPage(hob.home, "hob", "t", "s", "  ")).rejects.toThrow("不能为空");
     } finally { hob.close(); }
   });
 

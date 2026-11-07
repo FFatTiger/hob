@@ -1,10 +1,11 @@
 import { Type } from "@earendil-works/pi-ai";
 import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, resolve } from "node:path";
+import { basename, extname, join, relative, resolve } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
-import { lookupFile } from "./files.ts";
+import { lookupFile, isInPagesDir } from "./files.ts";
+import { resolveMovedPath } from "./layout.ts";
 import {
   COLORS,
   COLOR_IDS,
@@ -17,8 +18,8 @@ import {
   validateCustomProp,
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
-import type { Approval, ApprovalOption, CustomProp, Draft, Routine } from "../../shared/types.ts";
-import { cronToChinese } from "./cron-text.ts";
+import type { Approval, ApprovalOption, CustomProp, Draft, Routine, RoutineCheck } from "../../shared/types.ts";
+import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { generateImage, imageConfigured } from "./image.ts";
@@ -34,6 +35,31 @@ import { jobView } from "./job-view.ts";
 import { deleteSkill } from "./delete-skill.ts";
 
 type Tool = ToolDefinition<any, any>;
+
+/** 执行时间的参数说明：cron 表达式和具体时间都收。 */
+const SCHEDULES_DESCRIPTION = "一个或多个；可以是 cron 表达式，也可以是具体时间（如 2026-11-08T09:00），到点只跑一次。";
+
+/** once 的参数说明。 */
+const ONCE_DESCRIPTION = "可选。为 true 时做成一次就停：没有检查脚本的，跑完一次就停；有检查脚本的，第一次有输出就停。停了的定时任务还在，可以再打开。";
+
+/** 检查脚本参数：create_routine 和 update_routine 共用。 */
+const CHECK_DESCRIPTION = "可选。到点先跑的 bash 脚本，填脚本全文：没有输出就这次什么都不做；有输出时，then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出开始任务。脚本在这个定时任务自己的目录里运行，状态文件存在当前目录，记住上次看到哪里；第一次跑还没有状态时只记下现状，不输出。非零退出算检查失败。脚本用到的其他文件也放在这个目录，跟着定时任务走。";
+
+const CHECK_PARAM = Type.Object({
+  script: Type.String({ description: "bash 脚本全文" }),
+  then: Type.Union([Type.Literal("notify"), Type.Literal("job")], { description: "有输出时：notify 把输出作为提醒发到对话，job 带着输出开始任务" }),
+}, { description: CHECK_DESCRIPTION });
+
+/** 工具返回里说的「每 10 分钟」这类：具体时间只说那一刻，有检查脚本的说明有新内容会怎样，开了 once 的说明会停。 */
+function routineFact(schedules: string[], check: RoutineCheck | undefined, once: boolean | undefined): string {
+  const points = schedules.map((schedule) => timePointText(schedule));
+  const labels = schedules.map((schedule, index) => points[index] ?? cronToChinese(schedule));
+  const facts: string[] = [];
+  if (points.every(Boolean)) facts.push(`${labels.join("、")}跑一次`);
+  if (check) facts.push(`${labels.join("、")}检查一次${check.then === "notify" ? "，有新内容就提醒你" : "，有新内容就开任务"}`);
+  if (once) facts.push("触发一次就停");
+  return facts.length ? `，${facts.join("；")}` : "";
+}
 
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
@@ -380,12 +406,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "create_routine",
       label: "新增定时任务",
-      description: "新增一个定时任务。schedule 用 cron 表达式，如「0 9 * * *」每天 9 点；多个执行时间就传多个。",
+      description: "新增一个定时任务。执行时间用 cron 表达式，如「0 9 * * *」每天 9 点；只跑一次就填具体时间；多个执行时间就传多个。",
       parameters: Type.Object({
         name: Type.String({ description: "定时任务名称，如「每日简报」" }),
         instruction: Type.String({ description: "到点要执行的内容" }),
-        schedules: Type.Array(Type.String({ description: "cron 表达式" }), { description: "一个或多个" }),
+        schedules: Type.Array(Type.String({ description: "cron 表达式或具体时间" }), { description: SCHEDULES_DESCRIPTION }),
         skill: Type.Optional(Type.String({ description: "可选，按哪个技能做，填技能名。" })),
+        check: Type.Optional(CHECK_PARAM),
+        once: Type.Optional(Type.Boolean({ description: ONCE_DESCRIPTION })),
       }),
       execute: async (_id, params: any) => {
         try {
@@ -395,10 +423,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             instruction: String(params.instruction),
             schedules: (params.schedules as string[]) ?? [],
             ...(params.skill ? { skill: String(params.skill) } : {}),
+            ...(params.check ? { check: params.check as RoutineCheck } : {}),
+            ...(params.once ? { once: true } : {}),
           });
           await note("routine", `新增定时任务 · ${routine.name} · ${routine.schedules.map(cronToChinese).join("、")}`);
           profileChanged();
-          return ok(`定时任务「${routine.name}」已创建。`);
+          return ok(`定时任务「${routine.name}」已创建${routineFact(routine.schedules, routine.check, routine.once)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以派任务写到这个目录。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -407,14 +437,16 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "update_routine",
       label: "修改定时任务",
-      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、按哪个技能做、启用状态。",
+      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、按哪个技能做、检查脚本、启用状态。",
       parameters: Type.Object({
         routineId: Type.String(),
         name: Type.Optional(Type.String()),
         instruction: Type.Optional(Type.String()),
-        schedules: Type.Optional(Type.Array(Type.String())),
+        schedules: Type.Optional(Type.Array(Type.String({ description: "cron 表达式或具体时间" }), { description: SCHEDULES_DESCRIPTION })),
         active: Type.Optional(Type.Boolean()),
         skill: Type.Optional(Type.String({ description: "按哪个技能做，填技能名；填空字符串表示不用技能。" })),
+        check: Type.Optional(Type.Union([CHECK_PARAM, Type.Null()], { description: `${CHECK_DESCRIPTION}传 null 去掉检查。` })),
+        once: Type.Optional(Type.Boolean({ description: ONCE_DESCRIPTION })),
       }),
       execute: async (_id, params: any) => {
         try {
@@ -424,10 +456,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             ...(params.schedules ? { schedules: params.schedules as string[] } : {}),
             ...(typeof params.active === "boolean" ? { active: params.active } : {}),
             ...(typeof params.skill === "string" ? { skill: params.skill } : {}),
+            ...(params.check === null || params.check ? { check: params.check as RoutineCheck | null } : {}),
+            ...(typeof params.once === "boolean" ? { once: params.once } : {}),
           });
           await note("routine", `修改定时任务 · ${routine.name} · ${routine.schedules.map(cronToChinese).join("、")}`);
           profileChanged();
-          return ok("已修改。");
+          return ok(`已修改${routineFact(routine.schedules, routine.check, routine.once)}。目录是 ${routines.dir(routine)}。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -455,11 +489,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       description: "把一个文件（任务交来的文件、截图、任务生成的图）作为卡片发到对话里，图片直接显示。",
       parameters: Type.Object({ path: Type.String({ description: "文件的绝对路径" }) }),
       execute: async (_id, params: any) => {
-        const path = String(params.path);
-        if (!existsSync(path)) return fail(`文件不存在：${path}`);
+        const requested = String(params.path);
+        // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
+        const path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
+        if (!existsSync(path)) return fail(`文件不存在：${requested}`);
         let name = basename(path);
         let meta = fileMeta(path);
-        if (dirname(resolve(path)) === resolve(runtime.home, "pages") && extname(path).toLowerCase() === ".html") {
+        if (isInPagesDir(relative(runtime.home, resolve(path))) && extname(path).toLowerCase() === ".html") {
           const html = await readFile(path, "utf8");
           const title = html.match(/<title>([\s\S]*?)<\/title>/)?.[1];
           const summary = html.match(/<header class="hd"><h1>[\s\S]*?<\/h1><p>([\s\S]*?)<\/p><\/header>/)?.[1];
@@ -557,7 +593,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
         const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
         const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() });
         try {
-          const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "images"), config }, {
+          const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "assistants", assistantId, "files", "images"), config }, {
             prompt,
             ...(params.size ? { size: String(params.size) } : {}),
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),

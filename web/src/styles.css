@@ -58,6 +58,14 @@
 .sidebar-page-routine > .field, .sidebar-page-newRoutine > .field { padding-left: var(--sidebar-inset); padding-right: var(--sidebar-inset); }
 .sidebar-page-routine > .when, .sidebar-page-newRoutine > .when { padding-left: var(--sidebar-inset); padding-right: var(--sidebar-inset); }
 .sidebar-runs { padding: 0 var(--sidebar-inset); }
+.sidebar-page-routine .rt-check-line { font-size: 12.5px; color: var(--text2); }
+.sidebar-page-routine > .rt-check-line { margin-top: 8px; }
+.sidebar-page-routine .rt-check-line + .rt-check-line { margin-top: 6px; padding-top: 6px; border-top: 1px solid var(--line); }
+.sidebar-page-routine .rt-when-note { margin: 6px 0 0; padding: 0 var(--sidebar-inset); font-size: 12px; color: var(--text2); }
+.rt-bad, .sidebar-page-routine .rt-check-line.badline { color: var(--danger, #d4462c); }
+.rt-script { margin: 12px 0 0; }
+.rt-script > summary { padding: 2px 0; font-size: 12.5px; color: var(--text2); cursor: pointer; }
+.rt-script > pre { margin: 8px 0 0; padding: 10px 12px; border-radius: 10px; background: var(--field); overflow-x: auto; font-size: 12px; line-height: 1.55; white-space: pre-wrap; word-break: break-word; color: var(--text2); }
 .sidebar-runs .run + .run, .sidebar-page-routine .when .w + .w, .sidebar-page-newRoutine .when .w + .w { border-top: 1px solid var(--line); }
 .sidebar-page-assistant .sidebar-card-group > .field + .lbl { border-top: 1px solid var(--line); padding-top: 10px; }
 .sidebar-page-assistant .sidebar-card-group > .field { padding: 4px 0 10px; }
@@ -502,6 +510,73 @@ svg.i {
   background: var(--sel);
   box-shadow: 0 8px 20px rgb(0 0 0 / 18%);
   transition: none;
+}
+/* 能拖的提示：鼠标放上去时左上角（置顶）或左边（日常）出现一个小抓手 */
+.pin > .grip,
+.home-row > .grip {
+  position: absolute;
+  color: var(--text2);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease-out);
+}
+.pin > .grip {
+  top: 6px;
+  left: 6px;
+}
+.home-row {
+  position: relative;
+}
+.home-row > .grip {
+  top: 50%;
+  left: 0;
+  translate: 0 -50%;
+}
+@media (hover: hover) {
+  .pins:not(.locked) .pin:hover > .grip,
+  .home-row.can-pin:hover > .grip {
+    opacity: 1;
+  }
+}
+/* 日常拖进置顶区：置顶区描一圈虚线，跟手的小头像告诉你松手会怎样 */
+.pins.drop {
+  outline: 1.5px dashed color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+  border-radius: 14px;
+}
+.home-row.drop-before::before,
+.home-row.drop-after::after {
+  content: '';
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+}
+.home-row.drop-before::before {
+  top: -1px;
+}
+.home-row.drop-after::after {
+  bottom: -1px;
+}
+.pin-ghost {
+  position: fixed;
+  z-index: 1300;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 6px;
+  border-radius: 999px;
+  background: var(--field);
+  box-shadow: 0 8px 24px rgb(0 0 0 / 18%);
+  font-size: 12.5px;
+  pointer-events: none;
+  translate: -24px -50%;
+  white-space: nowrap;
+}
+.pin-ghost.over {
+  color: var(--accent);
 }
 .gt {
   display: flex;
@@ -4498,6 +4573,15 @@ button.screen,
   font-size: 15px;
   line-height: 1.62;
   overflow-wrap: anywhere;
+}
+/* 列表的记号要留在正文里面：不给左边留白的话，序号和圆点会挂到屏幕外面去 */
+.jd-text ul,
+.jd-text ol {
+  padding-left: 22px;
+  margin: 4px 0;
+}
+.jd-text li + li {
+  margin-top: 2px;
 }
 .jd-mine.queued { opacity: 0.75; }
 .jd-mine-note { margin-top: 2px; font-size: 12px; color: var(--text2); }

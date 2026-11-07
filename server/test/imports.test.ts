@@ -254,7 +254,7 @@ describe("服务商：导入", () => {
         max: "max",
       });
 
-      const secrets = JSON.parse(readFileSync(join(hob.home, "secrets.json"), "utf8")) as Record<string, string>;
+      const secrets = JSON.parse(readFileSync(join(hob.home, "system", "secrets.json"), "utf8")) as Record<string, string>;
       expect(secrets["provider:my-proxy"]).toBe("sk-literal");
       expect(secrets["provider:env-proxy"]).toBe(KEY_ENV_VALUE);
       expect(secrets["provider:anthropic"]).toBe("sk-ant-literal");
@@ -315,7 +315,7 @@ describe("服务商：导入", () => {
       expect(mine.name).toBe("my-proxy");
       expect(mine.baseUrl).toBe("https://proxy.example/v1");
       expect(mine.models.map((model) => model.id)).toEqual(["gpt-x"]);
-      const secrets = JSON.parse(readFileSync(join(hob.home, "secrets.json"), "utf8")) as Record<string, string>;
+      const secrets = JSON.parse(readFileSync(join(hob.home, "system", "secrets.json"), "utf8")) as Record<string, string>;
       expect(secrets["provider:my-proxy"]).toBe("sk-literal");
 
       // 只读来源：内容和 mtime 都没变
@@ -388,9 +388,9 @@ describe("Lore 连接：从本机导入", () => {
       });
       expect(saved.lore).toMatchObject({ configured: true, baseUrl: "http://127.0.0.1:18901", tokenConfigured: true });
 
-      const own = JSON.parse(readFileSync(join(hob.home, "lore", "config.json"), "utf8")) as Record<string, unknown>;
+      const own = JSON.parse(readFileSync(join(hob.home, "system", "lore", "config.json"), "utf8")) as Record<string, unknown>;
       expect(own).toEqual({ base_url: "http://127.0.0.1:18901", api_token: "lm_local" });
-      expect(statSync(join(hob.home, "lore", "config.json")).mode & 0o777).toBe(0o600);
+      expect(statSync(join(hob.home, "system", "lore", "config.json")).mode & 0o777).toBe(0o600);
 
       // 本机那份不动
       expect(readFileSync(localPath, "utf8")).toBe(before);

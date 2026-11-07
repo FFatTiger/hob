@@ -58,7 +58,7 @@ describe("派活带上原话", () => {
     const outside = mkdtempSync(join(tmpdir(), "hob-cwd-"));
     try {
       symlinkSync(hob.home, join(outside, "alias"));
-      for (const cwd of [hob.home, join(hob.home, "jobs", "new"), join(outside, "alias", "new")]) {
+      for (const cwd of [hob.home, join(hob.home, "assistants", "hob", "jobs", "new"), join(outside, "alias", "new")]) {
         await expect(hob.runtime.jobs.start("hob", { title: "测试", instruction: "测试", cwd })).rejects.toThrow("不能在 Hob 的数据目录里干活；不填 cwd 就在任务自己的目录里做。");
       }
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);

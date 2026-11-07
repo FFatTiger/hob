@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type ThinkingLevelMap } from "@earendil-works/pi-ai";
@@ -87,10 +87,11 @@ export function makeHob(overrides: Partial<HobConfig> = {}, options: MakeHobOpti
     models: options.settings?.models ? { ...seedModels, ...options.settings.models } : seedModels,
     work: { ...settings.work, ...(options.settings?.work ?? {}) },
   };
-  writeFileSync(join(home, "config.json"), JSON.stringify(config));
+  mkdirSync(join(home, "system"), { recursive: true });
+  writeFileSync(join(home, "system", "config.json"), JSON.stringify(config));
   if (!options.keepSettings) {
     writeFileSync(
-      join(home, "settings.json"),
+      join(home, "system", "settings.json"),
       JSON.stringify({
         revision: 1,
         settings: merged,
@@ -99,7 +100,7 @@ export function makeHob(overrides: Partial<HobConfig> = {}, options: MakeHobOpti
     );
   }
   const pi = new PiHost({
-    engineDir: join(home, "engine"),
+    engineDir: join(home, "system", "engine"),
     nativeProviders: [faux.provider],
   });
   const runtime = createRuntime({

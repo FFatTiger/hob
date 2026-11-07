@@ -81,7 +81,7 @@ describe("推送存储", () => {
       const view = hob.runtime.push.view();
       expect(view.publicKey.length).toBeGreaterThan(20);
       expect(view.devices).toEqual([]);
-      const file = join(hob.home, "push.json");
+      const file = join(hob.home, "system", "push.json");
       expect(statSync(file).mode & 0o777).toBe(0o600);
       const stored = JSON.parse(readFileSync(file, "utf8")) as { vapid: { privateKey: string } };
       expect(stored.vapid.privateKey.length).toBeGreaterThan(20);

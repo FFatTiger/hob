@@ -1,6 +1,6 @@
 // 消耗：不另外记账，直接从会话文件里 assistant 消息的 usage 统计（见 docs/architecture.md“消耗”）。
 import { createReadStream, existsSync, readFileSync, readdirSync, statSync } from "node:fs";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import type { TokenPrice, UsageAssistant, UsageModelPrice, UsagePrices, UsageRow, UsageSource, UsageView } from "../../shared/types.ts";
 import type { SettingsStore } from "./settings.ts";
 import type { Store } from "./store.ts";
@@ -104,6 +104,17 @@ function dayKeyer(timezone: string): (at: number) => string {
 
 function readDir(path: string): string[] {
   return existsSync(path) ? readdirSync(path) : [];
+}
+
+/** 所有任务的会话目录：在的助手和归档的助手都算。 */
+function jobSessionDirs(home: string): string[] {
+  const out: string[] = [];
+  const roots = [
+    ...readDir(join(home, "assistants")).map((id) => join(home, "assistants", id, "jobs")),
+    ...readDir(join(home, "archive", "assistants")).map((folder) => join(home, "archive", "assistants", folder, "jobs")),
+  ];
+  for (const root of roots) for (const id of readDir(root)) out.push(join(root, id));
+  return out;
 }
 
 function readJson(path: string): Record<string, unknown> | undefined {
@@ -228,12 +239,11 @@ export class UsageService {
       if (!assistants.has(id)) assistants.set(id, { id, name, archived: true });
       await this.sync({ file, assistantId: id, assistantName: name, source: "chat" }, seen);
     }
-    for (const jobId of readDir(join(home, "jobs"))) {
-      const file = join(home, "jobs", jobId, "worker.jsonl");
+    for (const jobDir of jobSessionDirs(home)) {
+      const file = join(jobDir, "worker.jsonl");
       if (!existsSync(file)) continue;
-      // 没有缓存时才读 job.json：任务的所属助手建好就不变
       const cached = this.files.get(file);
-      const job = cached ? undefined : this.options.store.job(jobId);
+      const job = cached ? undefined : this.options.store.job(basename(jobDir));
       const assistantId = cached?.assistantId ?? job?.assistantId;
       if (!assistantId) continue;
       const live = this.options.store.assistant(assistantId);

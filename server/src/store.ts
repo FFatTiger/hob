@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { archiveAssistantsDir, assistantDir, assistantJobsDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import type {
   Approval,
@@ -49,14 +50,19 @@ export interface AssistantState {
 
 /**
  * HOB_HOME 下的全部 JSON / JSONL 数据。文件都小，直接同步读写，写入走临时文件 + rename。
+ *
+ * v2 布局里任务和审批、定时都跟着所属助手放（assistants/<id>/jobs|approvals.json|routines.json），
+ * 进不到目录的地方要知道 jobId 落在哪个助手下面，所以这里维护一份内存索引，启动时扫一遍、
+ * 新建任务时登记；不存索引文件，免得和实际目录对不上。
  */
 export class Store {
+  /** jobId → 任务目录（含归档助手目录里的） */
+  private jobIndex: Map<string, string> | null = null;
+
   constructor(readonly home: string) {}
 
   init(): void {
-    for (const dir of ["assistants", "jobs", "uploads"]) {
-      mkdirSync(join(this.home, dir), { recursive: true });
-    }
+    mkdirSync(join(this.home, "assistants"), { recursive: true });
     if (!existsSync(join(this.home, "rules.json"))) {
       const changedAt = new Date().toISOString();
       this.saveGlobalRules([
@@ -80,7 +86,7 @@ export class Store {
 
   // ---------- 助手 ----------
   private assistantDir(id: string): string {
-    return join(this.home, "assistants", id);
+    return assistantDir(this.home, id);
   }
 
   assistants(): Assistant[] {
@@ -110,14 +116,16 @@ export class Store {
   }
 
   /**
-   * 归档助手：整个助手目录移进 archive/assistants/<id>-<时间>/。同盘 rename，不复制也不删数据，
-   * 归档里的 profile.json 就是它原来的档案；它的定时存成目录里的 routines.json。
+   * 归档助手：整个助手目录（含自己的任务、定时、审批、文件）移进 archive/assistants/<id>-<时间>/。
+   * 同盘 rename，不复制也不删数据。
    */
   archiveAssistant(id: string, name: string, routines: Routine[] = []): string {
     if (routines.length) writeJsonAtomic(join(this.assistantDir(id), "routines.json"), routines);
-    const target = join(this.home, "archive", "assistants", name);
+    const target = join(archiveAssistantsDir(this.home), name);
     mkdirSync(dirname(target), { recursive: true });
     renameSync(this.assistantDir(id), target);
+    // 任务跟着搬走了，索引要重建
+    this.jobIndex = null;
     return target;
   }
 
@@ -151,13 +159,45 @@ export class Store {
     appendFileSync(join(dir, "worklog.jsonl"), `${JSON.stringify(entry)}\n`);
   }
 
-  // ---------- 定时 ----------
-  private routinesFile(): string {
-    return join(this.home, "routines.json");
+  // ---------- 定时和审批：跟着所属助手 ----------
+  /** 每个助手目录下的一份记录文件（含归档目录里的），有就给路径。 */
+  private recordFiles(name: string, archived: boolean): string[] {
+    const out: string[] = [];
+    const live = join(this.home, "assistants");
+    if (existsSync(live)) {
+      for (const id of readdirSync(live)) {
+        const file = join(live, id, name);
+        if (existsSync(file)) out.push(file);
+      }
+    }
+    if (!archived) return out;
+    const root = archiveAssistantsDir(this.home);
+    if (existsSync(root)) {
+      for (const folder of readdirSync(root)) {
+        const file = join(root, folder, name);
+        if (existsSync(file)) out.push(file);
+      }
+    }
+    return out;
+  }
+
+  /** 写这个助手的记录文件：助手归档了就跟到归档目录，不然就地建。 */
+  private ownerFile(assistantId: string, name: string): string {
+    const live = this.assistantDir(assistantId);
+    if (existsSync(join(live, "profile.json"))) return join(live, name);
+    const root = archiveAssistantsDir(this.home);
+    if (existsSync(root)) {
+      for (const folder of readdirSync(root)) {
+        const dir = join(root, folder);
+        const profile = readJson<{ id?: unknown }>(join(dir, "profile.json"), {});
+        if (profile.id === assistantId) return join(dir, name);
+      }
+    }
+    return join(live, name);
   }
 
   routines(): Routine[] {
-    return readJson<Routine[]>(this.routinesFile(), []);
+    return this.recordFiles("routines.json", false).flatMap((file) => readJson<Routine[]>(file, []));
   }
 
   routine(id: string): Routine | undefined {
@@ -165,22 +205,29 @@ export class Store {
   }
 
   saveRoutine(routine: Routine): void {
-    const all = this.routines().filter((r) => r.id !== routine.id);
-    all.push(routine);
-    writeJsonAtomic(this.routinesFile(), all);
+    const target = this.ownerFile(routine.assistantId, "routines.json");
+    for (const file of this.recordFiles("routines.json", true)) {
+      const list = readJson<Routine[]>(file, []);
+      const next = list.filter((r) => r.id !== routine.id);
+      if (next.length !== list.length) writeJsonAtomic(file, next);
+    }
+    const list = readJson<Routine[]>(target, []).filter((r) => r.id !== routine.id);
+    list.push(routine);
+    writeJsonAtomic(target, list);
   }
 
+  /** 只从还在的助手里拿掉；归档目录里那份是历史，留着。 */
   deleteRoutine(id: string): void {
-    writeJsonAtomic(this.routinesFile(), this.routines().filter((r) => r.id !== id));
+    for (const file of this.recordFiles("routines.json", false)) {
+      const list = readJson<Routine[]>(file, []);
+      const next = list.filter((r) => r.id !== id);
+      if (next.length !== list.length) writeJsonAtomic(file, next);
+    }
   }
 
   // ---------- 审批 ----------
-  private approvalsFile(): string {
-    return join(this.home, "approvals.json");
-  }
-
   approvals(): Approval[] {
-    return readJson<Approval[]>(this.approvalsFile(), []);
+    return this.recordFiles("approvals.json", true).flatMap((file) => readJson<Approval[]>(file, []));
   }
 
   approval(id: string): Approval | undefined {
@@ -188,14 +235,24 @@ export class Store {
   }
 
   saveApproval(approval: Approval): void {
-    const all = this.approvals().filter((a) => a.id !== approval.id);
-    all.push(approval);
-    writeJsonAtomic(this.approvalsFile(), all);
+    const target = this.ownerFile(approval.assistantId, "approvals.json");
+    for (const file of this.recordFiles("approvals.json", true)) {
+      const list = readJson<Approval[]>(file, []);
+      const next = list.filter((a) => a.id !== approval.id);
+      if (next.length !== list.length) writeJsonAtomic(file, next);
+    }
+    const list = readJson<Approval[]>(target, []).filter((a) => a.id !== approval.id);
+    list.push(approval);
+    writeJsonAtomic(target, list);
   }
 
   // ---------- 委派 ----------
+  private hobFile(name: string): string {
+    return join(this.assistantDir("hob"), name);
+  }
+
   delegations(): Delegation[] {
-    return readJson<Delegation[]>(join(this.home, "delegations.json"), []);
+    return readJson<Delegation[]>(this.hobFile("delegations.json"), []);
   }
 
   delegation(id: string): Delegation | undefined {
@@ -205,16 +262,12 @@ export class Store {
   saveDelegation(delegation: Delegation): void {
     const all = this.delegations().filter((item) => item.id !== delegation.id);
     all.push(delegation);
-    writeJsonAtomic(join(this.home, "delegations.json"), all);
+    writeJsonAtomic(this.hobFile("delegations.json"), all);
   }
 
   // ---------- 草稿 ----------
-  private draftsFile(): string {
-    return join(this.home, "drafts.json");
-  }
-
   drafts(): Draft[] {
-    return readJson<Draft[]>(this.draftsFile(), []);
+    return readJson<Draft[]>(this.hobFile("drafts.json"), []);
   }
 
   draft(id: string): Draft | undefined {
@@ -224,31 +277,61 @@ export class Store {
   saveDraft(draft: Draft): void {
     const all = this.drafts().filter((d) => d.id !== draft.id);
     all.push(draft);
-    writeJsonAtomic(this.draftsFile(), all);
+    writeJsonAtomic(this.hobFile("drafts.json"), all);
   }
 
   // ---------- 任务 ----------
+  /** 所有任务目录的根：在的助手和归档的助手都算。 */
+  private jobRoots(): string[] {
+    const out: string[] = [];
+    const live = join(this.home, "assistants");
+    if (existsSync(live)) for (const id of readdirSync(live)) out.push(assistantJobsDir(this.home, id));
+    const archived = archiveAssistantsDir(this.home);
+    if (existsSync(archived)) for (const folder of readdirSync(archived)) out.push(join(archived, folder, "jobs"));
+    return out.filter((dir) => existsSync(dir));
+  }
+
+  private rebuildJobIndex(): Map<string, string> {
+    const index = new Map<string, string>();
+    for (const root of this.jobRoots()) {
+      for (const id of readdirSync(root).sort()) {
+        const dir = join(root, id);
+        if (existsSync(join(dir, "job.json"))) index.set(id, dir);
+      }
+    }
+    this.jobIndex = index;
+    return index;
+  }
+
+  private findJobDir(id: string): string | undefined {
+    const hit = (this.jobIndex ?? this.rebuildJobIndex()).get(id);
+    if (hit) return hit;
+    return this.rebuildJobIndex().get(id);
+  }
+
   jobDir(id: string): string {
-    return join(this.home, "jobs", id);
+    return this.findJobDir(id) ?? join(this.home, "assistants", "hob", "jobs", id);
   }
 
   jobs(): Job[] {
-    const root = join(this.home, "jobs");
-    if (!existsSync(root)) return [];
     const out: Job[] = [];
-    for (const id of readdirSync(root)) {
-      const job = readJson<Job | null>(join(root, id, "job.json"), null);
+    for (const dir of this.rebuildJobIndex().values()) {
+      const job = readJson<Job | null>(join(dir, "job.json"), null);
       if (job) out.push(job);
     }
     return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   job(id: string): Job | undefined {
-    return readJson<Job | null>(join(this.jobDir(id), "job.json"), null) ?? undefined;
+    const dir = this.findJobDir(id);
+    return dir ? readJson<Job | null>(join(dir, "job.json"), null) ?? undefined : undefined;
   }
 
   saveJob(job: Job): void {
-    writeJsonAtomic(join(this.jobDir(job.id), "job.json"), job);
+    const dir = this.findJobDir(job.id) ?? join(assistantJobsDir(this.home, job.assistantId), job.id);
+    writeJsonAtomic(join(dir, "job.json"), job);
+    this.jobIndex ??= new Map();
+    this.jobIndex.set(job.id, dir);
   }
 
   writeReport(jobId: string, text: string): string {
@@ -285,10 +368,10 @@ export class Store {
    */
   migrateMemories(): void {
     type OldDraft = Draft & { memories?: string[]; carry: Draft["carry"] & { memories?: number } };
-    const drafts = readJson<OldDraft[]>(this.draftsFile(), []);
+    const drafts = readJson<OldDraft[]>(this.hobFile("drafts.json"), []);
     if (drafts.some((draft) => !Array.isArray(draft.instructions))) {
       writeJsonAtomic(
-        this.draftsFile(),
+        this.hobFile("drafts.json"),
         drafts.map(({ memories, carry: { memories: _carried, ...carry }, ...draft }) => ({
           ...draft,
           instructions: draft.instructions ?? memories ?? [],

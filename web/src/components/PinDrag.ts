@@ -3,8 +3,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { PointerEvent as ReactPointerEvent, RefObject } from "react";
 import type { AssistantSummary } from "../../../shared/types.ts";
-import { reorderAt, type Box } from "../pin-drag.ts";
-import { closeAssistantMenu, savePinOrder, useApp } from "../store.ts";
+import { dropIndex, reorderAt, type Box } from "../pin-drag.ts";
+import { closeAssistantMenu, patchAssistant, savePinOrder, useApp } from "../store.ts";
 
 /** 按住后移动超过这么多像素才算在拖：点一下照旧打开对话，长按照旧弹菜单。 */
 const SLOP = 6;
@@ -169,5 +169,112 @@ export function usePinDrag(pins: AssistantSummary[], locked = false): PinDrag {
     lifted: press?.active ? press.id : null,
     target,
     className: (id) => (press?.active && press.id === id ? "lift" : undefined),
+  };
+}
+
+/**
+ * 日常里的助手按住拖：拖进置顶区就置顶，落在哪一格就排在哪；在日常里上下拖就换先后（先后也存在 pinOrder，
+ * 只和同一组的比）。只接鼠标：触摸在列表上是滚动，长按留给菜单。
+ */
+export function useRowToPin(a: AssistantSummary) {
+  const app = useApp();
+  const menuOpen = app.menu !== null;
+  // 搜索时日常只显示筛出来的几位，换先后会把别的挤乱：只许拖进置顶
+  const searching = app.query.trim().length > 0;
+  const [press, setPress] = useState<{ pointerId: number; from: { x: number; y: number }; active: boolean } | null>(null);
+  const [pos, setPos] = useState<{ x: number; y: number; over: boolean } | null>(null);
+  const moved = useRef(false);
+
+  useEffect(() => {
+    if (!press) return;
+    const grid = () => document.querySelector<HTMLElement>(".pins:not(.locked)");
+    const over = (x: number, y: number) => {
+      const r = grid()?.getBoundingClientRect();
+      return !!r && x >= r.left && x <= r.right && y >= r.top - 12 && y <= r.bottom + 12;
+    };
+    const rows = () => [...document.querySelectorAll<HTMLElement>(".home-row[data-row]")];
+    /** 在日常里落到哪：插在第几行前面，画线的那一行和画在上边还是下边 */
+    const slot = (x: number, y: number) => {
+      const list = rows();
+      if (searching || !list.length) return null;
+      const first = list[0].getBoundingClientRect();
+      const last = list[list.length - 1].getBoundingClientRect();
+      if (x < first.left || x > first.right || y < first.top - 20 || y > last.bottom + 20) return null;
+      const index = list.findIndex((el) => { const r = el.getBoundingClientRect(); return y < r.top + r.height / 2; });
+      return index < 0 ? { index: list.length, el: list[list.length - 1], after: true } : { index, el: list[index], after: false };
+    };
+    const clearMarks = () => {
+      grid()?.classList.remove("drop");
+      for (const el of rows()) el.classList.remove("drop-before", "drop-after");
+    };
+    const onMove = (e: PointerEvent) => {
+      if (e.pointerId !== press.pointerId) return;
+      if (!press.active) {
+        if (Math.abs(e.clientX - press.from.x) <= SLOP && Math.abs(e.clientY - press.from.y) <= SLOP) return;
+        closeAssistantMenu();
+        moved.current = true;
+        setPress({ ...press, active: true });
+      }
+      const hit = over(e.clientX, e.clientY);
+      clearMarks();
+      if (hit) grid()?.classList.add("drop");
+      else {
+        const at = slot(e.clientX, e.clientY);
+        at?.el.classList.add(at.after ? "drop-after" : "drop-before");
+      }
+      setPos({ x: e.clientX, y: e.clientY, over: hit });
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerId !== press.pointerId) return;
+      const root = grid();
+      clearMarks();
+      setPress(null);
+      setPos(null);
+      if (!press.active) return;
+      if (!root || !over(e.clientX, e.clientY)) {
+        const at = slot(e.clientX, e.clientY);
+        if (!at || a.hidden) return;
+        const ids = rows().map((el) => el.dataset.row ?? "");
+        const from = ids.indexOf(a.id);
+        if (from < 0) return;
+        const next = ids.filter((id) => id !== a.id);
+        next.splice(at.index > from ? at.index - 1 : at.index, 0, a.id);
+        void savePinOrder(next);
+        return;
+      }
+      const cells = [...root.querySelectorAll<HTMLElement>("[data-pin]")];
+      const ids = cells.map((el) => el.dataset.pin ?? "");
+      const at = dropIndex(cells.map((el) => measure(el)), e.clientX, e.clientY);
+      // 落在那一格的右半边就排在它后面
+      const r = at < 0 ? null : cells[at].getBoundingClientRect();
+      const index = at < 0 ? ids.length : e.clientX > r!.left + r!.width / 2 ? at + 1 : at;
+      void (async () => {
+        if (await patchAssistant(a.id, a.hidden ? { pinned: true, hidden: false } : { pinned: true })) return;
+        await savePinOrder([...ids.slice(0, index), a.id, ...ids.slice(index)]);
+      })();
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onUp);
+    };
+  }, [press, a.id, a.hidden, searching]);
+
+  return {
+    onPointerDown(e: ReactPointerEvent) {
+      if (e.pointerType !== "mouse" || e.button !== 0 || menuOpen) return;
+      moved.current = false;
+      setPress({ pointerId: e.pointerId, from: { x: e.clientX, y: e.clientY }, active: false });
+    },
+    /** 拖着走的那个小头像的位置；没在拖是 null */
+    ghost: press?.active && pos ? pos : null,
+    takeMoved() {
+      const was = moved.current;
+      moved.current = false;
+      return was;
+    },
   };
 }

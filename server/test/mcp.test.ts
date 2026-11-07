@@ -26,12 +26,12 @@ function tempHome(): string {
 }
 
 function writeConfig(home: string, doc: unknown): void {
-  mkdirSync(join(home, "engine"), { recursive: true });
-  writeFileSync(join(home, "engine", "mcp.json"), JSON.stringify(doc, null, 2));
+  mkdirSync(join(home, "system", "engine"), { recursive: true });
+  writeFileSync(join(home, "system", "engine", "mcp.json"), JSON.stringify(doc, null, 2));
 }
 
 function readConfig(home: string): Record<string, any> {
-  return JSON.parse(readFileSync(join(home, "engine", "mcp.json"), "utf8"));
+  return JSON.parse(readFileSync(join(home, "system", "engine", "mcp.json"), "utf8"));
 }
 
 const FIXTURE_SERVER = { command: process.execPath, args: [FIXTURE] };
@@ -40,7 +40,7 @@ describe("mcp.json 读写", () => {
   it("新建文件是 0600，写入 autoEnableCodemode: false，重写保留其它顶层键", async () => {
     const home = tempHome();
     await saveMcpServer(home, "fx", { kind: "stdio", command: "npx", args: ["-y", "x"] });
-    const path = join(home, "engine", "mcp.json");
+    const path = join(home, "system", "engine", "mcp.json");
     const mode = statSync(path).mode & 0o777;
     expect(mode).toBe(0o600);
     const doc = readConfig(home);
@@ -82,8 +82,8 @@ describe("mcp.json 读写", () => {
 
   it("坏文件读和写都报错，不当成空列表", async () => {
     const home = tempHome();
-    mkdirSync(join(home, "engine"), { recursive: true });
-    writeFileSync(join(home, "engine", "mcp.json"), "{ not json");
+    mkdirSync(join(home, "system", "engine"), { recursive: true });
+    writeFileSync(join(home, "system", "engine", "mcp.json"), "{ not json");
     expect(() => mcpView(home)).toThrow(/JSON/);
     await expect(saveMcpServer(home, "fx", { kind: "stdio", command: "npx" })).rejects.toThrow(/JSON/);
     expect(mcpEnabled(home)).toBe(false);
@@ -349,7 +349,7 @@ describe("任务会话里的 MCP", () => {
       writeConfig(hob.home, { mcpServers: { fx: { ...FIXTURE_SERVER, enabled: false, exposure: "direct" } } });
       expect(mcpEnabled(hob.home)).toBe(false);
       const opened = await hob.runtime.pi.open({
-        file: join(hob.home, "jobs", "t-mcp", "worker.jsonl"),
+        file: join(hob.home, "assistants", "hob", "jobs", "t-mcp", "worker.jsonl"),
         cwd: hob.home,
         model: "hob-faux/faux-1",
         thinking: "off",
@@ -375,7 +375,7 @@ describe("任务会话里的 MCP", () => {
       });
       expect(mcpEnabled(hob.home)).toBe(true);
       const opened = await hob.runtime.pi.open({
-        file: join(hob.home, "jobs", "t-mcp2", "worker.jsonl"),
+        file: join(hob.home, "assistants", "hob", "jobs", "t-mcp2", "worker.jsonl"),
         cwd: hob.home,
         model: "hob-faux/faux-1",
         thinking: "off",

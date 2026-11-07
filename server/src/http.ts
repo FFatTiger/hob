@@ -20,13 +20,14 @@ import type {
   ModelThinkingSaved,
   ModelsView,
   PushSubscriptionJson,
+  RoutineCheck,
   SettingsPatch,
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
 import { parseSprite } from "../../shared/sprites.ts";
 import { answerApproval, archiveAssistant, createFromDraft, dismissDraft } from "./actions.ts";
-import { setPassword } from "./config.ts";
+import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
 import { checkDesktopUrl } from "./desktop.ts";
@@ -570,7 +571,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const path = await generateImage(
         {
           home: options.home,
-          dir: join(options.home, "previews"),
+          dir: join(cacheDir(options.home), "previews"),
           config,
           ...(typeof body.apiKey === "string" && body.apiKey.trim() ? { apiKey: body.apiKey.trim() } : {}),
         },
@@ -900,6 +901,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       name?: string;
       instruction?: string;
       schedules?: string[];
+      check?: RoutineCheck;
+      once?: boolean;
     };
     if (!body.assistantId || !body.name || !body.instruction || !body.schedules?.length) {
       return c.json({ error: "缺字段：assistantId、name、instruction、schedules" }, 400);
@@ -910,6 +913,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
         name: body.name,
         instruction: body.instruction,
         schedules: body.schedules,
+        ...(body.check ? { check: body.check } : {}),
+        ...(body.once ? { once: true } : {}),
       });
       return c.json({ routine });
     } catch (error) {
@@ -924,6 +929,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       schedules?: string[];
       active?: boolean;
       skill?: string | null;
+      check?: RoutineCheck | null;
+      once?: boolean;
     };
     try {
       const routine = routines.update(c.req.param("id"), body);
@@ -945,8 +952,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.post("/api/routines/:id/run", async (c) => {
     try {
-      const job = await routines.runNow(c.req.param("id"));
-      return c.json({ job });
+      const result = await routines.runNow(c.req.param("id"));
+      return c.json(result);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
     }
@@ -1055,8 +1062,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   app.post("/api/uploads", async (c) => {
+    const assistantId = (c.req.query("assistantId") ?? "").trim();
+    if (!assistantId) return c.json({ error: "缺少 assistantId：上传的文件要放在某个助手的目录下" }, 400);
+    if (!store.assistant(assistantId)) return c.json({ error: `助手不存在：${assistantId}` }, 404);
     const body = await c.req.parseBody({ all: true });
-    const uploads = join(options.home, "uploads");
+    const uploads = assistantFilesDir(options.home, assistantId, "uploads");
     mkdirSync(uploads, { recursive: true });
     const saved: { path: string; name: string }[] = [];
     const values = Object.values(body).flatMap((value) => (Array.isArray(value) ? value : [value]));

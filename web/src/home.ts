@@ -28,6 +28,12 @@ export function byPinOrder(a: AssistantSummary, b: AssistantSummary): number {
   return at(a) - at(b) || a.createdAt.localeCompare(b.createdAt);
 }
 
+/** 日常的先后：拖过的按拖好的位置，没拖过的排在后面、按最近消息。 */
+export function byRowOrder(a: AssistantSummary, b: AssistantSummary): number {
+  const at = (x: AssistantSummary) => x.pinOrder ?? Number.MAX_SAFE_INTEGER;
+  return at(a) - at(b) || byLast(a, b);
+}
+
 /** 顶部那排置顶头像：去掉收起的、按搜索词过一遍，再按排好的先后。左栏和手机首页共用这一份。 */
 export function pinList(assistants: AssistantSummary[], query: string): AssistantSummary[] {
   return assistants.filter((a) => a.pinned && !a.hidden && matches(a, query)).sort(byPinOrder);
@@ -81,7 +87,7 @@ export function homeGroups(s: HomeSource, now = Date.now()): HomeGroups {
   const since = new Date(now - RECENT_MS).toISOString();
   const jobs = Object.values(s.jobs);
   const pins = pinList(s.assistants, s.query);
-  const rows = s.assistants.filter((a) => !a.pinned && !a.hidden && matches(a, s.query)).sort(byLast);
+  const rows = s.assistants.filter((a) => !a.pinned && !a.hidden && matches(a, s.query)).sort(byRowOrder);
   const hidden = s.assistants.filter((a) => a.hidden && matches(a, s.query)).sort(byLast);
   const asks: Approval[] = searching
     ? []

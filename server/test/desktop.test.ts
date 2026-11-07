@@ -260,7 +260,7 @@ describe("云桌面配置", () => {
     const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
     try {
       for (const router of [true, false]) for (const canSee of [true, false]) for (const name of ["browser_screenshot", "desktop_screenshot"]) {
-        const dir = router ? join(hob.home, "assistants", "hob", "screenshots") : join(hob.runtime.store.workDir("t-1234"), "screenshots");
+        const dir = router ? join(hob.home, "assistants", "hob", "files", "screenshots") : join(hob.runtime.store.workDir("t-1234"), "screenshots");
         const session = new DesktopToolSession(hob.runtime, "hob", canSee, router ? undefined : "任务", router, dir);
         vi.spyOn(session as any, "getPage").mockResolvedValue({ screenshot: async () => Buffer.from("image") });
         try {
@@ -284,7 +284,7 @@ describe("云桌面配置", () => {
     const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
     const clock = vi.spyOn(Date, "now").mockReturnValue(1793979012123);
     const session = new DesktopToolSession(hob.runtime, "hob", true, undefined, true);
-    const dir = join(hob.home, "assistants", "hob", "screenshots");
+    const dir = join(hob.home, "assistants", "hob", "files", "screenshots");
     try {
       expect(existsSync(dir)).toBe(false);
       const screenshot = session.tools().find((tool) => tool.name === "desktop_screenshot")!;

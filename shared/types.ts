@@ -277,16 +277,40 @@ export interface RoutineRun {
   tokens?: number; // 技能二期：输入加输出 token
 }
 
+export interface RoutineCheck {
+  script: string; // 到点先跑的 bash 脚本：没有输出就跳过这一次
+  then: "notify" | "job"; // 有输出时：notify 把输出作为提醒发到对话；job 带着输出开始任务
+}
+
+export interface RoutineChecks {
+  total: number; // 检查了几次
+  hits: number; // 触发了几次
+  failing?: string; // 最近一次失败的原因，下次成功就清掉
+  lastAt?: Iso; // 上次检查的时间
+}
+
+/** 定时到点（或点「立即运行」）这一次的结果。 */
+export interface RoutineTick {
+  outcome: "job" | "notify" | "quiet" | "failed"; // job 开了任务；notify 已发到对话；quiet 没变化；failed 检查失败
+  job?: Job;
+  reason?: string; // failed 时的原因
+}
+
 export interface Routine {
   id: string;
   assistantId: string;
   name: string; // 如 "每日简报"
   instruction: string; // 要做什么
-  schedules: string[]; // cron 表达式，如 "0 9 * * *"；可多个（"再加一个"）
+  schedules: string[]; // cron 表达式（如 "0 9 * * *"）或具体时间（如 "2026-11-08T09:00"）；可多个（"再加一个"）
   active: boolean;
   createdAt: Iso;
   runs: RoutineRun[]; // 最近 20 次，新的在前
   skill?: string; // 绑定这个助手自己的技能（AssistantSkill.name）：每次执行按它做
+  check?: RoutineCheck; // 到点先跑脚本，多数时候没变化就不开任务
+  checks?: RoutineChecks; // 检查计数和最近一次失败的原因
+  once?: boolean; // 做成一次就停：没有检查脚本的跑完就停，有检查的第一次有输出就停
+  stoppedAt?: Iso; // 上次停下的时间
+  stopReason?: "hit" | "finished"; // hit=按 once 停了；finished=所有执行时间都跑完了
 }
 
 export interface Delegation {

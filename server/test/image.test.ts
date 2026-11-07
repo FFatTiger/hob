@@ -149,7 +149,7 @@ describe("生图配置校验", () => {
       expect(saved.settings.revision).toBe(revision + 1);
 
       // Key 落在 secrets.json（0600），接口只报配没配
-      const secrets = join(hob.home, "secrets.json");
+      const secrets = join(hob.home, "system", "secrets.json");
       expect(readFileSync(secrets, "utf8")).toContain("sk-secret-value");
       expect(statSync(secrets).mode & 0o777).toBe(0o600);
       const view = (await (await app.request("/api/image", { headers: { cookie } })).json()) as ImageKeyView;
@@ -351,7 +351,7 @@ describe("生成图片", () => {
       const done = await test({ image, apiKey: "sk-test" });
       expect(done.ok).toBe(true);
       if (done.ok) {
-        expect(done.path.startsWith(join(hob.home, "previews"))).toBe(true);
+        expect(done.path.startsWith(join(hob.home, "cache", "previews"))).toBe(true);
         expect(readFileSync(done.path).equals(PNG)).toBe(true);
       }
       expect(server.requests[0].url).toBe("/v1/images/generations");

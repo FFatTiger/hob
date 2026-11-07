@@ -12,6 +12,7 @@ import { AsyncLocalStorage } from "node:async_hooks";
 import { fileURLToPath } from "node:url";
 import { WebSocket, WebSocketServer } from "ws";
 import { pointerEventLength } from "./pointer-event.mjs";
+import { ensureLocale } from "./locale.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const version = JSON.parse(fs.readFileSync(path.join(__dirname, "package.json"), "utf8")).version;
@@ -48,6 +49,15 @@ if (!resM) fail(`无效的 DESKTOP_RESOLUTION "${process.env.DESKTOP_RESOLUTION}
 const width = Number(resM[1]);
 const height = Number(resM[2]);
 if (width < 320 || width > 7680 || height < 240 || height > 4320) fail(`分辨率超出范围：${width}x${height}`);
+// 桌面语言（BCP 47）：决定的程序和浏览器看到的语言，见 locale.mjs。
+let LANG_SETTING;
+try {
+  LANG_SETTING = ensureLocale(process.env.DESKTOP_LANG || "zh-CN");
+} catch (e) {
+  fail(e.message);
+}
+// 时区：TZ 原样传给所有子进程；写了地区却不在 zoneinfo 里时早点报错，别让桌面悄悄跑在 UTC。
+if (TZ.includes("/") && !fs.existsSync(path.join("/usr/share/zoneinfo", TZ))) fail(`无效的 TZ "${TZ}"（要 IANA 时区名，如 Asia/Shanghai、America/New_York）`);
 
 fs.mkdirSync(path.join(DATA_DIR, "profiles"), { recursive: true });
 fs.mkdirSync(path.join(DATA_DIR, "home"), { recursive: true });
@@ -164,7 +174,8 @@ function watchService(name, cmd, args) {
 function childEnv() {
   const screen = context.getStore();
   const { DESKTOP_TOKEN: _token, DESKTOP_TOKEN_EXPORT: _export, ...env } = process.env;
-  return { ...env, DISPLAY: screen?.display, DESKTOP_SCREEN: screen?.id, DESKTOP_DOCK_TOKEN: screen ? dockToken(screen.id) : "", DESKTOP_PORT: String(PORT), TZ, LANG: process.env.LANG || "zh_CN.UTF-8", LANGUAGE: process.env.LANGUAGE || "zh_CN:zh" };
+  // 桌面里所有程序（dock、文件管理器、终端、浏览器）的语言都由 DESKTOP_LANG 定。
+  return { ...env, DISPLAY: screen?.display, DESKTOP_SCREEN: screen?.id, DESKTOP_DOCK_TOKEN: screen ? dockToken(screen.id) : "", DESKTOP_PORT: String(PORT), TZ, LANG: LANG_SETTING.LANG, LANGUAGE: LANG_SETTING.LANGUAGE };
 }
 
 function run(cmd, args, { timeoutMs = 15000, input, maxOutput = 65536 } = {}) {
@@ -341,7 +352,10 @@ function chromiumArgs(profile, userDir, noSandbox) {
     "--no-first-run",
     "--no-default-browser-check",
     "--disable-crash-reporter",
-    "--lang=zh-CN",
+    // --lang 是界面语言；--accept-lang 是发给网站的 Accept-Language 和 navigator.languages
+    // （两者都传，已有的 profile 也按部署配置，用户在浏览器设置里改的会被盖掉）。
+    `--lang=${LANG_SETTING.tag}`,
+    `--accept-lang=${LANG_SETTING.acceptLanguage}`,
     `--class=hob-${profile}`,
     `--name=hob-${profile}`,
     "--start-maximized",
@@ -404,8 +418,8 @@ async function launchBrowser(profile, entry) {
   const errRef = () => errTail;
   for (let attempt = 1; attempt <= 2; attempt++) {
     const child = spawn(BROWSER === "chrome" ? "google-chrome-stable" : "chromium", chromiumArgs(profile, userDir, entry.noSandbox), {
-      // 界面中文：这个 Debian 构建不理 --lang，认 LANG/LANGUAGE 环境变量（实测）；--lang 仍留着，别的构建能吃到
-      env: { ...childEnv(), LANG: "zh_CN.UTF-8", LANGUAGE: "zh_CN:zh" },
+      // 界面语言两头都设：这个 Debian 构建只认 LANG/LANGUAGE（实测），--lang 给认它的构建
+      env: childEnv(),
       stdio: ["ignore", "ignore", "pipe"],
     });
     entry.child = child;
@@ -709,6 +723,8 @@ const server = http.createServer(async (req, res) => {
         version,
         display: { width, height },
         browser: BROWSER,
+        timezone: TZ,
+        lang: { tag: LANG_SETTING.tag, locale: LANG_SETTING.LANG, acceptLanguage: LANG_SETTING.acceptLanguage },
         maxScreens: MAX_SCREENS,
         screens: screenList(),
       });
@@ -981,6 +997,6 @@ process.on("SIGTERM", shutdown);
 process.on("SIGINT", shutdown);
 
 // ---------- main ----------
-console.log(`desktopd ${version}：display ${width}x${height}，TZ=${TZ}，数据目录 ${DATA_DIR}`);
+console.log(`desktopd ${version}：display ${width}x${height}，TZ=${TZ}，语言 ${LANG_SETTING.tag}（${LANG_SETTING.LANG}${LANG_SETTING.generated ? "，本次生成" : ""}），数据目录 ${DATA_DIR}`);
 await new Promise((resolve) => server.listen(PORT, "0.0.0.0", resolve));
 console.log(`desktopd: 监听 0.0.0.0:${PORT}（访问控制靠令牌；映射到哪个接口由部署方决定）`);

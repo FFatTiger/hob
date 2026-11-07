@@ -3,11 +3,14 @@ import { closeSync, existsSync, lstatSync, openSync, readSync, readdirSync, real
 import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileKind, isTextKind, mimeOf } from "../../shared/files.ts";
 import type { FileKind, JobFileEntry, JobFilesView } from "../../shared/types.ts";
+import { resolveMovedPath } from "./layout.ts";
 
-/** 数据目录根上不对页面开放的文件：Hob 自己的凭据和内部状态（连同它们的临时文件、备份）。 */
+/** 数据目录根上不对页面开放的文件：半搬的老目录里也可能有这些。 */
 const DENY_ROOT_FILE = /^(secrets|config|settings|push)\.json/i;
-/** 数据目录根上不对页面开放的目录：引擎目录（凭据、bin）和 Lore 连接。 */
-const DENY_ROOT_DIRS = new Set(["engine", "lore"]);
+/** 数据目录根上整个不对页面开放的目录：配置、凭据、引擎、Lore、记忆都在 system/ 里。 */
+const DENY_ROOT_DIRS = new Set(["system"]);
+/** 迁移前的备份里面有整份凭据：不自动删，但也不给页面看。 */
+const DENY_ROOT_PREFIX = /^backup/i;
 /** 备份文件一律不给（凭据的备份也在里面）。 */
 const DENY_ANY_FILE = /\.bak/i;
 
@@ -38,9 +41,10 @@ export type Lookup = { ok: true; info: FileInfo } | { ok: false; status: 403 | 4
 function denied(root: string, path: string): boolean {
   const rel = relative(root, path);
   const parts = rel.split(sep);
-  if (DENY_ROOT_DIRS.has(parts[0] ?? "")) return true;
+  const top = parts[0] ?? "";
+  if (DENY_ROOT_DIRS.has(top) || DENY_ROOT_PREFIX.test(top)) return true;
   // 根上的凭据文件（含 settings.json.1234.tmp 这种原子写临时文件）
-  if (parts.length === 1 && DENY_ROOT_FILE.test(parts[0] ?? "")) return true;
+  if (parts.length === 1 && DENY_ROOT_FILE.test(top)) return true;
   return DENY_ANY_FILE.test(basename(path));
 }
 
@@ -79,8 +83,11 @@ export function lookupFile(home: string, requested: string, workDirs: string[] =
   let path: string;
   let size: number;
   let modifiedAt: string;
+  // 迁移把文件搬走了，会话和卡片里还是老路径：不存在时按 moves.json 找新位置
+  const wanted = resolve(requested);
+  const candidate = existsSync(wanted) ? wanted : resolveMovedPath(home, wanted);
   try {
-    path = realpathSync(resolve(requested));
+    path = realpathSync(candidate);
     const stats = statSync(path);
     if (!stats.isFile()) return { ok: false, status: 404, error: "文件不存在" };
     size = stats.size;
@@ -100,8 +107,21 @@ export function lookupFile(home: string, requested: string, workDirs: string[] =
   const text = isTextKind(kind);
   return {
     ok: true,
-    info: { path, name, size, modifiedAt, kind, text, mime: mimeOf(name), ...(/^(?:pages[/\\][0-9a-f-]{36}|knowledge[/\\]pages[/\\][0-9a-f]{64})\.html$/i.test(relative(root, path)) ? { page: true } : {}) },
+    info: { path, name, size, modifiedAt, kind, text, mime: mimeOf(name), ...(isPagePath(relative(root, path)) ? { page: true } : {}) },
   };
+}
+
+/**
+ * 展示页面：现在的布局是 assistants/<id>/files/pages/<uuid>.html，老数据还在根上的 pages/。
+ * knowledge/pages/<hash>.html 是进知识库的副本，也算页面。
+ */
+export function isPagePath(relativePath: string): boolean {
+  return /^(?:(?:assistants[/\\][^/\\]+[/\\]files[/\\])?pages[/\\][0-9a-f-]{36}|knowledge[/\\]pages[/\\][0-9a-f]{64})\.html$/i.test(relativePath);
+}
+
+/** 文件是不是在某个助手的展示页面目录里（或老布局根上的 pages/）：不看文件名。 */
+export function isInPagesDir(relativePath: string): boolean {
+  return /^(?:assistants[/\\][^/\\]+[/\\]files[/\\])?pages[/\\][^/\\]+$/.test(relativePath);
 }
 
 function workRoots(root: string, dirs: string[]): string[] {

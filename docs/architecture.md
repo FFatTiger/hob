@@ -51,6 +51,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
   settings.json               界面可改的设置（主题、时区、关于你、服务商、模型、并发、卡住判定、推送邮箱），带 revision，写入走 CAS
   rules.json                  全局规则 Rule[]（首次启动或升级时初始化；空数组保留）
   secrets.json                密钥（0600，原子写），接口只写不读回：provider:<id>、imageApiKey
+  usage-prices.json           models.dev 拉下来的模型单价和上次更新的时间（一天最多更新一次）
   engine/                     引擎目录：auth.json（引擎写的凭据）、models.json（Hob 写给引擎的内置服务商思考档）、mcp.json（MCP 服务配置，设置 → MCP 写）、bin（rg / fd）、资源
   memory/                     本地记忆（捆绑的本地记忆插件）
   lore/                       Lore 连接（config.json，格式 { base_url, api_token }，0600、原子写）
@@ -76,7 +77,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 ## 核心对象（契约在 `shared/types.ts`，前后端共用，改它要两边一起改）
 
-- **Assistant（助手）**：主助手 `id = "hob"` 唯一内置，首次启动自动创建；其余都是用户数据，不写死任何角色。`duty` 是职责简介，`dutyLong` 是详细职责；创建助手时从草稿复制，旧助手启动时从对应的已创建草稿幂等回填。长期记忆不属于某个助手（见下文“记忆”），助手自己特有的做法写在 `instructions`（补充说明）里。
+- **Assistant（助手）**：主助手 `id = "hob"` 唯一内置，首次启动自动创建；其余都是用户数据，不写死任何角色。`duty` 是职责简介，`dutyLong` 是详细职责；创建助手时从草稿复制，旧助手启动时从对应的已创建草稿幂等回填。长期记忆不属于某个助手（见下文“记忆”），助手需要知道的专属事实写在 `instructions`（补充说明）里。
 - **Item（对话条目）**：对话 = 有序的 Item 列表。用户消息、助手回复从 pi 会话的消息得出；卡片类（question / job / draft / note / file）用 pi 的自定义条目 `customType: "hob.item"` 存在同一个 `router.jsonl` 里，**不进模型上下文**。卡片的可变状态（审批是否已选、任务进度、草稿是否已建）在 approvals.json / jobs / drafts.json 里，条目只存 id 引用，渲染时合并。
 - **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手归档后任务详情照样显示。结束的任务可以接着做（续做）：上一轮结束时的状态、原因、用时存进 `rounds`，对话里再放一张带 `round`（第几轮）的任务卡；前面几张卡按 `rounds` 显示那一轮的结果、不带按钮，只有最后一张跟着任务实时变。
 - **Approval（审批）**：选择题卡片。来源可以是 Router（不阻塞，答案作为下一条用户消息回到 Router）或旧数据中的 Worker 提问（新任务只向助手提问，不生成用户审批卡）。带 `always` 的选项（"以后这类直接…"）选中后自动写一条 `mode: "allow"` 的 Rule，并在对话里出一行"已记进 X 的规矩 · …"。审批仍属于提问的助手；转交回合中助手提出的审批，也在主助手的委派卡内展示同一条审批，两处调用同一答复接口。
@@ -102,9 +103,11 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 | 工具 | 作用 |
 |---|---|
-| `start_job(title, note?, cwd?, skill?, expect_minutes?)` | 开任务，立即返回 jobId；对话里出任务卡片。`cwd` 指定工作目录；`skill` 指定本助手启用的技能，任务收到读技能的指令 |
+| `start_job(title, note?, cwd?, skills?, expect_minutes?)` | 开任务，立即返回 jobId；对话里出任务卡片。`cwd` 指定工作目录；`skills` 指定交给任务的本助手启用技能 |
 | `check_job(jobId)` | 查看任务状态、过程、结果和所用技能；主助手可看所有任务，其他助手只看自己的 |
 | `edit_skill(name, edits)` | 替换本助手技能的正文，保留旧版和附件 |
+| `save_job_as_skill(jobId, into?, note?)` | 让已完成的原任务在自己的会话里新建或修补技能，进度和结果显示在原任务上 |
+| `delete_skill(name, replaced_by?)` | 归档技能；检查任务和定时绑定，可将定时改绑到接替技能 |
 | `reply_job(jobId, text)` / `stop_job(jobId)` | 给在跑的任务补话 / 停掉 |
 | `ask_user(title, detail?, options[])` | 出选择题卡片（不阻塞）；options 最多 3 个，可标 `always` |
 | `set_rule(text, mode)` / `remove_rule(ruleId)` | 改要先问你；对话里出"已记进 X 的规矩 · …" |
@@ -147,7 +150,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 ## 记忆（长期记忆）
 
-记忆是所有助手共用的一份（关于用户的事实、偏好、约定），不属于某个助手；助手自己的做法放在它的规矩和补充说明里。
+记忆是所有助手共用的一份（关于用户的事实、偏好、约定），不属于某个助手；助手的专属事实放在补充说明里，做事方式放在规则或技能里。
 
 - 设置 → 记忆三选一：**本地记忆**（捆绑 `pi-memory` 0.4.2）/ **Lore**（捆绑 Lore 的 pi 插件正式版）/ **关闭**。两个插件随 Hob 固定版本，绝不安装任何东西，**绝不同时加载**（加载时断言）。
   - `pi-memory` 在 package.json 钉死版本。
@@ -163,7 +166,9 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 
 ## 技能
 
-任务可用的技能来自本助手技能目录、`HOB_HOME/skills`、Lore 插件发现的工作副本以及 `~/.agents/skills`。任务只加载启用的技能；对话层列出本助手启用技能的名称、标题、版本、更新时间、说明和路径，助手可读取技能并修改正文。引擎的默认技能目录与项目技能不加载。停用状态保存在设置中，不修改技能文件。设置页可从 pi、Claude Code、Codex 的本机技能目录复制到 Hob，限制大小并跳过越界链接；通用技能和 Lore 技能不由 Hob 删除。
+任务可用的技能来自本助手技能目录、`HOB_HOME/skills`、Lore 插件发现的工作副本以及 `~/.agents/skills`。通用技能照常加载；本助手技能由派活时的 `skills` 指定，任务只加载所选的启用技能，续做沿用。定时任务绑定的技能随任务传入。对话层列出本助手启用技能的名称、标题、版本、更新时间、说明和路径，助手可读取技能并修改正文。引擎的默认技能目录与项目技能不加载。停用状态保存在设置中，不修改技能文件。设置页可从 pi、Claude Code、Codex 的本机技能目录复制到 Hob，限制大小并跳过越界链接；通用技能和 Lore 技能不由 Hob 删除。
+
+任务完成后不自动沉淀；助手判断事情定下来后，可用 `save_job_as_skill` 让原任务回到自己的会话中写技能，也可从任务详情手动触发。`into` 指定修补的已有启用技能，`note` 交代反馈；新建不得重名。一轮内多次保存同一技能只记一版，定时任务尚未绑定技能时自动绑定。任务状态仍为已完成，沉淀状态保存在 Job，步骤通过 `job_step` 实时推送，结束向助手发送事件。技能删除前检查正在使用的任务与定时任务，归档并可改绑定时任务。
 
 ## MCP
 
@@ -242,8 +247,15 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 - 只能启用/删掉这 7 个标准档，不能造第 8 个档（引擎只认这 7 个）。`off` 可以改字符但不能删。删掉的档不用管协议：不写就是关（xhigh / max 本来就不写就等于关）。
 - 编辑：设置 → 服务商 → 服务商详情 → 模型 → 思考档（推理模型才有这一节）。字符去首尾空白、最长 40 字；留空就是服务商协议自己的默认，不合法 400 并说清哪一档。存完 `ModelCatalog.reset()`，下一轮对话 / 下一个任务就用新的档。
 
-## 对话富文本
+## 消耗
 
+不另外记账，直接从会话文件里的 assistant 消息统计（每条 assistant 消息算一次请求，带 `provider`、`model`、`timestamp` 和 `usage` 的 input / output / cacheRead / cacheWrite）：助手自己的对话（`router.jsonl`，含 `archive/assistants/` 里的）算「对话」，任务会话（`worker.jsonl`，按 `job.json` 归到所属助手）算「任务」。花费是按 token 数和单价自己算的，不用会话里的 `usage.cost`（自定义服务商那里都是 0）。
+
+- 统计（`server/src/usage.ts`）：每个会话文件按大小和修改时间缓存；文件变长时只读追加的那一段，规则是会话文件只往后写。第一次扫描是异步流式读，不把几百 MB 的 jobs 目录塞进一次同步读里，服务照常响应。按设置时区把时间戳归到哪一天。
+- 价格（`server/src/usage-prices.ts`）：默认单价从 `https://models.dev/api.json` 拉（美元 / 百万 token，四项），存 `HOB_HOME/usage-prices.json`，一天最多更新一次；拉不到就留上次的并在页面写清原因，失败后 10 分钟内不重试（不然每次打开页面都要等一次超时）。服务商 id 是用户自己起的，所以按模型 id 匹配：先找完全一样的，多个服务商都有时优先模型厂商自己那家（`canonical_model_id` 指回自己，或在厂商名单里），再取第一个。匹配不上的记「未定价」，花费不计。
+- 自定价格存在 `settings.json` 的 `settings.usage.prices`（键是模型 id），`PUT /api/usage/price` 写一个模型（`price: null` 恢复默认）。用订阅的服务商（如 Claude Code）按 models.dev 的价格算出来是等价的接口价，页面说明里写了以服务商账单为准。
+
+## 对话富文本
 对话和任务详情的 Markdown 使用 marked；公式按需动态加载 KaTeX（含本地 CSS 和字体，关闭 trust），代码块支持单独复制。音频在浏览器内解码生成波形，无法解码时显示进度条；视频使用浏览器原生播放器。
 
 ## HTTP / 实时
@@ -255,6 +267,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
   - `GET /api/providers` → 已配的服务商、引擎自带的服务商目录、整份设置，以及每个已配置服务商的模型和思考档（`models`，键是服务商 id；内置服务商列出引擎目录里的全部模型）；`POST /api/providers/test` 测试连接（内置服务商发起少量模型调用，兼容接口访问模型列表，失败不保存配置）
   - `PUT /api/models/thinking {ref, levels}` → 存一个模型的自定义思考档（`null` = 恢复默认），返回新 revision 的整份设置和这个模型现在的思考档、`PUT /api/providers/:id`（新建或改，Key 可选留空沿用）、`DELETE /api/providers/:id`、`POST /api/providers/discover {api, baseUrl, apiKey?, id?}`（从兼容接口拉模型列表）、`GET /api/providers/import`（本机能导入的服务商，不带 Key）、`POST /api/providers/import {ids}`（导入所选，同 id 覆盖）
   - `GET /api/models`（可用模型 + 名单里哪些不可用）
+  - `GET /api/usage`、`PUT /api/usage/price {revision, model, price}`（消耗，见下文“消耗”）
   - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录）
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
@@ -285,7 +298,7 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 - 照 `docs/design/v2/index.html` 做（那是唯一的视觉真相源：CSS 变量、尺寸、组件都直接搬）。截图 `s1~s6.png` 是验收对照。
 - 头像：都是 Hob 的像素小火苗，换一种颜色、带一件职责道具（安全帽、放大镜、Wi-Fi…），数据和画法在 `shared/sprites.ts`，前端画成 SVG。sprite 记成「道具」或「道具:颜色」；库里没有贴合职责的道具时，AI 可以自己画一件：sprite 记成 `custom` 或 `custom:颜色`，画法存在 `Assistant.prop`（`{ art, pal, dx }`，格式和 PROPS 里的一项相同；校验在 `shared/sprites.ts` 的 `validateCustomProp`，前后端共用，最多 16 行 × 16 字符、最多 6 种颜色、不能动火苗的 o y e 和描边 k、不能盖住眼睛、至少 6 个像素），草稿同样能带一份；自画道具在头像选择器里排第一个，换成内置道具后画法保留、能换回来；建助手时模型按职责挑道具（道具表同时生成提示词里的那行说明），和已有助手撞了就自动换颜色（自画的图案各不相同，不算撞）；助手设置里可以换道具和颜色。
 - 桌面三栏：左栏助手（置顶大头像 + 分组列表 + 收起的助手 + 底部设置）、中间对话、右栏（正在做 + 定时 / 定时编辑 / 助手设置，可收起）。设置是整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
-- 设置页：通用、服务商、模型、记忆、图像生成、联网搜索、技能、MCP、任务、通知、关于都是真页面。
+- 设置页：通用、服务商、模型、记忆、图像生成、联网搜索、技能、MCP、任务、消耗、通知、关于都是真页面。
 - 手机（宽 < 768px）：列表页（顶部在跑的任务行 + 助手）和对话页两级。
 - 浅色为主，深色按系统或设置切换（index.html 里的 `.dark` 变量）。
 - 不用 UI 组件库、不用 CSS 框架；React + 手写 CSS。

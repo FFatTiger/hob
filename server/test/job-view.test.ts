@@ -20,7 +20,7 @@ describe("任务查看", () => {
   it("按时区展示在跑过程和提问，排除思考", () => {
     const text = jobView(base, steps, [{ id: "q", assistantId: "hob", jobId: "t-1", title: "是否继续", options: [], status: "pending", source: "job", createdAt: now.toISOString() }], [], "Asia/Shanghai", now);
     expect(text).toContain("进行中，已运行 9 分钟");
-    expect(text).toContain("在等用户回答：是否继续");
+    expect(text).toContain("在等你回复：是否继续");
     expect(text).toContain("过程（新的在前，共 3 步）：\n11-05 23:59 运行 命令 · 还在跑，1 分钟\n11-05 23:58 收到：补充 信息\n11-05 23:56 说：正在 检查");
     expect(jobProcessLines([{ ...steps[0], at: "2026-11-04T15:56:00Z", text: "甲".repeat(200) }], "Asia/Shanghai", now)[0]).toHaveLength(160);
   });
@@ -76,13 +76,17 @@ describe("Router 技能工具", () => {
       const tools = buildRouterTools(hob.runtime, "hob");
       const start = vi.spyOn(hob.runtime.jobs, "start").mockResolvedValue({ ...base, status: "running" });
       const tool = tools.find((item) => item.name === "start_job")!;
-      const execute = (skill: string) => tool.execute("id", { title: "测试", skill }, undefined, undefined, {} as never);
-      expect((await execute("missing")).content[0].text).toBe("没有这个技能：missing。能用的有：dir-size");
-      await execute("dir-size");
+      const execute = (skills: string[]) => tool.execute("id", { title: "测试", skills }, undefined, undefined, {} as never);
+      expect((await execute(["missing"])).content[0].text).toBe("没有这个技能：missing。能用的有：dir-size");
+      await execute(["dir-size"]);
       expect(start.mock.calls[0][1].instruction).toMatch(/^按技能「统计」做（先读它的 SKILL.md）。\n/);
-      // 模型把没用的 skill 填成空串：照常派活，不加技能那句
-      await execute("");
+      expect(start.mock.calls[0][1].skills).toEqual(["dir-size"]);
+      await execute([]);
       expect(start.mock.calls[1][1].instruction).not.toContain("按技能");
+      saveAssistantSkill(hob.home, "hob", { name: "another", title: "检查", description: "检查用", content: "正文" });
+      await execute(["dir-size", "another"]);
+      expect(start.mock.calls[2][1].instruction).toMatch(/^按技能「统计」「检查」做（先读它们的 SKILL.md）。\n/);
+      expect(start.mock.calls[2][1].skills).toEqual(["dir-size", "another"]);
       const stop = vi.spyOn(hob.runtime.jobs, "stop").mockResolvedValue();
       await tools.find((item) => item.name === "stop_job")!.execute("id", { jobId: "t-1" }, undefined, undefined, {} as never);
       expect(stop).toHaveBeenCalledWith("t-1", `${hob.runtime.store.assistant("hob")!.name}叫停了`);

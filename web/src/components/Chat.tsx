@@ -1,5 +1,5 @@
 // 中间一栏：头部 + 消息区 + 输入框。
-import { useEffect, useLayoutEffect, useRef } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import type { AssistantSummary, Item } from "../../../shared/types.ts";
 import { isImagePath } from "../../../shared/media.ts";
 import { localPath } from "../outbox.ts";
@@ -27,6 +27,7 @@ import {
 } from "../store.ts";
 import { useLeave } from "../motion.ts";
 import { isStreamingTail } from "../merge.ts";
+import { afterScroll, expectAfterResize } from "../stick.ts";
 import { ItemList } from "./Items.tsx";
 import { DelayedText } from "./Empty.tsx";
 
@@ -47,26 +48,37 @@ function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: Assi
 
 /**
  * 贴底滚动：内容变高（新条目、流式文字、卡片数据晚到、字体加载）或容器变矮（手机键盘弹出）时，若原本就在底部附近就保持在底部。
- * 只有用户往上滚才算离开底部：平滑滚动途中的滚动事件、内容变高都不会误判（iPhone 上发完消息不跟着往上顶就是这个）。
+ * 内容自己变高、变矮、上面掉条目都会让浏览器挪滚动位置，这些都不算离开底部；判断规则见 stick.ts。
  * 新到一条时平滑滚过去；自己刚发的那条无论在哪都滚到底；首次加载、切换助手、重新拉整批对话时瞬间到底。
+ * 返回现在是否贴底（回到底部的按钮用）和一个滚到底的函数。
  */
-function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey: string, len: number, firstId: string | undefined, mineLast: boolean) {
+function useStickToBottom(
+  ref: React.RefObject<HTMLDivElement | null>,
+  expect: React.RefObject<number>,
+  resetKey: string,
+  len: number,
+  firstId: string | undefined,
+  mineLast: boolean,
+) {
+  const [stuck, setStuck] = useState(true);
   const pinned = useRef(true);
   const seen = useRef<{ key: string; len: number; firstId?: string }>({ key: "", len: 0 });
 
   useEffect(() => {
     const el = ref.current;
     if (!el) return;
-    let lastTop = el.scrollTop;
+    const box = () => ({ top: el.scrollTop, height: el.scrollHeight, view: el.clientHeight });
     const onScroll = () => {
-      if (el.scrollHeight - el.scrollTop - el.clientHeight < 80) pinned.current = true;
-      else if (el.scrollTop < lastTop - 2) pinned.current = false;
-      lastTop = el.scrollTop;
+      const next = afterScroll(pinned.current, expect.current, box());
+      expect.current = next.expect;
+      if (next.stuck !== pinned.current) {
+        pinned.current = next.stuck;
+        setStuck(next.stuck);
+      }
     };
     const ro = new ResizeObserver(() => {
-      if (!pinned.current) return;
-      el.scrollTop = el.scrollHeight;
-      lastTop = el.scrollTop;
+      expect.current = expectAfterResize(pinned.current, expect.current, box());
+      if (pinned.current) el.scrollTop = expect.current;
     });
     el.addEventListener("scroll", onScroll, { passive: true });
     ro.observe(el);
@@ -75,7 +87,7 @@ function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey:
       el.removeEventListener("scroll", onScroll);
       ro.disconnect();
     };
-  }, [ref]);
+  }, [ref, expect]);
 
   // 在绘制前定位：进对话页时先画出顶部、下一帧再跳到底，就是那一下闪
   useLayoutEffect(() => {
@@ -85,15 +97,38 @@ function useStickToBottom(ref: React.RefObject<HTMLDivElement | null>, resetKey:
     seen.current = { key: resetKey, len, firstId };
     if (last.key !== resetKey || len < last.len) {
       pinned.current = true;
+      setStuck(true);
       el.scrollTop = el.scrollHeight;
+      expect.current = el.scrollTop;
     } else if (len > last.len && last.firstId === firstId && (pinned.current || mineLast)) {
       pinned.current = true;
+      setStuck(true);
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [ref, resetKey, len, firstId, mineLast]);
+  }, [ref, expect, resetKey, len, firstId, mineLast]);
+
+  const toBottom = () => {
+    const el = ref.current;
+    if (!el) return;
+    pinned.current = true;
+    setStuck(true);
+    el.scrollTo({ top: el.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
+  };
+
+  return { atBottom: stuck, toBottom };
 }
 
-function useOlderMessages(ref: React.RefObject<HTMLDivElement | null>, id: string | null, key: string, firstId: string | undefined) {
+/**
+ * 往上翻加载更早的消息：分页拼到前面以后把滚动位置让回原来那条，看的人不会跳。
+ * 让位是程序自己动的，跟着记进预期位置，不然贴底那边会把它当成用户往上翻。
+ */
+function useOlderMessages(
+  ref: React.RefObject<HTMLDivElement | null>,
+  id: string | null,
+  key: string,
+  firstId: string | undefined,
+  expect: React.RefObject<number>,
+) {
   const anchor = useRef<{ id: string; top: number; key: string } | null>(null);
   const lastFirst = useRef<{ key: string; id?: string }>({ key: "" });
   const capture = () => {
@@ -108,10 +143,13 @@ function useOlderMessages(ref: React.RefObject<HTMLDivElement | null>, id: strin
     const old = lastFirst.current;
     if (el && old.key === key && old.id && old.id !== firstId && anchor.current?.key === key) {
       const node = Array.from(el.querySelectorAll<HTMLElement>("[data-item-id]")).find((item) => item.dataset.itemId === anchor.current?.id);
-      if (node) el.scrollTop += node.getBoundingClientRect().top - anchor.current.top;
+      if (node) {
+        el.scrollTop += node.getBoundingClientRect().top - anchor.current.top;
+        expect.current = el.scrollTop;
+      }
     }
     lastFirst.current = { key, id: firstId };
-  }, [ref, key, firstId]);
+  }, [ref, key, firstId, expect]);
   return () => {
     const el = ref.current;
     if (!el || !id) return;
@@ -129,6 +167,30 @@ function OlderStatus({ id }: { id: string | null }) {
 /** 最后一条是不是自己刚发的（转自别的助手的不算）。 */
 function isMine(item: Item | undefined): boolean {
   return item?.kind === "user" && !item.from;
+}
+
+/** 回到底部：离开底部时出现，助手在回复时圈里是三个点。一直留在 DOM 里，靠透明度淡入淡出。 */
+function JumpToBottom({ show, busy, onClick }: { show: boolean; busy: boolean; onClick: () => void }) {
+  return (
+    <button
+      className={`jump${show ? " show" : ""}`}
+      onClick={onClick}
+      title="回到最新消息"
+      aria-label="回到最新消息"
+      aria-hidden={!show}
+      tabIndex={show ? 0 : -1}
+    >
+      {busy ? (
+        <span className="jump-dots" aria-hidden="true">
+          <i />
+          <i />
+          <i />
+        </span>
+      ) : (
+        <Icon name="arrowDown" size={20} />
+      )}
+    </button>
+  );
 }
 
 /** 交给主助手的几类事，点一下填进输入框（不直接发送）。 */
@@ -210,8 +272,9 @@ export function Chat() {
   const thinking = Boolean(a?.busy) && !isStreamingTail(items);
   const think = useLeave(thinking, 180);
 
-  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id);
-  useStickToBottom(scrollRef, key, items.length, items[0]?.id, isMine(items.at(-1)));
+  const expect = useRef(0);
+  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id, expect);
+  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
     <main className="chat">
@@ -232,6 +295,7 @@ export function Chat() {
           {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>
       </div>
+      <JumpToBottom show={!stick.atBottom} busy={Boolean(a?.busy)} onClick={stick.toBottom} />
       <Composer />
     </main>
   );
@@ -375,8 +439,9 @@ export function ChatPage() {
   const think = useLeave(thinking, 180);
   const key = chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
 
-  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id);
-  useStickToBottom(scrollRef, key, items.length, items[0]?.id, isMine(items.at(-1)));
+  const expect = useRef(0);
+  const onScroll = useOlderMessages(scrollRef, s.sel, key, items[0]?.id, expect);
+  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
     <>
@@ -398,6 +463,7 @@ export function ChatPage() {
           {think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
         </div>
       </div>
+      <JumpToBottom show={!stick.atBottom} busy={Boolean(a?.busy)} onClick={stick.toBottom} />
       <Composer variant="mobile" />
     </>
   );

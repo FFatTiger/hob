@@ -318,9 +318,9 @@ describe("提示词的「记忆」一节", () => {
   it("本地 / Lore / 关闭三种提供者", () => {
     expect(memoryPromptLines("local")).toEqual([
       "## 记忆",
-      "你和用户是长期合作。涉及过去的偏好、决定和约定时，先用 memory_read 查看记忆；遇到值得长期记住的新事实，用 memory_write 记下来。记忆要精炼，过时的内容及时更新或删除。",
+      "你和用户是长期合作。用户过去的偏好、决定和约定，先用 memory_read 查，免得让用户再说一遍；新出现的、以后还用得上的事实，用 memory_write 记下来。记忆写短一些，过时的及时改掉或删掉。",
     ]);
-    expect(memoryPromptLines("lore")[1]).toContain("过去的偏好、决定和约定先查 Lore");
+    expect(memoryPromptLines("lore")[1]).toContain("用户过去的偏好、决定和约定，先去 Lore 查");
     expect(memoryPromptLines("off")).toEqual([]);
   });
 

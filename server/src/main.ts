@@ -41,6 +41,8 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.routines.start();
   runtime.jobs.startWatchdog();
   runtime.desktopEvents.restart();
+  // 消耗统计第一次要扫一遍会话文件（几百 MB）：先异步跑起来，服务不等它
+  runtime.usage.warmup();
 
   const app = createApp(runtime, { webDir: fileURLToPath(new URL("../../dist/web", import.meta.url)), home });
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);

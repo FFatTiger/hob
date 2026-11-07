@@ -9,6 +9,7 @@ export interface RoutineInput {
   name: string;
   instruction: string;
   schedules: string[];
+  skill?: string;
 }
 
 function validate(schedules: string[], timezone: string): void {
@@ -58,7 +59,7 @@ export class RoutineScheduler {
 
   private instruction(routine: Routine): string {
     const skill = routine.skill && usableAssistantSkills(this.runtime.home, routine.assistantId).find((item) => item.name === routine.skill);
-    return skill ? skillInstruction(skill.title, routine.instruction) : routine.instruction;
+    return skill ? skillInstruction([skill.title], routine.instruction) : routine.instruction;
   }
 
   private async fire(routineId: string): Promise<void> {
@@ -68,6 +69,7 @@ export class RoutineScheduler {
       await this.runtime.jobs.start(routine.assistantId, {
         title: routine.name,
         instruction: this.instruction(routine),
+        ...(routine.skill && usableAssistantSkills(this.runtime.home, routine.assistantId).some((skill) => skill.name === routine.skill) ? { skills: [routine.skill] } : {}),
         routineId: routine.id,
       });
     } catch (error) {
@@ -81,6 +83,7 @@ export class RoutineScheduler {
 
   create(input: RoutineInput): Routine {
     validate(input.schedules, this.runtime.settings.settings.general.timezone);
+    if (input.skill && !listAssistantSkills(this.runtime.home, input.assistantId).some((skill) => skill.name === input.skill)) throw new Error("绑定的技能无效");
     const routine: Routine = {
       id: newId("rt-"),
       assistantId: input.assistantId,
@@ -90,6 +93,7 @@ export class RoutineScheduler {
       active: true,
       createdAt: new Date().toISOString(),
       runs: [],
+      ...(input.skill ? { skill: input.skill } : {}),
     };
     this.runtime.store.saveRoutine(routine);
     this.apply(routine);
@@ -101,10 +105,10 @@ export class RoutineScheduler {
     const routine = this.runtime.store.routine(id);
     if (!routine) throw new Error(`定时任务不存在：${id}`);
     if (patch.schedules) validate(patch.schedules, this.runtime.settings.settings.general.timezone);
-    if (patch.skill !== undefined && patch.skill !== null && (typeof patch.skill !== "string" || !listAssistantSkills(this.runtime.home, routine.assistantId).some((skill) => skill.name === patch.skill))) throw new Error("绑定的技能无效");
+    if (patch.skill !== undefined && patch.skill !== null && patch.skill !== "" && (typeof patch.skill !== "string" || !listAssistantSkills(this.runtime.home, routine.assistantId).some((skill) => skill.name === patch.skill))) throw new Error("绑定的技能无效");
     const { skill, ...rest } = patch;
     const next: Routine = { ...routine, ...rest };
-    if (skill === null) delete next.skill;
+    if (skill === null || skill === "") delete next.skill;
     else if (skill !== undefined) next.skill = skill;
     this.runtime.store.saveRoutine(next);
     this.apply(next);
@@ -133,6 +137,7 @@ export class RoutineScheduler {
     return await this.runtime.jobs.start(routine.assistantId, {
       title: routine.name,
       instruction: this.instruction(routine),
+      ...(routine.skill && usableAssistantSkills(this.runtime.home, routine.assistantId).some((skill) => skill.name === routine.skill) ? { skills: [routine.skill] } : {}),
       routineId: routine.id,
     });
   }

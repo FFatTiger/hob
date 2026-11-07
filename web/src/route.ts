@@ -1,7 +1,7 @@
 // 地址里的 hash 和页面的对应：#/chat/<助手 id>[/<右栏的页>]、#/settings[/<分栏>]。手机首页列表没有 hash。
 import type { PanelPage } from "./panel-stack.ts";
 
-export const SETTINGS_SECTIONS = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "mcp", "desktop", "work", "push", "about"] as const;
+export const SETTINGS_SECTIONS = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "mcp", "desktop", "work", "usage", "push", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
 type RouteState = { page: "main" | "settings" | "knowledge"; section: SettingsSection | null; sel: string | null; mobile: "list" | "chat"; panelStack?: PanelPage[] };

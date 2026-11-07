@@ -1,6 +1,13 @@
 import type { ReactNode } from "react";
-import type { Delegation, JobStatus } from "../../../shared/types.ts";
+import type { Delegation, JobStatus, SedimentStatus } from "../../../shared/types.ts";
 import { Icon, type IconName } from "../icons.tsx";
+
+export function sedimentText(sediment: SedimentStatus): string {
+  if (sediment.status === "running") return "沉淀技能中…";
+  if (sediment.status === "empty") return "没有要沉淀的";
+  if (sediment.status === "failed") return "沉淀失败";
+  return sediment.updated ? `已更新技能「${sediment.title}」· 第 ${sediment.version} 版` : `已沉淀技能「${sediment.title}」`;
+}
 
 type StatusMeta = { text: string; icon: IconName; color: "" | "live" | "ok" | "bad"; spin: boolean };
 

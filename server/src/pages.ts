@@ -20,8 +20,8 @@ export async function renderPage(home: string, title: string, summary: string, h
   return path;
 }
 
-const description = `当流程、对比、架构、多步骤教程、数据表或长篇调研结论用页面比文字更易理解时使用。简短问答、闲聊或一两段能讲清的内容不要用。调用前只说一句话点题。
-html 只写正文的 HTML 片段（不要 <html>、<head>、<body>），标题和摘要由 Hob 放在页头，正文别再写 h1。页面离线显示：不能加载外部脚本、样式和字体，不能联网取数据；图片只能用 https 或 data 地址。
+const description = `把内容做成一页图文页面，作为卡片发到对话里。
+html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题和摘要由 Hob 放在页头，正文从 h2 开始。页面离线显示：外部脚本、样式和字体加载不了，也不能联网取数据；图片只能用 https 或 data 地址。
 已有样式（亮暗自动适配），直接用：
 - 小节用 <h2>、<h3>；段落、列表、<table>、<pre><code>、<blockquote> 都已排好。
 - 并列要点：<div class="cards"><div class="card"><h3>…</h3><p>…</p></div>…</div>
@@ -29,8 +29,8 @@ html 只写正文的 HTML 片段（不要 <html>、<head>、<body>），标题�
 - 步骤：<ol class="steps"><li><b>步骤名</b>说明</li>…</ol>
 - 关键数字：<div class="kpis"><div class="kpi"><b>42%</b><span>说明</span></div>…</div>
 - 提示框：<div class="note">…</div>；标签：<span class="tag">…</span>；都可加 ok / warn / bad 变色。
-- 图（流程、结构、时序、关系）用 <figure> 里的内联 <svg viewBox="…">，不写死宽高，配 <figcaption>。SVG 类：box 普通框、hl 强调框、line 连线、text 加 muted 为次要文字；文字默认 13px。颜色只用变量 --ink --muted --faint --line --soft --accent --accent-soft --ok --warn --bad，写成 style="fill:var(--accent)"。
-- 先给结论再展开；能用图、表、卡片说清的就别堆长段落；强调色只点最重要的一两处。
+- 图（流程、结构、时序、关系）用 <figure> 里的内联 <svg viewBox="…">，宽高随容器，配 <figcaption>。SVG 类：box 普通框、hl 强调框、line 连线、text 加 muted 为次要文字；文字默认 13px。颜色只用变量 --ink --muted --faint --line --soft --accent --accent-soft --ok --warn --bad，写成 style="fill:var(--accent)"。
+- 先给结论再展开；能用图、表、卡片说清的，就少用长段落；强调色只点最重要的一两处。
 - 需要特别的版式可以加 <style>（颜色仍用上面的变量），可以用 <script> 做交互。最多 ${MAX} 字。`;
 
 // 只给助手：任务和助手之间用 report 的 Markdown 和文件沟通，给用户怎么展示由助手决定

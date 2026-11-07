@@ -5,7 +5,17 @@ import type { JobStep } from "../../shared/types.ts";
 import { showPath } from "./text.ts";
 
 /** 沉淀技能那一轮发给任务的话的开头：任务详情里这句显示成「沉淀技能」。 */
-export const SEDIMENT_PROMPT_HEAD = "这件事以后还会再做。回顾刚才的过程，把能复用的做法沉淀成技能";
+export const SEDIMENT_PROMPT_HEAD = "回顾刚才的过程，看看有没有能复用的做法。这类事以后还会再做的，把做法写成技能";
+
+/** 旧版用过的开头：已经存下来的任务记录里还是这些，任务详情照样显示成「沉淀技能」。 */
+const LEGACY_SEDIMENT_HEADS = [
+  "这件事以后还会再做。回顾刚才的过程，把能复用的做法写成技能",
+  "这件事以后还会再做。回顾刚才的过程，把能复用的做法沉淀成技能",
+];
+
+function isSedimentPrompt(text: string): boolean {
+  return text.startsWith(SEDIMENT_PROMPT_HEAD) || LEGACY_SEDIMENT_HEADS.some((head) => text.startsWith(head));
+}
 
 /** transcript 里单步输出最多这么多字，超出的整段落盘，页面按路径去拉。 */
 export const STEP_OUTPUT_LIMIT = 20 * 1024;
@@ -14,7 +24,7 @@ export const STEP_EVENT_LIMIT = 4 * 1024;
 /** diff 只给看得清的一段，超长的改动不整段塞进接口。 */
 const EDIT_TEXT_LIMIT = 4_000;
 
-const AUTO_FOLLOW_UP = "你还没有调用 report";
+const AUTO_FOLLOW_UP = "这一轮结束了，还没有交结果。";
 
 function oneLine(value: string, max = 120): string {
   const line = value.replace(/\s+/g, " ").trim();
@@ -313,12 +323,12 @@ export function deriveSteps(file: string, options: DeriveOptions = {}): JobStep[
 
     if (message.role === "user") {
       const text = textOfContent(message.content).trim();
-      if (!text || text.startsWith(AUTO_FOLLOW_UP)) continue;
+      if (!text || text.startsWith(AUTO_FOLLOW_UP) || text.startsWith("你还没有调用 report")) continue;
       if (!seenUser) {
         seenUser = true; // 第一句是任务说明，详情头部已经有
         continue;
       }
-      steps.push({ id: `u${message.timestamp ?? at}`, kind: "text", at, from: "user", text: text.startsWith(SEDIMENT_PROMPT_HEAD) ? "沉淀技能" : text });
+      steps.push({ id: `u${message.timestamp ?? at}`, kind: "text", at, from: "user", text: isSedimentPrompt(text) ? "沉淀技能" : text });
     }
   }
   return steps;

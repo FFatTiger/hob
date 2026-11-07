@@ -27,7 +27,7 @@ describe("现在", () => {
       const runtime = { store, settings: { settings: { general: { timezone: "Asia/Shanghai" } } } } as unknown as HobRuntime;
       expect(nowBlock(runtime, "hob")).toBe([
         "【现在】2026-11-04 17:07 周三",
-        "进行中：t-run「统计用量」，运行 3 分钟；t-new「刚开始」，刚开始；t-queue「查磁盘」，排队中；t-wait「清理日志」，等用户确认",
+        "进行中：t-run「统计用量」，运行 3 分钟；t-new「刚开始」，刚开始；t-queue「查磁盘」，排队中；t-wait「清理日志」，等你回复",
         "转交中：写作「整理周报素材」，11:20 起",
         "等用户选：发到公众号吗？",
         "最近结束：t-stuck「每人明细页」17:05 受阻；t-long「一二三四五六七八九十一二三四五六七八九十…」17:00 失败；t-done「读回 CSV 数字」16:58 已完成",

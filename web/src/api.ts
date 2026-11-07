@@ -43,6 +43,9 @@ import type {
   SendMessageBody,
   SettingsFile,
   SettingsPatch,
+  UsagePricePatch,
+  UsagePriceSaved,
+  UsageView,
 } from "../../shared/types.ts";
 
 import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrigin, KnowledgePage, KnowledgeEntryView } from "../../shared/knowledge.ts";
@@ -158,6 +161,8 @@ export interface HobApi {
   imageTest(body: { image?: ImageSettings; apiKey?: string }): Promise<ImageTestResult>;
   changePassword(old: string, next: string): Promise<void>;
   about(): Promise<AboutInfo>;
+  usage(): Promise<UsageView>;
+  putUsagePrice(body: UsagePricePatch): Promise<UsagePriceSaved>;
   memory(): Promise<MemoryConfig>;
   putMemory(revision: number, provider: MemoryProvider): Promise<MemoryConfig>;
   putLore(body: { baseUrl: string; token?: string }): Promise<MemoryConfig>;
@@ -290,6 +295,8 @@ export const realApi: HobApi = {
   imageTest: (body) => req<ImageTestResult>("/api/image/test", json(body)),
   changePassword: (old, next) => req<void>("/api/password", json({ old, new: next })),
   about: () => req<AboutInfo>("/api/about"),
+  usage: () => req<UsageView>("/api/usage"),
+  putUsagePrice: (body) => req<UsagePriceSaved>("/api/usage/price", json(body, "PUT")),
   memory: () => req<MemoryConfig>("/api/memory"),
   putMemory: (revision, provider) => req<MemoryConfig>("/api/memory", json({ revision, provider }, "PUT")),
   putLore: (body) => req<MemoryConfig>("/api/memory/lore", json(body, "PUT")),

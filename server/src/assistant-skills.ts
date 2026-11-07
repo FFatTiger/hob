@@ -53,8 +53,8 @@ export function readAssistantSkillBody(path: string): string {
   return text.slice(end + 5).replace(/^\n/, "");
 }
 
-export function skillInstruction(title: string, instruction: string): string {
-  return `按技能「${title}」做（先读它的 SKILL.md）。\n${instruction}`;
+export function skillInstruction(titles: string[], instruction: string): string {
+  return `按技能${titles.map((title) => `「${title}」`).join("")}做（先读${titles.length === 1 ? "它" : "它们"}的 SKILL.md）。\n${instruction}`;
 }
 
 export function listAssistantSkills(home: string, assistantId: string): AssistantSkill[] {

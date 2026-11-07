@@ -59,6 +59,18 @@ describe("交回 Hob", () => {
 });
 
 describe("委派", () => {
+  it("转交结束发给 Hob 的汇总里没有沉淀提醒，那些任务归转交对象", () => {
+    const hob = setup();
+    try {
+      const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      hob.runtime.store.saveJob({ ...job("t-dg", "done"), summary: "检查完，服务都正常" });
+      hob.runtime.store.saveDelegation({ ...record(), turnFinished: true, jobIds: ["t-dg"] });
+      hob.runtime.delegations.update("dg-test");
+      const text = String(event.mock.calls[0]![1]);
+      expect(text).toContain("检查完，服务都正常");
+      expect(text).not.toContain("这个任务没带技能");
+    } finally { hob.close(); }
+  });
   it("目标助手提问后用户直接发消息：先接手，再结束 Router 审批，任务审批不变", async () => {
     const hob = setup();
     try {
@@ -110,14 +122,14 @@ describe("委派", () => {
     const hob = setup();
     try {
       const description = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "message_assistant")!.description;
-      expect(description).toBe("把一件事交给更合适的助手（见「其他助手」），由它负责到底；用户的原话和附件会自动转过去，对方的回复和结果会回到这里。");
+      expect(description).toBe("把一件事转给另一个助手（见「助手」一节），由它负责到底。用户的原话和附件会自动转过去，对方的回复和结果会回到这里。");
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
       const prompt = buildSystemPrompt(hob.runtime.store, "ops", { timezone, aboutYou, memory: "local" });
       expect(prompt).not.toContain("## 转来的事");
-      expect(prompt).toContain("转来的消息带着用户的原话，等同用户本人的要求，结果会自动回到 Hob。");
-      expect(prompt).toContain("先给结论，用规范的书面中文；长短跟着事情的分量走");
+      expect(prompt).toContain("转来的消息带着用户的原话，等同用户本人的要求，你办完的结果会自动回到 Hob。");
+      expect(prompt).toContain("先给结论，用规范的书面中文。长短跟着事情的分量走");
       const primary = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
-      expect(primary).toContain("对用户负责的是你");
+      expect(primary).toContain("任务只向你汇报，给用户看什么由你决定。");
       expect(primary).not.toContain("结果回来之前，不要自己 start_job 做同一件事");
       expect(prompt).not.toContain("转交时把用户原话转过去");
     } finally { hob.close(); }
@@ -342,11 +354,11 @@ describe("委派", () => {
       hob.runtime.delegations.addJob("dg-test", started.id);
       await waitFor(() => hob.faux.state.callCount > 0);
       const answer = hob.runtime.jobs.askQuestion(started.id, { title: "继续吗", options: [{ key: "A", label: "继续" }, { key: "B", label: "停止" }] });
-      expect(relay).toHaveBeenCalledWith("ops", "任务「检查」在等你回复：继续吗。选项：A 继续、B 停止。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。", "dg-test");
+      expect(relay).toHaveBeenCalledWith("ops", `任务「检查」（${started.id}）在等你回复：继续吗。选项：A 继续、B 停止。`, "dg-test");
       expect(hob.runtime.store.delegation("dg-test")?.status).toBe("waiting");
       expect(hob.runtime.router.items("ops").items.some((item) => item.kind === "question")).toBe(false);
       await hob.runtime.jobs.reply(started.id, "继续", "router");
-      expect(await answer).toBe("助手转达：继续");
+      expect(await answer).toBe("「服务器」回复：继续");
     } finally { release(); hob.close(); }
   });
 

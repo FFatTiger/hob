@@ -100,8 +100,7 @@ export function overviewTool(runtime: HobRuntime): ToolDefinition<any, any> {
     name: "overview",
     label: "查看这段时间的记录",
     description:
-      "查各助手一段时间内的日志和任务，用于早报、日报，或回答「这段时间做了什么」。",
-    promptSnippet: "写早报/汇总时用 overview 查看各助手这段时间的记录。",
+      "查各助手一段时间内的工作日志和任务，写早报、日报，或者回答「这段时间做了什么」时用。",
     parameters: Type.Object({
       sinceHours: Type.Optional(Type.Integer({ description: "往回看多少小时，默认 24，最多 168" })),
     }),

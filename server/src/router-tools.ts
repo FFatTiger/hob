@@ -31,6 +31,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { clampDuty } from "./text.ts";
 import { listAssistantSkills, readAssistantSkillBody, saveAssistantSkill, skillInstruction, usableAssistantSkills } from "./assistant-skills.ts";
 import { jobView } from "./job-view.ts";
+import { deleteSkill } from "./delete-skill.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -99,6 +100,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     readFile: async (path) => readFile(checkFile(path)),
     detectImageMimeType: async (path) => IMAGE_TYPES[extname(checkFile(path)).toLowerCase()],
   } }) as unknown as Tool;
+  delete (read as { promptSnippet?: unknown }).promptSnippet; // 用了自定义系统提示词，引擎自带的这段不进提示词
   const tools: Tool[] = [
     {
       name: "check_job",
@@ -116,7 +118,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "edit_skill",
       label: "改技能",
-      description: "改这个助手某个技能的正文（SKILL.md）：把一段原文换成新的文字，旧版会保留。要改脚本的，交给任务去改。",
+      description: "改一个技能的正文（SKILL.md）：把一段原文换成新的文字，旧版会保留。脚本要改的，交给任务改。",
       parameters: Type.Object({
         name: Type.String({ description: "技能名" }),
         edits: Type.Array(Type.Object({ old: Type.String(), new: Type.String() }), { description: "一处或几处修改：old 是正文里的原文，要一字不差、只出现一次；new 是换成的文字" }),
@@ -141,14 +143,27 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       },
     },
     {
+      name: "delete_skill",
+      label: "删除技能",
+      description: "删除一个技能。技能会移到归档，不会彻底删掉。",
+      parameters: Type.Object({ name: Type.String({ description: "技能名。" }), replaced_by: Type.Optional(Type.String({ description: "可选，被哪个技能接替，填技能名。用到它的定时任务会改用接替的技能。" })) }),
+      execute: async (_id, params: { name: string; replaced_by?: string }) => {
+        try {
+          const text = deleteSkill(runtime, assistantId, params.name, params.replaced_by || undefined);
+          await router.addItem(assistantId, { kind: "note", icon: "skill", text });
+          return ok(text);
+        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
+    {
       name: "save_job_as_skill",
       label: "沉淀技能",
-      description: "把一个已完成的任务的做法沉淀成这个助手的技能，在任务自己的会话里做，做完对话里会有提示。",
-      parameters: Type.Object({ jobId: Type.String() }),
-      execute: async (_id, params: { jobId: string }) => {
+      description: "让一个已完成的任务把它的做法写成技能。它在自己的会话里写，能把脚本和命令真跑一遍验证；进度显示在任务卡片上，写好以后结果会回到这里。",
+      parameters: Type.Object({ jobId: Type.String(), into: Type.Optional(Type.String({ description: "可选，在哪个已有技能的基础上改，填技能名；不填就新建。" })), note: Type.Optional(Type.String({ description: "可选，要交代给任务的话，比如用户的反馈和纠正、要一起并进来的技能。" })) }),
+      execute: async (_id, params: { jobId: string; into?: string; note?: string }) => {
         const job = store.job(params.jobId);
         if (!job || job.assistantId !== assistantId) return fail("任务不存在");
-        try { jobs.startSediment(job.id, "manual"); return ok("已开始沉淀技能。"); }
+        try { jobs.startSediment(job.id, { into: params.into || undefined, note: params.note || undefined }); return ok("已开始沉淀，进度显示在任务卡片上。"); }
         catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
@@ -186,8 +201,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "start_job",
       label: "创建任务",
-      description: "把要动手的事交给后台任务：跑命令、改文件、操作设备、多步调研。用户这次的原话、引用、附件和最近几条对话会自动带给任务；任务随时可以停。",
-      promptSnippet: "把需要执行的任务交给后台任务。",
+      description: "把事情交给后台任务去做。用户这次的原话、引用、附件和最近几条对话会自动带给任务，note 只补原话里看不出的背景。",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
         note: Type.Optional(Type.String({ description: "任务从原话里看不出、又需要知道的背景，最多 200 字。" })),
@@ -202,7 +216,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             description: "要交给任务的文件路径（用户发来的附件）；图片会直接给模型看",
           }),
         ),
-        skill: Type.Optional(Type.String({ description: "可选，按这个助手的哪个技能做，填技能名。" })),
+        skills: Type.Optional(Type.Array(Type.String(), { description: "给任务用的技能，填技能名。你的技能，任务只看得到你给的这些。" })),
         expect_minutes: Type.Optional(Type.Number({ description: "可选，预计多少分钟能交结果。超过了会通知你；不填按 10 分钟。" })),
         model: Type.Optional(Type.String({ description: `可选，不填用默认。聪明、成本、速度 0–100，越高越聪明、越贵、越快：\n${modelText}` })),
         thinking: Type.Optional(
@@ -215,15 +229,17 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           const note = params.note == null ? "" : String(params.note);
           if ([...note].length > 200) return fail("备注最多 200 字；用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景。");
           // 有的模型会把没用的可选参数填成空串：空串当没填
-          const wanted = params.skill ? String(params.skill) : "";
+          const wanted: string[] = Array.isArray(params.skills) ? [...new Set<string>(params.skills.map(String))] : [];
           const skills = usableAssistantSkills(runtime.home, assistantId);
-          const skill = wanted ? skills.find((item) => item.name === wanted) : undefined;
-          if (wanted && !skill) return fail(`没有这个技能：${wanted}。能用的有：${skills.map((item) => item.name).join("、") || "无"}`);
+          const missing = wanted.find((name) => !skills.some((item) => item.name === name));
+          if (missing) return fail(`没有这个技能：${missing}。能用的有：${skills.map((item) => item.name).join("、") || "无"}`);
+          const selected = wanted.map((name) => skills.find((item) => item.name === name)!);
           const original = router.originalWords(assistantId, note, true, Array.isArray(params.files) ? params.files.map(String) : []);
           const job = await jobs.start(assistantId, {
             title: String(params.title),
             ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
-            instruction: skill ? skillInstruction(skill.title, original.text) : original.text,
+            instruction: selected.length ? skillInstruction(selected.map((skill) => skill.title), original.text) : original.text,
+            ...(wanted.length ? { skills: wanted } : {}),
             ...(params.cwd ? { cwd: String(params.cwd) } : {}),
             ...(original.files.length ? { files: original.files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
@@ -242,7 +258,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "reply_job",
       label: "补充任务说明",
-      description: "把补充、纠正或追问交给已有的任务，它带着原来的上下文和目录接着做；已经结束的任务也可以。",
+      description: "把话交给一个已有的任务：补充、纠正、追问，或者回答它的提问。它带着原来的上下文和目录接着做，已经结束的任务也能接着做。",
       parameters: Type.Object({
         jobId: Type.String({ description: "任务 id" }),
         text: Type.String({ description: "要补充的话" }),
@@ -275,17 +291,17 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "ask_user",
       label: "询问用户",
-      description: "在对话里出选择题卡片（2 到 3 个选项），等用户选，答案会回到对话。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。",
+      description: "在对话里出一张选择题卡片（2 到 3 个选项），用户选完，答案会回到对话。",
       parameters: Type.Object({
         title: Type.String({ description: "问题，一句话" }),
-        detail: Type.Optional(Type.String({ description: "补充说明，写清后果" })),
+        detail: Type.Optional(Type.String({ description: "补充说明，写清后果。" })),
         options: Type.Array(
           Type.Object({
             label: Type.String({ description: "选项文字，如「暂不发布」" }),
           }),
           { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
         ),
-        remember: Type.Optional(Type.String({ description: "同类事以后可以不再问时，填这类事的简称（如「清理临时目录」）；卡片会多一个「以后直接做」的选项。" })),
+        remember: Type.Optional(Type.String({ description: "这类事以后可以不再问时，填这类事的简称（如「清理临时文件」）；卡片上会多一个「以后直接做」的选项。" })),
       }),
       execute: async (_id, params: any) => {
         const labels: { label: string }[] = Array.isArray(params.options) ? params.options : [];
@@ -320,7 +336,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "set_rule",
       label: "记录规则",
-      description: "记下用户对某类事的确认方式：ask 先问，allow 直接做。",
+      description: "记下用户对某类事的处理方式：ask 是做之前先问，allow 是直接做。",
       parameters: Type.Object({
         text: Type.String({ description: "规则内容，如「发布公众号」" }),
         mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
@@ -369,6 +385,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
         name: Type.String({ description: "定时任务名称，如「每日简报」" }),
         instruction: Type.String({ description: "到点要执行的内容" }),
         schedules: Type.Array(Type.String({ description: "cron 表达式" }), { description: "一个或多个" }),
+        skill: Type.Optional(Type.String({ description: "可选，按哪个技能做，填技能名。" })),
       }),
       execute: async (_id, params: any) => {
         try {
@@ -377,6 +394,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             name: String(params.name),
             instruction: String(params.instruction),
             schedules: (params.schedules as string[]) ?? [],
+            ...(params.skill ? { skill: String(params.skill) } : {}),
           });
           await note("routine", `新增定时任务 · ${routine.name} · ${routine.schedules.map(cronToChinese).join("、")}`);
           profileChanged();
@@ -389,13 +407,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "update_routine",
       label: "修改定时任务",
-      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、启用状态。",
+      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、按哪个技能做、启用状态。",
       parameters: Type.Object({
         routineId: Type.String(),
         name: Type.Optional(Type.String()),
         instruction: Type.Optional(Type.String()),
         schedules: Type.Optional(Type.Array(Type.String())),
         active: Type.Optional(Type.Boolean()),
+        skill: Type.Optional(Type.String({ description: "按哪个技能做，填技能名；填空字符串表示不用技能。" })),
       }),
       execute: async (_id, params: any) => {
         try {
@@ -404,6 +423,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             ...(params.instruction ? { instruction: String(params.instruction) } : {}),
             ...(params.schedules ? { schedules: params.schedules as string[] } : {}),
             ...(typeof params.active === "boolean" ? { active: params.active } : {}),
+            ...(typeof params.skill === "string" ? { skill: params.skill } : {}),
           });
           await note("routine", `修改定时任务 · ${routine.name} · ${routine.schedules.map(cronToChinese).join("、")}`);
           profileChanged();
@@ -432,7 +452,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     {
       name: "send_file",
       label: "发送文件",
-      description: "把一个文件（任务产出、截图、生成的图）作为卡片发到对话里，图片直接显示。",
+      description: "把一个文件（任务交来的文件、截图、任务生成的图）作为卡片发到对话里，图片直接显示。",
       parameters: Type.Object({ path: Type.String({ description: "文件的绝对路径" }) }),
       execute: async (_id, params: any) => {
         const path = String(params.path);
@@ -525,7 +545,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     tools.push({
       name: "generate_image",
       label: "生成图片",
-      description: "直接在对话里按文字生成或修改图片，生成时显示卡片，完成后图片自动显示，不需要派任务或用 send_file 发送。返回的路径可作为后续改图的参考图。",
+      description: "按文字生成或修改图片，直接显示在对话里：生成时有进度卡片，画好自动显示。返回的路径可以作为之后改图的参考图。",
       parameters: Type.Object({
         prompt: Type.String({ description: "要画什么，越具体越好" }),
         size: Type.Optional(Type.String({ description: "尺寸，如 1024x1024；不填用设置里的默认" })),
@@ -543,7 +563,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
           });
           await router.updateImage(assistantId, item.id, { status: "done", path });
-          return ok(`图片已经显示在对话里，不要再用 send_file 发一遍。图片路径：${path}`);
+          return ok(`图片已经显示在对话里。路径：${path}，之后改图可以作为参考图。`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
           await router.updateImage(assistantId, item.id, { status: "failed", error: message });
@@ -561,10 +581,10 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       {
         name: "propose_assistant",
         label: "提议创建专属助手",
-        description: "同类事情反复出现、又没有合适的助手时，提议新建一个专属助手。生成草稿卡，用户点「创建」才会建。怎么做事是所有助手共用的模板和全局规则定的，草稿里只写这个助手特有的东西。",
+        description: "提议新建一个专属助手：对话里出一张草稿卡，用户点「创建」才会建。做事的方法由所有助手共用的模板和全局规则决定，草稿里只写这个助手特有的东西。",
         parameters: Type.Object({
-          name: Type.String({ description: "助手名字：职责加一个亲切的昵称，四五个字，如「运维小子」「写稿搭子」「代理管家」；不要只写「代理」「运维」这种光秃秃的词" }),
-          duty: Type.String({ description: "左栏头像下面那行小字，最多 8 个字，如「线上和机器」「模型和 agent」" }),
+          name: Type.String({ description: "助手名字，职责加一个亲切的昵称，四五个字，如「写稿搭子」「记账管家」。" }),
+          duty: Type.String({ description: "左栏头像下面那行小字，最多 8 个字，如「周报和文章」「账单和预算」。" }),
           dutyLong: Type.String({ description: "草稿卡里的职责说明，两三句话，写完整一些" }),
           sprite: Type.String({
             description: `内置道具：${PROP_IDS.filter((id) => id !== "hob").map((id) => `${id} ${PROPS[id].label}`).join("，")}；或 custom（同时填 prop_art，自己画一件）`,
@@ -591,7 +611,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
           routines: Type.Optional(
             Type.Array(
               Type.Object({ name: Type.String(), instruction: Type.String(), schedule: Type.String() }),
-              { description: "可选。根据上下文判断这个助手需不需要定期做的事，不是每个助手都要有。拿不准就先问用户，问清楚再加。" },
+              { description: "可选。这个助手要定期做的事，不是每个助手都需要；拿不准就先问用户，问清楚再加。" },
             ),
           ),
           askFirst: Type.Optional(Type.Array(Type.String(), { description: "这个领域特有、做之前要先问用户的事，每项一条；全局规则已经列的不重复。" })),
@@ -645,7 +665,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
       {
         name: "message_assistant",
         label: "转交其他助手",
-        description: "把一件事交给更合适的助手（见「其他助手」），由它负责到底；用户的原话和附件会自动转过去，对方的回复和结果会回到这里。",
+        description: "把一件事转给另一个助手（见「助手」一节），由它负责到底。用户的原话和附件会自动转过去，对方的回复和结果会回到这里。",
         parameters: Type.Object({
           assistantId: Type.String({ description: "目标助手 id" }),
           note: Type.Optional(Type.String({ description: "可选，对方需要知道的背景，最多 200 字。" })),
@@ -671,7 +691,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
     tools.push({
       name: "hand_back_to_hob",
       label: "交回 Hob",
-      description: "这件事不归你管时交回 Hob，由它转给合适的助手。",
+      description: "把不归你管的事交回 Hob，由它转给合适的助手。",
       parameters: Type.Object({ text: Type.String({ description: "用户要什么" }), reason: Type.String({ description: "为什么不归你，一句话" }) }),
       execute: async (_id, params: any) => {
         const text = String(params.text ?? "").trim();

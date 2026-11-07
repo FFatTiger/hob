@@ -1,6 +1,6 @@
 // 设置整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
 import { DelayedText, Empty } from "./Empty.tsx";
-import { Fragment, Suspense, lazy, useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Fragment, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
 import type {
   AboutInfo,
   ClaudeCodeSettings,
@@ -104,63 +104,25 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-
-function PageHead({ title, desc }: { title: string; desc: ReactNode }) {
-  return (
-    <div className="setintro">
-      <div className="h">{title}</div>
-      <div className="d">{desc}</div>
-    </div>
-  );
-}
-
-/** 几选一：分段控件（一条底槽里几段，选中的那段抬起来）。 */
-function Seg<K extends string>({
-  items,
-  value,
-  onChange,
-  disabled,
-}: {
-  items: { key: K; label: string }[];
-  value: K;
-  onChange: (key: K) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="seg" role="radiogroup" style={{ "--seg-count": items.length, "--seg-index": Math.max(0, items.findIndex((item) => item.key === value)) } as CSSProperties}>
-      {items.map((item) => (
-        <button
-          key={item.key}
-          role="radio"
-          aria-checked={value === item.key}
-          className={value === item.key ? "on" : undefined}
-          onClick={() => onChange(item.key)}
-          disabled={disabled}
-        >
-          {item.label}
-        </button>
-      ))}
-    </div>
-  );
-}
-
-/** 一组设置：组内 8px，组与组 24px。 */
-function Group({ children }: { children: ReactNode }) {
-  return <div className="group">{children}</div>;
-}
+import { PageHead, Group, Seg } from "./SettingsParts.tsx";
+import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
+/** 保存行。lead 放在最左边（测试连接这类），和保存按钮同一行。 */
 function SaveRow({
   saved,
   error,
   children,
+  lead,
 }: {
   saved: boolean;
   error: string | null;
   children: ReactNode;
+  lead?: ReactNode;
 }) {
   return (
     <div className="sfoot">
+      {lead}
       {saved && !error ? <span className="okline">已保存</span> : null}
       {error ? <span className="badline">{error}</span> : null}
       <span className="sp" />
@@ -220,6 +182,7 @@ const SECTIONS: { id: SettingsSection; label: string }[] = [
   { id: "mcp", label: "MCP" },
   { id: "desktop", label: "云桌面" },
   { id: "work", label: "任务" },
+  { id: "usage", label: "消耗" },
   { id: "push", label: "通知" },
   { id: "about", label: "关于" },
 ];
@@ -316,6 +279,8 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
           <DesktopSection />
         ) : current === "work" ? (
           <WorkSection />
+        ) : current === "usage" ? (
+          <UsageSection />
         ) : current === "push" ? (
           <PushSection />
         ) : current === "about" ? (
@@ -380,9 +345,8 @@ function DesktopSection() {
   const [url, setUrl] = useState("");
   const [token, setToken] = useState("");
   const [enabled, setEnabled] = useState(false);
-  const [changingToken, setChangingToken] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
-  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string; public?: boolean } | null>(null);
   const [busy, setBusy] = useState(false);
   const [showDesktop, setShowDesktop] = useState<"hob" | "public" | null>(null);
   const [publicAssistants, setPublicAssistants] = useState<string[]>([]);
@@ -394,7 +358,6 @@ function DesktopSection() {
         setView(v);
         setUrl(v.url);
         setEnabled(v.enabled);
-        setChangingToken(!v.tokenConfigured);
         setPublicAssistants(v.publicAssistants);
       })
       .catch((e: Error) => setMessage({ ok: false, text: `无法读取云桌面配置：${e.message}` }));
@@ -412,7 +375,6 @@ function DesktopSection() {
       const v = await saveDesktop({ revision: view.revision, url, enabled, ...(token ? { token } : {}) });
       setView(v);
       setToken("");
-      setChangingToken(!v.tokenConfigured);
       setMessage({ ok: true, text: "已保存" });
     } catch (e) {
       setMessage({ ok: false, text: e instanceof Error ? e.message : String(e) });
@@ -429,9 +391,9 @@ function DesktopSection() {
       const next = await saveDesktopPublic(view.revision, publicAssistants);
       setView(next);
       setPublicAssistants(next.publicAssistants);
-      setMessage({ ok: true, text: "已保存" });
+      setMessage({ ok: true, text: "已保存", public: true });
     } catch (error) {
-      setMessage({ ok: false, text: error instanceof Error ? error.message : String(error) });
+      setMessage({ ok: false, text: error instanceof Error ? error.message : String(error), public: true });
     } finally { setBusy(false); }
   }
 
@@ -468,7 +430,7 @@ function DesktopSection() {
             <div className="sline">{view?.tokenConfigured ? "已设置" : "未设置"}</div>
             <div className="lbl sub">启用</div>
             <div className="sline">{view?.enabled ? "已启用" : "未启用"}</div>
-            <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+            <div className="ctl">
               <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
               <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
               {statusLine}
@@ -489,51 +451,44 @@ function DesktopSection() {
           <Group>
             <div className="lbl">连接</div>
             <div className="formcard">
-              <div className="lbl sub">地址</div>
+              <div className="lbl">地址</div>
               <div className="field">
                 <input value={url} disabled={!view || busy} onChange={(e) => setUrl(e.target.value)} placeholder="http://127.0.0.1:6080" />
               </div>
-              <div className="lbl sub">令牌</div>
-              <div className={`expand settings-motion${changingToken ? " open" : ""}`} inert={!changingToken}><div>
-                <div className="field">
-                  <input type="password" value={token} disabled={!view || busy} onChange={(e) => setToken(e.target.value)} placeholder={view?.tokenConfigured ? "已保存，留空则沿用" : "云桌面的访问令牌"} />
-                </div>
-              </div></div>
-              <div className={`expand settings-motion${changingToken ? "" : " open"}`} inert={changingToken}><div>
-                <div className="ctl">
-                  <span className="note">已设置</span>
-                  <button className="hob-btn" disabled={busy} onClick={() => setChangingToken(true)}>更换</button>
-                </div>
-              </div></div>
-              <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+              <div className="lbl">令牌</div>
+              <div className="field">
+                <input type="password" value={token} disabled={!view || busy} onChange={(e) => setToken(e.target.value)} placeholder={view?.tokenConfigured ? "已保存，留空不变" : "云桌面的访问令牌"} />
+              </div>
+              <div className="sfoot">
                 <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>测试连接</button>
-                {statusLine ?? <span className="note">测试地址、令牌和云桌面是否可用。</span>}
+                <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
+                {statusLine}
+                {message && !message.public ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
+                <span className="sp" />
+                <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
               </div>
             </div>
-            <div className="note">部署说明见 <a href="https://github.com/FFatTiger/hob#云桌面" target="_blank" rel="noreferrer">云桌面文档</a>。</div>
-            <div className="sfoot">
-              {message ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
-              <span className="sp" />
-              <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>打开桌面</button>
-              <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
-            </div>
+            <div className="note">部署说明见 <a href="https://github.com/FFatTiger/hob#云桌面" target="_blank" rel="noreferrer">云桌面文档</a>。测试连接会检查地址、令牌和云桌面是否可用。</div>
           </Group>
         </>
       )}
       <Group>
         <div className="lbl">公共屏幕</div>
-        <div className="note">用于登录你自己的账号，勾选的助手可以使用。受 Google 限制，目前无法登录 Google 账号。</div>
         <div className="formcard">
-          {assistants.map((assistant) => <label className="ctl" key={assistant.id}>
-            <input type="checkbox" className="rcheck" checked={publicAssistants.includes(assistant.id)} disabled={busy || !view} onChange={(event) => setPublicAssistants((ids) => event.target.checked ? [...ids, assistant.id] : ids.filter((id) => id !== assistant.id))} />
-            <span>{assistant.name}</span>
-          </label>)}
-          <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+          <div className="plist">
+            {assistants.map((assistant) => <label key={assistant.id}>
+              <input type="checkbox" className="rcheck" checked={publicAssistants.includes(assistant.id)} disabled={busy || !view} onChange={(event) => setPublicAssistants((ids) => event.target.checked ? [...ids, assistant.id] : ids.filter((id) => id !== assistant.id))} />
+              <span>{assistant.name}</span>
+            </label>)}
+          </div>
+          <div className="sfoot">
             <button className="hob-btn" disabled={!view?.enabled || busy} onClick={() => setShowDesktop("public")}>打开公共屏幕</button>
-            <button className="hob-btn hob-btn-primary" disabled={!view || busy} onClick={() => void savePublic()}>保存公共屏幕设置</button>
-            {message ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
+            {message?.public ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
+            <span className="sp" />
+            <button className="hob-btn hob-btn-primary" disabled={!view || busy} onClick={() => void savePublic()}>保存</button>
           </div>
         </div>
+        <div className="note">用于登录你自己的账号，勾选的助手可以使用。受 Google 限制，目前无法登录 Google 账号。</div>
       </Group>
       {showDesktop ? <Suspense fallback={null}><DesktopScreen initialScreen={showDesktop} takeOver={showDesktop === "public"} onClose={() => setShowDesktop(null)} /></Suspense> : null}
     </>
@@ -1130,10 +1085,11 @@ function ClaudeProviderCard() {
       <div className="lbl sub">Claude Code 程序路径</div>
       <div className="field"><input value={draft.executable} disabled={busy || !view} onChange={(e) => setDraft({ ...draft, executable: e.target.value })} placeholder={status?.executable || "留空时自动查找"} /></div>
       <div className="note">用量计入你的 Claude 订阅额度，与 Claude Code 共用。Docker 镜像不支持此功能。</div>
-      <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 12 }}>
+      <div className="sfoot">
         <button className="hob-btn" disabled={busy} onClick={() => void detect()}>重新检测</button>
-        <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
         {message ? <span className="note" role="status">{message}</span> : null}
+        <span className="sp" />
+        <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>保存</button>
       </div>
     </div>
   </Group>;
@@ -1677,7 +1633,7 @@ function ProviderForm({
               value={draft.key}
               placeholder={
                 view.providers.find((provider) => provider.id === draft.id)?.keyConfigured
-                  ? "已保存，留空则沿用"
+                  ? "已保存，留空不变"
                   : "sk-…"
               }
               onChange={(e) => patch({ key: e.target.value })}
@@ -1748,7 +1704,7 @@ function ProviderForm({
                 value={draft.key}
                 placeholder={
                   view.providers.find((provider) => provider.id === draft.id)?.keyConfigured
-                    ? "已保存，留空则沿用"
+                    ? "已保存，留空不变"
                     : "sk-…"
                 }
                 onChange={(e) => patch({ key: e.target.value })}
@@ -2695,7 +2651,7 @@ function MemorySection() {
     <>
       <PageHead
         title="记忆"
-        desc="所有助手共用同一份长期记忆。各助手特有的做法写在助手设置的「补充说明」中。"
+        desc="所有助手共用同一份长期记忆。各助手需要知道的专属事实写在助手设置的「补充说明」中。"
       />
 
       <Group>
@@ -2734,18 +2690,17 @@ function MemorySection() {
               <input
                 type="password"
                 value={token}
-                placeholder={tokenKept ? "已保存，留空则沿用" : "lm_…"}
+                placeholder={tokenKept ? "已保存，留空不变" : "lm_…"}
                 onChange={(e) => edit(() => setToken(e.target.value))}
                 disabled={busy}
               />
             </div>
-            <div className="ctl" style={{ gap: 10, flexWrap: "wrap" }}>
+            <SaveRow saved={saved && !dirty} error={error} lead={<>
               <button className="hob-btn" onClick={() => void runTest()} disabled={busy || baseUrl.trim() === ""}>
                 测试连接
               </button>
               {test ? <span className={test.ok ? "okline" : "badline"}>{test.text}</span> : null}
-            </div>
-            <SaveRow saved={saved && !dirty} error={error}>
+            </>}>
               {!error && dirty ? <span className="note">未保存的修改</span> : null}
               <button className="hob-btn" onClick={() => void loadMemory().then((r) => (r.ok ? reset(r.config) : setLoadError(r.error)))} disabled={busy || !dirty}>取消</button>
               <button className="hob-btn hob-btn-primary" onClick={() => void commit()} disabled={busy || !dirty}>{busy ? "正在验证…" : "保存"}</button>
@@ -2815,12 +2770,12 @@ function KnowledgeSection() {
     {source === "openai" ? <Group><div className="formcard">
       <div className="lbl">服务地址</div><div className="field"><input aria-label="服务地址" value={baseUrl} onChange={(e) => setBaseUrl(e.target.value)} disabled={busy} placeholder="http://127.0.0.1:8080/v1" /></div>
       <div className="lbl">模型名称</div><div className="field"><input aria-label="模型名称" value={model} onChange={(e) => setModel(e.target.value)} disabled={busy} /></div>
-      <div className="lbl">API Key</div><div className="field"><input aria-label="API Key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} disabled={busy} placeholder={configured ? "已设置，留空保持不变" : "请输入 API Key"} /></div>
-      <button className="hob-btn" disabled={busy} onClick={() => void run(false)}>测试连接</button>
-    </div></Group> : null}
-    <Group><div className="dim">建索引和查询时，文件内容和问题会发给这个接口。</div></Group>
-    <SaveRow saved={message?.ok === true} error={message?.ok === false ? message.text : null}><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(true)}>保存</button></SaveRow>
-    {message?.ok && message.text !== "已保存" ? <div className="okline" role="status">{message.text}</div> : null}
+      <div className="lbl">API Key</div><div className="field"><input aria-label="API Key" type="password" value={apiKey} onChange={(e) => setApiKey(e.target.value)} disabled={busy} placeholder={configured ? "已保存，留空不变" : "请输入 API Key"} /></div>
+      <SaveRow saved={message?.text === "已保存"} error={null} lead={<>
+        <button className="hob-btn" disabled={busy} onClick={() => void run(false)}>测试连接</button>
+        {message && message.text !== "已保存" ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
+      </>}><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(true)}>保存</button></SaveRow>
+    </div><div className="note">建索引和查询时，文件内容和问题会发给这个接口。</div></Group> : <SaveRow saved={message?.text === "已保存"} error={message?.ok === false ? message.text : null}><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(true)}>保存</button></SaveRow>}
   </>;
 }
 
@@ -2985,7 +2940,7 @@ function ImageSection() {
             <input
               type="password"
               value={apiKey}
-              placeholder={keyConfigured ? "已保存，留空则沿用" : "sk-…"}
+              placeholder={keyConfigured ? "已保存，留空不变" : "sk-…"}
               onChange={(e) => setApiKey(e.target.value)}
               disabled={busy}
             />
@@ -2993,11 +2948,8 @@ function ImageSection() {
           <div className="note">
             API Key 只保存在本机，保存后不再显示。保存前会生成测试图片，可能产生费用。
           </div>
-          <div className="lbl">测试</div>
+          {test ? (
           <div className="testrow">
-            <button className="hob-btn" onClick={() => void runTest()} disabled={busy}>
-              {busy ? "正在生成…" : "生成测试图片"}
-            </button>
             {test ? (
               <div className="testout">
                 <span className={test.ok ? "okline" : "badline"}>{test.text}</span>
@@ -3013,7 +2965,8 @@ function ImageSection() {
               </div>
             ) : null}
           </div>
-      <SaveRow saved={savedNote !== null && !dirty} error={error}>
+          ) : null}
+      <SaveRow saved={savedNote !== null && !dirty} error={error} lead={<button className="hob-btn" onClick={() => void runTest()} disabled={busy}>{busy ? "正在生成…" : "生成测试图片"}</button>}>
         {!error && dirty ? <span className="note">未保存的修改</span> : null}
         <button className="hob-btn" disabled={busy || !dirty} onClick={() => {
           setSource(saved.source);
@@ -3354,7 +3307,7 @@ function SecretPairs({ rows, onChange, keyLabel, valueLabel }: { rows: PairDraft
       {rows.map((row, index) => (
         <div className="pairrow" key={index}>
           <label className="field"><input className="mono" value={row.key} placeholder={keyLabel} onChange={(e) => update(index, { key: e.target.value })} /></label>
-          <label className="field"><input className="mono" type="password" value={row.value} placeholder={row.secret && row.value === "" ? "已保存，留空则沿用" : valueLabel} onChange={(e) => update(index, { value: e.target.value })} /></label>
+          <label className="field"><input className="mono" type="password" value={row.value} placeholder={row.secret && row.value === "" ? "已保存，留空不变" : valueLabel} onChange={(e) => update(index, { value: e.target.value })} /></label>
           <button className="hob-icon-btn" title="删除这一项" onClick={() => onChange(rows.filter((_, i) => i !== index))}><Icon name="close" size={15} /></button>
         </div>
       ))}
@@ -3830,7 +3783,7 @@ function SearchProviderDetail({ provider, configured, busy, save }: { provider: 
           ) : null}
           <div className="lbl">API Key{info.keyOptional ? "（可选）" : ""}</div>
           <div className="field">
-            <input type="password" value={key} onChange={(e) => { setKey(e.target.value); setTest(null); }} placeholder={configured ? "已保存，留空则沿用" : "填写 API Key"} disabled={busy} />
+            <input type="password" value={key} onChange={(e) => { setKey(e.target.value); setTest(null); }} placeholder={configured ? "已保存，留空不变" : "填写 API Key"} disabled={busy} />
           </div>
           <div className="note">API Key 只保存在本机，保存后不再显示。</div>
           <div className="testrow">

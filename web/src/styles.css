@@ -247,6 +247,14 @@
   --ok: #22a065;
   --danger: #d92d20;
   --stage: #ecebe7;
+  /* 设置 → 消耗：热力图五档和占比条 */
+  --u-l0: #e7e4dc;
+  --u-l1: #f2dfae;
+  --u-l2: #e8bf5e;
+  --u-l3: #d99a16;
+  --u-l4: #9a6a07;
+  --u-bar: #d99a16;
+  --u-strong: #b07c0e;
 }
 .dark {
   --bg: #151516;
@@ -264,6 +272,13 @@
   --utext: #151516;
   --danger: #ff6b5e;
   --stage: #0e0e0f;
+  --u-l0: #2c2c30;
+  --u-l1: #4a3a12;
+  --u-l2: #7a5a10;
+  --u-l3: #b98717;
+  --u-l4: #f0b429;
+  --u-bar: #b98717;
+  --u-strong: #e0a526;
 }
 html,
 body,
@@ -1100,11 +1115,6 @@ svg.i {
 .st.done {
   color: var(--text2);
 }
-.meta {
-  font-size: 13px;
-  color: var(--text2);
-  margin-top: 3px;
-}
 .acts {
   display: flex;
   gap: 8px;
@@ -1434,6 +1444,78 @@ svg.i {
     color: var(--text2);
   }
 }
+/*
+ * 回到底部：离开底部时浮在输入框上方，回到最底下再淡出。
+ * 一直留在 DOM 里，只换透明度和 pointer-events，出现和消失都是淡入淡出。
+ * 位置跟着 --comp-h 走（Composer 量出来的输入框总高），输入框变高、手机键盘弹起时都还在它上面。
+ */
+.jump {
+  position: absolute;
+  right: 26px;
+  bottom: calc(var(--comp-h, 80px) + 10px);
+  z-index: 2;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--card);
+  color: var(--text2);
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 20px rgba(0, 0, 0, 0.12);
+  opacity: 0;
+  transform: translateY(6px);
+  pointer-events: none;
+  transition: opacity var(--t-fast) var(--ease-out), transform var(--t-fast) var(--ease-out), background-color var(--t-fast) linear;
+}
+.dark .jump {
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 20px rgba(0, 0, 0, 0.5);
+}
+.jump.show {
+  opacity: 1;
+  transform: none;
+  pointer-events: auto;
+}
+@media (hover: hover) {
+  .jump.show:hover {
+    background: var(--sel);
+  }
+}
+.jump:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+/* 助手在回复：三个点轮流上下浮动（减少动态效果时由全局规则停掉） */
+.jump-dots {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.jump-dots i {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: currentColor;
+  animation: jump-dot 1.2s ease-in-out infinite;
+}
+.jump-dots i:nth-child(2) {
+  animation-delay: 0.15s;
+}
+.jump-dots i:nth-child(3) {
+  animation-delay: 0.3s;
+}
+@keyframes jump-dot {
+  0%,
+  60%,
+  100% {
+    opacity: 0.45;
+    transform: translateY(0);
+  }
+  30% {
+    opacity: 1;
+    transform: translateY(-3px);
+  }
+}
+
 .compwrap {
   padding: 8px 0 20px;
   overflow-y: hidden;
@@ -3252,11 +3334,32 @@ button:not(:disabled):active {
   flex-direction: column;
   gap: 6px;
 }
+/* 连接配置卡：字段名在输入框上面，字段之间、最后的操作行（测试 / 保存）和上面之间，都是同一个间距 */
 .formcard {
   background: var(--field);
   border-radius: 10px;
-  padding: 12px;
+  padding: 14px;
+  display: flex;
+  flex-direction: column;
 }
+.formcard > .lbl,
+.formcard > .lblrow { margin: 14px 0 6px; }
+.formcard > .lblrow .lbl { margin: 0; }
+.formcard > .lbl:first-child,
+.formcard > .lblrow:first-child { margin-top: 0; }
+.formcard > .ctl,
+.formcard > .sfoot { margin-top: 14px; flex-wrap: wrap; }
+.formcard > .ctl:first-child,
+.formcard > .lbl + .ctl { margin-top: 0; }
+.formcard > .note { margin-top: 6px; }
+.formcard > .testrow { margin-top: 14px; }
+.formcard > .sfoot + .ctl,
+.formcard > .ctl + .sfoot { margin-top: 10px; }
+/* 卡片里的勾选列表：一行一项，行间细线 */
+.formcard .plist { display: flex; flex-direction: column; }
+.formcard .plist > label { display: flex; align-items: center; gap: 10px; padding: 9px 2px; font-size: 14px; cursor: pointer; }
+.formcard .plist > label + label { border-top: 1px solid color-mix(in srgb, var(--text) 8%, transparent); }
+.formcard .plist > label > span { flex: 1; }
 .formcard .field { background: var(--bg); }
 /* 卡片底色和普通按钮一样，卡片里的普通按钮改用页面底色才看得见 */
 .formcard .hob-btn:not(.hob-btn-primary) { background: var(--bg); }
@@ -4051,11 +4154,11 @@ a.lbl-aside {
   animation: shake var(--t-slow) var(--ease-out);
 }
 
-/* 任务卡标题区两行：头像占两行，第一行标题（可折行），第二行状态和用时；和首页任务行同一个结构 */
+/* 任务卡标题区一行：头像、标题、右边是状态和用时；窄屏放不下时状态挪到标题下面 */
 .b.jobcard .tt {
   display: grid;
-  grid-template-columns: auto minmax(0, 1fr);
-  grid-template-areas: "av title" "av st";
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: "av title st";
   column-gap: 12px;
   row-gap: 2px;
   align-items: center;
@@ -4067,12 +4170,57 @@ a.lbl-aside {
 .b.jobcard .jt {
   grid-area: title;
   line-height: 1.45;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.b.jobcard .tt .st {
+.b.jobcard .tt .stline {
   grid-area: st;
+  display: flex;
+  align-items: center;
+  justify-self: end;
+  white-space: nowrap;
+}
+.b.jobcard .tt .stline .st {
   margin-left: 0;
-  justify-self: start;
   font-size: 12.5px;
+}
+@media (max-width: 600px) {
+  .b.jobcard .tt {
+    grid-template-columns: auto minmax(0, 1fr);
+    grid-template-areas: "av title" "av st";
+  }
+  .b.jobcard .tt .stline { justify-self: start; }
+}
+/* 说明块：状态原因、沉淀状态放进标题下面的浅底块；没沉淀出东西时转圈那行淡出就结束 */
+.b.jobcard .jnote {
+  margin-top: 10px;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text2);
+  transition: opacity var(--t-mid) var(--ease-in);
+}
+.b.jobcard .jnote.leaving { opacity: 0; }
+.b.jobcard .jnote-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  min-width: 0;
+}
+.b.jobcard .jnote-row > svg { flex: none; margin-top: 3px; }
+.b.jobcard .jnote-row.bad { color: var(--accent); }
+.b.jobcard .jnote .clamp {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
 }
 /* 任务卡：整张可点，默认只有标题和状态；和文件卡同宽同内边距（宽度由外面的 .hov 定） */
 .b.jobcard {
@@ -4090,9 +4238,6 @@ a.lbl-aside {
 .b.jobcard:focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
-}
-.meta.bad {
-  color: var(--accent);
 }
 
 /* 右栏“正在做”：点开任务详情；下面一行“全部任务” */
@@ -4713,8 +4858,37 @@ button.screen,
   max-width: 100%;
 }
 /* 原图还在路上：先铺缩略图（放大到同样宽度），原图加载好再换 */
-.fp-img-loading .fp-img-thumb {
+.fp-img-loading .fp-img-thumb,
+.fp-lightbox .fp-img-loading img {
   width: 100vw;
+}
+.fp-img-spin {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: #fff;
+  /* 和 DelayedText 一样等 300ms：原图很快到的话不闪一下暗 */
+  animation: enter-fade var(--t-mid) var(--ease-in) 300ms both;
+}
+.fp-lightbox {
+  display: flex;
+  flex-direction: column;
+  overflow: auto;
+}
+.fp-lightbox-image {
+  position: relative;
+  flex: none;
+  max-width: 100%;
+  margin: auto;
+}
+.fp-lightbox .fp-lightbox-image img {
+  display: block;
+  max-width: 100%;
+  max-height: none;
+  height: auto;
 }
 .fp-img img {
   display: block;
@@ -4962,4 +5136,489 @@ button.screen,
 }
 .pairrow .field:first-child {
   flex: 0 0 34%;
+}
+
+/* 设置 → 消耗：四个数、热力图、按模型、按助手（尺寸照 docs/design/v2 和票 128 的效果图） */
+/* 分段控件在它那一节标题下面：桌面按内容宽，手机占满 */
+.u-seg {
+  display: flex;
+}
+.group-card.u-stats {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 18px var(--sidebar-inset);
+}
+.u-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding-left: 18px;
+  border-left: 1px solid var(--line);
+}
+.u-stat:first-child {
+  padding-left: 0;
+  border-left: 0;
+}
+.u-stat .k {
+  font-size: 13px;
+  color: var(--text3);
+}
+.u-stat .v {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u-stat .s {
+  font-size: 12.5px;
+  color: var(--text3);
+}
+.u-stat .s b {
+  color: var(--u-strong);
+  font-weight: 500;
+}
+/* 热力图：一年一屏，一周一列，格子和间距都随宽度缩；手机放不下就横向滚动，星期固定在左 */
+.u-heatwrap {
+  position: relative;
+}
+.group-card.u-heat {
+  padding: 16px var(--sidebar-inset) 12px;
+}
+.u-scroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  padding: 2px 4px 3px 0;
+}
+.u-months {
+  display: grid;
+  grid-template-columns: repeat(var(--weeks), minmax(0, 1fr));
+  gap: 2px;
+  margin-left: 24px;
+  height: 16px;
+  font-size: 11.5px;
+  color: var(--text3);
+}
+.u-months span {
+  white-space: nowrap;
+  overflow: visible;
+}
+.u-grid {
+  display: flex;
+}
+.u-wd {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  flex: none;
+  width: 24px;
+  padding-right: 6px;
+  background: var(--field);
+  font-size: 10.5px;
+  color: var(--text3);
+}
+/* 星期几的三行靠在格子上：不占高度，格子才能按宽度成正方形 */
+.u-wd span {
+  position: absolute;
+  left: 0;
+  line-height: 1;
+}
+.u-wd span:nth-child(1) {
+  top: 0;
+}
+.u-wd span:nth-child(3) {
+  top: calc(100% * 2 / 7);
+}
+.u-wd span:nth-child(5) {
+  top: calc(100% * 4 / 7);
+}
+.u-cells {
+  flex: 1;
+  min-width: 0;
+  display: grid;
+  grid-template-columns: repeat(var(--weeks), minmax(0, 1fr));
+  gap: 2px;
+}
+.hw {
+  display: grid;
+  grid-template-rows: repeat(7, minmax(0, 1fr));
+  gap: 2px;
+}
+.hw i {
+  display: block;
+  aspect-ratio: 1;
+  border-radius: 2px;
+}
+.hw i.l0,
+.u-legend i.l0 {
+  background: var(--u-l0);
+}
+.hw i.l1,
+.u-legend i.l1 {
+  background: var(--u-l1);
+}
+.hw i.l2,
+.u-legend i.l2 {
+  background: var(--u-l2);
+}
+.hw i.l3,
+.u-legend i.l3 {
+  background: var(--u-l3);
+}
+.hw i.l4,
+.u-legend i.l4 {
+  background: var(--u-l4);
+}
+.hw i.today {
+  outline: 1.5px solid var(--text);
+  outline-offset: 1px;
+}
+.u-foot {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-top: 12px;
+  font-size: 12.5px;
+  color: var(--text3);
+}
+.u-legend {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  white-space: nowrap;
+}
+.u-legend i {
+  width: 11px;
+  height: 11px;
+  border-radius: 3px;
+  display: inline-block;
+}
+/* 悬停某一天：浮在热力图上面的小条 */
+.u-tip {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 6px);
+  z-index: 3;
+  max-width: 100%;
+  padding: 7px 10px;
+  border-radius: 7px;
+  background: var(--text);
+  color: var(--bg);
+  font-size: 12.5px;
+  line-height: 1.55;
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  pointer-events: none;
+  white-space: nowrap;
+}
+.u-tip b {
+  font-weight: 600;
+}
+/* 按模型：模型 / 占比 / 请求 / 输入 / 输出 / 缓存 / 花费 / 单价 */
+.u-mhead,
+.u-mrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.6fr) minmax(0, 0.85fr) 0.6fr 0.66fr 0.66fr 0.56fr 0.72fr minmax(0, 1fr);
+  gap: 8px;
+  align-items: center;
+}
+.u-mhead {
+  padding: 0 var(--sidebar-inset) 2px;
+  font-size: 12.5px;
+  color: var(--text3);
+}
+.u-mhead span:not(:first-child):not(:nth-child(2)) {
+  text-align: right;
+}
+/* 单价是按钮，右边有 6px 内边距：表头跟着让一点 */
+.u-mhead span:last-child {
+  padding-right: 6px;
+}
+.group-card.u-cards {
+  padding: 2px var(--sidebar-inset) 4px;
+}
+.u-mrow {
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.group-card.u-cards > *:first-child .u-mrow,
+.group-card.u-cards > *:first-child .u-wrow {
+  border-top: 0;
+}
+.u-mname {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  min-width: 0;
+  text-align: left;
+}
+.u-mname b {
+  font-weight: 500;
+  font-size: 14px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.u-mname span {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-size: 12.5px;
+  color: var(--text3);
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.u-mname em {
+  flex: none;
+  font-style: normal;
+  font-size: 11.5px;
+  padding: 0 5px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  color: var(--text2);
+}
+.u-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: var(--u-l0);
+  overflow: hidden;
+}
+.u-bar i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--u-bar);
+}
+.u-num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-size: 13.5px;
+  color: var(--text2);
+  white-space: nowrap;
+}
+/* 手机上每个数带一行标题，桌面上表头已经写了 */
+.u-k {
+  display: none;
+}
+.u-num.strong {
+  color: var(--text);
+  font-weight: 500;
+}
+.u-price {
+  justify-self: end;
+  padding: 3px 6px;
+  margin-right: -6px;
+  border-radius: 6px;
+  font-size: 12.5px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text2);
+  white-space: nowrap;
+}
+.u-price.missing {
+  color: var(--u-strong);
+}
+@media (hover: hover) {
+  .u-price:hover {
+    background: var(--field);
+  }
+}
+/* 改单价：同一张卡里展开一行，四项 + 保存 / 取消 / 恢复默认 */
+.u-edit {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 0 14px;
+  border-top: 1px solid var(--line);
+}
+.u-edit-fields {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px;
+}
+.u-edit-fields label {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 12px;
+  color: var(--text3);
+}
+.u-edit-fields input {
+  width: 100%;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 13.5px;
+  font-variant-numeric: tabular-nums;
+}
+.u-edit-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+/* 这排按钮在卡片（field 底）上：用页面底色才看得见 */
+.u-edit-actions .hob-btn {
+  background: var(--bg);
+}
+.u-edit .note {
+  margin: 0;
+}
+/* 按助手：名字 / 对话和任务占比 / 花费条 / 花费 */
+.u-wrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(0, 1.2fr) minmax(0, 1.4fr) auto;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 0;
+  border-top: 1px solid var(--line);
+}
+.u-wrow b {
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.u-wrow span {
+  font-size: 13px;
+  color: var(--text3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.u-wrow .u-num {
+  min-width: 62px;
+}
+@media (max-width: 767px) {
+  .group-card.u-stats {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    row-gap: 18px;
+  }
+  .u-stat:nth-child(3) {
+    padding-left: 0;
+    border-left: 0;
+  }
+  /* 手机上的分段控件占满宽度 */
+  .u-seg .seg {
+    display: grid;
+    width: 100%;
+  }
+  .u-seg .seg > button {
+    padding: 0 4px;
+  }
+  /* 热力图：格子保持看得清的大小，一年靠横向滑动；月份跟着走，星期固定在左 */
+  .u-grid {
+    width: max-content;
+  }
+  .u-cells {
+    flex: none;
+  }
+  .u-months,
+  .u-cells {
+    grid-template-columns: repeat(var(--weeks), 12px);
+    gap: 3px;
+  }
+  .hw {
+    grid-template-rows: repeat(7, 12px);
+    gap: 3px;
+  }
+  /* 星期固定在左：遮住滑过去的月份标签，不留半个字 */
+  .u-wd::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: -18px;
+    width: 100%;
+    height: 18px;
+    background: var(--field);
+  }
+  /* 按模型：名字和花费一行、服务商和单价一行、四个数一行、占比条一行 */
+  .u-mhead {
+    display: none;
+  }
+  .u-mrow {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    grid-template-areas:
+      "name name name cost"
+      "prov prov prov price"
+      "req in out cache"
+      "bar bar bar bar";
+    column-gap: 8px;
+    row-gap: 10px;
+    align-items: start;
+  }
+  .u-mname {
+    display: contents;
+  }
+  .u-mname b {
+    grid-area: name;
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+  .u-mname span {
+    grid-area: prov;
+  }
+  .u-bar {
+    grid-area: bar;
+  }
+  .u-req {
+    grid-area: req;
+  }
+  .u-in {
+    grid-area: in;
+  }
+  .u-out {
+    grid-area: out;
+  }
+  .u-cache {
+    grid-area: cache;
+  }
+  .u-cost {
+    grid-area: cost;
+  }
+  .u-price {
+    grid-area: price;
+  }
+  .u-num {
+    font-size: 13px;
+    text-align: left;
+  }
+  .u-cost {
+    text-align: right;
+  }
+  .u-k {
+    display: block;
+    margin-bottom: 2px;
+    font-size: 11.5px;
+    color: var(--text3);
+  }
+  .u-edit-fields {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+  /* 按助手：名字和花费一行，对话和任务一行，占比条单独一行 */
+  .u-wrow {
+    grid-template-columns: minmax(0, 1fr) auto;
+    grid-template-areas: "name cost" "who who" "bar bar";
+    gap: 8px 10px;
+  }
+  .u-wrow b {
+    grid-area: name;
+  }
+  .u-wrow span {
+    grid-area: who;
+  }
+  .u-wrow .u-bar {
+    grid-area: bar;
+  }
+  .u-wrow .u-num {
+    grid-area: cost;
+  }
 }

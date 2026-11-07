@@ -38,7 +38,7 @@ export function searchKnowledgeTool(runtime: HobRuntime, assistantId: string): T
   return {
     name: "search_knowledge",
     label: "查知识库",
-    description: "在绑定给你的知识库里查内容，找出和问题最相关的几段原文，每段带出处链接。回答用到时照抄出处链接标明来源；查不到就直说知识库里没有，不要编。",
+    description: "在绑定给你的知识库里查内容，返回和问题最相关的几段原文，每段带出处链接。",
     parameters: Type.Object({
       query: Type.String({ description: "要查的问题或关键词，写成完整的一句效果更好。" }),
       collection: Type.Optional(Type.String({ description: "可选，只查这个知识库，填名称。" })),

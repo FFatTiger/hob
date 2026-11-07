@@ -1,7 +1,7 @@
 // 对话条目的渲染：气泡、选择题、任务卡、草稿卡、文件卡、灰字提示。
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { Approval, ApprovalOption, Delegation, Draft, Item, Job, NoteIcon } from "../../../shared/types.ts";
+import type { Approval, ApprovalOption, Delegation, Draft, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
 import { visibleLiveCards } from "../page-live.ts";
@@ -41,7 +41,7 @@ import {
 import { fmtDuration, fmtElapsed, fmtWhen, isToday, needDivider } from "../util.ts";
 import { jobReason, jobRoundView } from "../steps.ts";
 import { menuPosition, messageMenu, moveSwipe, swipeReply, type SwipeState } from "../message-menu.ts";
-import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
+import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon, sedimentText } from "./status-meta.tsx";
 
 /* ---------------- markdown ---------------- */
 
@@ -177,6 +177,14 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
   const reason = jobReason(job);
   const owner = s.assistants.find((a) => a.id === job.assistantId);
 
+  // 沉淀状态：没沉淀出东西（empty）不在卡片上说，转圈那一行淡出就结束
+  const latest = past ? undefined : job.sediment;
+  const reached = latest && latest.status !== "empty" ? latest : undefined;
+  const kept = useRef<SedimentStatus | undefined>(undefined);
+  if (reached) kept.current = reached;
+  const sedimentLeave = useLeave(!!reached, 200);
+  const sediment = sedimentLeave.mounted ? (reached ?? kept.current) : undefined;
+
   // 状态变了才播，历史里的卡片不播
   const before = useRef(job.status);
   useEffect(() => {
@@ -201,11 +209,20 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
         <div className="tt">
           {owner ? <span className="jav"><Avatar sprite={owner.sprite} prop={owner.prop} size={40} /></span> : null}
           <span className="jt">{job.routineId ? <Icon name="clock" size={14} /> : null}{job.title}</span>
-          <StatusTag meta={JOB_STATUS[job.status]} card animated swapped={swapped}>
-            {running ? ` · ${fmtElapsed(job.startedAt ?? job.createdAt)}` : took(job) ? ` · 用时 ${took(job)}` : null}
-          </StatusTag>
+          <span className="stline">
+            <StatusTag meta={JOB_STATUS[job.status]} card animated swapped={swapped}>
+              {running ? ` · ${fmtElapsed(job.startedAt ?? job.createdAt)}` : took(job) ? ` · 用时 ${took(job)}` : null}
+            </StatusTag>
+          </span>
         </div>
-        {reason ? <div className={`meta${bad ? " bad" : ""}`}>{reason}</div> : null}
+        {/* 说明块：状态原因和沉淀状态放进标题下面的浅底块；都没有就不出现 */}
+        {reason || sediment ? <div className={`jnote${!reason && sedimentLeave.leaving ? " leaving" : ""}`}>
+          {reason ? <div className={`jnote-row${bad ? " bad" : ""}`}><span className="clamp">{reason}</span></div> : null}
+          {sediment ? <div className={`jnote-row${sediment.status === "failed" ? " bad" : ""}`}>
+            <Icon name={sediment.status === "running" ? "spin" : "mem"} size={13} className={sediment.status === "running" ? "spin" : undefined} />
+            <span>{sedimentText(sediment)}</span>
+          </div> : null}
+        </div> : null}
         {canReply || running ? (
           <div className="acts">
             {canReply ? (

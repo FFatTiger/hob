@@ -227,7 +227,7 @@ export interface Assistant {
   pinned: boolean; // 左栏顶部大头像
   hidden: boolean; // 收起的助手
   notify: boolean; // 需要确认时通知我
-  instructions: string; // 补充说明：用户可直接编辑的自定义指令，这个助手特有的做法写这里
+  instructions: string; // 补充说明：用户可直接编辑该助手需要知道的专属事实
   /** 这个助手用哪些模型；缺省全部跟随设置 → 模型 */
   models?: {
     conversation?: ModelPick; // 不填 = 跟随全局的对话模型
@@ -368,6 +368,12 @@ export interface JobsPage {
   hasMore: boolean;
 }
 
+export type SedimentStatus =
+  | { status: "running" }
+  | { status: "saved"; name: string; title: string; version: number; updated: boolean }
+  | { status: "empty"; reason: string }
+  | { status: "failed"; reason: string };
+
 export interface Job {
   id: string; // "t-" + 4 位以上
   assistantId: string;
@@ -392,6 +398,8 @@ export interface Job {
   modelReason?: string; // 换了模型的原因，如「需要看图，换成了 X」
   inputs?: string[]; // 交给任务的附件（绝对路径）
   routineId?: string; // 由定时触发
+  sediment?: SedimentStatus; // 在原任务中沉淀技能，不改变任务状态
+  skills?: string[]; // 派活时交给任务的本助手技能
   skillsUsed?: string[]; // 这次读过的本助手技能（AssistantSkill.name）
   delegationId?: string; // 转交回合创建的任务
   /** 续做前每一轮结束时的样子（第 0 轮起）。对话里前面几张任务卡照它显示，最后一张跟着任务实时变 */
@@ -549,6 +557,78 @@ export interface PushSettings {
   email: string;
 }
 
+/** 每百万 token 的单价（美元），四项。 */
+export interface TokenPrice {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** 设置 → 消耗：按模型改过的单价，键是模型 id（服务商 id 是用户自己起的，价格按模型 id 对）。 */
+export interface UsageSettings {
+  prices: Record<string, TokenPrice>;
+}
+
+/** 用量的来源：助手自己的对话 / 任务的会话。 */
+export type UsageSource = "chat" | "job";
+
+/** GET /api/usage 的一行：按天 × 助手 × 来源 × 服务商 × 模型汇总；day 是设置时区下的日期。 */
+export interface UsageRow {
+  day: string; // 2026-11-06
+  assistantId: string;
+  source: UsageSource;
+  provider: string;
+  model: string;
+  requests: number; // assistant 消息条数
+  input: number; // 没命中缓存的输入 token
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+/** 有会话文件的助手（归档的也算），「按助手」一节用它的名字。 */
+export interface UsageAssistant {
+  id: string;
+  name: string;
+  archived: boolean;
+}
+
+/** 一个模型现在的单价：改过的是自定，default 是价格表里的默认值（恢复默认和对比用）。 */
+export interface UsageModelPrice {
+  price: TokenPrice;
+  custom: boolean;
+  default?: TokenPrice;
+}
+
+/** 价格表：默认单价从 models.dev 拉，一天最多更新一次。 */
+export interface UsagePrices {
+  updatedAt: Iso | null; // 价格表拉到的时间；从没拉到过为 null
+  error: string | null; // 这次更新价格表失败的原因；成功为 null
+  models: Record<string, UsageModelPrice>; // 键是模型 id
+}
+
+/** GET /api/usage：按天、助手、来源、服务商、模型分组的明细 + 价格；前端自己汇总。 */
+export interface UsageView {
+  timezone: string;
+  rows: UsageRow[];
+  assistants: UsageAssistant[];
+  prices: UsagePrices;
+}
+
+/** PUT /api/usage/price：改一个模型的单价，price 为 null 就恢复默认。 */
+export interface UsagePricePatch {
+  revision: number;
+  model: string;
+  price: TokenPrice | null;
+}
+
+/** PUT /api/usage/price：新 revision 的整份设置 + 这个模型现在的单价（既没价格表也没自定时为 null）。 */
+export interface UsagePriceSaved {
+  settings: SettingsFile;
+  price: UsageModelPrice | null;
+}
+
 export interface Settings {
   general: GeneralSettings;
   /** 服务商（Key 在 secrets.json，这里只放不敏感的） */
@@ -565,6 +645,8 @@ export interface Settings {
   push: PushSettings;
   /** 知识库二期：向量模型（Key 在 secrets.json 的 embedding）；缺省 = 关闭，只按关键词查 */
   knowledge?: { embedding: EmbeddingSettings };
+  /** 消耗：按模型改过的单价；没改过的模型用 models.dev 的价格 */
+  usage?: UsageSettings;
 }
 
 /** 设置 → 知识库：向量模型，照图像生成的做法（兼容接口的地址 + 模型，Key 单独存）。 */
@@ -698,7 +780,6 @@ export type HobEvent =
   | { type: "item"; assistantId: string; item: Item } // 新条目，或按 id 替换
   | { type: "delta"; assistantId: string; itemId: string; text: string } // 流式追加到 assistant 条目
   | { type: "job"; job: Job }
-  | { type: "sediment-finished"; jobId: string }
   | { type: "delegation"; delegation: Delegation }
   | { type: "job_step"; jobId: string; step: JobStep } // 新的一步，或按 id 替换（输出流式更新、跑完补结果）
   | { type: "router-activity"; assistantId: string; activity: RouterActivity | null }

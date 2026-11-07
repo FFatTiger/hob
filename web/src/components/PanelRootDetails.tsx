@@ -45,7 +45,7 @@ export function PanelRootDetails() {
   const groups = groupSidebarFiles(files);
   return <>
     <div className="group-card sidebar-info">
-      <button className="sidebar-instructions" onClick={openAssistantPanel}><small>补充说明</small><span className={a?.instructions ? "" : "muted"}>{a?.instructions || "添加这个助手特有的做法"}</span><b>›</b></button>
+      <button className="sidebar-instructions" onClick={openAssistantPanel}><small>补充说明</small><span className={a?.instructions ? "" : "muted"}>{a?.instructions || "记下这个助手要知道的事实"}</span><b>›</b></button>
       <button onClick={() => openSidebarPage("routines")}><Icon name="clock" size={15} /><span>定时任务</span><small>{routineSummary(routines, s.settings.settings.general.timezone)}</small><b>›</b></button>
       <button onClick={() => openSidebarPage("skills")}><Icon name="mem" size={15} /><span>技能</span><small>{skills?.error ? "加载失败" : !skills?.loaded ? <DelayedText key={aid} text="正在加载…" /> : values.skills}</small><b>›</b></button>
       <button onClick={() => openSidebarPage("knowledge")}><Icon name="archive" size={15} /><span>知识库</span><small>{collectionsError ? "加载失败" : collectionsLoading ? <DelayedText text="正在加载…" /> : values.knowledge}</small><b>›</b></button>

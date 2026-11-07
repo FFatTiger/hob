@@ -38,6 +38,9 @@ import type {
   SettingsFile,
   SettingsPatch,
   ThinkingLevelMapSetting,
+  TokenPrice,
+  UsageModelPrice,
+  UsageView,
 } from "../../shared/types.ts";
 import type { AssistantSkill } from "../../shared/skills.ts";
 import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup } from "../../shared/knowledge.ts";
@@ -109,7 +112,6 @@ export interface State {
   offline: string | null; // 实时连接断开
   assistants: AssistantSummary[];
   jobs: Record<string, Job>;
-  sedimenting: Record<string, boolean>;
   delegations: Record<string, Delegation>;
   routines: Routine[];
   approvals: Record<string, Approval>;
@@ -152,7 +154,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
+const SCENES: SceneId[] = ["readme-chat", "readme-cards", "readme-dark", "readme-rules", "readme-desktop", "readme-page", "readme-knowledge", "readme-list", "readme-question", "readme-profile", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const api: HobApi = MOCK ? createMock(scene) : realApi;
@@ -186,7 +188,6 @@ function initial(): State {
     offline: null,
     assistants: [],
     jobs: {},
-    sedimenting: {},
     delegations: {},
     routines: [],
     approvals: {},
@@ -372,6 +373,26 @@ export async function loadAbout() {
   } catch (e) {
     set({ notice: `无法读取版本信息：${errText(e)}` });
     return null;
+  }
+}
+
+/** 设置 → 消耗：会话文件里的用量和价格表（打开页面时拉一次）。 */
+export async function loadUsage(): Promise<{ ok: true; view: UsageView } | { ok: false; error: string }> {
+  try {
+    return { ok: true, view: await api.usage() };
+  } catch (e) {
+    return { ok: false, error: `无法读取消耗统计：${errText(e)}` };
+  }
+}
+
+/** 改一个模型的单价（null = 恢复默认）；存完把新 revision 的整份设置收下来。 */
+export async function saveUsagePrice(model: string, price: TokenPrice | null): Promise<{ ok: true; price: UsageModelPrice | null } | { ok: false; error: string }> {
+  try {
+    const saved = await api.putUsagePrice({ revision: getState().settings.revision, model, price });
+    set({ settings: saved.settings });
+    return { ok: true, price: saved.price };
+  } catch (e) {
+    return { ok: false, error: errText(e) };
   }
 }
 
@@ -839,7 +860,7 @@ async function loadBootstrap() {
         {
           onEvent: applyEvent,
           onReconnect: () => {
-            set({ offline: null, sedimenting: {} });
+            set({ offline: null });
             void loadBootstrap();
           },
           onDown: (reason) => set({ offline: reason }),
@@ -869,9 +890,6 @@ export function applyEvent(ev: HobEvent) {
   switch (ev.type) {
     case "rules":
       if (state.page === "settings" && state.section === "rules") void loadRules();
-      break;
-    case "sediment-finished":
-      set((s) => ({ sedimenting: { ...s.sedimenting, [ev.jobId]: false } }));
       break;
     case "page-live": {
       const first = !state.livePages[ev.callId];
@@ -1373,10 +1391,9 @@ export async function changeAssistantSkill(id: string, name: string, action: "en
 }
 
 export async function sedimentJob(id: string) {
-  set((s) => ({ sedimenting: { ...s.sedimenting, [id]: true } }));
   try { await api.sedimentJob(id); return true; }
   catch (e) {
-    set((s) => ({ notice: `沉淀失败：${errText(e)}`, sedimenting: { ...s.sedimenting, [id]: false } }));
+    set({ notice: `沉淀失败：${errText(e)}` });
     return false;
   }
 }

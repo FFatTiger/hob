@@ -44,11 +44,29 @@ describe("助手技能接入", () => {
       setAssistantSkillEnabled(hob.home, "hob", input.name, true);
       await hob.runtime.routines.runNow(routine.id);
       expect(start.mock.calls[1][1].instruction).toBe("按技能「每日巡检」做（先读它的 SKILL.md）。\n检查");
+      expect(start.mock.calls[1][1].skills).toEqual([input.name]);
       expect((await req(`/api/routines/${routine.id}`, "PATCH", { skill: null })).status).toBe(200);
       expect((await req("/api/jobs/missing/sediment", "POST")).status).toBe(404);
       hob.runtime.store.saveJob({ id: "t-running", assistantId: "hob", title: "任务", instruction: "检查", status: "running", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       expect((await req("/api/jobs/t-running/sediment", "POST")).status).toBe(409);
       expect((await req(path, "DELETE")).status).toBe(200);
+    } finally { hob.close(); }
+  });
+  it("助手创建、修改定时任务时绑定和解绑技能", async () => {
+    const hob = makeHob();
+    try {
+      saveAssistantSkill(hob.home, "hob", input);
+      const tools = buildRouterTools(hob.runtime, "hob");
+      const create = tools.find((tool) => tool.name === "create_routine")!;
+      const update = tools.find((tool) => tool.name === "update_routine")!;
+      const createArgs = { name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] };
+      expect((await create.execute("id", { ...createArgs, skill: "missing" }, undefined, undefined, {} as never)).isError).toBe(true);
+      await create.execute("id", { ...createArgs, skill: input.name }, undefined, undefined, {} as never);
+      const routine = hob.runtime.store.routines().find((item) => item.name === "巡检")!;
+      expect(routine.skill).toBe(input.name);
+      expect((await update.execute("id", { routineId: routine.id, skill: "missing" }, undefined, undefined, {} as never)).isError).toBe(true);
+      await update.execute("id", { routineId: routine.id, skill: "" }, undefined, undefined, {} as never);
+      expect(hob.runtime.store.routine(routine.id)?.skill).toBeUndefined();
     } finally { hob.close(); }
   });
   it("任务读取技能只记一次用量", async () => {
@@ -61,13 +79,20 @@ describe("助手技能接入", () => {
       const open = vi.spyOn(hob.runtime.pi, "open");
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([call("read", { path: skill.path }), call("read", { path: skill.path }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
-      const job = await hob.runtime.jobs.start("hob", { title: "巡检", instruction: "检查" });
+      const job = await hob.runtime.jobs.start("hob", { title: "巡检", instruction: "检查", skills: [input.name] });
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "done");
       expect(hob.runtime.store.job(job.id)?.skillsUsed).toEqual([input.name]);
       expect(listAssistantSkills(hob.home, "hob")[0].uses).toBe(1);
       const workerOpen = open.mock.calls.find(([options]) => options.file === hob.runtime.store.workerFile(job.id))?.[0];
       expect(workerOpen?.skills?.filter((item) => item.name === input.name).map((item) => item.filePath)).toEqual([skill.path]);
       await hob.runtime.jobs.waitIdle();
+      hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
+      const other = await hob.runtime.jobs.start("hob", { title: "其他", instruction: "检查" });
+      await waitFor(() => hob.runtime.store.job(other.id)?.status === "done");
+      await hob.runtime.jobs.waitIdle();
+      const otherOpen = open.mock.calls.find(([options]) => options.file === hob.runtime.store.workerFile(other.id))?.[0];
+      expect(otherOpen?.skills?.some((item) => item.filePath === skill.path)).toBe(false);
+      expect(otherOpen?.skills?.some((item) => item.filePath === join(global, "SKILL.md"))).toBe(true);
     } finally { hob.close(); }
   });
   it("Router 工具只允许沉淀本助手的任务", async () => {
@@ -80,17 +105,18 @@ describe("助手技能接入", () => {
       expect(activityLabel("save_job_as_skill")).toBe("沉淀技能");
     } finally { hob.close(); }
   });
-  it("定时任务完成后自动沉淀", async () => {
+  it("定时任务完成后不自动沉淀", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      const sediment = vi.spyOn(hob.runtime.jobs, "startSediment");
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
-      hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成"), call("save_skill", input), text("完成")]);
+      hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
       const job = await hob.runtime.routines.runNow(routine.id);
-      await waitFor(() => listAssistantSkills(hob.home, "hob").length > 0);
-      expect(hob.runtime.store.job(job.id)?.status).toBe("done");
-      expect(hob.runtime.store.routine(routine.id)?.skill).toBe(input.name);
+      await waitFor(() => hob.runtime.store.job(job.id)?.status === "done");
       await hob.runtime.jobs.waitIdle();
+      expect(sediment).not.toHaveBeenCalled();
+      expect(listAssistantSkills(hob.home, "hob")).toEqual([]);
     } finally { hob.close(); }
   });
   it("照着技能顺利做完的定时执行不再自动沉淀", async () => {
@@ -127,7 +153,7 @@ describe("助手技能接入", () => {
       expect(error).toHaveBeenCalled();
     } finally { hob.close(); }
   });
-  it("调用达到 20 次才自动沉淀，失败不沉淀", async () => {
+  it("长任务和失败任务都不自动沉淀", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
@@ -139,14 +165,16 @@ describe("助手技能接入", () => {
       expect(sediment).not.toHaveBeenCalled();
       hob.faux.setResponses([...Array.from({ length: 20 }, () => call("ls", { path: "." })), call("report", { outcome: "done", result: "完成" }), text("完成")]);
       const long = await hob.runtime.jobs.start("hob", { title: "长任务", instruction: "检查" });
-      await waitFor(() => sediment.mock.calls.some(([id]) => id === long.id));
+      await waitFor(() => hob.runtime.store.job(long.id)?.status === "done");
+      await hob.runtime.jobs.waitIdle();
+      expect(sediment).not.toHaveBeenCalled();
       hob.faux.setResponses([...Array.from({ length: 20 }, () => call("ls", { path: "." })), call("report", { outcome: "stuck", result: "失败" }), text("完成")]);
       const failed = await hob.runtime.jobs.start("hob", { title: "失败任务", instruction: "检查" });
       await waitFor(() => hob.runtime.store.job(failed.id)?.status === "stuck");
       expect(sediment.mock.calls.some(([id]) => id === failed.id)).toBe(false);
     } finally { hob.close(); }
   });
-  it("续做成功后自动沉淀", async () => {
+  it("续做成功后不自动沉淀", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
@@ -156,7 +184,9 @@ describe("助手技能接入", () => {
       await waitFor(() => hob.runtime.store.job(job.id)?.status === "done");
       hob.faux.setResponses([call("report", { outcome: "done", result: "续做完成" }), text("完成")]);
       await hob.runtime.jobs.reply(job.id, "补充检查");
-      await waitFor(() => sediment.mock.calls.some(([id]) => id === job.id));
+      await waitFor(() => hob.runtime.store.job(job.id)?.status === "done" && !!hob.runtime.store.job(job.id)?.rounds?.length);
+      await hob.runtime.jobs.waitIdle();
+      expect(sediment).not.toHaveBeenCalled();
     } finally { hob.close(); }
   });
   it("附件用 from 从工作目录复制，不能跳出工作目录", () => {
@@ -193,11 +223,12 @@ describe("助手技能接入", () => {
         message = typeof user?.content === "string" ? user.content : user?.content?.map((block: any) => block.text ?? "").join("") ?? "";
         return text("没有需要沉淀的");
       }]);
-      hob.runtime.jobs.startSediment(job.id);
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      hob.runtime.jobs.startSediment(job.id, { into: input.name, note: "用户的反馈" });
       await hob.runtime.jobs.waitIdle();
-      expect(message).toContain("技能写的是这一类事怎么做，不是这一次的经过");
-      expect(message).toContain("不写进技能：");
-      expect(message).toContain(`这个助手已有的技能：${input.name}：${input.title} —— ${input.description}`);
+      expect(message).toContain("技能写这一类事怎么做，不写这一次的经过和数据");
+      expect(message).toContain(`这次在技能「${input.title}」（${input.name}，第 1 版）的基础上改，先读它现在的内容。`);
+      expect(message).toContain("交代：用户的反馈");
     } finally { hob.close(); }
   });
   it("没有调用保存工具时不生成技能", async () => {
@@ -212,24 +243,21 @@ describe("助手技能接入", () => {
       await hob.runtime.jobs.waitIdle();
     } finally { hob.close(); }
   });
-  it.each([
-    { source: "manual" as const, reply: "没有需要沉淀的，因为这次只是一次性操作", expected: "「巡检」没有可沉淀的做法：没有需要沉淀的，因为这次只是一次性操作" },
-    { source: "manual" as const, reply: "没有需要沉淀的", expected: "「巡检」没有可沉淀的做法" },
-    { source: "manual" as const, reply: "", expected: "「巡检」没有可沉淀的做法" },
-    { source: "auto" as const, reply: "没有需要沉淀的，因为这次只是一次性操作", expected: null },
-  ])("$source 沉淀没有技能时按来源通知：$reply", async ({ source, reply, expected }) => {
+  it.each(["没有需要沉淀的，因为这次只是一次性操作", "没有需要沉淀的", ""])("没有技能时写状态并通知助手：%s", async (reply) => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const job = { id: "t-no-result", assistantId: "hob", title: "巡检", instruction: "检查", status: "done" as const, createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [], model: "hob-faux/faux-1", thinking: "off" as const };
       hob.runtime.store.saveJob(job);
       const events: string[] = [];
-      hob.runtime.bus.subscribe((event) => { if (event.type === "sediment-finished") events.push(event.jobId); });
+      hob.runtime.bus.subscribe((event) => { if (event.type === "job" && event.job.id === job.id) events.push(event.job.sediment?.status ?? ""); });
+      const notify = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([text(reply)]);
-      hob.runtime.jobs.startSediment(job.id, source);
+      hob.runtime.jobs.startSediment(job.id);
       await hob.runtime.jobs.waitIdle();
       const notes = hob.runtime.router.items("hob").items.filter((item) => item.kind === "note" && item.icon === "skill");
-      expect(notes.map((note) => note.text)).toEqual(expected ? [expected] : []);
-      expect(events).toEqual([job.id]);
+      expect(notes).toEqual([]);
+      expect(events).toEqual(["running", "empty"]);
+      expect(notify).toHaveBeenCalledWith("hob", expect.stringContaining("沉淀完了：没有沉淀"));
     } finally { hob.close(); }
   });
   it("沉淀失败后仍发送结束事件并保留失败提示", async () => {
@@ -239,57 +267,46 @@ describe("助手技能接入", () => {
       hob.runtime.store.saveJob(job);
       vi.spyOn(hob.runtime.pi, "open").mockRejectedValueOnce(new Error("模型不可用"));
       vi.spyOn(console, "error").mockImplementation(() => {});
-      const events: string[] = [];
-      hob.runtime.bus.subscribe((event) => { if (event.type === "sediment-finished") events.push(event.jobId); });
-      hob.runtime.jobs.startSediment(job.id, "manual");
+      const notify = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      hob.runtime.jobs.startSediment(job.id);
       await hob.runtime.jobs.waitIdle();
-      expect(events).toEqual([job.id]);
+      expect(hob.runtime.store.job(job.id)?.sediment).toEqual({ status: "failed", reason: "模型不可用" });
+      expect(notify).toHaveBeenCalledWith("hob", expect.stringContaining("沉淀失败，模型不可用"));
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.text === "技能沉淀失败：模型不可用")).toBe(true);
     } finally { hob.close(); }
   });
   it("每轮每个技能只新增一个版本，后续保存覆盖内容和附件", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
-      const second = { ...input, name: "other-check", title: "其他巡检" };
-      const fresh = { ...input, name: "new-check", title: "新巡检" };
       saveAssistantSkill(hob.home, "hob", { ...input, files: [{ path: "references/keep.txt", content: "保留" }, { path: "scripts/check.sh", content: "旧版" }] });
-      saveAssistantSkill(hob.home, "hob", second);
       const job = { id: "t-versions", assistantId: "hob", title: "巡检", instruction: "检查", status: "done" as const, createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [], model: "hob-faux/faux-1", thinking: "off" as const };
       hob.runtime.store.saveJob(job);
       hob.faux.setResponses([
         call("save_skill", { ...input, content: "第一次", files: [{ path: "scripts/check.sh", content: "第一次" }] }),
-        call("save_skill", { ...second, content: "其他更新" }),
-        call("save_skill", { ...fresh, content: "新建第一次" }),
         call("save_skill", { ...input, content: "第二次", files: [{ path: "scripts/check.sh", content: "第二次" }, { path: "references/new.txt", content: "新附件" }] }),
-        call("save_skill", { ...fresh, content: "新建第二次", files: [{ path: "scripts/new.sh", content: "最终脚本" }] }),
         text("完成"),
       ]);
-      hob.runtime.jobs.startSediment(job.id);
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      hob.runtime.jobs.startSediment(job.id, { into: input.name });
       await hob.runtime.jobs.waitIdle();
       const root = join(hob.home, "assistants", "hob", "skills");
       const skills = listAssistantSkills(hob.home, "hob");
       expect(skills.find((skill) => skill.name === input.name)?.version).toBe(2);
-      expect(skills.find((skill) => skill.name === second.name)?.version).toBe(2);
-      expect(skills.find((skill) => skill.name === fresh.name)?.version).toBe(1);
       expect(readdirSync(join(root, input.name, ".history"))).toEqual(["1"]);
-      expect(readdirSync(join(root, second.name, ".history"))).toEqual(["1"]);
-      expect(existsSync(join(root, fresh.name, ".history"))).toBe(false);
       expect(readFileSync(join(root, input.name, ".history", "1", "scripts", "check.sh"), "utf8")).toBe("旧版");
       expect(readFileSync(join(root, input.name, "SKILL.md"), "utf8")).toContain("第二次");
       expect(readFileSync(join(root, input.name, "scripts", "check.sh"), "utf8")).toBe("第二次");
       expect(readFileSync(join(root, input.name, "references", "keep.txt"), "utf8")).toBe("保留");
       expect(readFileSync(join(root, input.name, "references", "new.txt"), "utf8")).toBe("新附件");
-      expect(readFileSync(join(root, fresh.name, "SKILL.md"), "utf8")).toContain("新建第二次");
-      expect(readFileSync(join(root, fresh.name, "scripts", "new.sh"), "utf8")).toBe("最终脚本");
       const notes = () => hob.runtime.router.items("hob").items.filter((item) => item.kind === "note" && item.icon === "skill");
-      expect(notes()).toHaveLength(3);
+      expect(notes()).toHaveLength(1);
       hob.faux.setResponses([call("save_skill", { ...input, content: "下一轮" }), text("完成")]);
-      hob.runtime.jobs.startSediment(job.id);
+      hob.runtime.jobs.startSediment(job.id, { into: input.name });
       await hob.runtime.jobs.waitIdle();
       expect(listAssistantSkills(hob.home, "hob").find((skill) => skill.name === input.name)?.version).toBe(3);
       expect(readdirSync(join(root, input.name, ".history")).sort()).toEqual(["1", "2"]);
       expect(readFileSync(join(root, input.name, ".history", "2", "SKILL.md"), "utf8")).toContain("第二次");
-      expect(notes()).toHaveLength(4);
+      expect(notes()).toHaveLength(2);
     } finally { hob.close(); }
   });
   it("原任务会话沉淀，保存后绑定定时并通知", async () => {
@@ -315,7 +332,7 @@ describe("助手技能接入", () => {
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.icon === "skill" && !!item.path)).toBe(true);
       await waitFor(() => hob.runtime.jobs.transcript(job.id).some((step) => step.title === "保存技能：每日巡检"));
       await hob.runtime.jobs.waitIdle();
-      expect(events).toContain("sediment-finished");
+      expect(hob.runtime.store.job(job.id)?.sediment).toMatchObject({ status: "saved", name: input.name, version: 1, updated: false });
     } finally { hob.close(); }
   });
 });

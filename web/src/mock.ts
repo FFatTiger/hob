@@ -31,6 +31,12 @@ import type {
   ProvidersView,
   PushSubscriptionJson,
   PushView,
+  TokenPrice,
+  UsageAssistant,
+  UsageModelPrice,
+  UsagePrices,
+  UsageRow,
+  UsageView,
   WorklogEntry,
 } from "../../shared/types.ts";
 import { defaultSearch } from "../../shared/search.ts";
@@ -40,13 +46,23 @@ import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
+export type SceneId = "readme-chat" | "readme-cards" | "readme-dark" | "readme-rules" | "readme-desktop" | "readme-page" | "readme-knowledge" | "readme-list" | "readme-question" | "readme-profile" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile";
 
 /** 每个截图场景对应的界面状态（选中哪个助手、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
   { sel: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat" }
 > = {
+  "readme-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "readme-rules": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-desktop": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-page": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-knowledge": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-list": { sel: null, panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "readme-question": { sel: "page", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-profile": { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "chat" },
   image: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "act-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "act-think": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -56,6 +72,8 @@ export const SCENE_UI: Record<
   boot: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   bubbles: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "bubbles-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "card-130": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "card-130-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   s1: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   s2: { sel: "bird", panel: "routine:r-daily", collapsed: false, dark: false, mobile: "list" },
   s3: { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "list" },
@@ -95,6 +113,60 @@ function minsAgo(n: number): string {
 
 function clone<T>(v: T): T {
   return JSON.parse(JSON.stringify(v)) as T;
+}
+
+/** 消耗页的假数据：四个模型、三个助手（一个有归档），一年的用量；工作日多、周末少，最近几个月用得更多。 */
+const USAGE_MODELS: { id: string; provider: string; input: number; output: number; cache: number; weight: number; price: TokenPrice }[] = [
+  { id: "claude-sonnet-4-5", provider: "anthropic", input: 3200, output: 350, cache: 0.68, weight: 1, price: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 } },
+  { id: "gpt-5", provider: "openai", input: 2900, output: 320, cache: 0.55, weight: 0.62, price: { input: 1.25, output: 10, cacheRead: 0.125, cacheWrite: 0 } },
+  { id: "deepseek-chat", provider: "deepseek", input: 2100, output: 260, cache: 0.71, weight: 0.3, price: { input: 0.28, output: 0.42, cacheRead: 0.028, cacheWrite: 0 } },
+  { id: "glm-4.6", provider: "zhipuai", input: 1300, output: 150, cache: 0.4, weight: 0.12, price: { input: 0.6, output: 2.2, cacheRead: 0.11, cacheWrite: 0 } },
+];
+
+const USAGE_ASSISTANTS: (UsageAssistant & { weight: number; chat: number })[] = [
+  { id: "hob", name: "Hob", archived: false, weight: 0.55, chat: 0.61 },
+  { id: "page", name: "写稿搭子", archived: false, weight: 0.3, chat: 0.22 },
+  { id: "ledger", name: "记账管家", archived: true, weight: 0.15, chat: 0.35 },
+];
+
+function mockUsageRows(timezone: string): { rows: UsageRow[]; assistants: UsageAssistant[] } {
+  const today = new Intl.DateTimeFormat("sv-SE", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+  const base = Date.parse(`${today}T00:00:00Z`);
+  const days = Array.from({ length: 365 }, (_, index) => new Date(base - (364 - index) * 86_400_000).toISOString().slice(0, 10));
+  let seed = 7;
+  const rnd = () => (seed = (seed * 9301 + 49297) % 233280) / 233280;
+  const weightSum = USAGE_MODELS.reduce((sum, model) => sum + model.weight, 0);
+  const rows: UsageRow[] = [];
+  days.forEach((day, index) => {
+    const age = days.length - 1 - index;
+    const ramp = age > 300 ? 0 : age > 200 ? 0.35 : age > 90 ? 0.7 : 1;
+    const weekend = ((new Date(`${day}T00:00:00Z`).getUTCDay() + 6) % 7) >= 5;
+    let total = ramp * (weekend ? 0.35 : 1) * (0.3 + rnd() * 1.1) * 520;
+    if (rnd() < 0.12) total = 0;
+    for (const model of USAGE_MODELS) {
+      for (const assistant of USAGE_ASSISTANTS) {
+        for (const source of ["chat", "job"] as const) {
+          const requests = Math.round((total * model.weight * assistant.weight * (source === "chat" ? assistant.chat : 1 - assistant.chat)) / weightSum);
+          if (requests <= 0) continue;
+          const input = requests * model.input;
+          const cacheRead = Math.round(input * model.cache);
+          rows.push({
+            day,
+            assistantId: assistant.id,
+            source,
+            provider: model.provider,
+            model: model.id,
+            requests,
+            input: input - cacheRead,
+            output: Math.round(requests * model.output),
+            cacheRead,
+            cacheWrite: Math.round((input - cacheRead) * 0.15),
+          });
+        }
+      }
+    }
+  });
+  return { rows, assistants: USAGE_ASSISTANTS.map(({ id, name, archived }) => ({ id, name, archived })) };
 }
 
 /** 演示模式里的云桌面状态，地址栏 ?desktop=none（缺省）/ ready / deployed / failed。 */
@@ -692,6 +764,105 @@ function buildDb(scene: SceneId): Db {
     if (scene === "act-home") assistants.find((a) => a.id === "page")!.busy = true;
   }
 
+  if (scene.startsWith("readme-")) {
+    const writing = assistants.find((a) => a.id === "page")!;
+    writing.instructions = "周报发到团队群；素材在共享盘的周报文件夹。";
+    writing.models = { work: { ref: "anthropic/claude-sonnet", thinking: "high" }, allowed: ["anthropic/claude-sonnet", "openai/gpt-5"] };
+    writing.last = { text: "周报已整理好，发送前请确认。", at: minsAgo(2) };
+    const hob = assistants.find((a) => a.id === "hob")!;
+    hob.busy = false;
+    hob.instructions = "";
+    hob.last = { text: "整理好了，适合用共享文档协作。", at: minsAgo(1) };
+    assistants.splice(0, assistants.length, ...assistants.filter((a) => ["hob", "page", "bird", "coin"].includes(a.id)));
+    const done: Job = {
+      id: "readme-job", assistantId: "hob", title: "比较团队知识整理方案", instruction: "比较团队资料的整理方式。",
+      status: "done", createdAt: minsAgo(8), startedAt: minsAgo(8), endedAt: minsAgo(2), durationMs: 360000,
+      stats: { reads: 3, commands: 1, edits: 0 }, summary: "已比较三种方案并整理建议。",
+      activity: [
+        { at: minsAgo(7), verb: "读", text: "团队资料/需求.md" },
+        { at: minsAgo(6), verb: "搜", text: "团队知识整理方案" },
+        { at: minsAgo(4), verb: "读", text: "团队资料/现有流程.md" },
+        { at: minsAgo(2), verb: "说", text: "已完成三种方案的比较。" },
+      ],
+    };
+    const active: Job = { ...done, id: "readme-active", assistantId: "bird", title: "整理行业动态", status: "running", endedAt: undefined, durationMs: undefined, createdAt: minsAgo(4), startedAt: minsAgo(4), activity: [{ at: minsAgo(1), verb: "搜", text: "本周行业动态" }] };
+    for (const key of Object.keys(jobs)) delete jobs[key];
+    jobs[done.id] = done;
+    jobs["readme-weekly"] = {
+      id: "readme-weekly", assistantId: "page", title: "整理本周周报", instruction: "整理本周周报初稿。",
+      status: "done", createdAt: minsAgo(5), startedAt: minsAgo(5), endedAt: minsAgo(3), durationMs: 120000,
+      stats: { reads: 3, commands: 0, edits: 1 }, summary: "已整理周报初稿，等待确认后发送。",
+      activity: [{ at: minsAgo(4), verb: "读", text: "周报/本周素材.md" }, { at: minsAgo(3), verb: "说", text: "周报初稿已整理。" }],
+    };
+    if (scene === "readme-list") jobs[active.id] = active;
+    if (scene === "readme-chat") jobs["readme-active"] = { ...active, assistantId: "hob", title: "整理实施清单", instruction: "整理团队资料的实施清单。", activity: [{ at: minsAgo(1), verb: "读", text: "团队资料/需求.md" }] };
+    for (const key of Object.keys(approvals)) delete approvals[key];
+    approvals["readme-approval"] = { id: "readme-approval", assistantId: "page", title: "将周报发到团队群吗？", detail: "周报初稿已整理好，发送前请确认。", options: [{ key: "A", label: "发送" }, { key: "B", label: "暂不发送" }], status: "pending", source: "router", createdAt: minsAgo(1) };
+    items.hob = [
+      { kind: "user", id: "readme-user", at: minsAgo(9), text: "我们团队的资料有点散，比较几种整理方案，给我一个建议。" },
+      asst("readme-reply", minsAgo(8), "我会比较几种方式，整理成一页给你。"),
+      { kind: "job", id: "readme-job-card", at: minsAgo(8), jobId: done.id },
+      asst("readme-result", minsAgo(1), "建议先用共享文档统一入口，现有资料不用搬家；下面是三种方案的比较。"),
+      { kind: "file", id: "readme-page-card", at: minsAgo(1), path: "/mock/readme-page.html", name: "团队资料整理方案", meta: "三种方式的对比与实施建议" },
+    ];
+    if (scene === "readme-desktop") items.hob = [
+      { kind: "user", id: "readme-browser-user", at: minsAgo(3), text: "打开示例网站，发一张截图给我看看。" },
+      asst("readme-browser-reply", minsAgo(2), "已在浏览器中打开示例网站，这是当前页面的截图。"),
+      { kind: "file", id: "readme-browser-shot", at: minsAgo(1), path: "/mock/desktop.jpg", name: "网页截图.jpg" },
+    ];
+    if (scene === "readme-chat") {
+      approvals["readme-chat-approval"] = { id: "readme-chat-approval", assistantId: "hob", title: "将方案发给团队吗？", options: [{ key: "A", label: "发送" }, { key: "B", label: "暂不发送" }], status: "pending", source: "router", createdAt: minsAgo(1) };
+      items.hob = [
+        { kind: "user", id: "readme-user", at: minsAgo(9), text: "比较团队资料的整理方式，给我一个建议和实施清单。" },
+        { kind: "job", id: "readme-job-card", at: minsAgo(8), jobId: done.id },
+        asst("readme-result", minsAgo(3), "建议先用**共享文档**统一入口，现有资料不用搬家。\n\n- 先建立目录，明确负责人\n- 再逐步整理高频使用的资料"),
+        { kind: "file", id: "readme-page-card", at: minsAgo(3), path: "/mock/readme-page.html", name: "团队资料整理方案", meta: "三种方式的对比与实施建议" },
+        { kind: "file", id: "readme-file-card", at: minsAgo(2), path: "/mock/knowledge/资料目录.md", name: "资料目录.md", meta: "团队常用资料入口" },
+        { kind: "job", id: "readme-active-card", at: minsAgo(2), jobId: "readme-active" },
+        { kind: "question", id: "readme-chat-question", at: minsAgo(1), approvalId: "readme-chat-approval" },
+      ];
+    }
+    if (scene === "readme-cards") {
+      Object.assign(draft, { status: "pending", createdAssistantId: undefined, name: "资料助手", dutyLong: "整理团队资料，维护共享目录", routinesText: "每周整理资料", askFirst: ["对外发送"], instructions: ["优先整理常用资料"], carry: { conversations: 3 } });
+      delegations["readme-delegation"] = { id: "readme-delegation", from: "hob", to: "page", text: "整理团队资料的使用说明。", createdAt: minsAgo(3), status: "running", jobIds: [] };
+      items.hob = [
+        { kind: "image", id: "readme-image", at: minsAgo(4), startedAt: minsAgo(4), status: "done", prompt: "团队资料封面", size: "1536x1024", path: "/mock/readme-cover.svg" },
+        { kind: "delegation", id: "readme-delegation-card", at: minsAgo(3), delegationId: "readme-delegation" },
+        { kind: "draft", id: "readme-draft-card", at: minsAgo(2), draftId: draft.id },
+        { kind: "note", id: "readme-note", at: minsAgo(1), icon: "memory", text: "记忆已更新 · 优先整理常用资料" },
+      ];
+    }
+    items.page = [
+      { kind: "user", id: "readme-weekly-user", at: minsAgo(5), text: "整理本周周报，完成后发到团队群。" },
+      { kind: "job", id: "readme-weekly-card", at: minsAgo(5), jobId: "readme-weekly" },
+      asst("readme-weekly-reply", minsAgo(3), "周报初稿已整理好。对外发送前，请先确认。"),
+      { kind: "question", id: "readme-question-card", at: minsAgo(1), approvalId: "readme-approval" },
+    ];
+  }
+
+  if (scene === "card-130" || scene === "card-130-dark") {
+    // 票 130 的验收场景：每种状态一张任务卡，看卡上的状态原因和沉淀状态
+    const card = (id: string, title: string, patch: Partial<Job>): Job => ({
+      id, assistantId: "hob", title, instruction: title,
+      status: "done", createdAt: minsAgo(50), startedAt: minsAgo(50), endedAt: minsAgo(40), durationMs: 600000,
+      stats: { reads: 4, commands: 2, edits: 0 }, activity: [], ...patch,
+    });
+    const cards: Job[] = [
+      card("t-130-stop", "整理项目资料", { status: "stopped", statusReason: "你叫停了", summary: "整理到一半停下了。" }),
+      card("t-130-stuck", "核对接口文档", { status: "stuck", statusReason: "沙箱里没有网络，装不上依赖，换镜像也一样；接口文档在共享盘里也没找到，问了两个同事都说不知道放在哪里，先把已经核对过的部分记下来，等你处理网络和文档之后再继续。" }),
+      card("t-130-running", "写周报初稿", { sediment: { status: "running" } }),
+      card("t-130-saved", "整理行业动态", { sediment: { status: "saved", name: "daily-brief", title: "每日行业简报", version: 1, updated: false } }),
+      card("t-130-updated", "对比团队资料方案", { sediment: { status: "saved", name: "daily-brief", title: "每日行业简报", version: 3, updated: true } }),
+      card("t-130-failed", "清理旧日志", { sediment: { status: "failed", reason: "技能目录不可写" } }),
+      card("t-130-empty", "备份相册", { sediment: { status: "empty", reason: "一次性的事情" } }),
+    ];
+    for (const job of cards) jobs[job.id] = job;
+    items.hob = [
+      { kind: "user", id: "c-130-user", at: minsAgo(60), text: "看看任务卡现在的样子。" },
+      ...cards.map((job, index): Item => ({ kind: "job", id: `c-130-${index}`, at: job.endedAt ?? job.createdAt, jobId: job.id })),
+    ];
+  }
+
   return {
     assistants,
     items,
@@ -699,7 +870,7 @@ function buildDb(scene: SceneId): Db {
     delegations,
     approvals,
     drafts: { "d-bird": draft },
-    routines,
+    routines: scene.startsWith("readme-") ? routines.filter((r) => r.id === "r-weekly-draft" || r.id === "r-daily") : routines,
     assistantSkills: { bird: [
       { name: "daily-brief", title: "每日行业简报", description: "整理值得关注的行业动态。", path: "/mock/assistants/bird/skills/daily-brief/SKILL.md", version: 2, createdAt: at(7, 9), updatedAt: at(1, 9), uses: 3, lastUsedAt: at(0, 9), enabled: true },
       { name: "release-watch", title: "重要发布追踪", description: "追踪模型和产品的重要发布。", path: "/mock/assistants/bird/skills/release-watch/SKILL.md", version: 1, createdAt: at(2, 9), updatedAt: at(2, 9), uses: 0, enabled: true },
@@ -710,7 +881,7 @@ function buildDb(scene: SceneId): Db {
         { id: "rule-2", text: "改线上服务", mode: "ask", changedAt: at(10, 9, 0) },
         { id: "rule-3", text: "清理我的文件", mode: "ask", changedAt: at(3, 9, 0) },
       ],
-      page: [
+      page: scene.startsWith("readme-") ? [{ id: "readme-rule", text: "向团队群发送周报", mode: "ask", changedAt: at(9, 9) }] : [
         { id: "rule-4", text: "删除草稿", mode: "ask", changedAt: at(9, 9, 0) },
         { id: "rule-5", text: "花钱", mode: "ask", changedAt: at(9, 9, 0) },
         { id: "rule-6", text: "发公众号", mode: "allow", changedAt: minsAgo(120) },
@@ -743,7 +914,7 @@ function buildDb(scene: SceneId): Db {
       revision: 1,
       settings: {
         general: {
-          theme: scene === "d-dark" || scene === "h-dark" || scene === "act-dark" ? "dark" : "system",
+          theme: scene === "d-dark" || scene === "h-dark" || scene === "act-dark" || scene === "readme-dark" || scene === "card-130-dark" ? "dark" : "system",
           timezone: "Asia/Tokyo",
           aboutYou: { name: "小林", language: "中文", notes: "" },
         },
@@ -758,7 +929,11 @@ function buildDb(scene: SceneId): Db {
             models: [{ id: "gpt-x", name: "GPT X", input: ["text", "image"], reasoning: true, contextWindow: 200_000 }],
           },
         ],
-        models: {
+        models: scene.startsWith("readme-") ? {
+          roster: [{ ref: "openai/gpt-5", note: "日常对话", thinking: "low" }, { ref: "anthropic/claude-sonnet", note: "整理资料", thinking: "high" }],
+          conversation: { ref: "openai/gpt-5", thinking: "low" },
+          work: { ref: "anthropic/claude-sonnet", thinking: "high" },
+        } : {
           roster: [
             { ref: "faux/fast", note: "响应快、成本低，适合日常对话", thinking: "low" },
             { ref: "faux/smart", note: "能力最强但速度较慢，适合复杂问题", thinking: "high" },
@@ -969,7 +1144,10 @@ const MCP_MOCK: McpView = {
 
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
-  let globalRules: Rule[] = [];
+  let globalRules: Rule[] = scene.startsWith("readme-") ? [
+    ...["删除或覆盖文件、数据和备份", "对外发送（消息、邮件、发布）、付费、充值、改计费", "停止或重启别人正在使用的服务和设备", "修改可能让你失去远程访问的设置（网络、防火墙、登录方式）"].map((text, i) => ({ id: `ask-${i}`, text, mode: "ask" as const, changedAt: at(10, 9) })),
+    ...["过去的记录是线索不是现状：动手前先核实实际状态。", "改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。", "凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。"].map((text, i) => ({ id: `allow-${i}`, text, mode: "allow" as const, changedAt: at(10, 9) })),
+  ] : [];
   if (new URLSearchParams(globalThis.location?.search ?? "").has("citation")) (db.items.hob ??= []).push({ kind: "assistant", id: "mock-citation", at: new Date().toISOString(), text: "这里是资料里的结论：[工作记录.md](#k/k-2/0)。" });
   let collections: KnowledgeCollection[] = [{ id: "kc-1", name: "工作资料", createdAt: minsAgo(1000), count: 0 }, { id: "kc-2", name: "灵感收藏", createdAt: minsAgo(900), count: 0 }];
   let entries: KnowledgeEntry[] = ["项目封面.png", "产品设计页面.html", "工作记录.md", "数据汇总.csv", "参考文档.pdf", "插画.png", "会议纪要.md", "网站方案.html", "预算表.csv", "资料.txt", "附件.json", "录音.mp3"].map((name, i) => ({
@@ -980,6 +1158,21 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   }));
   const indexStates = ["queued", "indexing", "ready", "failed", "unsupported"] as const;
   entries.forEach((entry, i) => { entry.index = { state: indexStates[i % indexStates.length]!, ...(i % indexStates.length === 3 ? { error: "无法读取文件" } : {}) }; });
+  if (scene === "readme-knowledge") {
+    collections = [{ id: "kc-1", name: "工作资料", createdAt: minsAgo(1000), count: 0 }];
+    const documents: { name: string; description: string; kind: KnowledgeEntry["kind"] }[] = [
+      { name: "团队资料整理方案.html", description: "比较共享文档、知识库和文件夹的适用场景。", kind: "html" },
+      { name: "周报进度表.csv", description: "汇总本周各项工作、负责人和进度。", kind: "csv" },
+      { name: "团队活动封面.png", description: "团队活动通知使用的封面图片。", kind: "image" },
+      { name: "项目会议纪要.md", description: "记录项目讨论的决定与后续安排。", kind: "markdown" },
+      { name: "资料目录.md", description: "收录团队常用资料及其访问入口。", kind: "markdown" },
+    ];
+    entries = documents.map((doc, i) => ({
+      ...doc, id: `readme-k-${i}`, origin: i === 2 ? "upload" : "output", path: `/mock/knowledge/${doc.name}`,
+      hash: `readme-hash-${i}`, size: 2048 + i * 1000, createdAt: minsAgo(i * 60), updatedAt: minsAgo(i * 60),
+      source: { assistantId: "hob" }, collections: ["kc-1"], index: { state: "ready", chunks: 1 },
+    }));
+  }
   const hob = db.assistants.find((a) => a.id === "hob");
   if (hob) hob.knowledge = ["kc-1"];
   let embeddingKeyConfigured = false;
@@ -1066,7 +1259,35 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     setAssistant(assistantId, { last: { text, at: new Date().toISOString() } });
   }
 
+  /** 消耗页的价格：默认价 + 设置里改过的。 */
+  const usagePrices = (): UsagePrices => {
+    const overrides = db.settings.settings.usage?.prices ?? {};
+    const models: Record<string, UsageModelPrice> = {};
+    for (const model of USAGE_MODELS) {
+      const custom = overrides[model.id];
+      models[model.id] = custom ? { price: custom, custom: true, default: model.price } : { price: model.price, custom: false };
+    }
+    return { updatedAt: minsAgo(90), error: null, models };
+  };
+  let usageData: { timezone: string; rows: UsageRow[]; assistants: UsageAssistant[] } | undefined;
+
   return {
+    usage: async (): Promise<UsageView> => {
+      const timezone = db.settings.settings.general.timezone;
+      if (usageData?.timezone !== timezone) usageData = { timezone, ...mockUsageRows(timezone) };
+      return { timezone, rows: usageData.rows, assistants: usageData.assistants, prices: usagePrices() };
+    },
+    putUsagePrice: async (body) => {
+      if (body.revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
+      const prices = { ...(db.settings.settings.usage?.prices ?? {}) };
+      if (body.price) prices[body.model] = body.price;
+      else delete prices[body.model];
+      db.settings = {
+        revision: db.settings.revision + 1,
+        settings: { ...db.settings.settings, ...(Object.keys(prices).length ? { usage: { prices } } : { usage: undefined }) },
+      };
+      return { settings: clone(db.settings), price: usagePrices().models[body.model] ?? null };
+    },
     knowledge: async (query = {}) => {
       const q = query.q?.toLowerCase();
       const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
@@ -1102,7 +1323,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       emit({ type: "rules" });
       return { rules: clone(globalRules) };
     },
-    models: async () => ({ ...clone(MOCK_MODELS), roster: clone(db.settings.settings.models.roster) }),
+    models: async () => ({ ...clone(MOCK_MODELS), models: scene.startsWith("readme-") ? clone(MOCK_MODELS.models.slice(0, 2)).map((model, i) => ({ ...model, ref: i ? "anthropic/claude-sonnet" : "openai/gpt-5", name: i ? "Claude Sonnet" : "GPT-5" })) : clone(MOCK_MODELS.models), roster: clone(db.settings.settings.models.roster) }),
     providers: async () => providersView(),
     claude: async () => ({ settings: clone(db.settings), status: { found: false, loggedIn: false } }),
     saveClaude: async (revision, claude) => {
@@ -1220,7 +1441,12 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     sedimentJob: async (id) => {
       if (!db.jobs[id]) throw new Error("任务不存在");
       if (db.jobs[id].status !== "done") throw new Error("任务尚未完成");
-      setTimeout(() => emit({ type: "sediment-finished", jobId: id }), 0);
+      db.jobs[id].sediment = { status: "running" };
+      emit({ type: "job", job: clone(db.jobs[id]) });
+      setTimeout(() => {
+        db.jobs[id].sediment = { status: "empty", reason: "没有需要沉淀的" };
+        emit({ type: "job", job: clone(db.jobs[id]) });
+      }, 0);
       return { ok: true };
     },
     skills: async () => {
@@ -1296,6 +1522,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
           image: db.settings.settings.image,
           search: db.settings.settings.search,
           skills: patch.skills ?? db.settings.settings.skills,
+          usage: db.settings.settings.usage,
           work: { ...db.settings.settings.work, ...(patch.work ?? {}) },
           push: { ...db.settings.settings.push, ...(patch.push ?? {}) },
         },
@@ -1602,7 +1829,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       return path;
     },
     fileUrl: (path, opts) =>
-      mockUploads.get(path) ?? (path === "/srv/example/reports/stats.csv" ? `data:text/plain;charset=utf-8,${encodeURIComponent('项目,大小\n旧日志,2.1GB\n服务,正常')}` : path === "/srv/example/reports/log-cleanup-1031.md" ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 清理报告\n\n已清理旧日志，服务运行正常。')}` : path.startsWith("/mock/assistants/") ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 每日行业简报\n\n整理值得关注的行业动态。')}` : path.startsWith("blob:") ? path : path.startsWith("/mock/knowledge/") ? (path.endsWith(".png") ? `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#d5e3d4"/><circle cx="430" cy="110" r="55" fill="#f5d599"/><path d="M0 380L190 150 340 330 430 220 600 400" fill="#83a392"/></svg>')}` : path.endsWith(".html") ? `data:text/html;charset=utf-8,${encodeURIComponent('<h1>产品设计页面</h1><p>这是模拟模式中的项目资料。</p>')}` : `data:text/plain;charset=utf-8,${encodeURIComponent('模拟模式中的项目资料。')}`) : path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`),
+      path === "/mock/readme-page.html" || (scene === "readme-knowledge" && path === "/mock/knowledge/团队资料整理方案.html") ? "/mock/readme-page.html" : mockUploads.get(path) ?? (path === "/srv/example/reports/stats.csv" ? `data:text/plain;charset=utf-8,${encodeURIComponent('项目,大小\n旧日志,2.1GB\n服务,正常')}` : path === "/srv/example/reports/log-cleanup-1031.md" ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 清理报告\n\n已清理旧日志，服务运行正常。')}` : path.startsWith("/mock/assistants/") ? `data:text/plain;charset=utf-8,${encodeURIComponent('# 每日行业简报\n\n整理值得关注的行业动态。')}` : path.startsWith("blob:") ? path : path.startsWith("/mock/knowledge/") ? (path.endsWith(".png") ? `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="600" height="400"><rect width="600" height="400" fill="#d5e3d4"/><circle cx="430" cy="110" r="55" fill="#f5d599"/><path d="M0 380L190 150 340 330 430 220 600 400" fill="#83a392"/></svg>')}` : path.endsWith(".html") ? `data:text/html;charset=utf-8,${encodeURIComponent('<h1>产品设计页面</h1><p>这是模拟模式中的项目资料。</p>')}` : `data:text/plain;charset=utf-8,${encodeURIComponent('模拟模式中的项目资料。')}`) : path.startsWith("/mock/") ? path : `data:text/plain;charset=utf-8,${encodeURIComponent(`mock 模式没有真实文件。\n\n${path}`)}`),
     fileMeta: async (path) => {
       const name = path.split("/").pop() ?? path;
       const dot = name.lastIndexOf(".");
@@ -1616,6 +1843,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         modifiedAt: new Date().toISOString(),
         mime: kind === "image" ? `image/${ext === ".jpg" ? "jpeg" : ext.slice(1)}` : "text/plain; charset=utf-8",
         kind,
+        ...(path === "/mock/readme-page.html" ? { page: true } : {}),
         text: kind !== "image",
       };
     },

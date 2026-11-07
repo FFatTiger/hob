@@ -1,48 +1,56 @@
 # Hob
 
-**A self-hosted personal assistant that actually does the work.** You talk to one main assistant, Hob. It runs real work as background jobs, asks before anything risky, and when a kind of work keeps coming back, it proposes a dedicated assistant for it.
+Hob is a self-hosted personal assistant that gets work done: talk to Hob, and it handles small requests itself and delegates larger jobs.
 
 [中文说明](README.zh-CN.md) · [Architecture](docs/architecture.md) · MIT License
 
 > The interface is currently Chinese-only. Hob is a single-user app you run on your own machine or server.
 
-![Hob: chat with the main assistant, a running job and its live transcript](docs/screenshots/chat.png)
+![A Hob conversation with job, page, file and confirmation cards, plus other card styles overlaid](docs/screenshots/chat.jpg)
+
+*Illustration: the floating cards are composed from separate screenshots.*
+
+## How it works
+
+You talk to assistants, not jobs. An assistant handles small requests directly and delegates larger work to a job. Jobs return Markdown results and files only to their assistant, and ask the assistant when they need an answer; the assistant decides what to show you and when to ask you. Global rules and each assistant's own rules determine what needs your confirmation.
 
 ## What you get
 
-**One conversation, real work.** Ask in plain language; Hob turns it into a job that runs in the background with its own shell, files and tools. A job card shows progress and elapsed time. Open it to follow every step live, add instructions mid-way, or stop it.
+### Assistants, jobs and schedules
 
-**Assistants that grow out of your habits.** When the same kind of request repeats, Hob suggests a dedicated assistant ("写作", "服务器", "记账" …). Each one keeps its own conversation, duties, approval rules, schedules and work log, and you configure all of it in one panel.
+Each assistant has a conversation, duties, rules, skills, schedules and a work log. When similar requests recur, Hob can propose a dedicated assistant. When it delegates to another assistant, a delegation card tracks the work, carries your original request and lets you take over in the receiving assistant's conversation.
 
-**Delegation you can see.** Hob hands work to the right assistant and keeps a delegation card in its own chat: status, linked jobs, and any pending question, which you can answer right on the card. Your original words travel with the work; reply in the receiving assistant's chat to take over, or reply in chat to close a pending question.
+Jobs can be inspected, stopped or resumed, with each round retained; the assistant receives reminders when a job exceeds its expected duration. Routines put their job cards and results in the conversation. The conversation follows new output as the assistant writes, and a screenshot can be pasted straight into the input box.
 
-**Work that can continue.** Assistants can read files, inspect job status, activity and results without interrupting the work, and resume a finished job with separate cards and reports for each round. They estimate job duration and receive reminders when work runs over; completion notices include actual and expected time.
+On a phone, the assistant list, conversation and profile use a mobile layout; the app supports swipe-to-reply and long-press actions. Push notifications alert you when an assistant needs your decision or a job gets stuck or fails.
 
-**Rules you control.** Set global rules for every assistant and job in Settings, with separate lists for actions that need confirmation and instructions to follow. Each assistant can also have its own rules; pick "always allow" once to save an exception.
+![Phone views of the assistant list, an assistant's confirmation question and its profile](docs/screenshots/mobile.jpg)
 
-**Schedules.** Daily briefs, weekly reports, month-end checks: routines run on cron-style schedules and post job cards and results into the assistant's conversation. A routine can also use a saved assistant skill.
+### Skills
 
-**Knowledge bases.** Organize, search and preview files, bind collections to assistants, and follow citations to source passages. An optional embedding model enables hybrid search; PDF text can also be indexed.
+An assistant decides which of its skills each job gets; a schedule can be bound to one. When a job finishes something worth repeating, the assistant has that job write the skill up in its own session, running the commands and scripts again first. Skills covering the same kind of work are merged into one and the older copy archived; when a job finds a step outdated, the skill gets corrected.
 
-**Cloud desktop.** An optional separate container gives each assistant its own screen and browser, with a shared screen for selected assistants. Assistants can browse directly, share login state with their jobs and send screenshots in chat. Watch or take control, sync the clipboard, use your local input method and keyboard shortcuts.
+### Rules
 
-**A clearer workspace.** The right panel brings assistant details, jobs and files together; its two lists load more as you scroll, and nested pages retain their address on refresh. Completed unread work is marked on the assistant's avatar. Archive an assistant when no longer needed while keeping its conversations and job history.
+Global rules apply to every assistant and job; each assistant can also have its own. Rules distinguish actions that require confirmation from instructions to follow automatically; confirmation choices can save an exception for next time.
 
-**Pages instead of walls of text.** For processes, comparisons or research, an assistant can answer with a single-page visual document. It opens in the side panel and renders live while the model is still writing.
+### Pages and knowledge
 
-**Tools that come with it:**
+Assistants can present comparisons and research as pages in the side panel. Organize, search and preview files in knowledge bases, bind them to assistants and follow citations; optional embeddings enable hybrid search, including indexed PDF text.
 
-- **Web search** across 10 providers (SearXNG, Exa, Tavily, Brave, Serper, Jina, Firecrawl, Perplexity, You.com, Ollama), used in order with automatic fallback.
-- **Skills** from Hob's own skill folder, the shared `~/.agents/skills`, and Lore. Import existing skills or let assistants save reusable ones, edit their instructions with version history, and choose a skill for a job.
-- **MCP servers** (stdio or streamable HTTP) that jobs can call, with per-server and per-tool switches; import what you already have from Claude Code, Cursor and pi.
-- **Long-term memory**, kept locally or in [Lore](https://github.com/FFatTiger/lore).
-- **Image generation** in chat through an OpenAI-compatible image API, with a progress card while it runs.
-- **Claude subscription** via an existing local Claude Code login on npm or source installs.
-- **Push notifications** when an assistant needs your decision or a job gets stuck or fails.
+### Cloud desktop and tools
 
-**Made for the phone too.** Hob is an installable web app with a mobile layout and Telegram-style gestures: swipe a message to reply, long-press for actions. Light and dark themes follow your system.
+An optional cloud desktop gives each assistant a browser and screen shared with its jobs; selected assistants can also use a public screen. Assistants can operate the browser and send screenshots in chat; you can watch or take control.
 
-![Hob on a phone: assistant list, a delegation card and assistant settings](docs/screenshots/mobile.png)
+Assistants and jobs can use web search across SearXNG, Exa, Tavily, Brave, Serper, Jina, Firecrawl, Perplexity, You.com and Ollama. Jobs can call configured MCP services, including configurations imported from Claude Code, Cursor and pi. Memory can be local or use [Lore](https://github.com/FFatTiger/lore); image generation uses an OpenAI-compatible API. npm and source installations can also use an existing Claude Code subscription login.
+
+### Usage and cost
+
+Settings → Usage counts the conversations and jobs you already have and shows requests, tokens and estimated cost for the last day, 7 days, 30 days or all time, with a heatmap for the past year and breakdowns by model and by assistant. Prices come from models.dev by default and can be edited per model.
+
+### Light and dark
+
+Hob has light and dark themes and can follow the system setting.
 
 ## Quick start
 
@@ -155,7 +163,7 @@ npm test             # vitest
 npm run typecheck
 ```
 
-Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend. No model or server is needed, and the screenshots above were taken that way.
+Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend. The screenshots above use dedicated mock scenarios; after `npx vite build`, set `CHROME_PATH` to your Chrome or Chromium executable and run `CHROME_PATH=/path/to/chrome node scripts/readme-screenshots.mjs`. To export the full set of detailed views separately, add `--all <output-directory>`.
 
 Stack: Node 22 + TypeScript, Hono with SSE, Vite + React with hand-written CSS. The agent engine is the [pi](https://github.com/earendil-works/pi) SDK, used in-process. Read [docs/architecture.md](docs/architecture.md) for the design, data layout and tool list (in Chinese).
 

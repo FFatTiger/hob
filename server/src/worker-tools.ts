@@ -13,14 +13,13 @@ export function registerReportTool(runtime: HobRuntime, jobId: string): ToolDefi
   return {
     name: "report",
     label: "提交结果",
-    description: "任务结束时调用一次，提交结果。",
-    promptSnippet: "任务结束必须调用 report 提交结果。",
+    description: "交结果。做完了、做不下去了，或者要用户拍板时调用。",
     parameters: Type.Object({
       outcome: Type.Unsafe<"done" | "stuck" | "need_approval">(
-        Type.String({ description: "done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板" }),
+        Type.String({ description: "done 要的结果拿到了；stuck 要的结果没拿到（做不下去或没做完），写明做到哪、缺什么；need_approval 要用户拍板才能往下做，写明要定什么。" }),
       ),
       result: Type.String({ description: "完整结果，按这个顺序写：结论；做了什么；验证了什么、怎么验证的；没验证或不确定的；需要用户决定的。带上数据、链接和文件路径，写给派活的助手。" }),
-      files: Type.Optional(Type.Array(Type.String(), { description: "交给助手的文件（绝对路径），比如要给用户看的图" })),
+      files: Type.Optional(Type.Array(Type.String(), { description: "交给助手的文件（绝对路径），比如要给用户看的图。" })),
     }),
     execute: async (_id, params: any) => {
       // 不认识的结果不能当成已完成：退回让模型重新调用
@@ -46,11 +45,10 @@ export function registerAskTool(runtime: HobRuntime, jobId: string): ToolDefinit
   return {
     name: "ask_user",
     label: "询问用户",
-    description: "问你的助手，等它回复：它会自己答，或者去问用户。用于用户定的规则要求先确认的事，或发送、删除、付费这类撤不回的事。其他拿不准的不问，按合理的假设做下去，把假设写进 result。",
-    promptSnippet: "规则要求执行前确认的事，执行前必须调用 ask_user。",
+    description: "问你的助手，等它回复。它能答的会直接答，要用户定的会去问用户。",
     parameters: Type.Object({
       title: Type.String({ description: "问题，一句话" }),
-      detail: Type.Optional(Type.String({ description: "补充说明，写清后果" })),
+      detail: Type.Optional(Type.String({ description: "补充说明，写清后果。" })),
       options: Type.Array(
         Type.Object({
           label: Type.String({ description: "选项文字" }),
@@ -84,8 +82,7 @@ export function registerImageTool(runtime: HobRuntime, jobId: string): ToolDefin
     name: "generate_image",
     label: "生成图片",
     description:
-      "按文字描述生成一张图片，返回图片的绝对路径（存在任务工作目录）。要把图给用户看，就把这个路径放进 report 的 files。",
-    promptSnippet: "生成图片用 generate_image；要给用户看就把它放进 report 的 files。",
+      "按文字描述生成一张图片，返回图片的绝对路径（存在任务工作目录）。要给用户看，就把路径放进 report 的 files。",
     parameters: Type.Object({
       prompt: Type.String({ description: "要画什么，越具体越好" }),
       size: Type.Optional(

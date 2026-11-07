@@ -47,7 +47,7 @@ describe("对话生图", () => {
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({ kind: "image", status: "pending", prompt: "猫", size: "1024x1024" });
       respond!();
-      expect((await result).content[0]).toMatchObject({ text: expect.stringContaining("不要再用 send_file") });
+      expect((await result).content[0]).toMatchObject({ text: expect.stringContaining("图片已经显示在对话里。路径：") });
       expect(events[1]).toMatchObject({ id: events[0].id, status: "done", path: expect.stringContaining("/images/") });
       const done = events[1];
       if (done.kind !== "image" || !done.path) throw new Error("没有图片路径");

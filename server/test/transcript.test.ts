@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import type { HobEvent, JobStep } from "../../shared/types.ts";
 import { commandSummary } from "../../shared/command.ts";
-import { STEP_OUTPUT_LIMIT, deriveSteps, toolStep, toolTitle } from "../src/transcript.ts";
+import { STEP_OUTPUT_LIMIT, SEDIMENT_PROMPT_HEAD, deriveSteps, toolStep, toolTitle } from "../src/transcript.ts";
 import { call, makeHob, text } from "./helpers.ts";
 
 const homes: string[] = [];
@@ -156,6 +156,16 @@ describe("任务过程推导", () => {
     expect(step.output).toContain("完整输出在");
     expect(step.outputPath).toBe(saved[0]);
     expect(readFileSync(saved[0], "utf8")).toHaveLength(full.length);
+  });
+
+  it("新旧开头的沉淀消息都显示成「沉淀技能」", () => {
+    const file = sessionFile([
+      message("user", { content: "整理报告", timestamp: 1_000 }),
+      message("user", { content: `${SEDIMENT_PROMPT_HEAD}，下次接到同类的事，照着它就能一次做成用户要的样子。`, timestamp: 2_000 }),
+      message("user", { content: "这件事以后还会再做。回顾刚才的过程，把能复用的做法写成技能，下次接到同类的事，照着它就能一次做成用户要的样子。", timestamp: 3_000 }),
+      message("user", { content: "这件事以后还会再做。回顾刚才的过程，把能复用的做法沉淀成技能，下次接到同类的事，照着它就能一次做成用户要的样子。", timestamp: 4_000 }),
+    ]);
+    expect(deriveSteps(file).map((step) => step.text)).toEqual(["沉淀技能", "沉淀技能", "沉淀技能"]);
   });
 
   it("没有会话文件时是空列表，不会报错", () => {

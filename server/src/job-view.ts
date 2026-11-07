@@ -1,7 +1,7 @@
 import type { Approval, Job, JobStatus, JobStep } from "../../shared/types.ts";
 import type { AssistantSkill } from "../../shared/skills.ts";
 
-const statusText: Record<JobStatus, string> = { queued: "排队中", running: "进行中", waiting: "等用户确认", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" };
+const statusText: Record<JobStatus, string> = { queued: "排队中", running: "进行中", waiting: "等你回复", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" };
 
 export function duration(ms: number): string {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -35,7 +35,7 @@ export function jobView(job: Job, steps: JobStep[], approvals: Approval[], skill
     : `${statusText[job.status]}，已运行 ${elapsed < 60000 ? "不到 1 分钟" : `${Math.floor(elapsed / 60000)} 分钟`}`;
   const lines = [`任务「${job.title}」（${job.id}）：${state}${job.rounds?.length ? `（第 ${job.rounds.length + 1} 轮）` : ""}`];
   if (job.statusReason) lines.push(`原因：${job.statusReason}`);
-  for (const approval of approvals.filter((item) => item.jobId === job.id && item.status === "pending")) lines.push(`在等用户回答：${approval.title}`);
+  for (const approval of approvals.filter((item) => item.jobId === job.id && item.status === "pending")) lines.push(`在等你回复：${approval.title}`);
   if (job.skillsUsed?.length) lines.push(`用到的技能：${job.skillsUsed.map((name) => { const skill = skills.find((item) => item.name === name); return skill ? `${skill.title}（第 ${skill.version} 版）` : name; }).join("、")}`);
   if (ended) {
     if (job.summary) {

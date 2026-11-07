@@ -528,7 +528,7 @@ describe("Router", () => {
       await hob.runtime.router.waitIdle("hob");
 
       expect(seen).toHaveLength(1);
-      expect(seen[0]).toContain("## 其他助手");
+      expect(seen[0]).toContain("## 助手");
       expect(seen[0]).toContain("写作");
     } finally {
       hob.close();

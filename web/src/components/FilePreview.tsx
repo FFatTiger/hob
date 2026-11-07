@@ -184,10 +184,10 @@ function HtmlBody({ meta }: { meta: FileMeta }) {
 function Body({ meta, find, page }: { meta: FileMeta; find?: string; page?: number }) {
   switch (meta.kind) {
     case "image":
-      return <ImageBody path={meta.path} name={meta.name} svg={false} />;
+      return <ImageBody key={meta.path} path={meta.path} name={meta.name} svg={false} />;
     case "svg":
       // svg 也按图片显示（<img> 里的 svg 不执行脚本），要 inline 才不会被当附件拦下
-      return <ImageBody path={meta.path} name={meta.name} svg />;
+      return <ImageBody key={meta.path} path={meta.path} name={meta.name} svg />;
     case "pdf":
       return <iframe className="fp-frame" src={fileUrl(meta.path) + (page ? `#page=${page}` : "")} title={meta.name} />;
     case "audio":
@@ -226,7 +226,10 @@ function ImageBody({ path, name, svg }: { path: string; name: string; svg: boole
   const [open, setOpen] = useState(false);
   const src = fileUrl(path, svg ? { inline: true } : undefined);
   // 先铺对话里已经加载过的缩略图，原图到了再盖上去：点开不用对着空白等
-  const [loaded, setLoaded] = useState(svg);
+  // svg 没有缩略图，直接显示原图
+  const [status, setStatus] = useState<"loading" | "loaded" | "error">(svg ? "loaded" : "loading");
+  const loading = status === "loading";
+  const thumb = photoUrl(path);
 
   useEffect(() => {
     if (!open) return;
@@ -243,14 +246,20 @@ function ImageBody({ path, name, svg }: { path: string; name: string; svg: boole
   return (
     <>
       <div className="fp-img">
-        <button onClick={() => setOpen(true)} title="放大" className={loaded ? undefined : "fp-img-loading"}>
-          {loaded ? null : <img className="fp-img-thumb" src={photoUrl(path)} alt="" aria-hidden="true" />}
-          <img src={src} alt={name} onLoad={() => setLoaded(true)} onError={() => setLoaded(true)} style={loaded ? undefined : { position: "absolute", opacity: 0 }} />
+        <button onClick={() => setOpen(true)} title="放大" className={loading ? "fp-img-loading" : undefined}>
+          {loading ? <img className="fp-img-thumb" src={thumb} alt="" aria-hidden="true" /> : null}
+          <img src={src} alt={name} onLoad={() => setStatus("loaded")} onError={() => setStatus("error")} style={loading ? { position: "absolute", opacity: 0 } : undefined} />
+          {loading ? <span className="fp-img-spin" aria-label="图片加载中"><Icon name="spin" size={18} w={2.2} className="spin" /></span> : null}
+          {status === "error" ? <span>图片加载失败</span> : null}
         </button>
       </div>
       {open ? (
-        <div className="lightbox" role="dialog" aria-label={name} onClick={() => setOpen(false)}>
-          <img src={src} alt={name} />
+        <div className="lightbox fp-lightbox" role="dialog" aria-label={name} onClick={() => setOpen(false)}>
+          <div className={loading ? "fp-lightbox-image fp-img-loading" : "fp-lightbox-image"}>
+            <img src={loading ? thumb : src} alt={name} />
+            {loading ? <span className="fp-img-spin" aria-label="图片加载中"><Icon name="spin" size={18} w={2.2} className="spin" /></span> : null}
+            {status === "error" ? <span>图片加载失败</span> : null}
+          </div>
         </div>
       ) : null}
     </>

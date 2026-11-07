@@ -13,7 +13,7 @@ export function nowBlock(runtime: HobRuntime, assistantId: string): string {
   const lines = [`【现在】${nowText(timezone, now)}`];
   const active = jobs.filter((job) => ["running", "queued", "waiting"].includes(job.status)).map((job) => {
     const minutes = job.startedAt ? Math.floor((now.getTime() - new Date(job.startedAt).getTime()) / 60_000) : 0;
-    const status = job.status === "queued" ? "排队中" : job.status === "waiting" ? "等用户确认" : minutes < 1 ? "刚开始" : `运行 ${minutes} 分钟`;
+    const status = job.status === "queued" ? "排队中" : job.status === "waiting" ? "等你回复" : minutes < 1 ? "刚开始" : `运行 ${minutes} 分钟`;
     return `${job.id}「${short(job.title)}」，${status}`;
   });
   if (active.length) lines.push(`进行中：${active.join("；")}`);

@@ -101,6 +101,6 @@ describe("任务耗时督办", () => {
     expect(jobResultEvent(job).split("\n")[0]).toBe("任务「测试」（t-1）已完成，用时 15 分钟，预计 5 分钟。");
     expect(jobResultEvent({ ...job, status: "failed", durationMs: 3_660_000 }).split("\n")[0]).toContain("失败，用时 1 小时 1 分钟");
     expect(jobResultEvent({ ...job, durationMs: 12_000 }).split("\n")[0]).toContain("用时 12 秒");
-    expect(jobResultEvent({ ...job, expect: undefined }).split("\n")[0]).toBe("任务「测试」（t-1）已完成。");
+    expect(jobResultEvent({ ...job, expect: undefined }).split("\n")[0]).toBe("任务「测试」（t-1）已完成，用时 15 分钟。");
   });
 });

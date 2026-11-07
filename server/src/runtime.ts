@@ -17,6 +17,7 @@ import type { LegacyModels } from "./settings.ts";
 import type { SettingsStore } from "./settings.ts";
 import type { Store } from "./store.ts";
 import type { PushSender, PushService } from "./push.ts";
+import type { UsageService } from "./usage.ts";
 import { Bus as BusImpl } from "./bus.ts";
 import { JobManager as JobManagerImpl } from "./jobs.ts";
 import { PushService as PushServiceImpl } from "./push.ts";
@@ -25,6 +26,8 @@ import { RouterManager as RouterManagerImpl } from "./router.ts";
 import { RoutineScheduler as RoutineSchedulerImpl } from "./routines.ts";
 import { SettingsStore as SettingsStoreImpl } from "./settings.ts";
 import { Store as StoreImpl } from "./store.ts";
+import { UsagePrices as UsagePricesImpl } from "./usage-prices.ts";
+import { UsageService as UsageServiceImpl } from "./usage.ts";
 
 /**
  * 进程内的全部服务。构造时先建 store/bus/pi，再把 router / jobs / routines 挂上去
@@ -53,6 +56,8 @@ export interface HobRuntime {
   routines: RoutineScheduler;
   /** Web Push：VAPID 密钥和订阅在 HOB_HOME/push.json，可见性只在内存里 */
   push: PushService;
+  /** 消耗：从会话文件统计用量，单价从 models.dev 拉 */
+  usage: UsageService;
 }
 
 export interface CreateRuntimeOptions {
@@ -63,7 +68,7 @@ export interface CreateRuntimeOptions {
   legacyModels?: LegacyModels;
   /** 测试注入的推送发送器（不碰网络） */
   pushSender?: PushSender;
-  /** 测试注入假的服务商接口（拉模型列表用） */
+  /** 测试注入假的服务商接口（拉模型列表用）和价格表接口（价格用） */
   fetchImpl?: typeof fetch;
 }
 
@@ -114,6 +119,12 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     home: options.home,
     email: () => runtime.settings.settings.push.email,
     ...(options.pushSender ? { sender: options.pushSender } : {}),
+  });
+  runtime.usage = new UsageServiceImpl({
+    home: options.home,
+    store,
+    settings,
+    prices: new UsagePricesImpl({ home: options.home, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }),
   });
   return runtime;
 }

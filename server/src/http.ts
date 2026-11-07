@@ -21,6 +21,8 @@ import type {
   ModelsView,
   PushSubscriptionJson,
   SettingsPatch,
+  UsagePricePatch,
+  UsagePriceSaved,
 } from "../../shared/types.ts";
 import { parseSprite } from "../../shared/sprites.ts";
 import { answerApproval, archiveAssistant, createFromDraft, dismissDraft } from "./actions.ts";
@@ -45,7 +47,8 @@ import { SEARCH_PROVIDERS } from "../../shared/search.ts";
 import { WebSearch } from "./search.ts";
 import { clampDuty } from "./text.ts";
 import { deleteOwnSkill, importSkills, listImportSkills, skillViews } from "./skills.ts";
-import { archiveAssistantSkill, listAssistantSkills, rollbackAssistantSkill, setAssistantSkillEnabled } from "./assistant-skills.ts";
+import { listAssistantSkills, rollbackAssistantSkill, setAssistantSkillEnabled } from "./assistant-skills.ts";
+import { deleteSkill } from "./delete-skill.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
 
 const COOKIE = "hob";
@@ -345,6 +348,24 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const thinking = await runtime.providers.thinkingOf(ref);
     if (!thinking) return c.json({ error: `模型 ${ref} 不在已配置的服务商里。` }, 400);
     return c.json({ settings: next, thinking } satisfies ModelThinkingSaved);
+  });
+
+  // 设置 → 消耗：会话文件里的用量和价格表；改单价走 settings.json，price 为 null 恢复默认
+  app.get("/api/usage", async (c) => c.json(await runtime.usage.view()));
+
+  app.put("/api/usage/price", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Partial<UsagePricePatch>;
+    if (typeof body.revision !== "number") return c.json({ error: "缺 revision" }, 400);
+    const model = typeof body.model === "string" ? body.model.trim() : "";
+    if (!model) return c.json({ error: "未指定模型。" }, 400);
+    let next;
+    try {
+      next = runtime.settings.setUsagePrice(body.revision, model, body.price ?? null);
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+    if (!next) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
+    return c.json({ settings: next, price: await runtime.usage.priceOf(model) } satisfies UsagePriceSaved);
   });
 
   // 设置 → 服务商：列表（Key 只报配没配）、引擎自带的服务商目录、整份设置
@@ -711,8 +732,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const id = c.req.param("id");
     if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
     try {
-      archiveAssistantSkill(options.home, id, c.req.param("name"));
-      bus.emit({ type: "skills", assistantId: id });
+      deleteSkill(runtime, id, c.req.param("name"));
       return c.json({ ok: true });
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
@@ -933,7 +953,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/jobs/:id/sediment", (c) => {
     const id = c.req.param("id");
     if (!store.job(id)) return c.json({ error: "任务不存在" }, 404);
-    try { jobs.startSediment(id, "manual"); return c.json({ ok: true }); }
+    try { jobs.startSediment(id); return c.json({ ok: true }); }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409); }
   });
 

@@ -65,7 +65,7 @@ describe("知识库查内容", () => {
       hob.faux.setResponses([call("search_knowledge", { query: "每日巡检" }), text("找到了")]);
       await hob.runtime.router.send("hob", { text: "找资料" }); await hob.runtime.router.waitIdle("hob");
       expect(state.session!.getActiveToolNames()).toContain("search_knowledge");
-      expect(state.session!.systemPrompt).toContain("能查的知识库：运维。问到可能写在这些库里的内容，先用 search_knowledge 查。");
+      expect(state.session!.systemPrompt).toContain("能查的知识库：运维。问到可能写在这些库里的内容，先用 search_knowledge 查；用到的内容照抄出处链接");
       expect(JSON.stringify(state.session!.messages)).toContain("每日巡检需要检查备份状态");
       const opened: { tools: string[]; prompt: string }[] = [];
       const open = hob.runtime.pi.open.bind(hob.runtime.pi);

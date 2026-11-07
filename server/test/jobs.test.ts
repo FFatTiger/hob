@@ -2,8 +2,10 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
+import type { Job } from "../../shared/types.ts";
 import { answerApproval } from "../src/actions.ts";
-import { JobManager, jobResultEvent } from "../src/jobs.ts";
+import { JobManager, assistantJobResultEvent, jobResultEvent } from "../src/jobs.ts";
+import { saveAssistantSkill } from "../src/assistant-skills.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";
 
@@ -20,11 +22,11 @@ function isRunning(pid: number): boolean {
 describe("任务", () => {
   it("任务事件按完整结果长度分段，缺结果说明原因", () => {
     const job = { id: "t-1", assistantId: "hob", title: "测试", instruction: "", status: "done" as const, createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [], reportPath: "/tmp/report.md" };
-    expect(jobResultEvent({ ...job, summary: "短结果" })).toBe("任务「测试」（t-1）已完成。\n结果：\n短结果");
+    expect(jobResultEvent({ ...job, summary: "短结果" })).toBe("任务「测试」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果：\n短结果");
     const long = "字".repeat(3001);
-    expect(jobResultEvent({ ...job, summary: long })).toBe(`任务「测试」（t-1）已完成。\n结果（共 3001 字，以下是前 3,000 字；全文：/tmp/report.md）：\n${long.slice(0, 3000)}`);
-    expect(jobResultEvent({ ...job, status: "failed", statusReason: "中断" })).toBe("任务「测试」（t-1）失败。\n中断");
-    expect(jobResultEvent({ ...job, summary: "短结果" }, "定时任务「每日」")).toBe("定时任务「每日」（t-1）已完成。\n结果：\n短结果");
+    expect(jobResultEvent({ ...job, summary: long })).toBe(`任务「测试」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果（共 3001 字，以下是前 3,000 字；全文：/tmp/report.md）：\n${long.slice(0, 3000)}`);
+    expect(jobResultEvent({ ...job, status: "failed", statusReason: "中断" })).toBe("任务「测试」（t-1）失败。\n过程：动手 0 次，没用技能。\n中断");
+    expect(jobResultEvent({ ...job, summary: "短结果" }, "定时任务「每日」")).toBe("定时任务「每日」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果：\n短结果");
   });
   it("report 的 outcome 不认识就退回重填，不当成已完成", async () => {
     const hob = makeHob();
@@ -109,7 +111,7 @@ describe("任务", () => {
       expect(done.summary).toBe(summary);
       const report = readFileSync(done.reportPath!, "utf8");
       expect(report).toContain(`## 结果\n\n${summary}\n\n## 任务说明`);
-      expect(event.mock.calls.some((args) => args[1] === jobResultEvent(done))).toBe(true);
+      expect(event.mock.calls.some((args) => args[1].startsWith(`任务「长报告」（${job.id}）已完成`) && args[1].includes(`结果（共 ${summary.length} 字`))).toBe(true);
     } finally {
       hob.close();
     }
@@ -281,7 +283,7 @@ describe("任务", () => {
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "question")).toBeUndefined();
       expect(hob.runtime.router.bootstrap().approvals).toEqual([]);
       expect(push).not.toHaveBeenCalled();
-      expect(event).toHaveBeenCalledWith("hob", "任务「清旧报告」在等你回复：删掉旧报告吗？选项：A 删、B 别删。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。");
+      expect(event).toHaveBeenCalledWith("hob", `任务「清旧报告」（${job.id}）在等你回复：删掉旧报告吗？选项：A 删、B 别删。`);
       // 等用户答多久都不算「无响应」（以前 15 分钟后被看门狗标成受阻，审批卡跟着作废）
       hob.runtime.jobs.checkStalls(Date.now() + 24 * 3600_000);
       expect(hob.runtime.store.job(job.id)?.status).toBe("waiting");
@@ -309,7 +311,7 @@ describe("任务", () => {
       for (const end of ["。", "！", "？", ".", "!", "?", ""]) {
         const answer = hob.runtime.jobs.askQuestion(job.id, { title: `问题${end}`, detail: `说明${end}`, options: [{ key: "A", label: "好" }] });
         const expected = end || "。";
-        expect(event).toHaveBeenLastCalledWith("hob", `任务「测试」在等你回复：问题${expected}说明${expected}选项：A 好。自己能答就用 reply_job 回它；要用户定，就用 ask_user 问用户，拿到答复再用 reply_job 回它。`);
+        expect(event).toHaveBeenLastCalledWith("hob", `任务「测试」（${job.id}）在等你回复：问题${expected}说明${expected}选项：A 好。`);
         hob.runtime.jobs.resolveAsk(hob.runtime.store.approvals().find((item) => item.status === "pending")!, "好");
         await answer;
       }
@@ -387,7 +389,7 @@ describe("任务", () => {
       expect(hob.runtime.store.approval(approval.id)?.answerText).toBeUndefined();
       await hob.runtime.jobs.waitIdle();
       expect(hob.runtime.store.job(job.id)?.status).toBe("done");
-      expect(hob.runtime.jobs.transcript(job.id).find((step) => step.name === "ask_user")?.output).toContain("助手转达：只删三个月前的");
+      expect(hob.runtime.jobs.transcript(job.id).find((step) => step.name === "ask_user")?.output).toContain("「Hob」回复：只删三个月前的");
     } finally { hob.close(); }
   });
 
@@ -396,7 +398,7 @@ describe("任务", () => {
     try {
       // 两个会话共用一套假模型，用工厂按“是不是 Worker”决定回什么，避免抢响应
       const factory = (context: any) => {
-        const isWorker = JSON.stringify(context.messages[0]).includes("助手派出的后台任务");
+        const isWorker = JSON.stringify(context.messages[0]).includes("派出的后台任务");
         if (!isWorker) return text("收到。");
         const lastAssistant = [...context.messages].reverse().find((message: any) => message.role === "assistant");
         const reported = lastAssistant?.content?.some((block: any) => block.type === "toolCall" && block.name === "report");
@@ -419,7 +421,7 @@ describe("任务", () => {
     try {
       hob.faux.setResponses(
         Array.from({ length: 10 }, () => (context: any) => {
-          const isWorker = JSON.stringify(context.messages[0]).includes("助手派出的后台任务");
+          const isWorker = JSON.stringify(context.messages[0]).includes("派出的后台任务");
           return isWorker ? call("report", { outcome: "done", result: "好了" }) : text("收到。");
         }),
       );
@@ -542,5 +544,68 @@ describe("任务", () => {
     } finally {
       hob.close();
     }
+  });
+});
+
+describe("没带技能的任务做完提醒沉淀", () => {
+  const hint = "这个任务没带技能。用 save_job_as_skill 让它回顾一遍，把能复用的做法沉淀下来，有没有值得沉淀的由它判断；已经有同类的技能，into 填那份。";
+  const makeJob = (overrides: Partial<Job> = {}): Job => ({
+    id: "t-hint", assistantId: "hob", title: "整理报告", instruction: "整理报告", status: "done",
+    createdAt: new Date().toISOString(), stats: { reads: 2, commands: 1, edits: 0 }, activity: [], summary: "报告整理好了",
+    ...overrides,
+  });
+
+  it("已完成、没带技能：提醒紧跟在「过程」那行后面", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const lines = assistantJobResultEvent(hob.home, makeJob(), { toolCount: 3 }).split("\n");
+      expect(lines.slice(0, 4)).toEqual(["任务「整理报告」（t-hint）已完成。", "过程：动手 3 次，没用技能。", hint, "结果："]);
+    } finally { hob.close(); }
+  });
+
+  it("带了技能，或者受阻、失败、已停止：不提醒", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const event = (job: Job) => assistantJobResultEvent(hob.home, job);
+      expect(event(makeJob({ skills: ["report-guide"] }))).not.toContain("这个任务没带技能");
+      for (const status of ["stuck", "failed", "stopped"] as const) expect(event(makeJob({ status }))).not.toContain("这个任务没带技能");
+    } finally { hob.close(); }
+  });
+
+  it("有从这个任务沉淀出来的技能：行末点名最近更新的那份", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const job = makeJob();
+      hob.runtime.store.saveJob(job);
+      saveAssistantSkill(hob.home, "hob", { name: "report-guide", title: "报告整理", description: "整理报告", content: "步骤" }, job.id);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      saveAssistantSkill(hob.home, "hob", { name: "report-brief", title: "报告简报", description: "整理简报", content: "步骤" }, job.id);
+      saveAssistantSkill(hob.home, "hob", { name: "other-skill", title: "别的事", description: "别的事", content: "步骤" }, "t-other");
+      const lines = assistantJobResultEvent(hob.home, job).split("\n");
+      expect(lines[2]).toBe(`${hint}上次从这个任务沉淀出了技能「报告简报」（report-brief），into 填它。`);
+    } finally { hob.close(); }
+  });
+
+  it("定时任务：没绑技能有提醒，绑了没有", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      const routine = hob.runtime.routines.create({ assistantId: "hob", name: "每日简报", instruction: "整理简报", schedules: ["0 9 * * *"] });
+      hob.faux.setResponses([call("report", { outcome: "done", result: "简报写好了" })]);
+      await hob.runtime.routines.runNow(routine.id);
+      await hob.runtime.jobs.waitIdle();
+      const first = String(event.mock.calls[0]![1]);
+      expect(first.startsWith("定时任务「每日简报」")).toBe(true);
+      expect(first.split("\n")[2]).toBe(hint);
+
+      saveAssistantSkill(hob.home, "hob", { name: "daily-brief", title: "每日简报", description: "整理简报", content: "步骤" });
+      hob.runtime.routines.update(routine.id, { skill: "daily-brief" });
+      hob.faux.setResponses([call("report", { outcome: "done", result: "简报写好了" })]);
+      await hob.runtime.routines.runNow(routine.id);
+      await hob.runtime.jobs.waitIdle();
+      const second = String(event.mock.calls.at(-1)![1]);
+      expect(second.startsWith("定时任务「每日简报」")).toBe(true);
+      expect(second).not.toContain("这个任务没带技能");
+    } finally { hob.close(); }
   });
 });

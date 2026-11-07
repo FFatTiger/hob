@@ -26,7 +26,7 @@ import {
 import { fmtBytes, fmtDuration, fmtElapsed, fmtTokens, fmtWhen } from "../util.ts";
 import { Markdown } from "./Markdown.tsx";
 import { PanelHead } from "./PanelHead.tsx";
-import { JOB_STATUS, StatusTag } from "./status-meta.tsx";
+import { JOB_STATUS, StatusTag, sedimentText } from "./status-meta.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })));
 
 
@@ -138,7 +138,7 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
   return (
     <>
       <PanelHead className="jdhead" title={<span className="t">任务</span>} close>
-        {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={!!s.sedimenting[job.id]} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{s.sedimenting[job.id] ? "正在沉淀…" : "沉淀成技能"}</button> : null}
+        {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={job.sediment?.status === "running"} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{job.sediment?.status === "running" ? "正在沉淀…" : "沉淀成技能"}</button> : null}
         {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="hob-btn hob-btn-compact" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />看桌面</button> : null}
       </PanelHead>
       <div className="jdbody" ref={body}>
@@ -200,7 +200,9 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
 /** 一轮的内容：前面几轮写明那一轮的状态和用时（最后一轮就是头部那个状态）；工作目录只跟在最后一轮下面。 */
 function RoundBody({ part, last, index }: { part: { job: Job; instruction?: string; steps?: JobStep[] }; last: boolean; index: number }) {
   const [expanded, setExpanded] = useState(false);
-  const timeline = part.steps === undefined ? undefined : groupThinking(part.steps);
+  const sedimentIndex = part.steps?.findIndex((step) => step.from === "user" && step.text === "沉淀技能") ?? -1;
+  const timeline = part.steps === undefined ? undefined : groupThinking(sedimentIndex < 0 ? part.steps : part.steps.slice(0, sedimentIndex));
+  const sediment = sedimentIndex < 0 ? undefined : groupThinking(part.steps!.slice(sedimentIndex + 1));
   const reason = jobReason(part.job);
   const ended = !active(part.job);
   const initiallyVisible = new Set(timeline ? visibleSteps(timeline.rows, ended, false).rows.map((row) => row.id) : []);
@@ -223,6 +225,7 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
           {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}
         </> : <Empty>还没有执行步骤。</Empty>}
       </div>
+      {sediment || (last && part.job.sediment) ? <><div className="lbl">沉淀技能{last && part.job.sediment ? ` · ${sedimentText(part.job.sediment)}` : ""}</div><div className="jd-timeline">{sediment?.rows.map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}{sediment?.thinking ? <ThinkingLive text={sediment.thinking} /> : null}</div></> : null}
       {last ? <Directory jobId={part.job.id} /> : null}
     </>
   );

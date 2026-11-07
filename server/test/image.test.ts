@@ -502,7 +502,7 @@ describe("图片进对话", () => {
           .items.filter((item): item is Extract<Item, { kind: "file" }> => item.kind === "file");
       expect(files()).toHaveLength(0);
       const routerLog = () => readFileSync(hob.runtime.store.routerFile("hob"), "utf8");
-      await waitFor(() => routerLog().includes(`任务交来的文件：${image}、${doc}。要给用户看，用 send_file 发。`));
+      await waitFor(() => routerLog().includes(`任务交来的文件：${image}、${doc}。`));
     } finally {
       hob.close();
       rmSync(dir, { recursive: true, force: true });

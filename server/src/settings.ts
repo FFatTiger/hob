@@ -15,6 +15,7 @@ import type {
   Theme,
   ThinkingLevel,
   ThinkingLevelMapSetting,
+  TokenPrice,
 } from "../../shared/types.ts";
 import { defaultSearch, normalizeSearch } from "../../shared/search.ts";
 import { checkImageSettings, normalizeImageSettings } from "./image.ts";
@@ -25,6 +26,7 @@ import type { ModelScores } from "../../shared/types.ts";
 import { isMemoryProvider, LORE_PLUGIN_VERSION, loreConnection, resolveMemoryProvider } from "./memory.ts";
 import { checkProvider } from "./providers.ts";
 import { checkTimezone } from "./time.ts";
+import { checkPrice } from "./usage-prices.ts";
 
 const FILE = "settings.json";
 const THEMES: Theme[] = ["system", "light", "dark"];
@@ -192,6 +194,22 @@ function normalizeProviders(raw: unknown): ProviderSettings[] {
   return providers;
 }
 
+/** 每百万 token 的单价的四项，键名固定。 */
+function normalizePrices(raw: unknown): Record<string, TokenPrice> {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const prices: Record<string, TokenPrice> = {};
+  for (const [model, price] of Object.entries(raw as Record<string, unknown>)) {
+    const id = model.trim();
+    if (!id) continue;
+    try {
+      prices[id] = checkPrice(price);
+    } catch {
+      // 这一项坏了：跳过，不影响其他模型
+    }
+  }
+  return prices;
+}
+
 /** 把读到的（或补丁里的）内容规整成合法设置：不合法的项退回默认值，时区不合法直接报错。 */
 function normalize(raw: unknown, base: Settings): Settings {
   const input = (raw ?? {}) as Partial<Settings>;
@@ -200,6 +218,7 @@ function normalize(raw: unknown, base: Settings): Settings {
   const work = (input.work ?? {}) as Partial<Settings["work"]>;
   const push = (input.push ?? {}) as Partial<Settings["push"]>;
   const theme = text(general.theme, base.general.theme) as Theme;
+  const prices = normalizePrices(input.usage?.prices);
   return {
     general: {
       theme: THEMES.includes(theme) ? theme : base.general.theme,
@@ -234,6 +253,7 @@ function normalize(raw: unknown, base: Settings): Settings {
       routerStallMinutes: int(work.routerStallMinutes, base.work.routerStallMinutes, 1, 24 * 60),
     },
     push: { email: text(push.email, base.push.email) },
+    ...(Object.keys(prices).length ? { usage: { prices } } : {}),
   };
 }
 
@@ -392,6 +412,7 @@ export class SettingsStore {
         providers: current.providers,
         work: { ...current.work, ...(patch.work ?? {}) },
         push: { ...current.push, ...(patch.push ?? {}) },
+        usage: current.usage,
       },
       current,
     );
@@ -462,6 +483,22 @@ export class SettingsStore {
       revision: this.file.revision + 1,
       settings: { ...this.get().settings, models },
     };
+    this.write();
+    return this.get();
+  }
+
+  /** 存一个模型的自定单价（price 为 null = 恢复默认）。不合法直接抛错，界面显示原因。 */
+  setUsagePrice(revision: number, model: string, price: TokenPrice | null): SettingsFile | undefined {
+    if (revision !== this.file.revision) return undefined;
+    const id = model.trim();
+    if (!id) throw new Error("未指定模型。");
+    const prices = { ...(this.settings.usage?.prices ?? {}) };
+    if (price === null) delete prices[id];
+    else prices[id] = checkPrice(price);
+    const settings = { ...this.settings };
+    if (Object.keys(prices).length) settings.usage = { prices };
+    else delete settings.usage;
+    this.file = { revision: this.file.revision + 1, settings };
     this.write();
     return this.get();
   }

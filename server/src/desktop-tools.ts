@@ -6,8 +6,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { chromium, type Browser, type Page } from "playwright-core";
 import type { HobRuntime } from "./runtime.ts";
 
-const LOGIN = "需要登录的页面不要自己登录，用 ask_user 请用户打开云桌面登录后回复。";
-const TAKEN = "用户正在操作云桌面，请稍后再试或用 ask_user 询问";
+const TAKEN = "用户正在操作云桌面，等用户操作完再试；着急的话，用 ask_user 问一声。";
 const point = Type.Object({ x: Type.Integer(), y: Type.Integer() });
 const action = Type.Object({
   type: Type.Union([Type.Literal("click"), Type.Literal("move"), Type.Literal("drag"), Type.Literal("type"), Type.Literal("key"), Type.Literal("scroll"), Type.Literal("wait")]),
@@ -110,7 +109,7 @@ export class DesktopToolSession {
   tools(): ToolDefinition<any, any>[] {
     const allowPublic = this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId) ?? false;
     const make = (name: string, label: string, description: string, parameters: any, run: (params: any, screen: string) => Promise<string | Buffer>): ToolDefinition<any, any> => ({
-      name, label, description: `${description} ${LOGIN}`,
+      name, label, description,
       parameters: Type.Object({ ...parameters.properties, ...(allowPublic ? { screen: Type.Optional(Type.Union([Type.Literal("own"), Type.Literal("public")])) } : {}) }),
       execute: async (_id, params) => {
         const operation = (async () => {
@@ -147,12 +146,12 @@ export class DesktopToolSession {
       },
     });
     return [
-      make("browser_open", "打开网页", this.router ? "在你的云桌面浏览器里打开 HTTP(S) 网页。要边看边和用户确认的操作自己做；步骤多、不需要用户盯着的交给任务。" : "在助手的浏览器中打开 HTTP(S) 网页。" , Type.Object({ url: Type.String() }), async ({ url }, screen) => {
+      make("browser_open", "打开网页", this.router ? "在你的云桌面浏览器里打开网页（HTTP 或 HTTPS）。" : "在助手的云桌面浏览器里打开网页（HTTP 或 HTTPS）。" , Type.Object({ url: Type.String() }), async ({ url }, screen) => {
         const target = new URL(url);
         if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("只支持 HTTP(S) 网页。");
         const page = await this.getPage(screen); this.check(screen); await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }); return `已打开 ${page.url()}`;
       }),
-      make("browser_snapshot", "读取页面", "读取当前页面的无障碍快照；引用用于点击或输入。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); return page.ariaSnapshot({ mode: "ai" }); }),
+      make("browser_snapshot", "读取页面", "读取当前页面的无障碍快照；里面的引用用于点击或输入。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); return page.ariaSnapshot({ mode: "ai" }); }),
       make("browser_click", "点击网页", "点击最新页面快照中的引用。", Type.Object({ ref: Type.String() }), async ({ ref }, screen) => { const page = await this.getPage(screen); this.check(screen); await page.getByRef(ref).click(); return "已点击。"; }),
       make("browser_type", "输入文字", "向最新页面快照中的引用输入文字。", Type.Object({ ref: Type.String(), text: Type.String(), submit: Type.Optional(Type.Boolean()) }), async ({ ref, text, submit }, screen) => { const page = await this.getPage(screen); this.check(screen); const target = page.getByRef(ref); await target.fill(text); if (submit) { this.check(screen); await target.press("Enter"); } return "已输入。"; }),
       make("browser_press", "按键", "向当前网页发送按键，如 Enter、Control+L。", Type.Object({ key: Type.String() }), async ({ key }, screen) => { const page = await this.getPage(screen); this.check(screen); await page.keyboard.press(key); return "已按键。"; }),

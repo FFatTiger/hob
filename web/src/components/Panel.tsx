@@ -638,7 +638,7 @@ function AssistantSkills({ aid }: { aid: string }) {
       <button className="assistant-skill-info" onClick={() => openFilePreview(skill.path)} title={`${skill.description} · ${skillUsage(skill)}`}><strong>{skill.title}</strong><span>{skill.description} · {skillUsage(skill)}</span></button>
       <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={skill.title} aria-pressed={skill.enabled} onClick={() => void changeAssistantSkill(aid, skill.name, skill.enabled ? "disable" : "enable")} />
       <button className="knowledge-dots" aria-label={`${skill.title}的操作`} onClick={(e) => menu.toggle(skill.name, e.currentTarget)}><Icon name="more" size={18} /></button>
-    </div>)}</div> : <Empty>还没有技能。任务完成后会自动沉淀，也可以在任务详情里点「沉淀成技能」。</Empty>}
+    </div>)}</div> : <Empty>还没有技能。助手会把做成的事沉淀成技能，你也可以在任务详情里点「沉淀成技能」。</Empty>}
     {selected && menu.menu && createPortal(<div className="amenu knowledge-popup" ref={menu.box}>
       <button onClick={() => { menu.close(); openFilePreview(selected.path); }}>查看</button>
       {selected.version > 1 ? <button onClick={() => { menu.close(); void changeAssistantSkill(aid, selected.name, "rollback"); }}>回退到上一版</button> : null}
@@ -820,7 +820,7 @@ function AssistantSettings() {
         <PanelText multiline value={a.dutyLong ?? ""} save={(dutyLong) => feedback.save({ dutyLong })} />
 
         <div className="lbl">补充说明</div>
-        <PanelText multiline value={a.instructions} placeholder="这个助手特有的做法，如“周报先列要点再展开”" save={(instructions) => feedback.save({ instructions })} />
+        <PanelText multiline value={a.instructions} placeholder="记下这个助手要知道的事实，如“周报发到团队群”" save={(instructions) => feedback.save({ instructions })} />
         </div>
       </div>
 

@@ -6,9 +6,7 @@ Hob 是一个自己部署、真正动手处理事务的私人助手。你只和 
 
 > 目前界面只有中文。Hob 是单用户应用，运行在你自己的电脑或服务器上。
 
-![与 Hob 的对话，展示任务、页面、文件、确认等卡片及浮层](docs/screenshots/chat.jpg)
-
-*示意图：浮层卡片由单独截图合成。*
+![Hob：与主助手的对话、正在运行的任务和实时执行过程](docs/screenshots/chat.png)
 
 ## 怎么运作
 
@@ -24,7 +22,7 @@ Hob 是一个自己部署、真正动手处理事务的私人助手。你只和 
 
 手机上可查看助手列表、对话和档案，支持滑动回复和长按操作。助手需要你确认，或任务受阻、失败时，可以收到推送通知。
 
-![手机上的助手列表、助手提出的确认问题和助手档案](docs/screenshots/mobile.jpg)
+![手机上的 Hob：助手列表、委派卡、助手设置](docs/screenshots/mobile.png)
 
 ### 技能
 
@@ -163,7 +161,7 @@ npm test             # vitest
 npm run typecheck
 ```
 
-开发地址加上 `?mock=1`，界面会使用浏览器内的模拟后端。上面的截图使用专门的模拟场景；执行 `npx vite build` 后，将 `CHROME_PATH` 设为 Chrome 或 Chromium 可执行文件路径，再运行 `CHROME_PATH=/path/to/chrome node scripts/readme-screenshots.mjs` 重新拍摄。要另行导出完整的详细场景图，可加上 `--all <输出目录>`。
+开发地址加上 `?mock=1`，界面会使用浏览器内的模拟后端，不需要模型和服务端。上面的截图就是这样拍的。
 
 技术栈：Node 22 + TypeScript，Hono + SSE，Vite + React，CSS 全部手写。智能体引擎是进程内运行的 [pi](https://github.com/earendil-works/pi) SDK。设计、数据布局和工具列表见 [docs/architecture.md](docs/architecture.md)。
 

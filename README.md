@@ -6,9 +6,7 @@ Hob is a self-hosted personal assistant that gets work done: talk to Hob, and it
 
 > The interface is currently Chinese-only. Hob is a single-user app you run on your own machine or server.
 
-![A Hob conversation with job, page, file and confirmation cards, plus other card styles overlaid](docs/screenshots/chat.jpg)
-
-*Illustration: the floating cards are composed from separate screenshots.*
+![Hob: chat with the main assistant, a running job and its live transcript](docs/screenshots/chat.png)
 
 ## How it works
 
@@ -24,7 +22,7 @@ Jobs can be inspected, stopped or resumed, with each round retained; the assista
 
 On a phone, the assistant list, conversation and profile use a mobile layout; the app supports swipe-to-reply and long-press actions. Push notifications alert you when an assistant needs your decision or a job gets stuck or fails.
 
-![Phone views of the assistant list, an assistant's confirmation question and its profile](docs/screenshots/mobile.jpg)
+![Hob on a phone: assistant list, a delegation card and assistant settings](docs/screenshots/mobile.png)
 
 ### Skills
 
@@ -163,7 +161,7 @@ npm test             # vitest
 npm run typecheck
 ```
 
-Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend. The screenshots above use dedicated mock scenarios; after `npx vite build`, set `CHROME_PATH` to your Chrome or Chromium executable and run `CHROME_PATH=/path/to/chrome node scripts/readme-screenshots.mjs`. To export the full set of detailed views separately, add `--all <output-directory>`.
+Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend. No model or server is needed, and the screenshots above were taken that way.
 
 Stack: Node 22 + TypeScript, Hono with SSE, Vite + React with hand-written CSS. The agent engine is the [pi](https://github.com/earendil-works/pi) SDK, used in-process. Read [docs/architecture.md](docs/architecture.md) for the design, data layout and tool list (in Chinese).
 

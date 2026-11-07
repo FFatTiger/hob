@@ -1,7 +1,7 @@
 // 对话条目的渲染：气泡、选择题、任务卡、草稿卡、文件卡、灰字提示。
 import { Fragment, useEffect, useLayoutEffect, useReducer, useRef, useState, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import type { Approval, ApprovalOption, Delegation, Draft, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
+import type { Approval, ApprovalOption, AssistantSummary, Delegation, Draft, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
 import { visibleLiveCards } from "../page-live.ts";
@@ -26,6 +26,7 @@ import {
   focusComposer,
   jumpToDelegation,
   jumpToHandback,
+  openAssistantPanel,
   openFilePreview,
   openLivePreview,
   openJob,
@@ -362,6 +363,86 @@ function DraftCard({ draft }: { draft: Draft }) {
             </button>
           </div>
         </div>
+    </div>
+  );
+}
+
+
+/** 助手卡上的状态标记：和左栏、编辑面板的叫法一致。 */
+function assistantFlags(a: AssistantSummary): string[] {
+  return [a.busy ? "正在回复" : "", a.pinned ? "置顶" : "", a.hidden ? "收起" : ""].filter(Boolean);
+}
+
+function AssistantName({ a }: { a: AssistantSummary }) {
+  return (
+    <span className="adirname">
+      {a.name}
+      {a.primary ? <em>主助手</em> : null}
+    </span>
+  );
+}
+
+function AssistantFlags({ a }: { a: AssistantSummary }) {
+  const flags = assistantFlags(a);
+  return flags.length ? <span className="adirflags">{flags.map((flag) => <em key={flag}>{flag}</em>)}</span> : null;
+}
+
+/** list_assistants 的列表卡：点一行打开这个助手的右栏编辑面板。 */
+function AssistantListCard({ item }: { item: Extract<Item, { kind: "assistants" }> }) {
+  const s = useApp();
+  const list = item.ids.map((id) => s.assistants.find((a) => a.id === id)).filter((a): a is AssistantSummary => Boolean(a));
+  return (
+    <div className="adir" data-item-id={item.id}>
+      <div className="adirhead">
+        <span>助手</span>
+        <span className="sp" />
+        <small>{list.length ? `${list.length} 个 · 点一个在右侧改` : "没有助手"}</small>
+      </div>
+      {list.map((a) => (
+        <button type="button" className="adirrow" key={a.id} onClick={() => openAssistantPanel(a.id)} title={`编辑「${a.name}」`}>
+          <Avatar sprite={a.sprite} prop={a.prop} size={34} />
+          <span className="adirmain">
+            <AssistantName a={a} />
+            <span className="adirduty">{a.duty || "（没写职责）"}</span>
+          </span>
+          <AssistantFlags a={a} />
+          <b className="adirgo">›</b>
+        </button>
+      ))}
+      {list.length < item.ids.length ? <div className="adirgone">有些助手已经不在了（可能归档了）。</div> : null}
+    </div>
+  );
+}
+
+/** get_assistant 的详情卡：点卡片（或按钮）打开右栏编辑面板。 */
+function AssistantDetailCard({ item }: { item: Extract<Item, { kind: "assistantDetail" }> }) {
+  const s = useApp();
+  const a = s.assistants.find((assistant) => assistant.id === item.assistantId);
+  if (!a) {
+    return (
+      <div className="adir" data-item-id={item.id}>
+        <div className="adirgone">「{item.assistantId}」已经不在了，可能归档了。</div>
+      </div>
+    );
+  }
+  const open = () => openAssistantPanel(a.id);
+  const status = [...assistantFlags(a), `通知${a.notify ? "开" : "关"}`].join(" · ");
+  return (
+    <div className="adir adetail" data-item-id={item.id}>
+      <button type="button" className="adirtop" onClick={open} title={`编辑「${a.name}」`}>
+        <Avatar sprite={a.sprite} prop={a.prop} size={46} />
+        <span className="adirmain">
+          <AssistantName a={a} />
+          <span className="adirduty">{a.duty || "（没写职责）"}</span>
+        </span>
+        <b className="adirgo">›</b>
+      </button>
+      <div className="adirkv">
+        <div className="kv"><span className="k">详细职责</span><span className={a.dutyLong?.trim() ? undefined : "none"}>{a.dutyLong?.trim() || "没有"}</span></div>
+        <div className="kv"><span className="k">补充说明</span><span className={a.instructions?.trim() ? undefined : "none"}>{a.instructions?.trim() || "没有"}</span></div>
+        <div className="kv"><span className="k">状态</span><span>{status}</span></div>
+      </div>
+      <div className="adiractions"><button type="button" className="hob-btn hob-btn-primary" onClick={open}>在右侧编辑</button></div>
     </div>
   );
 }
@@ -719,6 +800,14 @@ function ItemView({
         <DraftCard draft={draft} />
       </div>
     ) : null;
+  }
+
+  if (item.kind === "assistants") {
+    return <div className={`b wide${enter}`}><AssistantListCard item={item} /></div>;
+  }
+
+  if (item.kind === "assistantDetail") {
+    return <div className={`b wide${enter}`}><AssistantDetailCard item={item} /></div>;
   }
 
   if (item.kind === "delegation") {

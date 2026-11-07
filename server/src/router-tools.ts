@@ -18,7 +18,8 @@ import {
   validateCustomProp,
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
-import type { Approval, ApprovalOption, CustomProp, Draft, Routine, RoutineCheck } from "../../shared/types.ts";
+import type { Approval, ApprovalOption, Assistant, CustomProp, Draft, Routine, RoutineCheck } from "../../shared/types.ts";
+import { updateAssistant, type AssistantPatch } from "./assistant-admin.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
@@ -88,6 +89,37 @@ function fileMeta(path: string): string | undefined {
   } catch {
     return undefined;
   }
+}
+
+
+/** 助手资料里和界面叫法一致的标记，列表和详情都用它。 */
+function assistantFlags(assistant: Assistant): string[] {
+  return [
+    assistant.primary ? "主助手" : "",
+    assistant.pinned ? "置顶" : "",
+    assistant.hidden ? "已收起" : "",
+  ].filter(Boolean);
+}
+
+function assistantModelsText(assistant: Assistant): string {
+  const picks = [
+    assistant.models?.conversation ? `对话 ${assistant.models.conversation.ref}` : "",
+    assistant.models?.work ? `任务 ${assistant.models.work.ref}` : "",
+  ].filter(Boolean);
+  return picks.length ? picks.join("，") : "跟随设置";
+}
+
+/** 置顶的在前（按 pinOrder，没排过的按创建时间）。和左栏顺序一致。 */
+function orderedAssistants(store: { assistants: () => Assistant[] }): Assistant[] {
+  return [...store.assistants()].sort((a, b) => {
+    if (Boolean(a.pinned) !== Boolean(b.pinned)) return a.pinned ? -1 : 1;
+    if (a.pinned && b.pinned) {
+      const left = a.pinOrder ?? Number.MAX_SAFE_INTEGER;
+      const right = b.pinOrder ?? Number.MAX_SAFE_INTEGER;
+      if (left !== right) return left - right;
+    }
+    return a.createdAt.localeCompare(b.createdAt);
+  });
 }
 
 /** 一个助手的 Router 能用的全部工具。改状态的工具都写卡片 + 发事件。 */
@@ -614,6 +646,93 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string): Tool
   if (assistant().primary) {
     tools.push(
       overviewTool(runtime),
+      {
+        name: "list_assistants",
+        label: "看助手列表",
+        description: "列出所有助手（包括收起的）：名字、id、职责、置顶/收起、在不在忙。对话里会显示成一张列表卡，点某个助手就在右栏打开它的编辑面板。要改哪个助手，先用它拿 id。",
+        parameters: Type.Object({}),
+        execute: async () => {
+          const list = orderedAssistants(store);
+          const rows = list.map((item) => {
+            const summary = router.summary(item);
+            const flags = [...assistantFlags(item), summary.busy ? "正在回复" : ""].filter(Boolean);
+            return `- ${item.name}（${item.id}）：${item.duty}${flags.length ? ` · ${flags.join(" · ")}` : ""}`;
+          });
+          await router.addItem(assistantId, { kind: "assistants", ids: list.map((item) => item.id) });
+          if (!rows.length) return ok("现在一个助手都没有。");
+          return ok(`共 ${rows.length} 个助手（含收起的）：\n${rows.join("\n")}`);
+        },
+      },
+      {
+        name: "get_assistant",
+        label: "看助手资料",
+        description: "看一个助手的完整资料：名字、职责简介、详细职责、补充说明、置顶/收起/通知、模型、执行前确认、定时任务、最近做过的事。对话里会出一张详情卡，点它就在右栏打开编辑面板。",
+        parameters: Type.Object({ assistantId: Type.String({ description: "助手 id；不确定就先 list_assistants" }) }),
+        execute: async (_id, params: any) => {
+          const id = String(params.assistantId ?? "").trim();
+          const target = store.assistant(id);
+          if (!target) return fail(`没有这个助手：${id}${id ? "" : "（要填 id）"}`);
+          const rules = store.rules(id);
+          const routines = store.routines().filter((routine) => routine.assistantId === id);
+          const worklog = store.worklog(id).slice(0, 5);
+          const lines = [
+            `名字：${target.name}`,
+            `id：${target.id}`,
+            `职责简介：${target.duty || "（空）"}`,
+            `详细职责：${target.dutyLong?.trim() || "（空）"}`,
+            `补充说明：${target.instructions.trim() || "（空）"}`,
+            `置顶：${target.pinned ? "是" : "否"}；收起：${target.hidden ? "是" : "否"}；通知：${target.notify ? "开" : "关"}`,
+            `模型：${assistantModelsText(target)}`,
+            `执行前确认：${rules.length ? rules.map((rule) => `${rule.text}（${rule.mode === "ask" ? "需确认" : "直接执行"}）`).join("；") : "（没有）"}`,
+            `定时任务：${routines.length ? routines.map((routine) => `${routine.name}${routine.active ? "" : "（暂停）"}`).join("、") : "（没有）"}`,
+            `最近：${worklog.length ? worklog.map((entry) => entry.text).join(" / ") : "（没有记录）"}`,
+          ];
+          await router.addItem(assistantId, { kind: "assistantDetail", assistantId: id });
+          return ok(lines.join("\n"));
+        },
+      },
+      {
+        name: "update_assistant",
+        label: "改助手资料",
+        description: "改一个助手（包括自己）的资料：名字、职责简介、详细职责、补充说明、置顶、收起、通知、绑定的知识库。改之前的旧档案会备份到该助手的 backups 目录，返回里有备份路径；改完对话里留一行灰字。只有主助手能改别人。",
+        parameters: Type.Object({
+          assistantId: Type.String({ description: "要改的助手 id；先用 list_assistants 或 get_assistant 拿" }),
+          name: Type.Optional(Type.String({ description: "显示名，不能为空" })),
+          duty: Type.Optional(Type.String({ description: "左栏头像下那行小字，最多 8 个字" })),
+          dutyLong: Type.Optional(Type.String({ description: "详细职责，两三句话" })),
+          instructions: Type.Optional(Type.String({ description: "补充说明全文（不是片段，会整段替换）；传空字符串表示清空" })),
+          pinned: Type.Optional(Type.Boolean({ description: "是否放在顶部" })),
+          hidden: Type.Optional(Type.Boolean({ description: "true 收起这个助手（主助手不能收起）" })),
+          notify: Type.Optional(Type.Boolean({ description: "需要确认时是否通知" })),
+          knowledge: Type.Optional(Type.Array(Type.String(), { description: "绑定哪些知识库 id，整份替换；传空数组清空" })),
+        }),
+        execute: async (_id, params: any) => {
+          const targetId = String(params.assistantId ?? "").trim();
+          if (!targetId) return fail("要填 assistantId。");
+          const target = store.assistant(targetId);
+          if (!target) return fail(`没有这个助手：${targetId}`);
+          const patch: AssistantPatch = {};
+          if (typeof params.name === "string") {
+            if (!params.name.trim()) return fail("名字不能为空。");
+            patch.name = params.name.trim();
+          }
+          if (typeof params.duty === "string") patch.duty = params.duty;
+          if (typeof params.dutyLong === "string") patch.dutyLong = params.dutyLong;
+          if (typeof params.instructions === "string") patch.instructions = params.instructions;
+          if (typeof params.pinned === "boolean") patch.pinned = params.pinned;
+          if (typeof params.hidden === "boolean") patch.hidden = params.hidden;
+          if (typeof params.notify === "boolean") patch.notify = params.notify;
+          if (Array.isArray(params.knowledge)) patch.knowledge = params.knowledge.map((item: unknown) => String(item));
+          if (!Object.keys(patch).length) return fail("没给要改的字段：至少填 name、duty、dutyLong、instructions、pinned、hidden、notify、knowledge 中的一个。");
+          if (target.primary && patch.hidden) return fail("主助手不能收起。");
+          const result = await updateAssistant(runtime, targetId, patch, { backup: true });
+          if (!result.ok) return fail(result.error);
+          if (!result.changed.length) return ok("和原来一样，没有改动，也没留备份。");
+          const name = result.next?.name ?? target.name;
+          await note("info", `已改「${name}」：${result.changed.join("、")}`);
+          return ok(`已改「${name}」：${result.changed.join("、")}。旧档案留档在 ${result.backupPath}。`);
+        },
+      },
       {
         name: "propose_assistant",
         label: "提议创建专属助手",

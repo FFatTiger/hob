@@ -66,12 +66,15 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   const kind = panel.kind;
   const [rootScrolled, setRootScrolled] = useState(false);
   const selectedAssistant = s.profiles[s.sel ?? "hob"]?.assistant ?? s.assistants.find((a) => a.id === (s.sel ?? "hob"));
+  // 编辑面板可以指定改哪个助手（对话里的助手卡点进来），不指定就是当前对话这个
+  const editingId = panel.kind === "assistant" ? panel.id ?? s.sel ?? "hob" : s.sel ?? "hob";
+  const editing = s.profiles[editingId]?.assistant ?? s.assistants.find((a) => a.id === editingId);
   useEffect(() => setRootScrolled(false), [s.sel]);
-  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? "定时任务" : kind === "newRoutine" ? "新建定时任务" : kind === "routines" ? "定时任务" : kind === "skills" ? "技能" : kind === "knowledge" ? "知识库" : kind === "rules" ? "执行前确认" : kind === "now" ? "" : "编辑助手";
+  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? "定时任务" : kind === "newRoutine" ? "新建定时任务" : kind === "routines" ? "定时任务" : kind === "skills" ? "技能" : kind === "knowledge" ? "知识库" : kind === "rules" ? "执行前确认" : kind === "now" ? "" : `编辑助手 · ${editing?.name ?? editingId}`;
   return (
     <aside className="panel" onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
       <PanelHead className="phead" root={kind === "now"} title={<span className="t">{kind === "now" && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
-        {kind === "now" ? <><button className="hob-icon-btn" title="编辑助手" onClick={openAssistantPanel}><Icon name="edit" size={17} /></button><button className="hob-icon-btn panel-close" title="收起右栏" onClick={collapsePanel}><Icon name="dbl" size={17} /></button></> : null}
+        {kind === "now" ? <><button className="hob-icon-btn" title="编辑助手" onClick={() => openAssistantPanel()}><Icon name="edit" size={17} /></button><button className="hob-icon-btn panel-close" title="收起右栏" onClick={collapsePanel}><Icon name="dbl" size={17} /></button></> : null}
         {kind === "routines" ? <button className="hob-icon-btn" title="新建定时任务" onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}
         {panel.kind === "routine" ? <button className="hob-btn hob-btn-primary hob-btn-compact" onClick={() => void runRoutine(panel.id)}>立即运行</button> : null}
       </PanelHead>
@@ -81,7 +84,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
         ) : kind === "newRoutine" ? (
           <NewRoutine />
         ) : kind === "assistant" ? (
-          <AssistantSettings key={s.sel ?? "hob"} />
+          <AssistantSettings key={editingId} aid={editingId} />
         ) : kind === "routines" ? <RoutineList /> : kind === "skills" ? <AssistantSkills aid={s.sel ?? "hob"} /> : kind === "knowledge" ? <AssistantKnowledge aid={s.sel ?? "hob"} /> : kind === "rules" ? <AssistantRules aid={s.sel ?? "hob"} /> : (
           <><PanelNow /><PanelRootDetails /></>
         )}
@@ -827,9 +830,8 @@ function RuleCreator({ aid }: { aid: string }) {
   </div>;
 }
 
-function AssistantSettings() {
+function AssistantSettings({ aid }: { aid: string }) {
   const s = useApp();
-  const aid = s.sel ?? "hob";
   const profile = s.profiles[aid];
   const [picking, setPicking] = useState(false);
   const [archiving, setArchiving] = useState(false);

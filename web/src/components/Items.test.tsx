@@ -2,10 +2,11 @@ import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { Item, JobStatus, SedimentStatus } from "../../../shared/types.ts";
 
-const state = vi.hoisted(() => ({ sediment: undefined as SedimentStatus | undefined, status: "done" as JobStatus, statusReason: undefined as string | undefined }));
+const state = vi.hoisted(() => ({ sediment: undefined as SedimentStatus | undefined, status: "done" as JobStatus, statusReason: undefined as string | undefined, assistants: [] as unknown[] }));
 
 vi.mock("../store.ts", () => ({
-  useApp: () => ({ assistants: [], approvals: {}, drafts: {}, delegations: {}, livePages: {}, sel: "hob", jobs: { "t-1": { id: "t-1", title: "测试任务", status: state.status, statusReason: state.statusReason, sediment: state.sediment, assistantId: "hob", createdAt: "2026-01-01T00:00:00Z", stats: { reads: 0, commands: 0, edits: 0 } } } }),
+  useApp: () => ({ assistants: state.assistants, approvals: {}, drafts: {}, delegations: {}, livePages: {}, sel: "hob", jobs: { "t-1": { id: "t-1", title: "测试任务", status: state.status, statusReason: state.statusReason, sediment: state.sediment, assistantId: "hob", createdAt: "2026-01-01T00:00:00Z", stats: { reads: 0, commands: 0, edits: 0 } } } }),
+  openAssistantPanel: vi.fn(),
   photoUrl: (path: string) => path, fileUrl: (path: string) => path,
 }));
 vi.mock("./ImageGen.tsx", () => ({ ImageGenCard: ({ itemId }: { itemId: string }) => <div data-item-id={itemId}>生成的图片</div> }));
@@ -45,6 +46,30 @@ describe("对话卡片出处", () => {
     }
     finally { state.status = "done"; state.statusReason = undefined; vi.unstubAllGlobals(); }
   });
+  it("助手列表卡和详情卡按 id 显示助手，带得回编辑面板的入口", () => {
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    const at = "2026-01-01T00:00:00Z";
+    state.assistants = [
+      { id: "hob", name: "Hob", duty: "主助手", sprite: "hob", primary: true, pinned: true, hidden: false, notify: true, instructions: "", createdAt: at },
+      { id: "ops", name: "运维", duty: "服务器和网络", sprite: "wifi", primary: false, pinned: false, hidden: true, notify: true, instructions: "公网 IP 每周变一次", dutyLong: "管 NAS 和路由器", createdAt: at },
+    ];
+    const html = renderToStaticMarkup(<ItemList items={[
+      { kind: "assistants", id: "list-1", at, ids: ["hob", "ops"] },
+      { kind: "assistantDetail", id: "detail-1", at, assistantId: "ops" },
+    ]} />);
+    expect(html).toContain("Hob");
+    expect(html).toContain("主助手");
+    expect(html).toContain("运维");
+    expect(html).toContain("服务器和网络");
+    expect(html).toContain("收起");
+    expect(html).toContain("管 NAS 和路由器");
+    expect(html).toContain("在右侧编辑");
+    expect(html).toContain('data-item-id="list-1"');
+    expect(html).toContain('data-item-id="detail-1"');
+    state.assistants = [];
+    vi.unstubAllGlobals();
+  });
+
   it("文件、图片、生图和任务条目带各自的 item id", () => {
     vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
     const at = "2026-01-01T00:00:00Z";

@@ -8,7 +8,6 @@ import { serveStatic } from "@hono/node-server/serve-static";
 import type {
   AboutInfo,
   ClaudeCodeSettings,
-  Assistant,
   HobEvent,
   ImageKeyView,
   ImageSettingsSaved,
@@ -25,8 +24,8 @@ import type {
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
-import { parseSprite } from "../../shared/sprites.ts";
 import { answerApproval, archiveAssistant, createFromDraft, dismissDraft } from "./actions.ts";
+import { updateAssistant, type AssistantPatch } from "./assistant-admin.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -39,14 +38,13 @@ import { importMcpServers, listMcpImports, mcpView, patchMcpServer, removeMcpSer
 import type { McpServerPatch, McpServerSave } from "../../shared/mcp.ts";
 import { checkImageSettings, generateImage, imageConfigured, imageKey, IMAGE_KEY_SECRET } from "./image.ts";
 import { checkEmbeddingSettings, embed, embeddingKey, embeddingModel, EMBEDDING_KEY_SECRET } from "./embedding.ts";
-import { checkAssistantModels, checkModelsPatch } from "./models.ts";
+import { checkModelsPatch } from "./models.ts";
 import { saveLoreConnection, testLoreConnection } from "./memory.ts";
 import { verifyPassword } from "./password.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
 import { SEARCH_PROVIDERS } from "../../shared/search.ts";
 import { WebSearch } from "./search.ts";
-import { clampDuty } from "./text.ts";
 import { deleteOwnSkill, importSkills, listImportSkills, skillViews } from "./skills.ts";
 import { listAssistantSkills, rollbackAssistantSkill, setAssistantSkillEnabled } from "./assistant-skills.ts";
 import { deleteSkill } from "./delete-skill.ts";
@@ -782,72 +780,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   app.patch("/api/assistants/:id", async (c) => {
-    const id = c.req.param("id");
-    const assistant = store.assistant(id);
-    if (!assistant) return c.json({ error: "助手不存在" }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as Partial<Assistant> & { rule?: { id?: unknown; text?: unknown; mode?: unknown } };
-    if (body.rule !== undefined) {
-      const edit = body.rule;
-      if (!edit || typeof edit !== "object" || (edit.id !== undefined && (typeof edit.id !== "string" || !edit.id))) return c.json({ error: "规则无效。" }, 400);
-      if ((edit.id === undefined || edit.text !== undefined) && (typeof edit.text !== "string" || !edit.text.trim() || edit.text.trim().length > 1000)) return c.json({ error: "规则内容不能为空或超过 1000 字。" }, 400);
-      if ((edit.id === undefined || edit.mode !== undefined) && edit.mode !== "ask" && edit.mode !== "allow") return c.json({ error: "规则模式无效。" }, 400);
-      const rules = store.rules(id);
-      const existing = edit.id === undefined ? undefined : rules.find((item) => item.id === edit.id);
-      if (edit.id !== undefined && !existing) return c.json({ error: "规则不存在。" }, 404);
-      const text = typeof edit.text === "string" ? edit.text.trim() : existing!.text;
-      if (rules.some((item) => item.id !== edit.id && item.text === text)) return c.json({ error: "规则内容已存在。" }, 400);
-      const mode = edit.mode === "ask" || edit.mode === "allow" ? edit.mode : existing!.mode;
-      const rule = { id: existing?.id ?? newId("r-"), text, mode, changedAt: new Date().toISOString() };
-      if (existing) Object.assign(existing, rule);
-      else rules.push(rule);
-      store.saveRules(id, rules);
-      bus.emit({ type: "profile", assistantId: id });
-      return c.json({ ok: true, rule });
-    }
-    if (body.knowledge !== undefined) {
-      if (!Array.isArray(body.knowledge) || body.knowledge.some((id) => typeof id !== "string")) return c.json({ error: "知识库绑定无效。" }, 400);
-      const collections = (await runtime.knowledge.list()).collections;
-      if (body.knowledge.some((id) => !collections.some((item) => item.id === id))) return c.json({ error: "知识库不存在。" }, 400);
-    }
-    if (typeof body.sprite === "string" && body.sprite !== assistant.sprite) {
-      const parsed = parseSprite(body.sprite);
-      // custom 要有画法数据才收（画法在 prop 字段上，PATCH 不改它）；否则渲染成空手火苗，不如拒绝
-      if (!parsed || (parsed.prop === "custom" && !assistant.prop)) return c.json({ error: "头像无效。" }, 400);
-    }
-    let models;
-    let abilities;
-    try {
-      await runtime.models.get();
-      ({ models, abilities } = checkAssistantModels(
-        { ...(body.models ? { models: body.models } : {}), ...(body.abilities ? { abilities: body.abilities } : {}) },
-        runtime.settings.settings.models.roster,
-        runtime.models,
-      ));
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
-    }
-    const next: Assistant = {
-      ...assistant,
-      ...(typeof body.name === "string" ? { name: body.name } : {}),
-      ...(typeof body.duty === "string" ? { duty: clampDuty(body.duty) } : {}),
-      ...(typeof body.dutyLong === "string" ? { dutyLong: body.dutyLong } : {}),
-      ...(typeof body.sprite === "string" ? { sprite: body.sprite } : {}),
-      ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
-      // 置顶区里的位置：拖动头像换位置后按 0、1、2… 存，取整且不为负
-      ...(typeof body.pinOrder === "number" && Number.isFinite(body.pinOrder) ? { pinOrder: Math.max(0, Math.round(body.pinOrder)) } : {}),
-      ...(typeof body.hidden === "boolean" ? { hidden: body.hidden } : {}),
-      ...(typeof body.notify === "boolean" ? { notify: body.notify } : {}),
-      ...(models ? { models } : {}),
-      ...(abilities ? { abilities } : {}),
-      ...(typeof body.instructions === "string" ? { instructions: body.instructions } : {}),
-      ...(body.knowledge !== undefined ? { knowledge: [...new Set(body.knowledge)] } : {}),
-    };
-    store.saveAssistant(next);
-    // 工具说明和注册取决于模型及助手能力，变化后重开会话
-    if (models || abilities) router.releaseSessions();
-    const summary = router.summary(next);
-    bus.emit({ type: "assistant", assistant: summary });
-    return c.json({ assistant: summary });
+    const body = (await c.req.json().catch(() => ({}))) as AssistantPatch;
+    const result = await updateAssistant(runtime, c.req.param("id"), body);
+    if (!result.ok) return c.json({ error: result.error }, result.status);
+    return c.json(result.body);
   });
 
   // 归档助手：档案、对话、规则和定时进归档，助手从列表移除

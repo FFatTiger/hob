@@ -1470,6 +1470,32 @@ export async function patchAssistant(id: string, patch: Partial<Assistant>) {
   }
 }
 
+/**
+ * 置顶头像换了先后：按新先后把位置写成 0、1、2…（下标）存进各助手的档案。
+ * 只发变了的几条；有任何一条没存上，把整套先后退回并提示。
+ */
+export async function savePinOrder(ids: string[]): Promise<string | null> {
+  const changed = ids
+    .map((id, index) => ({ id, pinOrder: index }))
+    .filter(({ id, pinOrder }) => state.assistants.find((a) => a.id === id)?.pinOrder !== pinOrder);
+  if (!changed.length) return null;
+  const before = state.assistants;
+  set((s) => ({
+    assistants: s.assistants.map((a) => {
+      const index = ids.indexOf(a.id);
+      return index < 0 ? a : { ...a, pinOrder: index };
+    }),
+  }));
+  try {
+    await Promise.all(changed.map(({ id, pinOrder }) => api.patchAssistant(id, { pinOrder })));
+    return null;
+  } catch (e) {
+    const message = `保存失败：${errText(e)}`;
+    set({ assistants: before, notice: message });
+    return message;
+  }
+}
+
 export async function addRule(assistantId: string, text: string, mode: "ask" | "allow"): Promise<string | null> {
   try {
     const result = await api.patchAssistant(assistantId, { rule: { text, mode } });

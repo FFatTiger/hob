@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { Approval, JobStep } from "../../shared/types.ts";
+import type { Approval, Assistant, JobStep } from "../../shared/types.ts";
 import { createApp } from "../src/http.ts";
 import type { HobRuntime } from "../src/runtime.ts";
 import { makeHob } from "./helpers.ts";
@@ -395,6 +395,40 @@ describe("PATCH /api/assistants/:id", () => {
       expect(response.status).toBe(200);
       expect(hob.runtime.store.assistant("hob")?.duty).toBe("盯着模型发布和");
       expect(hob.runtime.store.assistant("hob")?.duty.length).toBeLessThanOrEqual(8);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("置顶位置存进档案，重新打开还是这个位置", async () => {
+    const hob = makeHob();
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const patch = (body: unknown) =>
+        app.request("/api/assistants/hob", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+      const response = await patch({ pinOrder: 2 });
+      expect(response.status).toBe(200);
+      expect(((await response.json()) as { assistant: Assistant }).assistant.pinOrder).toBe(2);
+      expect(hob.runtime.store.assistant("hob")?.pinOrder).toBe(2);
+      // 落的是 profile.json：另开一个 store 读同一份家目录
+      const { Store } = await import("../src/store.ts");
+      expect(new Store(hob.home).assistant("hob")?.pinOrder).toBe(2);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("置顶位置不是数字就不收，小数取整、负数归零", async () => {
+    const hob = makeHob();
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      const patch = (body: unknown) => app.request("/api/assistants/hob", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+      await patch({ pinOrder: "3" });
+      expect(hob.runtime.store.assistant("hob")?.pinOrder).toBeUndefined();
+      await patch({ pinOrder: 1.6 });
+      expect(hob.runtime.store.assistant("hob")?.pinOrder).toBe(2);
+      await patch({ pinOrder: -5 });
+      expect(hob.runtime.store.assistant("hob")?.pinOrder).toBe(0);
     } finally {
       hob.close();
     }

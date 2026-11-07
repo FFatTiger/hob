@@ -11,6 +11,7 @@ import { Avatar, type AvatarMark } from "../sprites.tsx";
 import { closePanelPages, openJob, openJobs, openRoutine, select, useApp } from "../store.ts";
 import { cronText, fmtElapsed, fmtList } from "../util.ts";
 import { useAssistantMenu } from "./AssistantMenu.tsx";
+import type { PinDragTarget } from "./PinDrag.ts";
 import { JOB_STATUS, StatusTag } from "./status-meta.tsx";
 import { Empty } from "./Empty.tsx";
 import { activityParts } from "./Panel.tsx";
@@ -48,16 +49,36 @@ function useMark(a: AssistantSummary, busy: boolean): AvatarMark | undefined {
   return undefined;
 }
 
-export function Pin({ a, sel, size = 52 }: { a: AssistantSummary; sel?: boolean; size?: number }) {
+export function Pin({
+  a,
+  sel,
+  size = 52,
+  drag,
+}: {
+  a: AssistantSummary;
+  sel?: boolean;
+  size?: number;
+  /** 置顶头像可以按住拖着换位置：指针事件挂这里，拖完跟的那次点击不打开对话 */
+  drag?: Pick<PinDragTarget, "handlers" | "takeMoved">;
+}) {
   const menu = useAssistantMenu(a);
   const { busy, slot } = useHomeBusy(a);
   const mark = useMark(a, busy);
+  // 长按弹菜单和拖动换位置都要 pointerdown：两个都调，别用一个把另一个盖掉
   return (
     <button
       className={`pin${sel ? " sel" : ""}`}
-      {...menu.handlers}
+      onPointerDown={(e) => {
+        menu.handlers.onPointerDown(e);
+        drag?.handlers.onPointerDown(e);
+      }}
+      onContextMenu={menu.handlers.onContextMenu}
+      onPointerMove={menu.handlers.onPointerMove}
+      onPointerUp={menu.handlers.onPointerUp}
+      onPointerCancel={menu.handlers.onPointerCancel}
       onClick={() => {
-        if (!menu.takeHeld()) void select(a.id);
+        if (drag?.takeMoved() || menu.takeHeld()) return;
+        void select(a.id);
       }}
     >
       <Avatar sprite={a.sprite} prop={a.prop} size={size} motion={busy && !sel ? "peek" : undefined} slot={slot} mark={mark} />

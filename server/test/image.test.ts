@@ -479,6 +479,10 @@ describe("图片进对话", () => {
     expect(isImagePath("/tmp/a/cat.md")).toBe(false);
     expect(isImagePath("/tmp/a/cat")).toBe(false);
     expect(isImagePath("/tmp/a/cat.png.bak")).toBe(false);
+    // 历史条目里路径可能没存下来：不能因为判空再抛一次
+    expect(isImagePath(undefined)).toBe(false);
+    expect(isImagePath(null)).toBe(false);
+    expect(isImagePath("")).toBe(false);
   });
 
   it("任务文件只交给助手，不直接发到对话", async () => {

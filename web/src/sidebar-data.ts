@@ -16,7 +16,9 @@ export function nextRoutine(routines: Routine[], timezone: string, now = new Dat
 export function assistantStatus(assistant: Pick<AssistantSummary, "id" | "busy">, jobs: Job[], approvals: Approval[], delegations: Delegation[]) {
   const own = jobs.filter((job) => job.assistantId === assistant.id);
   if (approvals.some((approval) => approval.status === "pending" && (approval.assistantId === assistant.id || own.some((job) => job.id === approval.jobId))) || own.some((job) => job.status === "waiting")) return "等你确认";
-  if (assistant.busy || own.some((job) => job.status === "running") || delegations.some((d) => d.status === "running" && (d.from === assistant.id || d.to === assistant.id))) return "执行中";
+  // 转交出去的活算在收到转交的那个助手头上：交出去的一方（主助手）这一轮已经说完了，等结果时是空闲的。
+  // 它自己在说话由 busy 表示，不用看 delegations 的 from。
+  if (assistant.busy || own.some((job) => job.status === "running") || delegations.some((d) => d.status === "running" && d.to === assistant.id)) return "执行中";
   if (own.some((job) => job.status === "queued")) return "排队中";
   return "空闲";
 }

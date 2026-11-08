@@ -60,4 +60,15 @@ describe("对话卡片出处", () => {
     for (const item of items) expect(html).toContain(`data-item-id="${item.id}"`);
     vi.unstubAllGlobals();
   });
+
+  it("文件条目没存 path 时不崩，仍然显示名字", () => {
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    const at = "2026-01-01T00:00:00Z";
+    const legacy = { kind: "file", id: "file-no-path", at, name: "旧文件.pdf", meta: "12 KB" } as unknown as Item;
+    const html = renderToStaticMarkup(<ItemList items={[legacy]} />);
+    expect(html).toContain('data-item-id="file-no-path"');
+    expect(html).toContain("旧文件.pdf");
+    expect(html).toContain("12 KB");
+    vi.unstubAllGlobals();
+  });
 });

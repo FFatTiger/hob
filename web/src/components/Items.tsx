@@ -728,6 +728,23 @@ function ItemView({
 
   if (item.kind === "image") return <ImageGenCard {...item} fresh={fresh} itemId={item.id} />;
 
+  // 老数据里可能有一条没存 path 的文件条目：只显示名字，不进预览，避免 path.lastIndexOf 抛异常把整页带白。
+  if (!item.path) {
+    return (
+      <div className={`att filecard${fresh ? " enter" : ""}`} data-item-id={item.id} title="文件路径缺失，无法预览">
+        <span className="ico">
+          <Icon name="file" size={18} />
+        </span>
+        <span>
+          <span className="n" style={{ display: "block" }}>
+            {item.name || "文件"}
+          </span>
+          {item.meta ? <span className="m">{item.meta}</span> : null}
+        </span>
+      </div>
+    );
+  }
+
   return isImagePath(item.path) ? (
     <ImageCard path={item.path} name={item.name} fresh={fresh} itemId={item.id} />
   ) : (

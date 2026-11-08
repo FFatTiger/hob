@@ -9,8 +9,9 @@ export const IMAGE_TYPES: Record<string, string> = {
   ".webp": "image/webp",
 };
 
-/** 按扩展名判断是不是图片（不读文件）。 */
-export function isImagePath(path: string): boolean {
+/** 按扩展名判断是不是图片（不读文件）。历史数据里的路径可能缺失，空值按「不是图片」处理。 */
+export function isImagePath(path: string | null | undefined): boolean {
+  if (!path) return false;
   const dot = path.lastIndexOf(".");
   if (dot === -1) return false;
   return path.slice(dot).toLowerCase() in IMAGE_TYPES;

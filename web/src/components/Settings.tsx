@@ -104,7 +104,7 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-import { PageHead, Group, Seg } from "./SettingsParts.tsx";
+import { PageHead, Group, Seg, LinkRow } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
@@ -3800,12 +3800,10 @@ function SearchProviderDetail({ provider, configured, busy, save }: { provider: 
   );
 }
 
-function AboutSection() {
-  const [about, setAbout] = useState<AboutInfo | null>(null);
-  useEffect(() => {
-    void loadAbout().then(setAbout);
-  }, []);
+const REPO_URL = "https://github.com/FFatTiger/hob";
 
+/** 关于页：版本、数据目录，以及仓库入口。 */
+export function AboutView({ about }: { about: AboutInfo | null }) {
   if (!about) return <Empty>正在读取版本信息…</Empty>;
   const rows: [string, string][] = [
     ["Hob 版本", about.version],
@@ -3821,7 +3819,16 @@ function AboutSection() {
             <span className="v">{value}</span>
           </div>
         ))}
+        <LinkRow icon="github" label="GitHub" value="FFatTiger/hob" href={REPO_URL} />
       </div>
     </>
   );
+}
+
+function AboutSection() {
+  const [about, setAbout] = useState<AboutInfo | null>(null);
+  useEffect(() => {
+    void loadAbout().then(setAbout);
+  }, []);
+  return <AboutView about={about} />;
 }

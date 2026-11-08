@@ -19,7 +19,8 @@ import { activityParts } from "./Panel.tsx";
 
 /**
  * 首页头像动不动：在忙的助手进页面时看一圈，之后每 30 秒再看一圈，几个在忙的轮流看、不同时动；一个助手只在一处动，免得桌面左栏加对话页满屏都在动。
- * 助手在回复、或有进行中的任务 / 委派时，它的置顶或列表行在动；桌面上正打开的那个不动（对话底部的小人在动）。
+ * 助手在回复、或有进行中的任务时，它的置顶或列表行在动；收到转交、对方的活还没干完时也算在忙（交出去的一方不算，它已经说完了）。
+ * 桌面上正打开的那个不动（对话底部的小人在动）。
  * 任务行不动，状态那列已经有转圈；只有收起的助手折着时，由它的任务行替它动。
  */
 function isBusy(s: ReturnType<typeof useApp>, a: AssistantSummary): boolean {
@@ -34,19 +35,37 @@ function useHomeBusy(a: AssistantSummary | undefined): { busy: boolean; slot: nu
 }
 
 /**
+ * 你上次看过之后最近结束的活算什么状态：自己名下的任务，加上自己转交出去、已经结束的转交。
+ * 交出去以后自己这边没有任务，但对方干完／退回同样是一件事了结，主助手的头像要能挂上完成／受阻。
+ */
+function lastEnded(s: ReturnType<typeof useApp>, a: AssistantSummary): "done" | "stuck" | undefined {
+  const ended: { at: string; mark: "done" | "stuck" }[] = [];
+  for (const job of Object.values(s.jobs)) {
+    if (job.assistantId !== a.id || !job.endedAt) continue;
+    const mark = job.status === "done" ? "done" : job.status === "stuck" || job.status === "failed" ? "stuck" : undefined;
+    if (mark) ended.push({ at: job.endedAt, mark });
+  }
+  for (const d of Object.values(s.delegations)) {
+    if (d.from !== a.id || !d.endedAt) continue;
+    const mark = d.status === "done" ? "done" : d.status === "stuck" || d.status === "returned" || d.status === "interrupted" ? "stuck" : undefined;
+    if (mark) ended.push({ at: d.endedAt, mark });
+  }
+  // 只看你上次看过之后结束的：早就结束的不代表现在的状态
+  const last = ended.filter((e) => !a.readAt || e.at > a.readAt).sort((x, y) => y.at.localeCompare(x.at))[0];
+  return last?.mark;
+}
+
+/**
  * 头像右下角只显示最要紧的状态：等你确认（?）> 受阻（!）> 正在工作（淡蓝 ···）> 完成未读（绿色对勾）。
- * 受阻和完成未读由最近结束的任务决定，未读清零后不再显示。
+ * 受阻和完成未读由最近结束的活决定（任务或自己转交出去的转交），未读清零后不再显示。
  */
 function useMark(a: AssistantSummary, busy: boolean): AvatarMark | undefined {
   const s = useApp();
   if (assistantStatus(a, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) === "等你确认") return "ask";
-  // 只看你上次看过之后结束的任务：早就结束的任务不代表现在的状态
-  const last = Object.values(s.jobs)
-    .filter((j) => j.assistantId === a.id && j.endedAt && (!a.readAt || j.endedAt > a.readAt))
-    .sort((x, y) => (y.endedAt ?? "").localeCompare(x.endedAt ?? ""))[0];
-  if (a.unread > 0 && last && (last.status === "stuck" || last.status === "failed")) return "stuck";
+  const last = lastEnded(s, a);
+  if (a.unread > 0 && last === "stuck") return "stuck";
   if (busy) return "busy";
-  if (a.unread > 0 && last?.status === "done") return "done";
+  if (a.unread > 0 && last === "done") return "done";
   return undefined;
 }
 

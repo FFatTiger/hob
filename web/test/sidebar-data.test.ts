@@ -41,7 +41,8 @@ describe("右栏数据", () => {
     expect(assistantStatus({ ...a, busy: true }, [], [], [])).toBe("执行中");
     expect(assistantStatus(a, [], [approval], [])).toBe("等你确认");
     expect(assistantStatus(a, [], [], [delegation])).toBe("执行中");
-    expect(assistantStatus({ id: "hob", busy: false }, [], [], [delegation])).toBe("执行中");
+    // 交出去的一方（主助手）这一轮已经说完了，等结果时是空闲的
+    expect(assistantStatus({ id: "hob", busy: false }, [], [], [delegation])).toBe("空闲");
     expect(assistantStatus(a, [job("queued")], [], [])).toBe("排队中");
     expect(assistantStatus(a, [], [], [])).toBe("空闲");
     expect(assistantStatus({ ...a, busy: true }, [job("running"), job("queued")], [approval], [delegation])).toBe("等你确认");

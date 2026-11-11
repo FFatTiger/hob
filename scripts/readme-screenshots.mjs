@@ -52,6 +52,11 @@ try {
     console.log(`${path}: ${size} bytes`);
   }
 
+  const assistant = await open("s1");
+  await assistant.page.getByText("交给「写作」", { exact: true }).first().waitFor();
+  await save(assistant.page, "assistant");
+  await assistant.context.close();
+
   const pc = await open("readme-group-now");
   await pc.page.getByText("网站加深色模式", { exact: true }).first().waitFor();
   await save(pc.page, "chat");

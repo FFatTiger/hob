@@ -6,7 +6,7 @@ Hob is a self-hosted personal assistant that gets work done: talk to Hob, and it
 
 > The interface is currently Chinese-only. Hob is a single-user app you run on your own machine or server.
 
-![Hob: a group topic with a project and its subtasks](docs/screenshots/chat.png)
+![Hob: chatting with the main assistant, with job cards, delegations and a live job transcript](docs/screenshots/assistant.png)
 
 ## How it works
 
@@ -27,6 +27,8 @@ On desktop, the home page shows how many decisions are waiting for you and how m
 ### Groups, topics and projects
 
 Put several assistants in a group, let the group owner take unaddressed messages, or use `@` to call a specific member. Jobs, questions and results stay in the group, and each member can use models chosen for that group. Topics keep longer discussions separate; a software-development workflow brings clarification, requirements, subtasks and acceptance into one project view, with jobs started in the project's chosen working directory. New installations include an agile team group with product, architecture, development, testing and release members, collapsed in the assistant list by default.
+
+![Hob: a group topic with a project and its subtasks](docs/screenshots/chat.png)
 
 ### Skills
 

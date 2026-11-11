@@ -6,7 +6,7 @@ Hob is a self-hosted personal assistant that gets work done: talk to Hob, and it
 
 > The interface is currently Chinese-only. Hob is a single-user app you run on your own machine or server.
 
-![Hob: chat with the main assistant, a running job and its live transcript](docs/screenshots/chat.png)
+![Hob: a group topic with a project and its subtasks](docs/screenshots/chat.png)
 
 ## How it works
 
@@ -20,13 +20,17 @@ Each assistant has a conversation, duties, rules, skills, schedules and a work l
 
 Jobs can be inspected, stopped or resumed, with each round retained; the assistant receives reminders when a job exceeds its expected duration. Routines put their job cards and results in the conversation. A routine can run once at a set time, or carry a check script that runs first and wakes the assistant (or just leaves you a note) only when something changed, optionally stopping after the first hit. The conversation follows new output as the assistant writes; screenshots can be pasted and files dropped straight into the window.
 
-On a phone, the assistant list, conversation and profile use a mobile layout; the app supports swipe-to-reply and long-press actions. Push notifications alert you when an assistant needs your decision or a job gets stuck or fails.
+On desktop, the home page shows how many decisions are waiting for you and how much work is in progress, with a composer for the main assistant. On a phone, the assistant list, conversation and profile use a mobile layout; the app supports swipe-to-reply and long-press actions. Push notifications alert you when an assistant needs your decision or a job gets stuck or fails.
 
-![Hob on a phone: assistant list, a delegation card and assistant settings](docs/screenshots/mobile.png)
+![Hob on a phone: the conversation list, a job card and a project view](docs/screenshots/mobile.png)
+
+### Groups, topics and projects
+
+Put several assistants in a group, let the group owner take unaddressed messages, or use `@` to call a specific member. Jobs, questions and results stay in the group, and each member can use models chosen for that group. Topics keep longer discussions separate; a software-development workflow brings clarification, requirements, subtasks and acceptance into one project view, with jobs started in the project's chosen working directory. New installations include an agile team group with product, architecture, development, testing and release members, collapsed in the assistant list by default.
 
 ### Skills
 
-An assistant decides which of its skills each job gets; a schedule can be bound to one. When a job finishes something worth repeating, the assistant has that job write the skill up in its own session, running the commands and scripts again first. Skills covering the same kind of work are merged into one and the older copy archived; when a job finds a step outdated, the skill gets corrected.
+An assistant decides which of its skills each job gets; a schedule can be bound to one. When a job finishes something worth repeating, the assistant can ask it to write or update a skill in the same session. The job can run its scripts and commands to check them, and the saved changes become a new skill version shown on the job card.
 
 ### Rules
 

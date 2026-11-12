@@ -7,9 +7,12 @@ import { plainText } from "../../../shared/plain-text.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
 import { fmtList } from "../util.ts";
-import { selectGroup, useApp } from "../store.ts";
+import { selectGroup, shallow, useAppSelect, type State } from "../store.ts";
 import type { GroupRowData } from "../home.ts";
 import { useRowToPin, type PinDragTarget } from "./PinDrag.ts";
+
+const pickAssistants = (s: State) => ({ assistants: s.assistants });
+const pickGroupRow = (s: State) => ({ assistants: s.assistants, groupPrefs: s.groupPrefs });
 
 /** 群的成员助手，群主排第一（叠放时在最上面）；归档了的助手不在里面。 */
 export function membersOf(g: GroupSummary, assistants: AssistantSummary[]): AssistantSummary[] {
@@ -56,7 +59,7 @@ function groupMark(g: GroupRowData | GroupSummary): "busy" | "ask" | undefined {
 
 /** 置顶区里的群头像：叠放头像 + 群名 + 人数。 */
 export function GroupPin({ g, sel, size = 52, drag }: { g: GroupRowData; sel?: boolean; size?: number; drag?: Pick<PinDragTarget, "handlers" | "takeMoved"> }) {
-  const s = useApp();
+  const s = useAppSelect(pickAssistants, shallow);
   return (
     <button
       className={`pin${sel ? " sel" : ""}`}
@@ -78,7 +81,7 @@ export function GroupPin({ g, sel, size = 52, drag }: { g: GroupRowData; sel?: b
  * 左栏的群行：整行点开群聊；能像助手一样拖进置顶区和换先后。
  */
 export function GroupRow({ g, size = 42, sel }: { g: GroupRowData; size?: number; sel?: boolean }) {
-  const s = useApp();
+  const s = useAppSelect(pickGroupRow, shallow);
   const prefs = s.groupPrefs[g.id];
   const toPin = useRowToPin({ id: g.id, pinned: Boolean(prefs?.pinned), hidden: false });
   return (

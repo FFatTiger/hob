@@ -1,6 +1,6 @@
 // 一个小的外部 store：bootstrap + 当前对话 + jobs/approvals/drafts 按 id 存，SSE 事件合并进来。
 import { parseRoute, type SettingsSection } from "./route.ts";
-import { useSyncExternalStore } from "react";
+import { useRef, useSyncExternalStore } from "react";
 import type {
   AnswerApprovalBody,
   Approval,
@@ -355,9 +355,46 @@ export function useApp(): State {
   return useSyncExternalStore(subscribe, getState, getState);
 }
 
+/**
+ * 只订阅状态里的一部分：pick 出来的东西没变就不重渲染。
+ * 外面的 store 每次 set 都换一个新对象，useApp 的人全都跟着重画；
+ * 手机首页那种几千个节点的列表，切页改的只是 mobile/sel/gsel，不该跟着重画一遍。
+ * pick 要稳定（放模块顶层），返回的要么是原样的引用（数组、对象），要么是浅比较比值。
+ */
+export function useAppSelect<T>(pick: (s: State) => T, eq: (a: T, b: T) => boolean = Object.is): T {
+  const cache = useRef<{ state: State; value: T } | null>(null);
+  const read = () => {
+    const hit = cache.current;
+    if (hit && hit.state === state) return hit.value;
+    const next = pick(state);
+    if (hit && eq(hit.value, next)) {
+      // 值没变：沿用原来那份，React 比到同一个引用就跳过这次渲染
+      cache.current = { state, value: hit.value };
+      return hit.value;
+    }
+    cache.current = { state, value: next };
+    return next;
+  };
+  return useSyncExternalStore(subscribe, read, read);
+}
+
+/** 浅比较：pick 出来的字段逐个比。 */
+export function shallow<T extends object>(a: T, b: T): boolean {
+  if (Object.is(a, b)) return true;
+  const ka = Object.keys(a) as (keyof T)[];
+  if (ka.length !== Object.keys(b).length) return false;
+  return ka.every((k) => Object.is(a[k], b[k]));
+}
+
 function errText(e: unknown): string {
   if (e instanceof ApiError) return e.message;
   return e instanceof Error ? e.message : String(e);
+}
+
+/** 把这一页带来的任务/确认并进总表；一条都没有就把原来那张表原样返回，
+ *  免得整张表换新、首页每一行都跟着重画一遍。 */
+function mergePage<T extends { id: string }>(base: Record<string, T>, list: T[] | undefined): Record<string, T> {
+  return list && list.length ? { ...base, ...index(list) } : base;
 }
 
 function index<T extends { id: string }>(list: T[]): Record<string, T> {
@@ -1432,10 +1469,10 @@ async function loadItems(id: string) {
       items: { ...s.items, [id]: page.items },
       itemGen: { ...s.itemGen, [id]: (s.itemGen[id] ?? 0) + 1 },
       itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
-      jobs: { ...s.jobs, ...index(page.jobs) },
-      approvals: { ...s.approvals, ...index(page.approvals) },
-      drafts: { ...s.drafts, ...index(page.drafts) },
-      delegations: { ...s.delegations, ...index(page.delegations ?? []) },
+      jobs: mergePage(s.jobs, page.jobs),
+      approvals: mergePage(s.approvals, page.approvals),
+      drafts: mergePage(s.drafts, page.drafts),
+      delegations: mergePage(s.delegations, page.delegations ?? []),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {
@@ -1496,8 +1533,8 @@ async function loadGroupItems(id: string) {
       groupItems: { ...s.groupItems, [id]: page.items },
       groupGen: { ...s.groupGen, [id]: (s.groupGen[id] ?? 0) + 1 },
       groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
-      jobs: { ...s.jobs, ...index(page.jobs) },
-      approvals: { ...s.approvals, ...index(page.approvals) },
+      jobs: mergePage(s.jobs, page.jobs),
+      approvals: mergePage(s.approvals, page.approvals),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {

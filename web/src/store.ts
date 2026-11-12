@@ -2375,12 +2375,50 @@ export async function jumpToItem(assistantId: string, itemId: string) {
   } catch (e) { set({ notice: `无法定位对话消息：${errText(e)}` }); }
 }
 
+/** 打开设置前停在哪：关掉设置回原处，而不是回首页（从对话里那句「前往设置」进来，改完还在那个对话）。 */
+type SettingsBack = {
+  page: "main" | "knowledge";
+  sel: string | null;
+  gsel: string | null;
+  sideHome: boolean;
+  panelStack: PanelPage[];
+  mobile: "list" | "topics" | "chat";
+};
+let settingsBack: SettingsBack | null = null;
+
 export function openSettings() {
-  set({ page: "settings", section: null, sub: null, sheet: false, search: false, panelStack: [] });
+  if (state.page !== "settings") {
+    settingsBack = {
+      page: state.page === "knowledge" ? "knowledge" : "main",
+      sel: state.sel,
+      gsel: state.gsel,
+      sideHome: state.sideHome,
+      panelStack: state.panelStack,
+      mobile: state.mobile,
+    };
+  }
+  // 手机上设置是整页、盖在对话上面，右栏的页先收起；桌面上是弹窗，底下的对话和右栏都留原样。
+  const narrow = window.innerWidth < 768;
+  set({ page: "settings", section: null, sub: null, sheet: false, search: false, ...(narrow ? { panelStack: [] as PanelPage[] } : {}) });
 }
 
 export function closeSettings() {
-  goHome();
+  if (state.page !== "settings") return;
+  const back = settingsBack;
+  settingsBack = null;
+  if (!back) { goHome(); return; }
+  set({
+    page: back.page,
+    section: null,
+    sub: null,
+    sel: back.sel,
+    gsel: back.gsel,
+    sideHome: back.sideHome,
+    panelStack: back.panelStack,
+    mobile: back.mobile,
+  });
+  // 从知识库「去设置向量模型」进来的，改完回知识库
+  if (back.page === "knowledge") void loadKnowledge();
 }
 
 /** 桌面点了左导航 / 手机点了列表里的一项。 */

@@ -1,15 +1,25 @@
 // 手机（宽 < 768px）：列表页 + 右栏内容的整页。
+import { memo } from "react";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { openKnowledge, openSettings, setQuery, setSearch, useApp, type PanelPage } from "../store.ts";
+import { openKnowledge, openSettings, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
 import { Panel } from "./Panel.tsx";
 import { usePinDrag } from "./PinDrag.ts";
 
-export function MobileList() {
-  const s = useApp();
+/** 手机首页只关心这几位：切页（mobile/sel/gsel）变了不重画这一大片。 */
+const pickList = (s: State) => ({
+  assistants: s.assistants,
+  groups: s.groups,
+  groupPrefs: s.groupPrefs,
+  query: s.query,
+  search: s.search,
+});
+
+export const MobileList = memo(function MobileList() {
+  const s = useAppSelect(pickList, shallow);
   const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const layout = pinLayout(pins.length);
@@ -57,7 +67,7 @@ export function MobileList() {
       </div>
     </>
   );
-}
+});
 
 export function Sheet({ leaving, page }: { leaving: boolean; page?: PanelPage | null }) {
   return (

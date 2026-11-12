@@ -381,33 +381,39 @@ export function Chat() {
 
   return (
     <main className="chat">
-      <div className="head">
-        {g && parent ? (
-          <>
-            <button className="crumb" title="回到综合" onClick={() => void selectGroup(parent.id)}>{parent.name}</button>
-            <Icon name="chev" size={14} className="crumb-sep" />
-            <span className="nm">{g.name}</span>
-          </>
-        ) : g ? (
-          <>
-            <GroupCluster g={g} assistants={s.assistants} size={26} />
-            <span className="nm">{g.name}</span>
-            <span className="gcount">{`综合 · ${g.members.length} 位成员`}</span>
-            {g.workflow ? <span className="wftag">{workflowInfo(g.workflow).label}</span> : null}
-          </>
-        ) : a ? (
-          <>
-            <Avatar sprite={a.sprite} prop={a.prop} size={24} />
-            <span className="nm">{a.name}</span>
-          </>
+      {/* 顶部不再是占满一行、带下划线的标题栏：改成浮在消息上方居中的小胶囊，消息从它下面穿过去 */}
+      <div className="chat-top">
+        {g || a ? (
+          <div className="chat-title">
+            {g && parent ? (
+              <>
+                <button className="crumb" title="回到综合" onClick={() => void selectGroup(parent.id)}>{parent.name}</button>
+                <Icon name="chev" size={13} className="crumb-sep" />
+                <span className="nm">{g.name}</span>
+              </>
+            ) : g ? (
+              <>
+                <GroupCluster g={g} assistants={s.assistants} size={24} />
+                <span className="nm">{g.name}</span>
+                <span className="gcount">{`综合 · ${g.members.length} 位成员`}</span>
+                {g.workflow ? <span className="wftag">{workflowInfo(g.workflow).label}</span> : null}
+              </>
+            ) : a ? (
+              <>
+                <Avatar sprite={a.sprite} prop={a.prop} size={22} />
+                <span className="nm">{a.name}</span>
+              </>
+            ) : null}
+          </div>
         ) : null}
-        <span className="sp" />
-        <RunningJobs items={items} />
-        {s.collapsed ? (
-          <button className="hob-icon-btn" title="展开右栏" onClick={expandPanel}>
-            <Icon name="panel" size={18} />
-          </button>
-        ) : null}
+        <div className="chat-tools">
+          <RunningJobs items={items} />
+          {s.collapsed ? (
+            <button className="hob-icon-btn float" title="展开右栏" onClick={expandPanel}>
+              <Icon name="panel" size={18} />
+            </button>
+          ) : null}
+        </div>
       </div>
       {g && parent && g.project ? <TopicStage topic={g} /> : null}
       <ConversationBody className="msgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} />
@@ -642,22 +648,23 @@ export function ChatPage() {
   return (
     <>
       <div className="mchat-head">
-        <button className="hob-icon-btn" style={{ marginLeft: -8 }} title="返回" onClick={leaveChat}>
-          <Icon name="left" size={22} />
+        <button className="hob-icon-btn float mchat-back" title="返回" onClick={leaveChat}>
+          <Icon name="left" size={21} />
         </button>
-        {g && parent ? null : g ? <GroupCluster g={g} assistants={s.assistants} size={30} /> : a ? <Avatar sprite={a.sprite} prop={a.prop} size={30} /> : null}
-        {g ? (
-          <span className="gname">
-            <span className="nm">{g.name}</span>
-            <span className="gcount">{parent ? `${parent.name} · 话题` : `综合 · ${g.members.length} 位成员`}</span>
-          </span>
-        ) : (
-          <span className="nm">{a?.name ?? ""}</span>
-        )}
-        <span className="sp" />
+        <div className="mchat-title">
+          {g && parent ? null : g ? <GroupCluster g={g} assistants={s.assistants} size={26} /> : a ? <Avatar sprite={a.sprite} prop={a.prop} size={26} /> : null}
+          {g ? (
+            <span className="gname">
+              <span className="nm">{g.name}</span>
+              <span className="gcount">{parent ? `${parent.name} · 话题` : `综合 · ${g.members.length} 位成员`}</span>
+            </span>
+          ) : (
+            <span className="nm">{a?.name ?? ""}</span>
+          )}
+        </div>
         <RunningJobs items={items} />
-        <button className="hob-icon-btn" title={g ? "群信息" : "助手信息"} onClick={openSheet}>
-          <Icon name="more" size={20} />
+        <button className="hob-icon-btn float mchat-more" title={g ? "群信息" : "助手信息"} onClick={openSheet}>
+          <Icon name="more" size={19} />
         </button>
       </div>
       {g && parent && g.project ? <TopicStage topic={g} mobile /> : null}

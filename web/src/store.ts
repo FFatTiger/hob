@@ -62,7 +62,7 @@ import { isImagePath } from "../../shared/media.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
-import { resolveTheme, updateStatusColor } from "./theme.ts";
+import { resolveTheme, updateManifest, updateStatusColor } from "./theme.ts";
 import { popPage, pushPage, removeMissingLivePages, replacePage, selectPanelStack, type PanelPage } from "./panel-stack.ts";
 export type { FilePreviewState, PanelPage } from "./panel-stack.ts";
 
@@ -853,6 +853,7 @@ function applyTheme(theme: Theme) {
   const { dark } = resolveTheme(theme, darkQuery.matches);
   document.documentElement.classList.toggle("dark", dark);
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
+  updateManifest(dark);
   updateStatusColor(state, window.innerWidth < 768);
 }
 

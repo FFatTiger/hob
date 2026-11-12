@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { resolveTheme, statusSurface } from "../src/theme.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { resolveTheme, statusSurface, updateManifest } from "../src/theme.ts";
 
 describe("主题和状态栏", () => {
   it.each([
@@ -27,4 +27,15 @@ describe("主题和状态栏", () => {
     expect(statusSurface({ ...main, phase: "loading" }, true)).toBe("bg");
     expect(statusSurface({ ...main, phase: "loading" }, false)).toBe("side");
   });
+
+  it("按深浅主题换 manifest：iOS 的启动屏和状态栏颜色只认它", () => {
+    const link = { setAttribute: vi.fn() };
+    vi.stubGlobal("document", { getElementById: () => link });
+    updateManifest(true);
+    expect(link.setAttribute).toHaveBeenCalledWith("href", "/manifest-dark.webmanifest?v=4");
+    updateManifest(false);
+    expect(link.setAttribute).toHaveBeenCalledWith("href", "/manifest.webmanifest?v=4");
+  });
 });
+
+afterEach(() => vi.unstubAllGlobals());

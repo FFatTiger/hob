@@ -26,7 +26,7 @@ vi.mock("./components/Mobile.tsx", () => ({ MobileList: () => null, Sheet: () =>
 vi.mock("./components/Settings.tsx", () => ({ SettingsPage: () => null }));
 vi.mock("./components/Markdown.tsx", () => ({ Markdown: () => null }));
 vi.mock("./pwa.ts", () => ({ applyUpdate: vi.fn() }));
-vi.mock("./theme.ts", () => ({ updateStatusColor: vi.fn() }));
+vi.mock("./theme.ts", () => ({ updateStatusColor: vi.fn(), updateManifest: vi.fn() }));
 
 import { App } from "./App.tsx";
 import { backPanel } from "./store.ts";

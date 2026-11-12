@@ -21,6 +21,19 @@ export function statusSurface(page: StatusPage, narrow: boolean): "bg" | "side" 
   return page.page === "settings" || page.page === "knowledge" ? "bg" : "side";
 }
 
+const LIGHT_MANIFEST = "/manifest.webmanifest?v=4";
+const DARK_MANIFEST = "/manifest-dark.webmanifest?v=4";
+
+/**
+ * 装到主屏后，iOS 画启动屏和状态栏用的是 manifest 里的 background_color / theme_color。
+ * manifest 只有一份、不跟系统主题走，所以按当前主题换一份深色的；index.html 里预判过一次，
+ * 这里在主题真正确定下来后再对一次（服务端保存的主题可能和本地缓存不一致）。
+ */
+export function updateManifest(dark: boolean) {
+  const link = document.getElementById("manifest");
+  if (link) link.setAttribute("href", dark ? DARK_MANIFEST : LIGHT_MANIFEST);
+}
+
 export function updateStatusColor(page: StatusPage, narrow: boolean) {
   const root = document.documentElement;
   root.style.setProperty("--status-background", `var(--${statusSurface(page, narrow)})`);

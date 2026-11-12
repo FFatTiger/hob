@@ -196,7 +196,8 @@ function timezones(): string[] {
   return list ?? [];
 }
 
-export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: boolean }) {
+/** modal：桌面上设置是弹窗（居中卡片），导航顶上放关闭键，不再有「返回 Hob」那一行；手机还是整页。 */
+export function SettingsPage({ narrow, leaving, modal = false }: { narrow: boolean; leaving: boolean; modal?: boolean }) {
   const s = useApp();
   const current = s.section ?? (narrow ? null : "general");
   // 换分栏、进出子页都从顶上看起
@@ -237,7 +238,14 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
         </div>
       ) : (
         <div className="setnav">
-          <div className="setnavtitle">设置</div>
+          <div className="setnavtitle">
+            <span>设置</span>
+            {modal ? (
+              <button className="hob-icon-btn setclose" title="关闭设置" aria-label="关闭设置" onClick={closeSettings}>
+                <Icon name="close" size={16} />
+              </button>
+            ) : null}
+          </div>
           {SECTIONS.map((item) => (
             <button
               key={item.id}
@@ -247,10 +255,14 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
               {item.label}
             </button>
           ))}
-          <span className="sp" />
-          <button className="navrow" onClick={closeSettings}>
-            返回 Hob
-          </button>
+          {modal ? null : (
+            <>
+              <span className="sp" />
+              <button className="navrow" onClick={closeSettings}>
+                返回 Hob
+              </button>
+            </>
+          )}
         </div>
       )}
       <div className="setmain" ref={main}>

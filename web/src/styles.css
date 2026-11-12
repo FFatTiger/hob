@@ -3473,6 +3473,62 @@ button:not(:disabled):active {
   pointer-events: none;
   animation: drawer-out var(--t-mid) var(--ease-out) forwards;
 }
+
+/* 桌面端的设置是弹窗：垫一层背板，设置本身缩成居中的卡片。
+   底下的对话、左栏、右栏都不卸载，关掉就还在原处。 */
+.setmodal {
+  position: fixed;
+  inset: 0;
+  z-index: 50;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgb(0 0 0 / 28%);
+  animation: enter-fade var(--t-fast) var(--ease-in);
+}
+.dark .setmodal {
+  background: rgb(0 0 0 / 48%);
+}
+.setmodal.leaving {
+  pointer-events: none;
+  animation: enter-fade var(--t-mid) var(--ease-out) reverse forwards;
+}
+.setcard {
+  width: min(980px, 100%);
+  height: min(720px, calc(100vh - 48px));
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  overflow: hidden;
+  box-shadow: 0 24px 64px rgb(0 0 0 / 24%);
+  animation: modal-in var(--t-slow) var(--ease-out);
+  outline: none;
+}
+/* 卡片里的设置就是原来那一页，只是不再铺满屏幕、也不再自己播整页动画 */
+.setcard .setpage {
+  position: relative;
+  inset: auto;
+  height: 100%;
+  border-radius: inherit;
+  animation: none;
+}
+.setcard .setpage.leaving {
+  animation: none;
+}
+.setnavtitle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.setnavtitle .setclose {
+  width: 28px;
+  height: 28px;
+}
+@keyframes modal-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+}
 .setnav {
   width: 216px;
   flex: none;

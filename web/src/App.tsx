@@ -16,7 +16,7 @@ import { groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, type GonePage } from "./panel-stack.ts";
-import { backPanel, clearNotice, start, tick, useApp, type PanelPage } from "./store.ts";
+import { backPanel, clearNotice, closeSettings, start, tick, useApp, type PanelPage } from "./store.ts";
 import { updateStatusColor } from "./theme.ts";
 import { Avatar } from "./sprites.tsx";
 
@@ -138,7 +138,8 @@ export function App() {
   // 拖文件进窗口：只在界面里接管，登录页/连不上时不管
   const drop = <DropFiles />;
 
-  if (settings.mounted) {
+  // 手机上设置是整页；桌面上是弹窗（见下面的 SettingsModal），底下的对话和左栏照原样留着
+  if (settings.mounted && narrow) {
     return (
       <>
         <SettingsPage narrow={narrow} leaving={settings.leaving} />
@@ -193,7 +194,8 @@ export function App() {
   }
 
   return (
-    <div className={`app${fullPage ? " preview-full" : ""}`}>
+    <>
+    <div className={`app${fullPage ? " preview-full" : ""}`} inert={settings.mounted || undefined}>
       <div className="sidestack">
         <div className={`sidepane home${sideGroup ? " away" : ""}`} aria-hidden={sideGroup ? true : undefined}>
           <Sidebar />
@@ -220,6 +222,35 @@ export function App() {
       {s.offline ? <div className="toast">{s.offline}</div> : null}
       {drop}
       {toast}
+    </div>
+    {settings.mounted ? <SettingsModal leaving={settings.leaving} /> : null}
+    </>
+  );
+}
+
+/** 桌面端的设置弹窗：Esc、点背板、导航上的关闭键都能关；开着的时候底下的对话不卸载，关掉还在原处。 */
+function SettingsModal({ leaving }: { leaving: boolean }) {
+  const card = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    card.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      event.preventDefault();
+      event.stopPropagation();
+      closeSettings();
+    };
+    // 捕获阶段先接：不然 Esc 会先被右栏那套「退一层」的监听拿去
+    window.addEventListener("keydown", onKey, true);
+    return () => window.removeEventListener("keydown", onKey, true);
+  }, []);
+  return (
+    <div
+      className={`setmodal${leaving ? " leaving" : ""}`}
+      onMouseDown={(event) => { if (event.target === event.currentTarget) closeSettings(); }}
+    >
+      <div className="setcard" ref={card} role="dialog" aria-modal="true" aria-label="设置" tabIndex={-1}>
+        <SettingsPage narrow={false} leaving={false} modal />
+      </div>
     </div>
   );
 }

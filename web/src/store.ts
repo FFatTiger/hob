@@ -391,6 +391,12 @@ function errText(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
 }
 
+/** 把这一页带来的任务/确认并进总表；一条都没有就把原来那张表原样返回，
+ *  免得整张表换新、首页每一行都跟着重画一遍。 */
+function mergePage<T extends { id: string }>(base: Record<string, T>, list: T[] | undefined): Record<string, T> {
+  return list && list.length ? { ...base, ...index(list) } : base;
+}
+
 function index<T extends { id: string }>(list: T[]): Record<string, T> {
   const out: Record<string, T> = {};
   for (const x of list) out[x.id] = x;
@@ -1463,10 +1469,10 @@ async function loadItems(id: string) {
       items: { ...s.items, [id]: page.items },
       itemGen: { ...s.itemGen, [id]: (s.itemGen[id] ?? 0) + 1 },
       itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
-      jobs: { ...s.jobs, ...index(page.jobs) },
-      approvals: { ...s.approvals, ...index(page.approvals) },
-      drafts: { ...s.drafts, ...index(page.drafts) },
-      delegations: { ...s.delegations, ...index(page.delegations ?? []) },
+      jobs: mergePage(s.jobs, page.jobs),
+      approvals: mergePage(s.approvals, page.approvals),
+      drafts: mergePage(s.drafts, page.drafts),
+      delegations: mergePage(s.delegations, page.delegations ?? []),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {
@@ -1527,8 +1533,8 @@ async function loadGroupItems(id: string) {
       groupItems: { ...s.groupItems, [id]: page.items },
       groupGen: { ...s.groupGen, [id]: (s.groupGen[id] ?? 0) + 1 },
       groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
-      jobs: { ...s.jobs, ...index(page.jobs) },
-      approvals: { ...s.approvals, ...index(page.approvals) },
+      jobs: mergePage(s.jobs, page.jobs),
+      approvals: mergePage(s.approvals, page.approvals),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {

@@ -894,6 +894,10 @@ svg.i {
   flex-direction: column;
   position: relative;
 }
+/* 这一栏多宽，决定顶部标题和任务胶囊怎么排（窗口宽窄不代表这一栏宽窄：左右两栏都能收） */
+main.chat {
+  container: chat / inline-size;
+}
 /*
  * 输入框浮在消息上：消息一直滚到底，从输入框下面穿过去，没有一条实心底色把消息切成直线。
  * 消息区底部留出输入框的高度（--comp-h 由 Composer 量出来写到 .chat 上），最后一条能滚到输入框上面。
@@ -914,21 +918,163 @@ svg.i {
   backdrop-filter: blur(18px) saturate(1.5);
   box-shadow: 0 0 0 0.5px var(--line), 0 8px 28px var(--composer-shadow);
 }
-.head {
-  height: 54px;
-  flex: none;
+/* 浮窗下面垫一层从上往下的淡出：消息滚到浮窗底下时自然融进背景，而不是被切成两半。
+   只用 --bg 一个颜色，深浅主题都跟着走。 */
+.chat::before,
+.mpane.chat::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 4;
+  pointer-events: none;
+  height: 98px;
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0,
+    var(--bg) 53%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 100%
+  );
+}
+.mpane.chat::before {
+  height: calc(80px + env(safe-area-inset-top, 0px));
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0,
+    var(--bg) 70%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 100%
+  );
+}
+/* 有任务在跑时标题下面还挂着一行任务胶囊，淡出要把那一行也盖住，不然会压在第一条消息上。
+   实心只到胶囊下沿（78px），消息上边距同时往下让一行（84px），滚到最顶上第一条也不会被切。 */
+.mpane.chat:has(.mchat-head .runpill.show)::before {
+  height: calc(126px + env(safe-area-inset-top, 0px));
+  background: linear-gradient(
+    to bottom,
+    var(--bg) 0,
+    var(--bg) 62%,
+    color-mix(in srgb, var(--bg) 0%, transparent) 100%
+  );
+}
+.mpane.chat:has(.mchat-head .runpill.show) .mmsgs {
+  padding-top: calc(84px + env(safe-area-inset-top, 0px));
+}
+/* 对话顶部：不再占满一行，改成浮在消息上方居中的小胶囊，消息从它下面穿过去（和输入框一个思路）。
+   底色用 --bg 半透明加模糊，浅色深色都跟着页面走；--gav-ring 也换成 --bg，群头像的重叠描边才对得上。 */
+.chat-top {
+  position: absolute;
+  top: 9px;
+  left: 0;
+  right: 0;
+  z-index: 5;
+  display: flex;
+  justify-content: center;
+  padding: 0 14px;
+  pointer-events: none;
+  --gav-ring: var(--bg);
+}
+.chat-title,
+.chat-tools .runpill,
+.hob-icon-btn.float {
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 20px var(--composer-shadow);
+}
+.chat-title {
+  pointer-events: auto;
   display: flex;
   align-items: center;
-  gap: 9px;
-  padding: 0 18px 0 22px;
-  border-bottom: 1px solid var(--line);
+  gap: 8px;
+  height: 38px;
+  /* 右边那颗圆形按钮是浮在栏上的，标题最大宽度要把它让开，长名字才不至于压到按钮底下 */
+  max-width: min(56%, calc(100% - 96px));
+  min-width: 0;
+  padding: 0 14px 0 6px;
+  border-radius: 999px;
 }
-.head .nm {
+.chat-title .nm {
+  flex: 0 1 auto;
   font-size: 15px;
   font-weight: 500;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
 }
-.head .sp {
-  flex: 1;
+.chat-title .gcount,
+.chat-title .wftag,
+.chat-title .crumb-sep {
+  flex: none;
+}
+/* 话题里的面包屑（父群名）以前是 flex: none，父群名一长就把当前群名挤成 0 宽，名字整个看不见。
+   现在它自己有上限、自己省略号，剩下的宽度留给当前群名。 */
+.chat-title .crumb {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+/* 头像不参与收缩，挤的时候只挤文字 */
+.chat-title > .av,
+.chat-title > .gav,
+.mchat-title > .av,
+.mchat-title > .gav {
+  flex: none;
+}
+.chat-tools {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  pointer-events: auto;
+}
+/* chat-tools 是绝对定位、宽度收缩到内容，runpill 的 max-width:55% 会按收缩后的宽度算，
+   长一点的文字（「2 个任务进行中」）就被截成「2 …」。这里给一个明确的宽度上限。 */
+.chat-tools .runpill {
+  height: 32px;
+  max-width: min(180px, 30vw);
+}
+/* 有任务胶囊时右边那一段被占住，居中的标题按让出来的宽度收：名字长了先省略，
+   不和胶囊压在一起（412px = 两侧各 180px 的胶囊 + 两边间距）。这一栏窄了走下面那套：胶囊换行。 */
+@container chat (min-width: 661px) {
+  .chat-top:has(.chat-tools .runpill.show) .chat-title {
+    max-width: min(56%, calc(100% - 412px));
+  }
+}
+/* 栏窄的时候（右栏开着、窗口不大）居中的标题和右侧胶囊必然要撞：让胶囊落到标题下面一行，
+   和手机一样。标题拿回 56%，名字不用为了任务胶囊挤成几个字。 */
+@container chat (max-width: 660px) {
+  .chat-tools .runpill.show {
+    position: absolute;
+    top: 46px;
+    right: 0;
+  }
+  /* 胶囊让位了，标题这一行只剩右边那颗圆按钮，把它让开就能多用一些宽度 */
+  .chat-title {
+    max-width: calc(100% - 96px);
+  }
+  .chat .msgs {
+    padding-top: 86px;
+  }
+  .chat::before {
+    height: 132px;
+    background: linear-gradient(
+      to bottom,
+      var(--bg) 0,
+      var(--bg) 60%,
+      color-mix(in srgb, var(--bg) 0%, transparent) 100%
+    );
+  }
+}
+.hob-icon-btn.float {
+  border-radius: 999px;
 }
 /* 消息区和输入框都预留滚动条的位置：Windows 上滚动条占宽，不预留的话消息列会比输入框往左偏半个滚动条 */
 .msgs {
@@ -938,7 +1084,7 @@ svg.i {
   scrollbar-gutter: stable;
   display: flex;
   flex-direction: column;
-  padding-bottom: calc(var(--comp-h, 80px) + 6px);
+  padding: 54px 0 calc(var(--comp-h, 80px) + 6px);
 }
 .msgs .col {
   margin-top: auto;
@@ -2528,20 +2674,69 @@ svg.i {
   align-items: center;
   gap: 4px;
 }
+/* 手机对话顶部同样改成浮窗：返回、标题胶囊、信息三个浮在消息上方，标题居中 */
 .mchat-head {
+  position: absolute;
+  top: calc(5px + env(safe-area-inset-top, 0px));
+  left: 0;
+  right: 0;
+  z-index: 6;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 calc(8px + env(safe-area-inset-right, 0px)) 0 calc(8px + env(safe-area-inset-left, 0px));
+  pointer-events: none;
+}
+.mchat-head > * {
+  pointer-events: auto;
+}
+.mchat-back {
+  position: absolute;
+  left: calc(6px + env(safe-area-inset-left, 0px));
+}
+.mchat-more {
+  position: absolute;
+  right: calc(6px + env(safe-area-inset-right, 0px));
+}
+.mchat-title {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: calc(8px + env(safe-area-inset-top, 0px)) calc(14px + env(safe-area-inset-right, 0px)) 10px
-    calc(14px + env(safe-area-inset-left, 0px));
-  border-bottom: 1px solid var(--line);
+  /* 两侧各一颗 34px 的浮动按钮（6px 边距 + 8px 间隙），标题最多用到这里，再长就省略 */
+  max-width: min(62%, calc(100% - 100px));
+  min-width: 0;
+  padding: 4px 14px 4px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 20px var(--composer-shadow);
 }
 .mchat-head .nm {
-  font-size: 16px;
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 15px;
   font-weight: 500;
 }
-.mchat-head .sp {
-  flex: 1;
+/* 有任务在跑：胶囊挪到标题下面一行，居中，不和返回／信息抢地方 */
+.mchat-head .runpill.show {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  max-width: 90%;
+  min-width: 0;
+  margin: 6px auto 0;
+  height: 30px;
+  background: color-mix(in srgb, var(--bg) 78%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.6);
+  backdrop-filter: blur(18px) saturate(1.6);
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 20px var(--composer-shadow);
 }
 .mmsgs {
   flex: 1;
@@ -2549,7 +2744,7 @@ svg.i {
   overflow-y: auto;
   display: flex;
   flex-direction: column;
-  padding: 0 14px calc(var(--comp-h, 80px) + 6px);
+  padding: calc(58px + env(safe-area-inset-top, 0px)) 14px calc(var(--comp-h, 80px) + 6px);
 }
 /* 手机：助手这一侧（文字气泡、任务卡、提问卡）共用一个上限，用户气泡略窄。
    卡片直接占满上限；长文字换行后也会撑到上限，所以右边缘能对齐。 */
@@ -6078,7 +6273,7 @@ button.screen,
 .panel .group-card {
   --gav-ring: var(--field);
 }
-.chat .head,
+.chat .chat-title,
 .mchat-head {
   --gav-ring: var(--bg);
 }
@@ -6208,7 +6403,7 @@ button.screen,
 .dark .u .quote.named {
   color: rgb(0 0 0 / 0.6);
 }
-.head .gcount {
+.chat-title .gcount {
   font-size: 12.5px;
   color: var(--text3);
 }
@@ -6220,13 +6415,8 @@ button.screen,
   flex-direction: column;
   line-height: 1.25;
 }
-.mchat-head .runpill {
-  flex-shrink: 1000;
-  min-width: 88px;
-  overflow: hidden;
-}
 .mchat-head .gname > span,
-.mchat-head > .nm {
+.mchat-title > .nm {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
@@ -7196,7 +7386,7 @@ button.screen,
 }
 
 /* 综合的头部：群名后面跟「综合 · N 位成员」和工作方式小标签；话题里是面包屑 */
-.head .wftag {
+.chat-title .wftag {
   font-size: 11.5px;
   padding: 2px 7px;
   border-radius: 6px;

@@ -11,8 +11,10 @@
         const dark = theme === "dark" || (theme !== "light" && theme !== "dark" && matchMedia("(prefers-color-scheme: dark)").matches);
         document.documentElement.classList.toggle("dark", dark);
         document.documentElement.style.colorScheme = dark ? "dark" : "light";
-        // 和 theme.ts 的 statusSurface 一致：手机用 --bg，宽屏用 --side
-        const narrow = innerWidth < 768;
+        // iPhone 主屏应用冷启动时这段脚本跑得早，innerWidth 偶尔还是 980 这类默认值；屏幕宽度启动时就是准的，取两者较小的。
+        const narrow = Math.min(innerWidth || Infinity, screen.width || Infinity) < 768;
+        // 和 theme.ts 的 statusSurface 一致：手机用 --bg，宽屏用 --side。加载页和登录页也用它（见 styles.css 的 .boot）
+        document.documentElement.style.setProperty("--status-background", `var(--${narrow ? "bg" : "side"})`);
         document.querySelector('meta[name="theme-color"]').content = narrow ? (dark ? "#151516" : "#ffffff") : dark ? "#1b1b1d" : "#f6f6f4";
       })();
     </script>

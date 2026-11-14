@@ -17,7 +17,7 @@ import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, type GonePage } from "./panel-stack.ts";
 import { backPanel, clearNotice, start, tick, useApp, type PanelPage } from "./store.ts";
-import { updateStatusColor } from "./theme.ts";
+import { isNarrow, updateStatusColor } from "./theme.ts";
 import { Avatar } from "./sprites.tsx";
 
 /** 右栏的页一层层盖上去：新页从右边滑进来，下面的页不动也不隐藏；退掉的页滑出去以后再卸。换了助手直接换，不滑。 */
@@ -44,7 +44,7 @@ function rawError(text: string): string {
 
 export function App() {
   const s = useApp();
-  const [narrow, setNarrow] = useState(() => window.innerWidth < 768);
+  const [narrow, setNarrow] = useState(isNarrow);
   const chat = useLeave(s.mobile === "chat" && Boolean(s.sel ?? s.gsel), 240);
   const settings = useLeave(s.page === "settings", 180);
   const knowledge = useLeave(s.page === "knowledge", 180);
@@ -86,7 +86,7 @@ export function App() {
   }, [s.panelStack]);
 
   useEffect(() => {
-    const onResize = () => setNarrow(window.innerWidth < 768);
+    const onResize = () => setNarrow(isNarrow());
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
   }, []);

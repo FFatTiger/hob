@@ -2432,7 +2432,7 @@ svg.i {
   inset: 0;
   display: grid;
   place-items: center;
-  background: var(--side);
+  background: var(--status-background, var(--side));
 }
 .login .card {
   width: 340px;
@@ -2938,12 +2938,14 @@ svg.i {
 .when input {
   color: var(--text);
 }
+/* iOS 在启动那一刻取状态栏颜色，之后不再跟：这时铺满屏的是加载页（登录页同理），它要和首页同色。
+   不用媒体查询：冷启动那一刻视口宽度可能还不是手机宽度。--status-background 由 index.html 按屏幕宽度先写好。 */
 .boot {
   position: fixed;
   inset: 0;
   display: grid;
   place-items: center;
-  background: var(--side);
+  background: var(--status-background, var(--side));
   color: var(--text3);
   font-size: 14px;
 }

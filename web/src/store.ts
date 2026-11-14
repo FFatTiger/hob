@@ -62,7 +62,7 @@ import { isImagePath } from "../../shared/media.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
-import { resolveTheme, updateStatusColor } from "./theme.ts";
+import { isNarrow, resolveTheme, updateStatusColor } from "./theme.ts";
 import { popPage, pushPage, removeMissingLivePages, replacePage, selectPanelStack, type PanelPage } from "./panel-stack.ts";
 export type { FilePreviewState, PanelPage } from "./panel-stack.ts";
 
@@ -853,7 +853,7 @@ function applyTheme(theme: Theme) {
   const { dark } = resolveTheme(theme, darkQuery.matches);
   document.documentElement.classList.toggle("dark", dark);
   document.documentElement.style.colorScheme = dark ? "dark" : "light";
-  updateStatusColor(state, window.innerWidth < 768);
+  updateStatusColor(state, isNarrow());
 }
 
 export function setTheme(theme: Theme) {
@@ -1336,7 +1336,7 @@ export function pendingKeyOf(s: State): string | null {
 export async function selectGroup(id: string, nav = true, keepStack = false, forceChat = false) {
   const previous = state.gsel ?? state.sel;
   const group = state.groups.find((x) => x.id === id);
-  const narrow = window.innerWidth < 768;
+  const narrow = isNarrow();
   const opensTopics = !forceChat && narrow && Boolean(group && !group.parentId);
   set((s) => ({
     gsel: id,

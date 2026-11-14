@@ -1,5 +1,13 @@
 import type { Theme } from "../../shared/types.ts";
 
+/**
+ * 手机布局：取窗口宽度和屏幕宽度里小的那个。iPhone 主屏应用冷启动时 innerWidth 偶尔还是 980 这类默认值，
+ * 只看它会先按宽屏画一帧、把状态栏色写成 --side，而 iOS 只认启动那一刻的颜色（index.html 里同样这么判断）。
+ */
+export function isNarrow(): boolean {
+  return Math.min(window.innerWidth || Infinity, window.screen?.width || Infinity) < 768;
+}
+
 export function resolveTheme(theme: Theme, systemDark: boolean) {
   const dark = theme === "dark" || (theme === "system" && systemDark);
   return { dark, color: dark ? "#1b1b1d" : "#f6f6f4" };

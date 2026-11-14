@@ -21,7 +21,7 @@ vi.mock("../src/api.ts", async (importOriginal) => {
     },
   };
 });
-vi.mock("../src/theme.ts", () => ({ resolveTheme: () => ({ dark: false }), updateStatusColor: () => undefined }));
+vi.mock("../src/theme.ts", () => ({ resolveTheme: () => ({ dark: false }), updateStatusColor: () => undefined, isNarrow: () => window.innerWidth < 768 }));
 
 let store: typeof import("../src/store.ts");
 beforeAll(async () => {

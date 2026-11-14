@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { resolveTheme, statusSurface } from "../src/theme.ts";
 
 describe("主题和状态栏", () => {
@@ -26,5 +26,16 @@ describe("主题和状态栏", () => {
     expect(statusSurface({ ...main, panelStack: [{ kind: "file", full: true }] }, false)).toBe("bg");
     expect(statusSurface({ ...main, phase: "loading" }, true)).toBe("bg");
     expect(statusSurface({ ...main, phase: "loading" }, false)).toBe("side");
+  });
+});
+
+describe("isNarrow", () => {
+  it("iPhone 冷启动时 innerWidth 还是 980，按屏幕宽度认成手机", async () => {
+    const { isNarrow } = await import("../src/theme.ts");
+    vi.stubGlobal("window", { innerWidth: 980, screen: { width: 402 } });
+    expect(isNarrow()).toBe(true);
+    vi.stubGlobal("window", { innerWidth: 1280, screen: { width: 1440 } });
+    expect(isNarrow()).toBe(false);
+    vi.unstubAllGlobals();
   });
 });

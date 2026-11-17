@@ -156,7 +156,6 @@ export interface HobApi {
   desktopScreens(): Promise<{ screens: DesktopScreen[]; profiles: Record<string, string> }>;
 
   saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }): Promise<DesktopView>;
-  saveDesktopPublic(revision: number, assistants: string[]): Promise<DesktopView>;
   testDesktop(): Promise<DesktopTestResult>;
   mcp(): Promise<McpView>;
   putMcp(name: string, body: McpServerSave): Promise<McpView>;
@@ -210,7 +209,7 @@ export interface HobApi {
   deleteGroupRule(groupId: string, ruleId: string): Promise<void>;
   groups(): Promise<GroupSummary[]>;
   createGroup(body: { name: string; purpose: string; ownerId: string; members: string[] }): Promise<Group>;
-  patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; instructions?: string; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
+  patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; listOrder?: number; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
   patchGroupMemberModels(groupId: string, assistantId: string, patch: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }): Promise<Group>;
   archiveGroup(groupId: string): Promise<void>;
   /** 在群里开一个话题 */
@@ -311,7 +310,6 @@ export const realApi: HobApi = {
   desktop: () => req<DesktopView>("/api/desktop"),
   desktopScreens: () => req<{ screens: DesktopScreen[]; profiles: Record<string, string> }>("/api/desktop/screens"),
   saveDesktop: (body) => req<DesktopView>("/api/desktop", json(body, "PUT")),
-  saveDesktopPublic: (revision, assistants) => req<DesktopView>("/api/desktop/public", json({ revision, assistants }, "PUT")),
   testDesktop: () => req<DesktopTestResult>("/api/desktop/test", json({})),
   mcp: () => req<McpView>("/api/mcp"),
   putMcp: (name, body) => req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, json(body, "PUT")),

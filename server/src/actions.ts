@@ -127,11 +127,13 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   }
 
   // 回给模型：自己写的那句要说明是用户写的、没选给出的选项；多问题卡一行一个问题
-  const reply = questions
-    ? answersText(approval, questions, answers, note)
-    : option
-      ? `用户选择了 ${option.key}：${option.label}`
-      : `用户没有选给出的选项，而是回复：${text}`;
+  const reply = approval.login && option?.key === "A"
+    ? `用户已在「${approval.login.site}」完成登录。`
+    : questions
+      ? answersText(approval, questions, answers, note)
+      : option
+        ? `用户选择了 ${option.key}：${option.label}`
+        : `用户没有选给出的选项，而是回复：${text}`;
   if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, option ? `用户选择了：${option.label}` : reply);
   else await routeAnswer(runtime, approval, reply, delegationId);
 
@@ -146,11 +148,11 @@ export interface AssistantPatch {
   sprite?: unknown;
   pinned?: unknown;
   pinOrder?: unknown;
+  listOrder?: unknown;
   hidden?: unknown;
   notify?: unknown;
   models?: unknown;
   abilities?: unknown;
-  instructions?: unknown;
   knowledge?: unknown;
 }
 
@@ -193,11 +195,12 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
     ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
     // 置顶区里的位置：拖动头像换位置后按 0、1、2… 存，取整且不为负
     ...(typeof body.pinOrder === "number" && Number.isFinite(body.pinOrder) ? { pinOrder: Math.max(0, Math.round(body.pinOrder)) } : {}),
+    // 首页列表里的固定顺序：拖动助手行后按 0、1、2… 存，取整且不为负
+    ...(typeof body.listOrder === "number" && Number.isFinite(body.listOrder) ? { listOrder: Math.max(0, Math.round(body.listOrder)) } : {}),
     ...(typeof body.hidden === "boolean" ? { hidden: body.hidden } : {}),
     ...(typeof body.notify === "boolean" ? { notify: body.notify } : {}),
     ...(models ? { models } : {}),
     ...(abilities ? { abilities } : {}),
-    ...(typeof body.instructions === "string" ? { instructions: body.instructions } : {}),
     ...(Array.isArray(body.knowledge) ? { knowledge: [...new Set(body.knowledge as string[])] } : {}),
   };
   store.saveAssistant(next);
@@ -208,7 +211,7 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
   return { status: 200, body: { assistant: summary } };
 }
 
-/** 草稿 → 真正创建助手：带规则、补充说明、定时任务，两边对话各写一行说明。 */
+/** 草稿 → 真正创建助手：带规则、定时任务，两边对话各写一行说明。 */
 export async function createFromDraft(runtime: HobRuntime, draftId: string): Promise<ActionResult> {
   const { store, bus, router, routines } = runtime;
   const draft = store.draft(draftId);
@@ -238,7 +241,6 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
     pinned: false,
     hidden: false,
     notify: true,
-    instructions: draft.instructions.join("\n"),
     createdAt: now,
     splitFrom: {
       from: draft.assistantId,
@@ -325,11 +327,6 @@ export async function archiveAssistant(runtime: HobRuntime, id: string): Promise
     store.saveJob({ ...job, assistantName: target.name });
   }
 
-  // 公共屏幕授权不随助手 id 的重新使用继承。
-  const desktop = runtime.settings.settings.desktop;
-  if (desktop?.publicAssistants?.includes(id)) {
-    runtime.settings.setDesktop(runtime.settings.get().revision, { ...desktop, publicAssistants: desktop.publicAssistants.filter((assistantId) => assistantId !== id) });
-  }
   router.forget(id);
   // 助手走了：从它所在的群里移出，群主换人；群里没人了就一起归档
   await runtime.groups.assistantArchived(id);

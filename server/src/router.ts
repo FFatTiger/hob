@@ -6,7 +6,7 @@ import { dirname, join, relative, resolve } from "node:path";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
-import { readTodos, pruneStaleTodos } from "./todos.ts";
+import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
 import { assistantTodosPath } from "./config.ts";
 import type {
   Assistant,
@@ -35,6 +35,7 @@ import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
 import { requestText } from "./groups.ts";
+import { pushAssistantTurnEnd } from "./push.ts";
 import { monthDayTimeText } from "./time.ts";
 import { DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
@@ -63,6 +64,8 @@ export interface EventDetails {
   sourceUserId?: string;
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
+  /** 任务或转交结果已送来：本轮收尾时统一通知，避免任务结束和助手回复各推一次 */
+  workDone?: true;
 }
 
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
@@ -71,7 +74,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill", "edit_notes",
+  "read", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -119,7 +122,14 @@ interface RouterState {
   stalled: boolean;
   /** 这一轮最后一条模型回复是出错（连重试也放弃了）：这一轮收尾时写成一行给用户看 */
   turnError?: string;
-  /** 记忆提供者换了：跑着的这一轮结束就释放会话，下一轮按新提供者重新打开 */
+  /** 这一轮最后一条可见回复，用于完成通知正文 */
+  turnLastText?: string;
+  /** agent_settled 捕获的失败原因，reportTurnFailure 会清掉 turnError */
+  turnFailure?: string;
+  /** 这一轮开始前或事件带来的工作状态 */
+  turnHadWork: boolean;
+  turnWorkDone: boolean;
+  turnDelegation: boolean;
   releaseAfterTurn?: boolean;
   /** 还在跑的记忆写入工具：参数只在 tool_execution_start 里有，按 toolCallId 存着给 note 用 */
   currentDelegationId?: string;
@@ -413,7 +423,7 @@ export class RouterManager {
     const key = this.keyOf(assistantId, groupId);
     let state = this.routers.get(key);
     if (!state) {
-      state = { key, assistantId, ...(groupId ? { groupId } : {}), running: 0, lastEventAt: Date.now(), stalled: false };
+      state = { key, assistantId, ...(groupId ? { groupId } : {}), running: 0, lastEventAt: Date.now(), stalled: false, turnHadWork: false, turnWorkDone: false, turnDelegation: false };
       this.routers.set(key, state);
     }
     if (state.session) return state;
@@ -498,7 +508,6 @@ export class RouterManager {
           imageEnabled: tools.some((tool) => tool.name === "generate_image"),
           showPageEnabled: tools.some((tool) => tool.name === "show_page"),
           desktopEnabled: desktop.enabled && !!desktop.url && desktop.tokenConfigured,
-          publicDesktop: desktop.publicAssistants.includes(assistant.id),
           models: this.promptModels(assistant.id, groupId),
           skills: visibleSkills(this.runtime, assistant.id, group),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
@@ -597,15 +606,24 @@ export class RouterManager {
         ? message.errorMessage ?? "模型服务出错"
         : undefined;
     }
-    // 整轮结束（包括重试）：模型一直没答成就明说一句，用户和下一轮都看得到
-    if (event.type === "agent_settled") void this.reportTurnFailure(state).catch((error) => console.error("写失败说明失败：", error));
+    // 整轮结束（包括重试）：模型一直没答成就明说一句，用户和下一轮都看得到；
+    // 答成了的这一轮，手上没活的待办在这里收起（出错的那一轮留到下一轮）
+    if (event.type === "agent_settled") {
+      const failed = Boolean(state.turnError);
+      if (state.turnError) state.turnFailure = state.turnError;
+      void this.reportTurnFailure(state).catch((error) => console.error("写失败说明失败：", error));
+      if (!failed) releaseIdleTodos(this.runtime, assistantId, state.groupId);
+    }
     if (event.type === "agent_end") this.flushEventTurn(state, assistantId);
     this.progress(state);
     if (event.type === "agent_start" || (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_start")) {
       state.thinkingText = "";
       this.setActivity(state, { state: "thinking", label: t("正在想…") });
-      // 新一轮从干净的开始：上一轮没办成的已经留过提示行了
       if (event.type === "agent_start") state.turnCalls = undefined;
+      if (event.type === "agent_start") {
+        state.turnLastText = undefined;
+        state.turnFailure = undefined;
+      }
     }
     if (event.type === "message_update" && (event.assistantMessageEvent.type === "thinking_delta" || event.assistantMessageEvent.type === "thinking_end")) {
       if (event.assistantMessageEvent.type === "thinking_delta") state.thinkingText = (state.thinkingText ?? "") + event.assistantMessageEvent.delta;
@@ -634,6 +652,8 @@ export class RouterManager {
       this.flushEventTurn(state, assistantId);
       if (!state.groupId) state.eventTurn = { held: [] };
       const details = event.message.details as EventDetails | undefined;
+      state.turnDelegation ||= Boolean(details?.delegationId);
+      state.turnWorkDone ||= Boolean(details?.workDone);
       const users = this.derived(assistantId).result.items.filter((item) => item.kind === "user");
       const source = details?.sourceUserId ? users.find((item) => item.id === details.sourceUserId) : undefined;
       state.currentUserId = (source ?? users.at(-1))?.id;
@@ -735,6 +755,7 @@ export class RouterManager {
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
       const text = errorEcho(event.message) ? "" : messageText(event.message.content).trim();
+      state.turnLastText = text || state.turnLastText;
       if (state.groupId) {
         this.runtime.groups?.settle(state.groupId, state.assistantId, text);
         return;
@@ -1065,15 +1086,20 @@ export class RouterManager {
     return item;
   }
 
-  async event(assistantId: string, text: string, details?: EventDetails, groupId?: string): Promise<void> {
+  async event(assistantId: string, text: string, details?: EventDetails, groupId?: string): Promise<boolean> {
     const group = this.groupFor(assistantId, groupId);
     if (group) {
       // 进它的群会话，并且让 GroupManager 开一轮：它说的话才写得到时间线上
-      void this.runtime.groups.deliverEvent(group.id, assistantId, text).catch((error) => console.error("群事件投递失败：", error));
-      return;
+      void this.runtime.groups.deliverEvent(group.id, assistantId, text, "", details?.workDone).catch((error) => console.error("群事件投递失败：", error));
+      return true;
     }
-    await this.ensure(assistantId);
-    void this.pushEvent(assistantId, text, details).catch(() => undefined);
+    try {
+      await this.ensure(assistantId);
+      void this.pushEvent(assistantId, text, details).catch(() => undefined);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   /** 将转交结果送进接收会话；会话条目是去重依据。 */
@@ -1081,8 +1107,8 @@ export class RouterManager {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
     if (received()) return true;
-    await this.pushEvent(assistantId, text, { returnedDelegationId: id });
-    return received();
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
+    return success && received();
   }
 
   /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
@@ -1090,8 +1116,8 @@ export class RouterManager {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
     if (received()) return true;
-    await this.pushEvent(assistantId, text, { handoverTopicId: topicId });
-    return received();
+    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
+    return success && received();
   }
 
   /** 事件进 Router 上下文（custom message，不进气泡）；这一轮跑完才返回。 */
@@ -1104,8 +1130,10 @@ export class RouterManager {
     const state = await this.ensure(assistantId);
     const session = state.session!;
     this.touch(state);
-    await pruneStaleTodos(this.runtime, assistantId);
     state.running += 1;
+    state.turnHadWork = state.turnHadWork || todosBusy(this.runtime, assistantId, state.groupId);
+    state.turnWorkDone ||= Boolean(details?.workDone);
+    state.turnDelegation ||= Boolean(details?.delegationId);
     this.armStall(state);
     this.publishBusy(state);
     try {
@@ -1131,8 +1159,32 @@ export class RouterManager {
       this.clearStall(state);
       this.publishBusy(state);
       this.maybeRelease(state);
+      this.finishTurn(state);
       this.touch(state);
     }
+  }
+
+  /** 这一轮的状态由调用方在真正收尾时判断；任务、转交和提问仍在时不发完成通知 */
+  private finishTurn(state: RouterState): void {
+    if (state.running > 0) return;
+    const error = state.turnFailure;
+    const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
+    if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
+    if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy) {
+      pushAssistantTurnEnd(
+        { push: this.runtime.push, store: this.store },
+        {
+          assistantId: state.assistantId,
+          ...(state.groupId ? { groupId: state.groupId } : {}),
+          ...(error ? { error } : { text: state.turnLastText }),
+        },
+      );
+    }
+    state.turnHadWork = false;
+    state.turnWorkDone = false;
+    state.turnDelegation = false;
+    state.turnFailure = undefined;
+    state.turnLastText = undefined;
   }
 
   /** 忙闲变了告诉前端（“正在想”要看它）。 */
@@ -1224,8 +1276,6 @@ export class RouterManager {
     const gap = await this.modelGap(assistantId);
     if (gap) return this.sendWithoutModel(assistantId, body, gap);
     const state = await this.ensure(assistantId);
-    // 搁久了的那份在轮到这一轮之前收起，这一段带给模型的就是当前这份
-    await pruneStaleTodos(this.runtime, assistantId);
     const data = {
       text: body.text,
       ...(body.quote ? { quote: body.quote } : {}),
@@ -1262,9 +1312,9 @@ export class RouterManager {
     await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
-  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files?: string[]): Promise<void> {
+  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = false): Promise<void> {
     const state = await this.ensure(assistantId, groupId);
-    await this.deliver(state, text, { received, files });
+    await this.deliver(state, text, { received, files, workDone });
   }
 
   /**
@@ -1299,7 +1349,7 @@ export class RouterManager {
   private async deliver(
     state: RouterState,
     text: string,
-    options: { itemId?: string; files?: string[]; knowledgeQuery?: string; received?: () => void } = {},
+    options: { itemId?: string; files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
   ): Promise<void> {
     const previousDelivery = state.pendingDelivery;
     let releaseDelivery!: () => void;
@@ -1308,6 +1358,11 @@ export class RouterManager {
 
     this.touch(state);
     state.running += 1;
+    state.turnHadWork = state.turnHadWork || todosBusy(this.runtime, state.assistantId, state.groupId);
+    // 用户发来的话（单聊、群里成员接话）这一轮也算在办事：答完、手上没别的活就通知
+    state.turnWorkDone ||= options.workDone ?? true;
+    state.turnLastText = undefined;
+    state.turnFailure = undefined;
     this.armStall(state);
     this.publishBusy(state);
     let unsubscribeReceived = () => {};
@@ -1339,6 +1394,7 @@ export class RouterManager {
       this.clearStall(state);
       this.publishBusy(state);
       this.maybeRelease(state);
+      this.finishTurn(state);
       this.touch(state);
     }
   }
@@ -1401,6 +1457,11 @@ export class RouterManager {
     } catch {
       return [];
     }
+  }
+
+  /** 单聊里用户和助手说过的可见消息；卡片、工具调用和系统事件已排除。 */
+  messageHistory(assistantId: string): Array<Extract<Item, { kind: "user" | "assistant" }>> {
+    return this.derived(assistantId).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
   }
 
   items(assistantId: string, options: { before?: string; limit?: number } = {}): ItemsPage {
@@ -1507,11 +1568,12 @@ export class RouterManager {
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
   /** 把事件当作转交的一轮送给目标助手；这一轮没正常收尾就把转交记为受阻，不会一直挂着。 */
-  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails, knowledgeQuery?: string): Promise<void> {
+  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails, knowledgeQuery?: string): Promise<boolean> {
     const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery);
     if (!success || !this.store.delegation(delegationId)?.turnFinished) {
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }
+    return success;
   }
 
   /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文；群里提的问题回群会话）。 */

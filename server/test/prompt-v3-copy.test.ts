@@ -55,8 +55,7 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       }
       expect(router.find((tool) => tool.name === "show_page")?.description.startsWith(`${line(routerSource, "show_page")}\n`)).toBe(true);
       const secondary = buildRouterTools(hob.runtime, "other");
-      expect(secondary.find((tool) => tool.name === "hand_back_to_hob")?.description).toBe(line(routerSource, "hand_back_to_hob"));
-      expect(secondary.find((tool) => tool.name === "edit_notes")?.description).toBe(line(routerSource, "edit_notes"));
+      expect(secondary.find((tool) => tool.name === "hand_back")?.description).toBe(line(routerSource, "hand_back"));
       const worker = [registerReportTool(hob.runtime, "t"), registerAskTool(hob.runtime, "t"), registerImageTool(hob.runtime, "t")];
       for (const tool of worker) expect(tool.description, tool.name).toBe(line(workerSource, tool.name));
       const outcomeSource = workerSource.split("\n").find((item) => item.startsWith("- `outcome`："))!.split("：").slice(1).join("：");

@@ -169,6 +169,8 @@ export interface State {
   nowWide: boolean; // 右栏「正在做」展开成宽栏：大屏桌面 + 完整日志
   theme: Theme;
   query: string;
+  homeFilter: "all" | "assistants" | "jobs" | "routines";
+  homeOrder: "recent" | "custom";
   quote: { itemId: string; text: string } | null;
   text: string;
   attachments: Attachment[]; // 输入框里待发的附件（选了就出现，后台在传）
@@ -181,15 +183,18 @@ export interface State {
   tick: number; // 定时刷新“进行中 · N 分钟”
   updateReady: boolean; // 新版本装好了，等用户点「刷新」
   loggingIn: boolean;
+  desktopLogin: { approvalId: string; assistantId: string } | null;
 }
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
 const LOCALE_KEY = "hob.locale";
+const HOME_FILTER_KEY = "hob.home.filter";
+const HOME_ORDER_KEY = "hob.home.order";
 /** 这台页面客户端的标识：上报可见性；SSE 断了服务端就把这台当不可见。 */
 const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 let watchingVisibility = false;
@@ -198,6 +203,15 @@ function parsePanel(raw: string): PanelState {
   if (raw === "assistant" || raw === "now" || raw === "routines" || raw === "skills" || raw === "knowledge" || raw === "rules" || raw === "newRoutine") return { kind: raw };
   if (raw.startsWith("routine:")) return { kind: "routine", id: raw.slice("routine:".length) };
   return { kind: "now" };
+}
+
+function storedHomeFilter(): "all" | "assistants" | "jobs" | "routines" {
+  const value = localStorage.getItem(HOME_FILTER_KEY);
+  return value === "assistants" || value === "jobs" || value === "routines" ? value : "all";
+}
+
+function storedHomeOrder(): "recent" | "custom" {
+  return localStorage.getItem(HOME_ORDER_KEY) === "custom" ? "custom" : "recent";
 }
 
 function storedTheme(): Theme | null {
@@ -294,6 +308,8 @@ function initial(): State {
     nowWide: false,
     theme: storedTheme() ?? "system",
     query: "",
+    homeFilter: storedHomeFilter(),
+    homeOrder: storedHomeOrder(),
     quote: null,
     text: "",
     attachments: [],
@@ -306,6 +322,7 @@ function initial(): State {
     tick: 0,
     updateReady: false,
     loggingIn: false,
+    desktopLogin: null,
   };
   if (MOCK) {
     state.sel = ui.gsel ? null : ui.sel;
@@ -696,11 +713,6 @@ export const rollbackGeneralSkill = (name: string) => api.rollbackGeneralSkill(n
 export const loadDesktop = () => api.desktop();
 export async function saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }) {
   const view = await api.saveDesktop(body);
-  set({ settings: await api.settings() });
-  return view;
-}
-export async function saveDesktopPublic(revision: number, assistants: string[]) {
-  const view = await api.saveDesktopPublic(revision, assistants);
   set({ settings: await api.settings() });
   return view;
 }
@@ -1811,6 +1823,14 @@ export async function answer(approvalId: string, answer: AnswerApprovalBody) {
   }
 }
 
+export function openLoginDesktop(approvalId: string, assistantId: string) {
+  set({ desktopLogin: { approvalId, assistantId } });
+}
+
+export function closeLoginDesktop() {
+  set({ desktopLogin: null });
+}
+
 export async function createDraft(id: string) {
   try {
     await api.createDraft(id);
@@ -1843,6 +1863,67 @@ export async function archiveAssistant(id: string) {
 export async function retryDelegation(id: string) {
   try { await api.retryDelegation(id); }
   catch (e) { set({ notice: t("重新转交失败：{error}", { error: errText(e) }) }); }
+}
+
+async function findGroupItem(groupId: string, matches: (item: GroupItem) => boolean): Promise<boolean> {
+  while (state.gsel === groupId && !(state.groupItems[groupId] ?? []).some(matches) && state.groupPages[groupId]?.hasMore) {
+    const first = state.groupItems[groupId]?.[0]?.id;
+    await loadOlderGroupItems(groupId);
+    if (state.groupPages[groupId]?.error) throw new Error(state.groupPages[groupId].error!);
+    if (!first || state.groupItems[groupId]?.[0]?.id === first) break;
+  }
+  return (state.groupItems[groupId] ?? []).some(matches);
+}
+
+export async function jumpToApproval(approvalId: string) {
+  const approval = state.approvals[approvalId];
+  if (!approval) return;
+  if (approval.source === "job" && approval.jobId) {
+    await jumpToJob(approval.jobId);
+    return;
+  }
+  try {
+    if (approval.groupId) {
+      await selectGroup(approval.groupId, true, false, true);
+      if (!await findGroupItem(approval.groupId, (item) => item.kind === "question" && item.approvalId === approvalId)) {
+        set({ notice: t("未找到对应的问题") });
+        return;
+      }
+    } else {
+      await select(approval.assistantId);
+      if (!await findConversationItem(approval.assistantId, (item) => item.kind === "question" && item.approvalId === approvalId)) {
+        set({ notice: t("未找到对应的问题") });
+        return;
+      }
+    }
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const row = document.getElementById(`approval-${approvalId}`);
+      if (row) flashItem(row);
+    }));
+  } catch (e) {
+    set({ notice: t("无法定位问题：{error}", { error: errText(e) }) });
+  }
+}
+
+export function openAssistant(id: string) {
+  const approval = Object.values(state.approvals)
+    .filter((item) => item.status === "pending" && item.assistantId === id)
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  const waitingJob = Object.values(state.jobs).filter((job) => job.status === "waiting" && job.assistantId === id).sort((a, b) => (a.startedAt ?? a.createdAt).localeCompare(b.startedAt ?? b.createdAt))[0];
+  if (approval) void jumpToApproval(approval.id);
+  else if (waitingJob) void jumpToJob(waitingJob.id);
+  else void select(id);
+}
+
+export function openGroup(id: string) {
+  const topics = state.groups.filter((group) => group.parentId === id).map((group) => group.id);
+  const approval = Object.values(state.approvals)
+    .filter((item) => item.status === "pending" && item.groupId && (item.groupId === id || topics.includes(item.groupId)) && item.source !== "job")
+    .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
+  const waitingJob = Object.values(state.jobs).filter((job) => job.status === "waiting" && job.groupId && (job.groupId === id || topics.includes(job.groupId))).sort((a, b) => (a.startedAt ?? a.createdAt).localeCompare(b.startedAt ?? b.createdAt))[0];
+  if (approval) void jumpToApproval(approval.id);
+  else if (waitingJob) void jumpToJob(waitingJob.id);
+  else void selectGroup(id);
 }
 
 export async function jumpToHandback(assistantId: string, id: string, forwarded: boolean) {
@@ -2073,6 +2154,46 @@ export async function savePinOrder(ids: string[]): Promise<string | null> {
   return message;
 }
 
+export async function saveListOrder(ids: string[]): Promise<string | null> {
+  const isGroup = (id: string) => state.groups.some((group) => group.id === id);
+  const changedAssistants = ids
+    .map((id, listOrder) => ({ id, listOrder }))
+    .filter(({ id }) => !isGroup(id))
+    .filter(({ id, listOrder }) => state.assistants.find((assistant) => assistant.id === id)?.listOrder !== listOrder);
+  const changedGroups = ids
+    .map((id, listOrder) => ({ id, listOrder }))
+    .filter(({ id }) => isGroup(id))
+    .filter(({ id, listOrder }) => state.groups.find((group) => group.id === id)?.listOrder !== listOrder);
+  if (!changedAssistants.length && !changedGroups.length) return null;
+  const beforeAssistants = state.assistants;
+  const beforeGroups = state.groups;
+  set((s) => ({
+    assistants: s.assistants.map((assistant) => {
+      const index = ids.indexOf(assistant.id);
+      return index < 0 ? assistant : { ...assistant, listOrder: index };
+    }),
+    groups: s.groups.map((group) => {
+      const index = ids.indexOf(group.id);
+      return index < 0 ? group : { ...group, listOrder: index };
+    }),
+  }));
+  const results = await Promise.all([
+    ...changedAssistants.map(({ id, listOrder }) => api.patchAssistant(id, { listOrder })),
+    ...changedGroups.map(({ id, listOrder }) => api.patchGroup(id, { listOrder })),
+  ].map((request) => request.then(() => ({ ok: true as const }), (error) => ({ ok: false as const, error }))));
+  const failedAssistantIds = changedAssistants.filter((_, index) => !results[index]?.ok).map((entry) => entry.id);
+  const failedGroupIds = changedGroups.filter((_, index) => !results[changedAssistants.length + index]?.ok).map((entry) => entry.id);
+  if (!failedAssistantIds.length && !failedGroupIds.length) return null;
+  const first = results.find((result) => !result.ok);
+  const message = t("保存失败：{error}", { error: errText(first && !first.ok ? first.error : t("未知错误")) });
+  set((s) => ({
+    assistants: s.assistants.map((assistant) => failedAssistantIds.includes(assistant.id) ? beforeAssistants.find((old) => old.id === assistant.id) ?? assistant : assistant),
+    groups: s.groups.map((group) => failedGroupIds.includes(group.id) ? beforeGroups.find((old) => old.id === group.id) ?? group : group),
+    notice: message,
+  }));
+  return message;
+}
+
 export async function addRule(assistantId: string, text: string, mode: "ask" | "allow"): Promise<string | null> {
   if (state.groups.some((group) => group.id === assistantId)) {
     try { await api.patchGroup(assistantId, { rule: { text, mode } }); await loadGroupProfile(assistantId); return null; }
@@ -2147,8 +2268,8 @@ export async function loadTranscript(jobId: string) {
 }
 
 /** instant：和换对话一起打开，跟着对话直接出现，不再滑入 */
-export function openJob(id: string, round?: number, instant = false) {
-  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "job", id, round, ...(instant ? { instant } : {}) }) }));
+export function openJob(id: string, round?: number, instant = false, jumpApprovalId?: string) {
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "job", id, round, ...(instant ? { instant } : {}), ...(jumpApprovalId ? { jumpApprovalId } : {}) }) }));
   void loadTranscript(id);
 }
 
@@ -2232,14 +2353,19 @@ export function newAssistant() {
   set({ text: t("我想创建一个专属助手，负责："), nonce: state.nonce + 1, mobile: "chat", sheet: false });
 }
 
-/** 从定时运行记录打开任务所在对话及详情。 */
-export async function jumpToJob(assistantId: string, jobId: string) {
+export async function jumpToJob(assistantOrJobId: string, requestedJobId?: string) {
+  const jobId = requestedJobId ?? assistantOrJobId;
   if (!state.jobs[jobId]) await loadTranscript(jobId);
   const job = state.jobs[jobId];
   if (!job) return;
+  const approval = Object.values(state.approvals).find((item) => item.status === "pending" && item.jobId === jobId);
+  if (!requestedJobId) {
+    openJob(jobId, undefined, false, approval?.id);
+    return;
+  }
   if (job.groupId && state.groups.some((group) => group.id === job.groupId)) await selectGroup(job.groupId, true, true, true);
-  else if (state.assistants.some((assistant) => assistant.id === assistantId)) await select(assistantId, true, true);
-  openJob(jobId);
+  else if (state.assistants.some((assistant) => assistant.id === assistantOrJobId)) await select(assistantOrJobId, true, true);
+  openJob(jobId, undefined, false, approval?.id);
 }
 
 export function openRoutine(id: string) {
@@ -2434,6 +2560,16 @@ export function expandPanel() {
 
 export function setQuery(query: string) {
   set({ query });
+}
+
+export function setHomeFilter(homeFilter: State["homeFilter"]) {
+  localStorage.setItem(HOME_FILTER_KEY, homeFilter);
+  set({ homeFilter });
+}
+
+export function setHomeOrder(homeOrder: State["homeOrder"]) {
+  localStorage.setItem(HOME_ORDER_KEY, homeOrder);
+  set({ homeOrder });
 }
 
 export function setMobile(page: MobilePage) {

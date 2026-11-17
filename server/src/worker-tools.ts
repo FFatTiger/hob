@@ -111,6 +111,33 @@ export function registerAskTool(runtime: HobRuntime, jobId: string, sediment = f
   };
 }
 
+/** Worker 的登录交接：先把等待交给助手，由助手决定是否向用户出 ask_login 卡。 */
+export function registerAskLoginTool(runtime: HobRuntime, jobId: string, sediment = false): ToolDefinition<any, any> {
+  return {
+    name: "ask_login",
+    label: "请用户登录",
+    description: "请用户在桌面上登录一个网站：碰到登录页、两步验证、验证码这类只能用户本人完成的步骤时用。会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。",
+    parameters: Type.Object({
+      site: Type.String({ description: "哪个网站" }),
+      reason: Type.String({ description: "为什么要登录，一句话" }),
+    }),
+    execute: async (_id, params: any) => {
+      if (sediment) return ok("沉淀时不用问：把登录这一步写进技能，交给助手处理。");
+      const site = String(params.site ?? "").trim();
+      const reason = String(params.reason ?? "").trim();
+      if (!site || !reason) return { content: [{ type: "text" as const, text: "site 和 reason 都要填写清楚。" }], details: undefined, isError: true };
+      const answer = await runtime.jobs.askQuestion(jobId, {
+        title: `需要登录：${site}`,
+        detail: reason,
+        options: [{ key: "A", label: "好了" }],
+        recommended: "A",
+        login: { site, reason },
+      });
+      return ok(answer);
+    },
+  };
+}
+
 /** Worker 的图像生成工具：只在配了图像生成、且这个助手开着这项能力时才注册。 */
 export function registerImageTool(runtime: HobRuntime, jobId: string): ToolDefinition<any, any> {
   return {

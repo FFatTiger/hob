@@ -19,7 +19,7 @@ describe("群补充说明", () => {
     const group = { id: "g-1", name: "团队", purpose: "协作", ownerId: "hob", members: ["hob", "ops"], createdAt: "2026-01-01" };
     const store = {
       home: "/tmp/hob",
-      assistant: (id: string) => id === "hob" ? { id: "hob", name: "Hob", primary: true, duty: "主助手", instructions: "" } : { id, name: "运维", primary: false, duty: "机器", instructions: "" },
+      assistant: (id: string) => id === "hob" ? { id: "hob", name: "Hob", primary: true, duty: "主助手" } : { id, name: "运维", primary: false, duty: "机器" },
       assistants: () => [], groups: () => [], group: () => group, globalRules: () => [], rules: () => [], groupRules: () => [], routines: () => [], job: () => undefined, workDir: () => "/own",
     } as never;
     const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const, searchEnabled: false, imageEnabled: false, desktopEnabled: false };
@@ -31,38 +31,32 @@ describe("群补充说明", () => {
     expect(buildSystemPrompt(store, "hob", settings)).not.toContain(sentence);
   });
 
-  it("群会话和话题任务在助手说明之前读取所属群说明", () => {
-    const group = { id: "g-1", name: "团队", purpose: "协作", ownerId: "hob", members: ["hob"], instructions: "群里的约定", createdAt: "2026-01-01" };
-    const topic = { ...group, id: "g-2", name: "话题", parentId: group.id };
+  it("群主那段不再带补充说明", () => {
+    const group = { id: "g-1", name: "团队", purpose: "协作", ownerId: "hob", members: ["hob"], createdAt: "2026-01-01" };
     const store = {
-      home: "/tmp/hob", assistant: () => ({ id: "hob", name: "Hob", primary: true, duty: "主助手", instructions: "助手自己的说明" }),
-      assistants: () => [], groups: () => [], group: (id: string) => id === group.id ? group : topic,
-      globalRules: () => [], rules: () => [], groupRules: () => [], routines: () => [],
-      job: () => ({ assistantId: "hob", groupId: topic.id, cwd: "/work" }),
-      workDir: () => "/own",
+      home: "/tmp/hob", assistant: () => ({ id: "hob", name: "Hob", primary: true, duty: "主助手" }),
+      assistants: () => [], groups: () => [], group: () => group, globalRules: () => [], rules: () => [], groupRules: () => [], routines: () => [], job: () => undefined, workDir: () => "/own",
     } as never;
     const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const, searchEnabled: false, imageEnabled: false, desktopEnabled: false };
-    for (const prompt of [buildSystemPrompt(store, "hob", { ...settings, group: topic }), buildWorkerPrompt(store, "job", settings)]) {
-      expect(prompt).toContain("## 本群的补充说明\n群里的约定");
-      expect(prompt.indexOf("群里的约定")).toBeLessThan(prompt.indexOf("助手自己的说明"));
-    }
+    expect(buildSystemPrompt(store, "hob", { ...settings, group })).not.toContain("补充说明");
   });
+
 
   it("到点时原话代表用户本人，旧做法对不上时照原话办（票 198）", () => {
     const group = { id: "g-1", name: "社区菜园", purpose: "采购和记账", ownerId: "hob", members: ["hob"], createdAt: "2026-01-01" };
     const store = {
       home: "/tmp/hob",
-      assistant: () => ({ id: "hob", name: "Hob", primary: true, duty: "主助手", instructions: "" }),
+      assistant: () => ({ id: "hob", name: "Hob", primary: true, duty: "主助手" }),
       assistants: () => [], groups: () => [], group: () => group, globalRules: () => [], rules: () => [], groupRules: () => [], routines: () => [], job: () => undefined, workDir: () => "/own",
     } as never;
     const settings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const, searchEnabled: false, imageEnabled: false, desktopEnabled: false };
     const owner = buildSystemPrompt(store, "hob", { ...settings, group });
     expect(owner).toContain("转交里的用户原话、确认卡上的选择，以及定时任务里用户写的要做的事、建它和改它时用户的原话，代表用户本人。助手当时记下的要做的事，是那个助手对用户原话的理解；和原话对不上时，照原话办。");
-    expect(owner).toContain("规则、记忆、技能和补充说明记下的，都是以前的话、做法和情况。用户现在说的和它们对不上时，用户现在的话才是他这次要的，照新的办。");
+    expect(owner).toContain("规则、记忆和技能记下的，都是以前的话、做法和情况。用户现在说的和它们对不上时，用户现在的话才是他这次要的，照新的办。");
     expect(owner).toContain("照建它时用户交代的办，到点的消息里带着用户当时的原话；");
-    // 单聊也要有这一段：用户现在的话盖过旧的规则、记忆、技能和补充说明
+    // 单聊也要有这一段：用户现在的话盖过旧的规则、记忆和技能
     const single = buildSystemPrompt(store, "hob", settings);
-    expect(single).toContain("规则、记忆、技能和补充说明记下的，都是以前的话、做法和情况。");
+    expect(single).toContain("规则、记忆和技能记下的，都是以前的话、做法和情况。");
     expect(single).not.toContain("定时任务里用户写的要做的事");
   });
 });
@@ -112,7 +106,6 @@ describe("现在时间", () => {
           routines: [],
           routinesText: "",
           askFirst: [],
-          instructions: [],
           carry: { conversations: 2 },
           createdAt: new Date().toISOString(),
         };
@@ -136,8 +129,8 @@ describe("现在时间", () => {
 
 describe("提示词角色和内容", () => {
   it("覆盖主助手、其他助手和 Worker，最少信息时也能写全", () => {
-    const primary = { id: "hob", name: "Hob", primary: true, duty: "主助手", instructions: "主说明" };
-    const other = { id: "ops", name: "运维", primary: false, duty: "服务器", dutyLong: "维护机器", instructions: "副说明" };
+    const primary = { id: "hob", name: "Hob", primary: true, duty: "主助手" };
+    const other = { id: "ops", name: "运维", primary: false, duty: "服务器", dutyLong: "维护机器" };
     const store = {
       assistant: (id: string) => id === "hob" ? primary : other,
       assistants: () => [primary, other],
@@ -154,14 +147,14 @@ describe("提示词角色和内容", () => {
     expect(main).toContain("- 日报（rt-daily） · 每天 09:00：写日报");
     const specific = buildSystemPrompt(store, "ops", { ...settings, assistantSkillsDir: "/skills" });
     expect(specific).toContain("你是「运维」，用户的助手，负责服务器。\n详细职责：维护机器");
-    expect(specific).toContain("用户在一对一的对话里和你合作。主助手 Hob 会把归你管的事转给你：转来的消息带着用户的原话，等同用户本人的要求，你办完的结果会自动回到 Hob。用户找你办的事不归你管时，用 hand_back_to_hob 交回 Hob，由它转给合适的助手。");
+    expect(specific).toContain("用户在一对一的对话里和你合作。别的助手会把归你管的事转给你：转来的消息带着用户的原话，等同用户本人的要求，你办完的结果会自动回到转来的那位。用户找你办的事不归你管时，看「助手」一节：明显归某个助手管的，用 message_assistant 直接转给它，少绕一手；拿不准归谁，或者是别人转给你、却不归你管的，用 hand_back 交回。");
     const worker = buildWorkerPrompt(store, "t", { ...settings, abilities: { exec: false, write: true, image: false } });
     expect(worker).toContain("你是「Hob」派出的后台任务，在自己的会话里把交给你的事做完。\n工作目录：/work，是「Hob」指定的现成目录：你的命令默认在这里跑，改动直接落在这里。任务自己的目录是 /own：要另拉一份代码隔离着做，或者放临时文件和中间产物，用它。读取不限目录。");
     expect(worker).toContain("不能做：执行命令（bash）、生图（generate_image）。");
     expect(worker).toContain("## 这些事执行前先用 ask_user 问\n- 删除\n- 重启");
     // 没指定 cwd：任务就在自己的目录里做
     expect(buildWorkerPrompt(store, "t-plain", settings)).toContain(`工作目录：${homedir()}。产出放在这里；读取不限目录。`);
-    const emptyStore = { ...store as object, assistant: () => ({ ...primary, instructions: "" }), assistants: () => [primary], groups: () => [], globalRules: () => [], rules: () => [], routines: () => [] } as never;
+    const emptyStore = { ...store as object, assistant: () => ({ ...primary }), assistants: () => [primary], groups: () => [], globalRules: () => [], rules: () => [], routines: () => [] } as never;
     const empty = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const, assistantSkillsDir: "/skills" };
     // 提示词不设字数上限：只看最少信息时也能写出身份和边界
     expect(buildSystemPrompt(emptyStore, "hob", empty)).toContain("你是「Hob」");
@@ -178,13 +171,13 @@ describe("提示词角色和内容", () => {
 });
 
 describe("可选能力和事件边界", () => {
-  it("按四个开关列出关闭的能力、网页和记忆；公共屏幕只在启用时出现", () => {
+  it("按四个开关列出关闭的能力、网页和记忆", () => {
     const hob = makeHob();
     try {
       hob.runtime.store.saveGlobalRules([]);
       const base = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" } };
       for (let mask = 0; mask < 16; mask++) {
-        const options = { ...base, memory: (mask & 1 ? "local" : "off") as "local" | "off", searchEnabled: !!(mask & 2), imageEnabled: !!(mask & 4), desktopEnabled: !!(mask & 8), publicDesktop: true };
+        const options = { ...base, memory: (mask & 1 ? "local" : "off") as "local" | "off", searchEnabled: !!(mask & 2), imageEnabled: !!(mask & 4), desktopEnabled: !!(mask & 8) };
         const prompt = buildSystemPrompt(hob.runtime.store, "hob", options);
         const disabled = [!(mask & 1) && "记忆", !(mask & 2) && "联网搜索", !(mask & 4) && "图像生成", !(mask & 8) && "云桌面"].filter(Boolean);
         if (disabled.length) expect(prompt).toContain(`没开的能力：${disabled.join("、")}，在 设置 里开。`);
@@ -195,13 +188,13 @@ describe("可选能力和事件边界", () => {
         expect(prompt.includes("你和你的任务共用一个云桌面浏览器")).toBe(!!(mask & 8));
         expect(prompt).not.toContain("做成页面（show_page）更好读");
         expect(buildSystemPrompt(hob.runtime.store, "hob", { ...options, showPageEnabled: true })).toContain("做成页面（show_page）更好读");
-        expect(prompt.includes("还能用公共屏幕上用户登录好的 Chrome。")).toBe(!!(mask & 8));
-        expect(prompt).not.toContain("其他助手的回复");
+        // 收起的助手（这里是默认带的那几位）照样能接转交，它们的回复也会送回来
+        expect(prompt).toContain("其他助手的回复");
       }
       const assistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...assistant, id: "other", primary: false });
       expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off" })).toContain("转交里的用户原话和确认卡上的选择");
-      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off", desktopEnabled: true })).not.toContain("还能用公共屏幕");
+      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off", desktopEnabled: true })).toContain("你和你的任务共用一个云桌面浏览器");
     } finally { hob.close(); }
   });
 });
@@ -232,7 +225,7 @@ describe("系统提示词", () => {
       const store = hob.runtime.store;
       const primary = store.assistant("hob")!;
       store.saveAssistant({ ...primary, id: "ops", name: "服务器", duty: "机器", primary: false });
-      store.saveDraft({ id: "d", assistantId: "hob", status: "created", createdAssistantId: "ops", name: "服务器", sprite: "server", duty: "机器", dutyLong: "维护服务器", routines: [], routinesText: "", askFirst: [], instructions: [], carry: { conversations: 0 }, createdAt: primary.createdAt });
+      store.saveDraft({ id: "d", assistantId: "hob", status: "created", createdAssistantId: "ops", name: "服务器", sprite: "server", duty: "机器", dutyLong: "维护服务器", routines: [], routinesText: "", askFirst: [], carry: { conversations: 0 }, createdAt: primary.createdAt });
       store.migrateAssistantDuties();
       expect(store.assistant("ops")?.dutyLong).toBe("维护服务器");
       store.saveRules("ops", [{ id: "r", text: "重启服务", mode: "ask", changedAt: primary.createdAt }, { id: "r2", text: "查看日志", mode: "allow", changedAt: primary.createdAt }]);

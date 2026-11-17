@@ -9,7 +9,7 @@ const ISO = "2026-11-08T02:00:00.000Z";
 
 function addAssistant(hob: TestHob, id: string, name: string, duty: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }
@@ -401,7 +401,7 @@ describe("主助手的提示词", () => {
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
       const group = hob.runtime.store.groups().find((item) => item.name === "家里机器")!;
       expect(prompt).toContain(`- 家里机器（${group.id}）：负责机器上的事；群主 服务器；成员 Hob、服务器、写作`);
-      expect(prompt).toContain("一件事要几个助手接力，又有管这类事的群，用 message_group 交给那个群：群里会开一个话题，群主接手，按群里的分工安排成员，有了结论会回到你这里，这期间同一件事你这边不再另派。群里记着分工、本群的技能和补充说明，成员在同一个话题里交接，彼此看得到做到哪儿；一个个转给成员，这些都用不上。");
+      expect(prompt).toContain("一件事要几个助手接力，又有管这类事的群，用 message_group 交给那个群：群里会开一个话题，群主接手，按群里的分工安排成员，有了结论会回到你这里，这期间同一件事你这边不再另派。群里记着分工和本群的技能，成员在同一个话题里交接，彼此看得到做到哪儿；一个个转给成员，这些都用不上。");
     } finally {
       hob.close();
     }
@@ -413,7 +413,7 @@ describe("主助手的提示词", () => {
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
       expect(prompt).toContain("建群时挑最能统筹的当群主：群主接没点名的消息和群里的定时，安排成员，最后给用户结论，要知道这件事要办成什么、看得懂各个成员的活。成员里有职责就是统筹这类事的，让它当；成员各管一摊、没有谁看得到全局的，你自己进群当群主。");
       // 接在 ADMIN_LINE 后面
-      const admin = "助手、群和话题，你都能直接建和改，和用户在界面上操作一样。用户要你改的，直接改，改完说一句改了什么。你自己觉得该改的，比如同类的事反复出现又没有合适的助手管、某个群缺了该在的成员，先跟用户说你的想法，用户同意了再改。归档助手和群由用户在界面上操作。";
+      const admin = "助手、群和话题，你都能直接建和改，和用户在界面上操作一样。用户要你改的，直接改，改完说一句改了什么。你自己觉得该改的，比如同类的事反复出现又没有合适的助手管、某个群缺了该在的成员，先跟用户说你的想法，用户同意了再改。归档助手和群、助手能用的能力（跑命令、改文件、生图），由用户在界面上操作。";
       expect(prompt.indexOf(admin)).toBeGreaterThan(-1);
       expect(prompt.indexOf("建群时挑最能统筹的当群主")).toBe(prompt.indexOf(admin) + admin.length + 1);
     } finally {

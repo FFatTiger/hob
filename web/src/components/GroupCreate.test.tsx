@@ -16,7 +16,7 @@ vi.mock("react-dom", async (importOriginal) => ({ ...(await importOriginal<typeo
 import { createBody, draftError, MemberList, membersOfGroup, NewGroupDialog } from "./GroupCreate.tsx";
 
 function assistant(id: string, name: string, duty: string, hidden = false): AssistantSummary {
-  return { id, name, duty, sprite: "page", primary: false, pinned: false, hidden, notify: false, instructions: "", createdAt: "2026-11-08T01:00:00.000Z", unread: 0, busy: false };
+  return { id, name, duty, sprite: "page", primary: false, pinned: false, hidden, notify: false, createdAt: "2026-11-08T01:00:00.000Z", unread: 0, busy: false };
 }
 
 const list: AssistantSummary[] = [

@@ -299,7 +299,7 @@ describe("任务", () => {
       expect(approval).toMatchObject({ source: "job", jobId: job.id, status: "pending" });
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "question")).toBeUndefined();
       expect(hob.runtime.router.bootstrap().approvals).toEqual([]);
-      expect(push).not.toHaveBeenCalled();
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "删掉旧报告吗？", body: "Hob · 等待你的回答" }));
       expect(event).toHaveBeenCalledWith("hob", `任务「清旧报告」（${job.id}）在等你回复：删掉旧报告吗？选项：A 删、B 别删。`);
       // 等用户答多久都不算「无响应」（以前 15 分钟后被看门狗标成受阻，审批卡跟着作废）
       hob.runtime.jobs.checkStalls(Date.now() + 24 * 3600_000);

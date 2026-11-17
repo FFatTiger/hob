@@ -14,13 +14,14 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "reply_job": labelText = t("补充任务要求"); break;
     case "stop_job": labelText = t("停止任务"); break;
     case "ask_user": labelText = t("准备问你"); break;
+    case "ask_login": labelText = t("请你登录"); break;
     case "set_rule": case "remove_rule": labelText = t("改规矩"); break;
     case "create_routine": case "update_routine": case "delete_routine": labelText = withValue(t("设定时任务"), value("name")); break;
     case "send_file": labelText = withValue(t("发文件"), basename(value("path"))); break;
     case "set_avatar": labelText = t("换头像"); break;
     case "create_assistant": labelText = t("新建助手"); break;
     case "message_assistant": { const id = value("assistantId"); labelText = id ? t("交给「{name}」", { name: assistantName?.(id) ?? id }) : t("交给助手"); break; }
-    case "hand_back_to_hob": labelText = t("交回 Hob"); break;
+    case "hand_back": labelText = t("交回"); break;
     case "show_page": labelText = withValue(t("写页面"), value("title")); break;
     case "find_knowledge": labelText = withValue(t("正在找资料"), value("query")); break;
     case "search_knowledge": labelText = withValue(t("正在查知识库"), value("query")); break;

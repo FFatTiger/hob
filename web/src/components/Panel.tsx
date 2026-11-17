@@ -300,10 +300,10 @@ function PanelNow() {
         </>
       ) : <div className="sidebar-facts">{last ? <button onClick={() => openJob(last.id)}>{t("上次")} <span>{jobStatusIcon(last.status, 14)}<span>{last.title}</span></span><small>{fmtWhen(last.endedAt!)}</small></button> : null}{next ? <div>{t("下一次")} <span><span aria-hidden="true">⏱</span><span>{next.routine.name}</span></span><small>{formatNext(next.at, s.settings.settings.general.timezone)}</small></div> : null}</div>}
 
-      {panelAssistant(s.panelStack, s.sel) === "hob" ? Object.values(s.delegations).filter((delegation) => delegation.status === "running" || delegation.status === "waiting").map((delegation) => {
+      {Object.values(s.delegations).filter((delegation) => delegation.from === aid && (delegation.status === "running" || delegation.status === "waiting")).map((delegation) => {
         const target = s.assistants.find((assistant) => assistant.id === delegation.to);
-        return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation("hob", delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>{t("交给「{name}」", { name: target?.name ?? delegation.to })}</span><small><StatusTag meta={DELEGATION_STATUS[delegation.status]} /></small> ›</button>;
-      }) : null}
+        return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation(aid, delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>{t("交给「{name}」", { name: target?.name ?? delegation.to })}</span><small><StatusTag meta={DELEGATION_STATUS[delegation.status]} /></small> ›</button>;
+      })}
     </div>
   );
 }
@@ -320,7 +320,7 @@ function GroupSettings({ id }: { id: string }) {
   return <>
     <div className="pgroup"><div className="bigav"><GroupCluster g={group} assistants={s.assistants} size={64} /></div>
       <div className="sech"><span>{t("基本信息")}</span></div><div className="group-card sidebar-card-group">
-      {([["name", t("群名")], ["purpose", t("负责什么")], ["instructions", t("补充说明")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "instructions"} save={(value) => save({ [key]: value })} /></div>)}
+      {([ ["name", t("群名")], ["purpose", t("负责什么")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
       </div></div>
     <div className="pgroup"><div className="sech"><span>{t("模型")}</span></div>
     <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...settings.roster.map((entry) => ({ value: entry.ref, label: view?.models.find((item) => item.ref === entry.ref)?.name ?? entry.ref }))]} /></div>)}
@@ -1035,8 +1035,6 @@ function AssistantSettings() {
         <div className="lbl">{t("详细职责")}</div>
         <PanelText multiline value={a.dutyLong ?? ""} save={(dutyLong) => feedback.save({ dutyLong })} />
 
-        <div className="lbl">{t("补充说明")}</div>
-        <PanelText multiline value={a.instructions} placeholder={t("记下这个助手要知道的事实，如“周报发到团队群”")} save={(instructions) => feedback.save({ instructions })} />
         </div>
       </div>
 
@@ -1057,7 +1055,7 @@ function AssistantSettings() {
         <div className="group-card sidebar-card-group">
         <div className="lbl">{t("通知")}</div>
         <div className="ctl">
-          <span style={{ fontSize: 14 }}>{t("需要确认时通知我")}</span>
+          <span style={{ fontSize: 14 }}>{t("需要我回答或做完时通知我")}</span>
           <span className="sp" />
           <button
             className={`tog${a.notify ? "" : " off"}`}

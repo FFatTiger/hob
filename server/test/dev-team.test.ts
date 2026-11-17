@@ -34,7 +34,6 @@ function legacyAssistant(id: string, name: string): Assistant {
     pinned: true,
     hidden: false,
     notify: true,
-    instructions: "",
     createdAt: new Date().toISOString(),
   };
 }

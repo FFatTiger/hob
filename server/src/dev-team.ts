@@ -175,7 +175,6 @@ export function seedDevTeam(store: Store, createGroup: (input: CreateGroupInput)
         pinned: false,
         hidden: true,
         notify: true,
-        instructions: "",
         createdAt: now,
       };
       store.saveAssistant(assistant);

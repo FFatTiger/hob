@@ -165,7 +165,7 @@ describe("推送触发规则", () => {
       await flush();
       expect(fake.sent[2]?.payload).toMatchObject({ title: "群里问", body: "Hob · 等待你的回答", url: "/#/group/g-1" });
 
-      // 助手关了「需要我拍板时通知我」
+      // 助手关了「需要我回答或做完时通知我」
       const hobAssistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...hobAssistant, notify: false });
       pushApproval(deps, approvalOf("hob", "不该推"));

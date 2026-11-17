@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
-import type { Item } from "../../shared/types.ts";
+import type { Item, Job } from "../../shared/types.ts";
 import { answerApproval } from "../src/actions.ts";
 import { createRuntime } from "../src/runtime.ts";
 import { createApp } from "../src/http.ts";
@@ -26,6 +26,77 @@ function systemText(context: {
 }
 
 describe("Router", () => {
+  it("任务结果接着答完时只推一条完成通知，转交目标回合不推", async () => {
+    const hob = makeHob();
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      hob.faux.setResponses([text("已完成，报告已经放好。")]);
+      await hob.runtime.router.event("hob", "任务已完成", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push.mock.calls[0]?.[0]).toMatchObject({ title: "Hob", body: "已完成，报告已经放好。", url: "/?a=hob" });
+
+      hob.faux.setResponses([text("转交中的回复")]);
+      await hob.runtime.router.event("hob", "目标助手正在处理", { delegationId: "dg-test", workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(1);
+    } finally { hob.close(); }
+  });
+
+  it("用户发来的话答完、手上没别的活就推一条完成通知", async () => {
+    const hob = makeHob();
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      hob.faux.setResponses([text("路线排好了。")]);
+      await hob.runtime.router.send("hob", { text: "帮我排一下周末的路线" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push.mock.calls[0]?.[0]).toMatchObject({ title: "Hob", body: "路线排好了。" });
+    } finally { hob.close(); }
+  });
+
+  it("任务或提问仍在时不把回合当成做完", async () => {
+    const hob = makeHob();
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      hob.faux.setResponses([text("普通回复。")]);
+      await hob.runtime.router.event("hob", "普通事件");
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+
+      const activeJob: Job = {
+        id: "t-notify-busy",
+        assistantId: "hob",
+        title: "还在查",
+        instruction: "查一下",
+        status: "running",
+        createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 },
+        activity: [],
+      };
+      hob.runtime.store.saveJob(activeJob);
+      hob.faux.setResponses([text("任务还在进行。")]);
+      await hob.runtime.router.event("hob", "任务结果已送到", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+
+      hob.runtime.store.saveJob({ ...activeJob, status: "done", endedAt: new Date().toISOString() });
+      hob.runtime.store.saveApproval({
+        id: "q-notify-busy",
+        assistantId: "hob",
+        title: "还要继续吗？",
+        options: [{ key: "A", label: "继续" }, { key: "B", label: "停止" }],
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      hob.faux.setResponses([text("问题还在等回答。")]);
+      await hob.runtime.router.event("hob", "任务结果已送到", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+    } finally { hob.close(); }
+  });
+
   it("现在块只进模型消息，不进用户气泡或事件展示", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
@@ -251,7 +322,6 @@ describe("Router", () => {
           sprite: "page",
           routines: [{ name: "周报", instruction: "写本周周报", schedule: "0 17 * * 5" }],
           askFirst: ["发公众号"],
-          facts: ["标题不超过 20 字"],
         }),
         text("建好了。"),
       ]);
@@ -265,11 +335,10 @@ describe("Router", () => {
         duty: "周报和文章",
         sprite: "page",
         routinesText: "周报 · 每周五 17:00",
-        instructions: ["标题不超过 20 字"],
       });
       expect(draft).not.toHaveProperty("carry");
       expect(hob.runtime.store.assistant(draft.createdAssistantId!)?.splitFrom).not.toHaveProperty("conversations");
-      expect(hob.runtime.store.assistant(draft.createdAssistantId!)).toMatchObject({ name: "写作", instructions: "标题不超过 20 字" });
+      expect(hob.runtime.store.assistant(draft.createdAssistantId!)).toMatchObject({ name: "写作", dutyLong: "每周写周报，写公众号文章。" });
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "draft" && item.draftId === draft.id)).toBe(true);
       // 不结束这一轮：建好之后模型还能接着说话
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "assistant" && item.text === "建好了。")).toBe(true);
@@ -384,7 +453,7 @@ describe("Router", () => {
           dutyLong: "每周写周报。",
           sprite: "page",
           routines: [{ name: "周报", instruction: "写周报", schedule: "0 17 * * 5" }],
-          facts: ["负责周报"],
+
         }),
         text("建好了。"),
       ]);
@@ -441,13 +510,12 @@ describe("Router", () => {
         duty: "盯着模型发布和 agent 产品的最新动态",
         dutyLong: "盯模型发布、agent 产品和开源项目，每天挑 6 条。",
         sprite: "bird",
-        facts: ["负责模型动态"],
       })) as { terminate?: boolean };
       // 不结束这一轮：建好以后还能接着说话
       expect(created.terminate).toBeUndefined();
       expect(hob.runtime.store.drafts()[0]?.duty).toBe("盯着模型发布和");
       // 模型给的头像只认内置的，不能指到生成的头像文件上
-      await tool.execute("tool-call", { name: "旁门", duty: "试试", dutyLong: "试试。", sprite: "img:img-abc123.png", facts: ["负责测试"] });
+      await tool.execute("tool-call", { name: "旁门", duty: "试试", dutyLong: "试试。", sprite: "img:img-abc123.png" });
       expect(hob.runtime.store.drafts().find((draft) => draft.name === "旁门")?.sprite).toBe("page");
     } finally {
       hob.close();
@@ -488,16 +556,14 @@ describe("Router", () => {
         },
         text("好的。"),
       ]);
-      const assistant = hob.runtime.store.assistant("hob")!;
-      hob.runtime.store.saveAssistant({ ...assistant, instructions: "标题不超过 20 字" });
       await hob.runtime.router.send("hob", { text: "发公众号之前要问我" });
       await hob.runtime.router.waitIdle("hob");
       await hob.runtime.router.send("hob", { text: "在吗" });
       await hob.runtime.router.waitIdle("hob");
 
       expect(seen).toHaveLength(1);
-      expect(seen[0]).toContain("## 补充说明");
-      expect(seen[0]).toContain("标题不超过 20 字");
+      expect(seen[0]).not.toContain("## 补充说明");
+      expect(seen[0]).not.toContain("标题不超过 20 字");
       expect(seen[0]).toContain("执行前确认：发公众号");
     } finally {
       hob.close();
@@ -514,7 +580,6 @@ describe("Router", () => {
           dutyLong: "每周写周报。",
           sprite: "page",
           routines: [],
-          facts: ["负责周报"],
         }),
         text("建好了。"),
       ]);
@@ -632,6 +697,7 @@ describe("Router", () => {
   it("模型出错（限流等）不再悄无声息：对话里补一行没能回复", async () => {
     const hob = makeHob();
     try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
       const session = (await hob.runtime.router.ensure("hob")).session!;
       session.setAutoRetryEnabled(false);
       hob.faux.setResponses([
@@ -644,6 +710,8 @@ describe("Router", () => {
       await hob.runtime.router.waitIdle("hob");
       const notes = hob.runtime.router.items("hob").items.filter((item) => item.kind === "note");
       expect(notes.at(-1)).toMatchObject({ kind: "note", text: expect.stringMatching(/^没能回复：调用模型失败（模型服务返回 400：request exceeds client API key limits）。可以再发一次。$/) });
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "Hob", body: expect.stringContaining("没做成") }));
     } finally {
       hob.close();
     }

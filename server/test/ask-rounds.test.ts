@@ -56,7 +56,7 @@ function userTexts(file: string): string[] {
 
 function addAssistant(hob: TestHob, id: string, name: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, duty: "机器", primary: false, pinned: false, sprite: "server", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, duty: "机器", primary: false, pinned: false, sprite: "server" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }

@@ -10,7 +10,6 @@
 - 动作用统一的动词：创建、保存、删除、运行、停止、查看、生成、分派、确认、取消。
 - 不出现底座的名字（pi）。
 - 不用破折号，不用感叹号，不加语气词。
-- 助手档案的「补充说明」记录该助手需要知道的事实，不称为做法；做事方式放在规则或技能中。
 
 ## 术语
 
@@ -36,7 +35,7 @@
 | 要先问你 / 先问 | 执行前确认 / 需确认 |
 | 直接做 | 直接执行 |
 | 刚改 | 最近修改 |
-| 需要我拍板时通知我 | 需要确认时通知我 |
+| 需要我回答或做完时通知我 | Notify me when it needs an answer or finishes |
 | 一句话职责 | 职责简介 |
 | 关于你 | 个人信息 |
 | 分出助手 / 分出去 | 创建专属助手 |
@@ -85,7 +84,7 @@
 | 执行前确认 / 直接执行 | Ask first / Go ahead |
 | 技能 / 沉淀技能 | skill / save as a skill |
 | 通用技能 / 本群技能 / 你的技能 | shared skill / group skill / your skill |
-| 职责简介 / 详细职责 / 补充说明 | role / responsibilities / notes |
+| 职责简介 / 详细职责 | role / responsibilities |
 | 个人信息 | About you |
 | 群 / 群主 / 成员 | group / owner / member |
 | 话题 | topic |

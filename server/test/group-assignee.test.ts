@@ -17,7 +17,6 @@ function addAssistant(hob: TestHob, id: string, name: string, duty: string, work
     primary: false,
     pinned: false,
     sprite: "page",
-    instructions: "",
     ...(workModel ? { models: { work: { ref: workModel, thinking: "off" as const } } } : {}),
   };
   hob.runtime.store.saveAssistant(assistant);

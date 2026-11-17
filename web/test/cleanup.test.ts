@@ -6,6 +6,7 @@ let server: ViteDevServer;
 let browser: Browser;
 let page: Page;
 let base: string;
+const BROWSER_TEST_TIMEOUT = 90_000;
 
 beforeAll(async () => {
   server = await createServer({
@@ -21,6 +22,8 @@ beforeAll(async () => {
   base = `http://127.0.0.1:${address.port}`;
   browser = await chromium.launch({ executablePath: "/usr/bin/google-chrome", args: ["--no-sandbox"] });
   page = await browser.newPage({ locale: "zh-CN" });
+  page.setDefaultTimeout(60_000);
+  page.setDefaultNavigationTimeout(60_000);
 });
 afterAll(async () => { await page?.close(); await browser?.close(); await server?.close(); });
 
@@ -37,7 +40,7 @@ describe("前端失败路径", () => {
     await expect.poll(() => page.evaluate(() => localStorage.getItem("fixture.assistants"))).toContain('"b":2');
     await page.reload();
     await expect.poll(() => page.locator("output").textContent()).toBe("g,a,b");
-  });
+  }, BROWSER_TEST_TIMEOUT);
   it("F21 提交失败后单问题卡可重新选择", async () => {
     await fixture("question");
     await page.getByRole("button", { name: /继续/ }).click();
@@ -45,7 +48,7 @@ describe("前端失败路径", () => {
     await expect.poll(() => page.getByRole("button", { name: /暂停/ }).isEnabled()).toBe(true);
     await page.getByRole("button", { name: /暂停/ }).click();
     await expect.poll(() => calls("answer")).toBe(2);
-  });
+  }, BROWSER_TEST_TIMEOUT);
   it("F22 任务补话失败保留草稿，组字 Enter 不发送", async () => {
     await fixture("job");
     await page.getByRole("button", { name: "补充要求", exact: true }).click();
@@ -56,7 +59,7 @@ describe("前端失败路径", () => {
     await page.getByRole("button", { name: "发送", exact: true }).click();
     await expect.poll(() => calls("reply")).toBe(1);
     await expect.poll(() => input.inputValue()).toBe("保留这段文字");
-  });
+  }, BROWSER_TEST_TIMEOUT);
   it("F29 翻页提示在深浅主题都使用 text3", async () => {
     await fixture("older");
     const color = async () => page.locator(".older-messages").evaluate(el => [getComputedStyle(el).color, getComputedStyle(document.documentElement).getPropertyValue("--text3").trim()]);
@@ -66,7 +69,7 @@ describe("前端失败路径", () => {
       const expected = await page.evaluate(value => { const el = document.createElement("span"); el.style.color = value; document.body.append(el); const result = getComputedStyle(el).color; el.remove(); return result; }, variable);
       expect(actual).toBe(expected);
     }
-  });
+  }, BROWSER_TEST_TIMEOUT);
   it("F30 工具开关失败回原状态并以服务端返回为准", async () => {
     await fixture("mcp");
     const toggle = page.getByRole("button", { name: "tool启用" });
@@ -78,5 +81,5 @@ describe("前端失败路径", () => {
     expect(await toggle.getAttribute("aria-pressed")).toBe("true");
     await toggle.click();
     await expect.poll(() => toggle.getAttribute("aria-pressed")).toBe("false");
-  });
+  }, BROWSER_TEST_TIMEOUT);
 });

@@ -12,7 +12,7 @@ const ISO = "2026-11-08T02:00:00.000Z";
 
 function addAssistant(hob: TestHob, id: string, name: string, duty: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }

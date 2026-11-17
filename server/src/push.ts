@@ -297,12 +297,34 @@ export interface NotifyDeps {
   store: Store;
 }
 
+/** 一轮结束后通知助手：完成通知和失败通知共用这一条入口。 */
+export interface AssistantTurnEnd {
+  assistantId: string;
+  groupId?: string;
+  text?: string;
+  error?: string;
+}
+
 /** 点开推送去哪：群里提的问题、群里开的任务去群聊页，其余去这个助手的单聊。 */
 function openUrl(assistantId: string, groupId?: string): string {
   return groupId ? `/#/group/${encodeURIComponent(groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
 }
 
-/** 出审批：这个助手开了「需要确认时通知我」才推送。 */
+/** 一轮结束后推送；是否已经从有活变成没活由 Router 按 todosBusy 判断。 */
+export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
+  const assistant = deps.store.assistant(turn.assistantId);
+  if (!assistant?.notify) return;
+  const group = turn.groupId ? deps.store.group(turn.groupId) : undefined;
+  const title = group?.name ?? assistant.name;
+  const body = turn.error
+    ? t("没做成：{reason}", { reason: plainText(turn.error) })
+    : turn.text?.trim()
+      ? plainText(turn.text).replace(/\s+/g, " ").slice(0, 160)
+      : t("已完成");
+  void deps.push.send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }).catch(() => undefined);
+}
+
+/** 出审批：这个助手开了「需要我回答或做完时通知我」才推送。 */
 export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   const assistant = deps.store.assistant(approval.assistantId);
   if (!assistant?.notify) return;
@@ -313,7 +335,7 @@ export function pushApproval(deps: NotifyDeps, approval: Approval): void {
     .catch(() => undefined);
 }
 
-/** 任务受阻或失败：所属助手开了通知才推送。 */
+/** 任务没有后续助手回合时的受阻或失败兜底通知。 */
 export function pushJobEnd(deps: NotifyDeps, job: Job): void {
   if (job.status !== "stuck" && job.status !== "failed") return;
   const assistant = deps.store.assistant(job.assistantId);

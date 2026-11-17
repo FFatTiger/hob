@@ -12,7 +12,7 @@ const options = { memory: "off" as const, retry: { maxRetries: 2, baseDelayMs: 1
 
 function addAssistant(hob: TestHob, id: string, name: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, primary: false, pinned: false, sprite: "page", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, primary: false, pinned: false, sprite: "page" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }

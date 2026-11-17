@@ -32,6 +32,7 @@ import {
   jumpToDelegation,
   jumpToHandback,
   openFilePreview,
+  openLoginDesktop,
   openLivePreview,
   openNoteGroup,
   openJob,
@@ -311,21 +312,6 @@ function DraftCard({ draft }: { draft: Draft }) {
               <span className="k">{t("执行前确认")}</span>
               <span className={draft.askFirst.length ? undefined : "none"}>{draft.askFirst.join(" · ") || t("没有")}</span>
             </div>
-            <div className="kv">
-              <span className="k">{t("补充说明")}</span>
-              {draft.instructions.length ? (
-                // 每条一行：条目自己带句号，再用「；」接起来会变成「。；」
-                <span>
-                  {draft.instructions.map((line, i) => (
-                    <span className="line" key={i}>
-                      {line}
-                    </span>
-                  ))}
-                </span>
-              ) : (
-                <span className="none">{t("没有")}</span>
-              )}
-            </div>
           </div>
         </div>
         <div className="acts swap" style={{ marginTop: 12 }}>
@@ -400,7 +386,26 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
 }
 
 function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
-  return approval.questions?.length ? <MultiQuestionCard approval={approval} fresh={fresh} /> : <SingleQuestionCard approval={approval} fresh={fresh} />;
+  return approval.login ? <LoginCard approval={approval} fresh={fresh} /> : approval.questions?.length ? <MultiQuestionCard approval={approval} fresh={fresh} /> : <SingleQuestionCard approval={approval} fresh={fresh} />;
+}
+
+function LoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  const login = approval.login!;
+  const done = approval.status === "answered";
+  return (
+    <div className={`b q qlogin${fresh ? " enter" : ""}`}>
+      <div className="qt">{approval.title}</div>
+      <div className="qs">{t("网站：{site}", { site: login.site })}</div>
+      <div className="qs">{login.reason}</div>
+      {approval.status === "expired" ? <div className="opts"><div className="opt">{t("已结束")}</div></div> : done ? <div className="opts"><div className="opt chosen"><Icon name="check" size={15} />{t("已完成")}</div></div> : (
+        <div className="qfoot qacts">
+          <button className="hob-btn hob-btn-primary" onClick={() => openLoginDesktop(approval.id, approval.assistantId)}>
+            <Icon name="pointer" size={14} />{t("去登录")}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 /** 一张卡问几个问题：每个问题选一项或自己写一句，一次提交。要补充的写进那个问题的「自己写」，卡上不另设补充框。 */
@@ -775,7 +780,7 @@ function ItemView({
           <span className="send-progress" aria-label={t("正在发送")}><Icon name="spin" size={16} w={2.2} className="spin" /></span>
         ) : null}
         <div className={`hov right msg${fresh ? " enter-right" : ""}${pend ? " pending" : ""}`}>
-        {forwarded ? <div className="forwarded-line">{forwarded && "assistantId" in forwarded ? t("从和 Hob 的对话转来") : t("从综合转来")}</div> : null}
+        {forwarded ? <div className="forwarded-line">{forwarded && "assistantId" in forwarded ? (() => { const sender = s.assistants.find((a) => a.id === forwarded.assistantId); return t("从和「{name}」的对话转来", { name: sender?.name ?? forwarded.assistantId }); })() : t("从综合转来")}</div> : null}
         {album ? (
           <div className={`u-album${albumOpen ? " open" : ""}`} ref={hasBubble ? undefined : bubble} style={hasBubble ? undefined : swipeStyle}>
             <button className="album-pill" onClick={() => setAlbumOpen(!albumOpen)}>{albumOpen ? t("收起") : t("展开 {n}", { n: photos.length })}</button>
@@ -793,7 +798,7 @@ function ItemView({
         ) : null}
         {hasBubble ? (
         <div className="u" ref={bubble} style={swipeStyle}>
-          {item.from ? <button className="forward-label" onClick={() => void (item.from!.assistantId === "hob" ? jumpToDelegation(item.from!.assistantId, item.from!.delegationId, false) : jumpToHandback(item.from!.assistantId, item.from!.delegationId, false))}>{(() => { const sender = s.assistants.find((a) => a.id === item.from!.assistantId); return sender ? <Avatar sprite={sender.sprite} prop={sender.prop} size={16} /> : null; })()}{item.from.assistantId === "hob" ? t("转自 {name}", { name: item.from.name }) : t("转自「{name}」", { name: item.from.name })}</button> : null}
+          {item.from ? <button className="forward-label" onClick={() => void (item.from!.delegationId.startsWith("dg-") ? jumpToDelegation(item.from!.assistantId, item.from!.delegationId, false) : jumpToHandback(item.from!.assistantId, item.from!.delegationId, false))}>{(() => { const sender = s.assistants.find((a) => a.id === item.from!.assistantId); return sender ? <Avatar sprite={sender.sprite} prop={sender.prop} size={16} /> : null; })()}{t("转自 {name}", { name: item.from.name })}</button> : null}
           {item.quote ? <button className={`quote${quoteWho?.(item.quote.itemId) ? " named" : ""}`} onClick={(event) => jumpToQuote(event, item.quote!.itemId)}>{quoteWho?.(item.quote.itemId) ? t("{name}：", { name: quoteWho(item.quote.itemId)! }) : ""}{item.quote.text}</button> : null}
           {/* 其他附件是气泡里的一行文件卡 */}
           {item.text ? <span className={`u-text${item.from ? " u-brief" : ""}`}>{item.from ? <Brief text={item.text} /> : item.text}</span> : null}
@@ -881,7 +886,7 @@ function ItemView({
 
   if (item.kind === "question") {
     const ap = s.approvals[item.approvalId];
-    return ap ? <QuestionCard approval={ap} fresh={fresh} /> : null;
+    return ap ? <div id={`approval-${ap.id}`} data-item-id={item.id}><QuestionCard approval={ap} fresh={fresh} /></div> : null;
   }
 
   if (item.kind === "job") {

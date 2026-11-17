@@ -229,8 +229,9 @@ export interface Assistant {
   /** 置顶区里的位置：小的在前，拖动头像换位置时改它；没排过的排在排过的后面，再按创建时间 */
   pinOrder?: number;
   hidden: boolean; // 收起的助手
-  notify: boolean; // 需要确认时通知我
-  instructions: string; // 补充说明：用户可直接编辑该助手需要知道的专属事实
+  notify: boolean; // 需要回答或做完时通知我
+  /** 首页助手/群列表的固定顺序：小的在前；没排过的排在后面。 */
+  listOrder?: number;
   /** 这个助手用哪些模型；缺省全部跟随设置 → 模型 */
   models?: {
     conversation?: ModelPick; // 不填 = 跟随全局的对话模型
@@ -265,11 +266,12 @@ export interface Group {
   id: string; // "g-" + 短 id；话题也是
   name: string; // 话题：话题名
   purpose: string; // 负责什么，一句话
-  instructions?: string; // 本群补充说明，话题继承所属群
   ownerId: string; // 群主，必须在 members 里
   members: string[]; // assistantId，含群主，顺序就是成员列表的顺序
   models?: { conversation?: ModelPick; work?: ModelPick }; // 本群模型默认值
   memberModels?: Record<string, { conversation?: ModelPick; work?: ModelPick }>; // 各成员在本群的模型覆盖
+  /** 首页助手/群列表的固定顺序：小的在前；没排过的按最近活跃排。 */
+  listOrder?: number;
   createdAt: Iso;
   parentId?: string; // 有它的是话题：所属的群
   createdBy?: string; // 话题：谁开的，"user" 或成员 assistantId
@@ -392,7 +394,7 @@ export interface Routine {
 
 export interface Delegation {
   id: string;
-  from: "hob";
+  from: string;
   to: string;
   text: string;
   createdAt: Iso;
@@ -566,6 +568,7 @@ export interface Approval {
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
+  login?: { site: string; reason: string }; // ask_login 的登录交接信息
   createdAt: Iso;
   answeredAt?: Iso;
 }
@@ -583,7 +586,6 @@ export interface Draft {
   routines: { name: string; instruction: string; schedule: string }[]; // 草稿卡 "定时任务" 行
   routinesText: string; // 草稿卡 "定时任务" 行的展示文字
   askFirst: string[]; // 执行前确认的事项
-  instructions: string[]; // 补充说明（建好后写进新助手的 instructions）
   readonly carry?: { readonly conversations?: number }; // 仅供读取旧数据，未实际迁移对话
   createdAssistantId?: string;
   createdAt: Iso;
@@ -767,7 +769,7 @@ export interface Settings {
   image: ImageSettings;
   search: SearchSettings;
   /** 云桌面令牌保存在 secrets.json，不包含在设置中。 */
-  desktop?: { url: string; enabled: boolean; publicAssistants?: string[] };
+  desktop?: { url: string; enabled: boolean };
   claude?: ClaudeCodeSettings;
   /** 停用的技能，键为来源和技能名。 */
   skills?: { disabled: string[] };
@@ -803,7 +805,6 @@ export interface DesktopView {
   enabled: boolean;
   deployed: boolean;
   tokenConfigured: boolean;
-  publicAssistants: string[];
 }
 
 export interface DesktopScreen { id: string; running: boolean; browserRunning: boolean; viewers: number; lastActiveAt: string | null }

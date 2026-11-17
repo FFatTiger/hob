@@ -118,7 +118,7 @@ describe("知识库查内容", () => {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([text("收到")]);
       search.mockClear();
-      const delegation = await hob.runtime.delegations.start("ops", "每日巡检怎么做");
+      const delegation = await hob.runtime.delegations.start("hob", "ops", "每日巡检怎么做");
       await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.turnFinished));
       expect(search).toHaveBeenCalledWith("每日巡检怎么做", [collection.id], { limit: 3, gate: true });
       const ops = await hob.runtime.router.ensure("ops");

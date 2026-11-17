@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { t } from "../../shared/i18n.ts";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
@@ -9,6 +9,7 @@ import { Login } from "./components/Login.tsx";
 import { Knowledge } from "./components/Knowledge.tsx";
 import { MobileList, Sheet } from "./components/Mobile.tsx";
 import { Panel } from "./components/Panel.tsx";
+import { PushPrompt } from "./components/PushPrompt.tsx";
 import { SettingsPage } from "./components/Settings.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { GroupSidebar, MobileTopics } from "./components/Topics.tsx";
@@ -17,9 +18,12 @@ import { groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, type GonePage } from "./panel-stack.ts";
-import { backPanel, clearNotice, start, tick, useApp, type PanelPage } from "./store.ts";
+import { backPanel, answer, clearNotice, closeLoginDesktop, start, tick, useApp, type PanelPage } from "./store.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
+import { useDesktopScreens } from "./desktop-screens.ts";
 import { Avatar } from "./sprites.tsx";
+
+const LoginDesktop = lazy(() => import("./components/DesktopView.tsx").then((module) => ({ default: module.DesktopView })));
 
 /** 右栏的页一层层盖上去：新页从右边滑进来，下面的页不动也不隐藏；退掉的页滑出去以后再卸。换了助手直接换，不滑。 */
 function useLayers(stack: PanelPage[], owner: string | null) {
@@ -45,6 +49,7 @@ function rawError(text: string): string {
 
 export function App() {
   const s = useApp();
+  const desktop = useDesktopScreens();
   const [narrow, setNarrow] = useState(isNarrow);
   const chat = useLeave(s.mobile === "chat" && Boolean(s.sel ?? s.gsel), 240);
   const settings = useLeave(s.page === "settings", 180);
@@ -78,6 +83,24 @@ export function App() {
   useEffect(() => {
     void start();
   }, []);
+
+  useEffect(() => {
+    const login = s.desktopLogin;
+    if (!login) return;
+    if (s.approvals[login.approvalId]?.status !== "pending") closeLoginDesktop();
+  }, [s.desktopLogin, s.approvals]);
+
+  const finishLogin = () => {
+    const login = s.desktopLogin;
+    closeLoginDesktop();
+    if (login && s.approvals[login.approvalId]?.status === "pending") void answer(login.approvalId, { key: "A" });
+  };
+  const loginApproval = s.desktopLogin ? s.approvals[s.desktopLogin.approvalId] : undefined;
+  const loginProfile = s.desktopLogin ? desktop.profiles[s.desktopLogin.assistantId] ?? s.desktopLogin.assistantId : undefined;
+  const loginOverlay = s.desktopLogin && loginApproval?.status === "pending" && loginProfile ? (
+    <Suspense fallback={null}><LoginDesktop initialScreen={loginProfile} takeOver login onClose={finishLogin} /></Suspense>
+  ) : null;
+
 
   useEffect(() => {
     if (!s.panelStack.length) return;
@@ -136,6 +159,8 @@ export function App() {
     </button>
   ) : null;
 
+  const pushPrompt = <PushPrompt />;
+
   // 拖文件进窗口：只在界面里接管，登录页/连不上时不管
   const drop = <DropFiles />;
 
@@ -147,6 +172,8 @@ export function App() {
         {narrow ? mobileLayers : <><JobOverlay /><FilePreviewOverlay /></>}
         {drop}
         {toast}
+        {pushPrompt}
+        {loginOverlay}
       </>
     );
   }
@@ -158,6 +185,8 @@ export function App() {
         <Knowledge narrow={narrow} leaving={knowledge.leaving} />
         {narrow ? mobileLayers : null}
         {toast}
+        {pushPrompt}
+        {loginOverlay}
       </>
     );
   }
@@ -191,6 +220,8 @@ export function App() {
         <AssistantMenu />
         {drop}
         {toast}
+        {pushPrompt}
+        {loginOverlay}
       </>
     );
   }
@@ -223,6 +254,8 @@ export function App() {
       {s.offline ? <div className="toast">{s.offline}</div> : null}
       {drop}
       {toast}
+      {pushPrompt}
+      {loginOverlay}
     </div>
   );
 }

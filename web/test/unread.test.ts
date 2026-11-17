@@ -12,7 +12,7 @@ describe("未读", () => {
     vi.stubGlobal("document", { visibilityState: "visible" });
     const markRead = vi.spyOn(realApi, "markRead").mockResolvedValue(undefined);
     const { applyEvent, getState } = await import("../src/store.ts");
-    const summary = (id: string) => ({ id, name: id, duty: "", sprite: "hob", primary: false, pinned: true, hidden: false, notify: true, instructions: "", createdAt: "", unread: 2 }) as unknown as AssistantSummary;
+    const summary = (id: string) => ({ id, name: id, duty: "", sprite: "hob", primary: false, pinned: true, hidden: false, notify: true, createdAt: "", unread: 2 }) as unknown as AssistantSummary;
     getState().sel = "hob"; // 正看着 Hob 的对话
     applyEvent({ type: "assistant", assistant: summary("hob") });
     applyEvent({ type: "assistant", assistant: summary("bird") });

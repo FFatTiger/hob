@@ -52,7 +52,7 @@ import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -90,6 +90,7 @@ export const SCENE_UI: Record<
   "ask-rounds-group": { sel: null, gsel: "g-home", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "ask-rounds-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "ask-rounds-mobile": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "home-attention": { sel: null, panel: "now", collapsed: false, dark: false, mobile: "list" },
   s1: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   s2: { sel: "bird", panel: "routine:r-daily", collapsed: false, dark: false, mobile: "list" },
   s3: { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "list" },
@@ -216,16 +217,16 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.7.0",
+  version: "1.8.0",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
 
 const DESKTOP_VIEWS: Record<DesktopScene, DesktopView> = {
-  none: { revision: 1, url: "", enabled: false, deployed: false, tokenConfigured: false, publicAssistants: [] },
-  ready: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true, publicAssistants: [] },
-  deployed: { revision: 1, url: "http://desktop:6080", enabled: true, deployed: true, tokenConfigured: true, publicAssistants: [] },
-  failed: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true, publicAssistants: [] },
+  none: { revision: 1, url: "", enabled: false, deployed: false, tokenConfigured: false },
+  ready: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true },
+  deployed: { revision: 1, url: "http://desktop:6080", enabled: true, deployed: true, tokenConfigured: true },
+  failed: { revision: 1, url: "http://127.0.0.1:30196", enabled: true, deployed: false, tokenConfigured: true },
 };
 
 interface Db {
@@ -287,7 +288,6 @@ function buildDb(scene: SceneId): Db {
       pinned: true,
       hidden: false,
       notify: true,
-      instructions: L("输出用中文短句；编写代码的任务先询问项目目录。", "Keep replies short; for coding jobs, ask for the project folder first."),
       createdAt: at(30, 9, 0),
       last: { text: L("已交给任务处理，完成后通知你。", "Handed it to a job. I'll tell you when it's done."), at: at(0, 10, 5) },
       unread: 0,
@@ -302,7 +302,6 @@ function buildDb(scene: SceneId): Db {
       pinned: true,
       hidden: false,
       notify: true,
-      instructions: L("口语化短句；标题不超过 20 字；配图自行生成；周报每周五提交。", "Short, conversational lines; titles under 60 characters; make your own images; send the weekly report on Fridays."),
       models: {
         work: { ref: "faux/smart", thinking: "high" },
         allowed: ["faux/smart", "faux/vision"],
@@ -322,7 +321,6 @@ function buildDb(scene: SceneId): Db {
       pinned: true,
       hidden: false,
       notify: true,
-      instructions: L("清理日志前先查看保留天数的规则。", "Check the retention rule before cleaning up logs."),
       createdAt: at(28, 9, 0),
       last: { text: L("凌晨 3 点清理 2.1GB 旧日志", "Cleaned 2.1 GB of old logs at 3 am"), at: at(1, 3, 5) },
       unread: 0,
@@ -337,7 +335,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: false,
       notify: true,
-      instructions: L("关注 agent 编排和本地部署，不包含融资新闻。", "Follow agent orchestration and local deployment; skip funding news."),
       createdAt: at(7, 9, 0),
       splitFrom: { from: "hob", at: at(7, 9, 0), conversations: 8 },
       last: { text: L("今天 6 条，挑选了 2 条重点", "Six items today, two worth your time"), at: at(0, 9, 0) },
@@ -353,7 +350,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: false,
       notify: false,
-      instructions: "",
       createdAt: at(25, 9, 0),
       last: { text: L("相册备份完成，新增 312 张", "Photo backup done: 312 new photos"), at: at(0, 7, 30) },
       unread: 0,
@@ -368,7 +364,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: false,
       notify: false,
-      instructions: "",
       createdAt: at(24, 9, 0),
       last: { text: L("10 月账单已整理完成，比上月减少 12%", "October bills are done, 12% less than last month"), at: at(1, 21, 10) },
       unread: 0,
@@ -383,7 +378,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: false,
-      instructions: "",
       createdAt: at(20, 9, 0),
       last: { text: L("本周读书笔记已整理完成", "This week's reading notes are done"), at: at(3, 20, 0) },
       unread: 0,
@@ -398,7 +392,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: false,
-      instructions: "",
       createdAt: at(18, 9, 0),
       last: { text: L("本周三次训练已记录", "Three sessions recorded this week"), at: at(2, 19, 0) },
       unread: 0,
@@ -415,7 +408,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: true,
-      instructions: "",
       createdAt: at(5, 10, 0),
       last: { text: L("列了 4 项待办，第 4 项要你在手机上试一下", "4 to-dos listed; item 4 is yours to try on a phone"), at: at(0, 9, 41) },
       unread: 0,
@@ -431,7 +423,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: true,
-      instructions: "",
       createdAt: at(5, 10, 0),
       last: { text: L("30 天的长效 token 放 httpOnly cookie", "The 30-day token goes in an httpOnly cookie"), at: at(0, 9, 44) },
       unread: 0,
@@ -447,7 +438,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: true,
-      instructions: "",
       createdAt: at(5, 10, 0),
       last: { text: L("开工", "Started"), at: at(0, 9, 45) },
       unread: 0,
@@ -463,7 +453,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: true,
-      instructions: "",
       createdAt: at(5, 10, 0),
       unread: 0,
       busy: false,
@@ -478,7 +467,6 @@ function buildDb(scene: SceneId): Db {
       pinned: false,
       hidden: true,
       notify: true,
-      instructions: "",
       createdAt: at(5, 10, 0),
       unread: 0,
       busy: false,
@@ -555,7 +543,6 @@ function buildDb(scene: SceneId): Db {
     routines: [{ name: "每日简报", instruction: "挑最值得看的几条，最多 6 条", schedule: "0 9 * * *" }],
     routinesText: "每天 09:00 简报，最多 6 条；重要发布随时提醒",
     askFirst: ["花钱订阅", "替你对外发消息"],
-    instructions: ["关心 agent 编排和本地部署", "不看融资新闻"],
     carry: { conversations: 8 },
     createdAssistantId: draftPending ? undefined : "bird",
     createdAt: at(0, 10, 17),
@@ -962,7 +949,7 @@ cp now.txt "$seen"`,
     ];
     items.server = [
       { kind: "user", id: "h-user", at: minsAgo(9), text: "检查代理节点为什么无法连接。" },
-      { kind: "note", id: "h-note", at: minsAgo(8), icon: "info", text: "已交回 Hob：代理配置不属于我的职责。", handbackId: "hb-demo" },
+      { kind: "note", id: "h-note", at: minsAgo(8), icon: "info", text: "已交回「Hob」：代理配置不属于我的职责。", handbackId: "hb-demo" },
       { kind: "user", id: "h-delegation-forward", at: minsAgo(4), text: "检查代理节点为什么无法连接。", from: { assistantId: "hob", name: "Hob", delegationId: "dg-returned" } },
     ];
   }
@@ -977,12 +964,12 @@ cp now.txt "$seen"`,
 
   if (scene.startsWith("readme-")) {
     const writing = assistants.find((a) => a.id === "page")!;
-    writing.instructions = L("周报发到团队群；素材在共享盘的周报文件夹。", "Post the weekly report to the team group; the source material is in the weekly folder on the shared drive.");
+
     writing.models = { work: { ref: "anthropic/claude-sonnet", thinking: "high" }, allowed: ["anthropic/claude-sonnet", "openai/gpt-5"] };
     writing.last = { text: L("周报已整理好，发送前请确认。", "The weekly report is ready; check it before I send."), at: minsAgo(2) };
     const hob = assistants.find((a) => a.id === "hob")!;
     hob.busy = false;
-    hob.instructions = "";
+
     hob.last = { text: L("整理好了，适合用共享文档协作。", "Done. A shared doc fits how your team works."), at: minsAgo(1) };
     assistants.splice(0, assistants.length, ...assistants.filter((a) => ["hob", "page", "bird", "coin"].includes(a.id)));
     const done: Job = {
@@ -1033,7 +1020,7 @@ cp now.txt "$seen"`,
       ];
     }
     if (scene === "readme-cards") {
-      Object.assign(draft, { status: "pending", createdAssistantId: undefined, name: "资料助手", dutyLong: "整理团队资料，维护共享目录", routinesText: "每周整理资料", askFirst: ["对外发送"], instructions: ["优先整理常用资料"], carry: { conversations: 3 } });
+      Object.assign(draft, { status: "pending", createdAssistantId: undefined, name: "资料助手", dutyLong: "整理团队资料，维护共享目录", routinesText: "每周整理资料", askFirst: ["对外发送"],  carry: { conversations: 3 } });
       delegations["readme-delegation"] = { id: "readme-delegation", from: "hob", to: "page", text: "整理团队资料的使用方法。", createdAt: minsAgo(3), status: "running", jobIds: [] };
       items.hob = [
         { kind: "image", id: "readme-image", at: minsAgo(4), startedAt: minsAgo(4), status: "done", prompt: "团队资料封面", size: "1536x1024", path: "/mock/readme-cover.svg" },
@@ -1173,6 +1160,21 @@ cp now.txt "$seen"`,
     { kind: "question", id: "gd-3", at: at(0, 9, 40), approvalId: "ap-g-dev", speaker: "po" },
     { kind: "assistant", id: "gd-4", at: at(0, 9, 41), text: "这件事要分几步，我开个话题列上待办，做完给你结论。", speaker: "po" },
   ];
+
+  if (scene === "home-attention") {
+    approvals["ap-home-attention"] = {
+      id: "ap-home-attention",
+      assistantId: "po",
+      groupId: "g-dev",
+      title: "登录页要保留自动登录吗？",
+      detail: "这会影响发布前的安全检查，请你定一下。",
+      options: [{ key: "A", label: "保留，但只在本机" }, { key: "B", label: "不保留" }],
+      status: "pending",
+      source: "router",
+      createdAt: minsAgo(2),
+    };
+    devItems.push({ kind: "question", id: "gd-home-attention", at: minsAgo(2), approvalId: "ap-home-attention", speaker: "po" });
+  }
 
   const groups: GroupSummary[] = [
     {
@@ -1845,7 +1847,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const groupRules: Record<string, Rule[]> = {};
   if (scene === "g-owns" || scene === "g-owns-dark") {
     const group = db.groups.find((item) => item.id === "g-dev")!;
-    group.instructions = "先明确要做成什么样，再分给合适的成员；发布前请用户确认。";
+    
     const topic: GroupSummary = { ...group, id: "g-owns-topic", parentId: group.id, name: "监听项目动态", busy: [], unread: 0 };
     db.groups.push(topic);
     db.groupItems[topic.id] = [];
@@ -2235,11 +2237,6 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       desktop = { ...desktop, revision: desktop.revision + 1, url: body.url, enabled: body.enabled, tokenConfigured: desktop.tokenConfigured || Boolean(body.token) };
       return clone(desktop);
     },
-    saveDesktopPublic: async (revision, assistants) => {
-      if (revision !== desktop.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
-      desktop = { ...desktop, revision: desktop.revision + 1, publicAssistants: [...assistants] };
-      return clone(desktop);
-    },
     testDesktop: async () => {
       if (desktopMockScene() === "failed") return { ok: false, error: `无法连接 ${desktop.url}，请确认云桌面已部署并启动。` };
       if (!desktop.url) return { ok: false, error: "请先填写云桌面地址。" };
@@ -2538,7 +2535,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         group.ownerId = patch.ownerId;
         for (const topic of db.groups.filter((g) => g.parentId === groupId)) topic.ownerId = patch.ownerId;
       }
-      if (patch.instructions !== undefined) group.instructions = patch.instructions;
+      
       if (patch.models !== undefined) {
         const models = { ...group.models };
         for (const key of ["conversation", "work"] as const) {
@@ -2552,6 +2549,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         group.purpose = patch.purpose;
         for (const topic of db.groups.filter((g) => g.parentId === groupId)) topic.purpose = patch.purpose;
       }
+      if (typeof patch.listOrder === "number" && Number.isFinite(patch.listOrder)) group.listOrder = Math.max(0, Math.round(patch.listOrder));
       emitGroup(groupId);
       return clone(group);
     },

@@ -20,7 +20,6 @@ import {
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
-import { updateAssistant } from "./actions.ts";
 import type { Approval, ApprovalQuestion, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
@@ -509,6 +508,39 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       },
     },
     {
+      name: "ask_login",
+      label: "请用户登录",
+      description: "请用户在桌面上登录一个网站：碰到登录页、两步验证、验证码这类只能用户本人完成的步骤时用。会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。",
+      parameters: Type.Object({
+        site: Type.String({ description: "哪个网站" }),
+        reason: Type.String({ description: "为什么要登录，一句话" }),
+      }),
+      execute: async (_id, params: any) => {
+        const site = String(params.site ?? "").trim();
+        const reason = String(params.reason ?? "").trim();
+        if (!site || !reason) return fail("site 和 reason 都要填写清楚。");
+        const approval: Approval = {
+          id: newId("q-"),
+          assistantId,
+          title: t("需要登录：{site}", { site }),
+          detail: reason,
+          options: [{ key: "A", label: "好了" }],
+          recommended: "A",
+          status: "pending",
+          source: "router",
+          ...(groupId ? { groupId } : {}),
+          login: { site, reason },
+          createdAt: new Date().toISOString(),
+        };
+        store.saveApproval(approval);
+        if (groupId) runtime.groups.publish(groupId);
+        await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
+        bus.emit({ type: "approval", approval });
+        pushApproval({ push: runtime.push, store }, approval);
+        return endTurn("已请用户登录，等用户完成后继续。");
+      },
+    },
+    {
       name: "ask_user",
       label: "询问用户",
       description: "在对话里出一张选择题卡片（2 到 3 个选项），用户选完，答案会回到对话。",
@@ -822,10 +854,10 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
 
   if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId));
 
-  if (assistant().primary) {
+  {
     tools.push(
       overviewTool(runtime),
-      ...buildAdminTools(runtime, assistantId, groupId),
+      ...buildAdminTools(runtime, assistantId, groupId, { primary: assistant().primary }),
       {
         name: "message_assistant",
         label: "转交其他助手",
@@ -839,6 +871,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           const target = store.assistant(targetId);
           if (!target) return fail(`没有这个助手：${targetId}`);
           if (targetId === assistantId) return fail("不能转交给自己。");
+          const currentDelegationId = router.currentDelegation(assistantId, groupId);
+          if (currentDelegationId) {
+            const current = store.delegation(currentDelegationId);
+            const sourceName = current ? nameOf(current.from) : "发起委派的助手";
+            return fail(`你在办「${sourceName}」转来的事：不归你管就用 hand_back 交回它，由它再转。`);
+          }
+          // 转给主助手的事它没法再往下转（转交中不能再转交，它也没有 hand_back），交回才能由它接着转
+          if (target.primary && !assistant().primary) return fail(`要交给「${target.name}」，用 hand_back：它会接过去，转给合适的助手。`);
           try {
             const note = params.note == null ? "" : String(params.note);
             if ([...note].length > NOTE_LIMIT) return fail(`备注 ${[...note].length} 字，最多 ${NOTE_LIMIT} 字。用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景，改短后再调用一次。`);
@@ -846,7 +886,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             // 手上这份还没做完的项一起交过去：它们写在转交内容里，接手的助手自己决定要不要照这几项列
             const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, groupId)).filter((item) => item.status !== "done");
             const carried = unfinished.length ? `${original.text}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}` : original.text;
-            await runtime.delegations.start(targetId, carried, original.files);
+            await runtime.delegations.start(assistantId, targetId, carried, original.files);
             if (!unfinished.length) return endTurn(`已转交给「${target.name}」。`);
             await handOffTodos(runtime, assistantId, groupId);
             return endTurn(`已转交给「${target.name}」。你手上那份待办（没做完 ${unfinished.length} 项）一起交过去了，已经清掉。`);
@@ -892,11 +932,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         },
       },
     );
-  } else {
+  }
+  if (!assistant().primary) {
     tools.push({
-      name: "hand_back_to_hob",
-      label: "交回 Hob",
-      description: "把不归你管的事交回 Hob，由它转给合适的助手。",
+      name: "hand_back",
+      label: "交回",
+      description: "把不归你管的事交回：别人转给你的，交回转来的那位；用户直接找你的，交回 Hob，由它转给合适的助手。",
       parameters: Type.Object({ text: Type.String({ description: "用户要什么" }), reason: Type.String({ description: "为什么不归你，一句话" }) }),
       execute: async (_id, params: any) => {
         const text = String(params.text ?? "").trim();
@@ -905,74 +946,22 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         try {
           const delegationId = router.currentDelegation(assistantId, groupId);
           if (delegationId) {
-            runtime.delegations.returnToHob(delegationId, text, reason);
-          } else {
-            await router.ensure("hob");
-            const handbackId = newId("hb-");
-            await router.addItem(assistantId, { kind: "note", icon: "info", text: `已交回 Hob：${reason}`, handbackId });
-            await router.addForwarded("hob", text, handbackId, assistantId);
-            await router.event("hob", `转自「${assistant().name}」：${text}\n交回原因：${reason}`);
+            const delegation = store.delegation(delegationId);
+            const destinationName = delegation ? nameOf(delegation.from) : "发起委派的助手";
+            runtime.delegations.returnTo(delegationId, text, reason);
+            return endTurn(`已交回「${destinationName}」。`);
           }
-          return endTurn("已交回 Hob。");
+          const destination = store.assistant("hob");
+          if (!destination) return fail("主助手不存在，暂时无法交回。");
+          await router.ensure(destination.id);
+          const handbackId = newId("hb-");
+          await router.addItem(assistantId, { kind: "note", icon: "info", text: `已交回「${destination.name}」：${reason}`, handbackId });
+          await router.addForwarded(destination.id, text, handbackId, assistantId);
+          await router.event(destination.id, `转自「${assistant().name}」：${text}\n交回原因：${reason}`);
+          return endTurn(`已交回「${destination.name}」。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
-      },
-    },
-    /**
-     * 自己的补充说明自己改：用户当面纠正了一条记在里面的事，不用去找主助手。
-     * 群主还多一项：改本群的（话题里改的是所属群的）。
-     */
-    {
-      name: "edit_notes",
-      label: "改补充说明",
-      description: "改你自己的补充说明：把一段原文换成新的文字。补充说明记的是一直成立、你做事要知道的事实：它每轮都在你的提示词里，你派出去的任务也带着它，写进来的会一直被拿去用。",
-      parameters: Type.Object({
-        edits: Type.Array(
-          Type.Object({ old: Type.String(), new: Type.String() }),
-          { description: "一处或几处修改：old 是补充说明里的原文，要一字不差、只出现一次；new 是换成的文字；old 填空字符串表示把 new 接在最后" },
-        ),
-        ...(groupId && store.group(groupId)?.ownerId === assistantId
-          ? { group: Type.Optional(Type.Boolean({ description: "填 true 改本群的补充说明，不填改你自己的。" })) }
-          : {}),
-      }),
-      execute: async (_id, params: { edits?: { old?: string; new?: string }[]; group?: boolean }) => {
-        const edits = Array.isArray(params.edits) ? params.edits : [];
-        if (!edits.length) return fail("edits 不能为空：要改哪一段，就填它的原文和换成的文字。");
-        // 群和话题只在群里能改，改的是所属的那个群（话题没有自己的补充说明）
-        const live = groupId ? store.group(groupId) : undefined;
-        const toGroup = params.group === true;
-        if (toGroup && !live) return fail("group 只在群里用：要改自己的补充说明，不填这一项。");
-        if (toGroup && live!.ownerId !== assistantId) return fail("只有群主能改本群的补充说明。");
-        const gid = live ? live.parentId ?? live.id : "";
-        const current = toGroup ? store.group(gid)?.instructions ?? "" : assistant().instructions;
-        let text = current;
-        for (const edit of edits) {
-          const old = typeof edit?.old === "string" ? edit.old : "";
-          const next = typeof edit?.new === "string" ? edit.new : "";
-          if (!old) {
-            text = text.trim() ? `${text.trimEnd()}\n${next}` : next;
-            continue;
-          }
-          const count = text.split(old).length - 1;
-          if (!count) return fail(`原文没找到：${old}。现在的补充说明是：${text.trim() || "（空）"}`);
-          if (count > 1) return fail(`这段原文出现了 ${count} 次，多带几个字让它只出现一次。`);
-          text = text.replace(old, () => next);
-        }
-        try {
-          if (toGroup) {
-            runtime.groups.update(gid, { instructions: text });
-          } else {
-            // 和界面上改档案走同一套：校验、推送、档案页实时更新都在里面
-            const result = await updateAssistant(runtime, assistantId, { instructions: text });
-            if (result.status !== 200) return fail((result.body as { error?: string }).error ?? "没有改成补充说明。");
-          }
-        } catch (error) {
-          return fail(error instanceof Error ? error.message : String(error));
-        }
-        await note("info", toGroup ? t("修改了本群的补充说明") : t("修改了自己的补充说明"));
-        // 改完的全文给回去：追加时把原文又抄了一遍这类错，模型看得出来
-        return ok(`已改好补充说明。现在是：\n${text.trim() || "（空）"}`);
       },
     });
   }

@@ -70,7 +70,6 @@ import {
   loadMcp,
   loadDesktop,
   saveDesktop,
-  saveDesktopPublic,
   testDesktop,
   putMcpServer,
   patchMcpServer,
@@ -356,11 +355,9 @@ function DesktopSection() {
   const [token, setToken] = useState("");
   const [enabled, setEnabled] = useState(false);
   const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
-  const [message, setMessage] = useState<{ ok: boolean; text: string; public?: boolean } | null>(null);
+  const [message, setMessage] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  const [showDesktop, setShowDesktop] = useState<"hob" | "public" | null>(null);
-  const [publicAssistants, setPublicAssistants] = useState<string[]>([]);
-  const assistants = useApp().assistants;
+  const [showDesktop, setShowDesktop] = useState(false);
 
   useEffect(() => {
     void loadDesktop()
@@ -368,7 +365,6 @@ function DesktopSection() {
         setView(v);
         setUrl(v.url);
         setEnabled(v.enabled);
-        setPublicAssistants(v.publicAssistants);
       })
       .catch((e: Error) => setMessage({ ok: false, text: t("无法读取云桌面配置：{error}", { error: e.message }) }));
   }, []);
@@ -391,20 +387,6 @@ function DesktopSection() {
     } finally {
       setBusy(false);
     }
-  }
-
-  async function savePublic() {
-    if (!view) return;
-    setBusy(true);
-    setMessage(null);
-    try {
-      const next = await saveDesktopPublic(view.revision, publicAssistants);
-      setView(next);
-      setPublicAssistants(next.publicAssistants);
-      setMessage({ ok: true, text: t("已保存"), public: true });
-    } catch (error) {
-      setMessage({ ok: false, text: error instanceof Error ? error.message : String(error), public: true });
-    } finally { setBusy(false); }
   }
 
   async function testConnection() {
@@ -442,7 +424,7 @@ function DesktopSection() {
             <div className="sline">{view?.enabled ? t("已启用") : t("未启用")}</div>
             <div className="ctl">
               <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>{t("测试连接")}</button>
-              <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>{t("打开桌面")}</button>
+              <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop(true)}>{t("打开桌面")}</button>
               {statusLine}
             </div>
           </div>
@@ -471,9 +453,9 @@ function DesktopSection() {
               </div>
               <div className="sfoot">
                 <button className="hob-btn" disabled={busy || !view} onClick={() => void testConnection()}>{t("测试连接")}</button>
-                <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop("hob")}>{t("打开桌面")}</button>
+                <button className="hob-btn" disabled={!view?.enabled} onClick={() => setShowDesktop(true)}>{t("打开桌面")}</button>
                 {statusLine}
-                {message && !message.public ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
+                {message ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
                 <span className="sp" />
                 <button className="hob-btn hob-btn-primary" disabled={busy || !view} onClick={() => void save()}>{t("保存")}</button>
               </div>
@@ -482,25 +464,7 @@ function DesktopSection() {
           </Group>
         </>
       )}
-      <Group>
-        <div className="lbl">{t("公共屏幕")}</div>
-        <div className="formcard">
-          <div className="plist">
-            {assistants.map((assistant) => <label key={assistant.id}>
-              <input type="checkbox" className="rcheck" checked={publicAssistants.includes(assistant.id)} disabled={busy || !view} onChange={(event) => setPublicAssistants((ids) => event.target.checked ? [...ids, assistant.id] : ids.filter((id) => id !== assistant.id))} />
-              <span>{assistant.name}</span>
-            </label>)}
-          </div>
-          <div className="sfoot">
-            <button className="hob-btn" disabled={!view?.enabled || busy} onClick={() => setShowDesktop("public")}>{t("打开公共屏幕")}</button>
-            {message?.public ? <span className={message.ok ? "okline" : "badline"} role="status">{message.text}</span> : null}
-            <span className="sp" />
-            <button className="hob-btn hob-btn-primary" disabled={!view || busy} onClick={() => void savePublic()}>{t("保存")}</button>
-          </div>
-        </div>
-        <div className="note">{t("用于登录你自己的账号，勾选的助手可以使用。受 Google 限制，目前无法登录 Google 账号。")}</div>
-      </Group>
-      {showDesktop ? <Suspense fallback={null}><DesktopScreen initialScreen={showDesktop} takeOver={showDesktop === "public"} onClose={() => setShowDesktop(null)} /></Suspense> : null}
+      {showDesktop ? <Suspense fallback={null}><DesktopScreen initialScreen="hob" takeOver onClose={() => setShowDesktop(false)} /></Suspense> : null}
     </>
   );
 }
@@ -2362,7 +2326,7 @@ function PushSection() {
         <div className="lbl">{t("本机推送")}</div>
         {supported ? (
           <div className="ctl">
-            <span style={{ fontSize: 14 }}>{t("需要确认或任务受阻时推送给我")}</span>
+            <span style={{ fontSize: 14 }}>{t("需要我回答或做完时通知我")}</span>
             <span className="sp" />
             <button
               className={`tog${on ? "" : " off"}`}
@@ -2379,7 +2343,7 @@ function PushSection() {
             {t("浏览器已拒绝通知权限：点击地址栏左侧的图标 → 通知 → 允许，然后刷新本页并重新开启。")}
           </div>
         ) : null}
-        <div className="note">{t("页面在前台时不推送，页面不在前台或锁屏时才推送。各助手还需在助手设置中开启「需要确认时通知我」。")}</div>
+        <div className="note">{t("页面在前台时不推送，页面不在前台或锁屏时才推送。各助手还需在助手设置中开启「需要我回答或做完时通知我」。")}</div>
         <div className="note">{t("在 iPhone 上需先将 Hob 添加到主屏幕，再从主屏幕打开才能接收推送。")}</div>
       </Group>
 
@@ -2629,7 +2593,7 @@ function MemorySection() {
     <>
       <PageHead
         title={t("记忆")}
-        desc={t("所有助手共用同一份长期记忆。各助手需要知道的专属事实写在助手设置的「补充说明」中。")}
+        desc={t("所有助手共用同一份长期记忆。")}
       />
 
       <Group>

@@ -85,13 +85,13 @@ export function JobOverlay({ embedded = false, page }: { embedded?: boolean; pag
   return (
     <div className={`${embedded ? "jd-embedded" : "jd-overlay"}${presence.leaving ? " leaving" : ""}`} onClick={embedded ? undefined : closePanelPages}>
       <div className="jd" onClick={(event) => event.stopPropagation()}>
-        {shown.kind === "jobs" ? <><PanelHead className="jdhead" title={<span className="t">{t("任务记录")}</span>} close /><WorklogPage /></> : <JobDetail key={`${shown.id}-${shown.round ?? "default"}`} id={shown.id} round={shown.round} />}
+        {shown.kind === "jobs" ? <><PanelHead className="jdhead" title={<span className="t">{t("任务记录")}</span>} close /><WorklogPage /></> : <JobDetail key={`${shown.id}-${shown.round ?? "default"}`} id={shown.id} round={shown.round} jumpApprovalId={shown.jumpApprovalId} />}
       </div>
     </div>
   );
 }
 
-function JobDetail({ id, round }: { id: string; round?: number }) {
+function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; jumpApprovalId?: string }) {
   const s = useApp();
   const job = s.jobs[id];
   const steps = s.steps[id];
@@ -129,6 +129,15 @@ function JobDetail({ id, round }: { id: string; round?: number }) {
       pinned.current = true;
     }
   }, [steps?.length, steps?.[steps.length - 1]?.id]);
+
+  useEffect(() => {
+    if ((!jumpApprovalId && job?.status !== "waiting") || !steps?.length) return;
+    const timer = window.setTimeout(() => {
+      const target = body.current?.querySelector<HTMLElement>('[data-job-approval="true"]');
+      if (target) target.scrollIntoView({ behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth", block: "center" });
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [jumpApprovalId, job?.status, steps?.length]);
 
   if (!job) {
     return (
@@ -333,7 +342,7 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
   const title = step.title ?? step.name ?? "";
   const parts = titleParts(title);
   return (
-    <div className={`jd-tool${step.isError ? " bad" : ""}${open ? " open" : ""}`}>
+    <div className={`jd-tool${step.isError ? " bad" : ""}${open ? " open" : ""}`} data-job-approval={step.name === "ask_user" ? "true" : undefined}>
       <button className="jd-tool-head" onClick={() => setOpen((value) => !value)}>
         <span className="ico">
           {step.running ? (

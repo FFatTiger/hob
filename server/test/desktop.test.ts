@@ -10,7 +10,6 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopControl, RfbClientFilter, attachDesktopWebSocket } from "../src/desktop-control.ts";
 import { availableDesktopTools, DesktopToolSession, desktopProfile } from "../src/desktop-tools.ts";
-import { DesktopPublicLock } from "../src/desktop-public.ts";
 import { createApp } from "../src/http.ts";
 import { makeHob } from "./helpers.ts";
 import { DesktopService, checkDesktopUrl } from "../src/desktop.ts";
@@ -37,6 +36,20 @@ describe("云桌面配置", () => {
     expect(desktop.connection()).toEqual({ url: "http://localhost:6080", token: "secret" });
     expect(new SettingsStore(home).settings.desktop?.url).toBe("http://localhost:6080");
   });
+  it("请求云桌面时带上 Hob 设置的时区", async () => {
+    const seen: string[] = [];
+    const server = createServer((req, res) => { seen.push(req.headers["x-hob-timezone"] as string); res.writeHead(200); res.end("{}"); });
+    server.listen(0, "127.0.0.1"); await once(server, "listening");
+    const { home, settings, desktop } = setup();
+    try {
+      settings.patch(settings.get().revision, { general: { timezone: "Asia/Shanghai" } });
+      settings.setDesktop(settings.get().revision, { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, enabled: true });
+      writeSecret(home, "desktop:token", "token");
+      await desktop.request("/api/health");
+      expect(seen).toEqual(["Asia/Shanghai"]);
+    } finally { await new Promise<void>((resolve) => server.close(() => resolve())); }
+  });
+
   it("配置接口保存令牌但不向客户端返回", async () => {
     const hob = makeHob();
     try {
@@ -117,6 +130,26 @@ describe("云桌面配置", () => {
       expect(seen).toHaveLength(2);
     } finally { hob.close(); await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
+  it("普通接管和登录接管都使用同一个浏览器，并在交还时同步登录态", async () => {
+    const hob = makeHob();
+    const requests: string[] = [];
+    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async (path) => { requests.push(path); return new Response("{}"); });
+    const client = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    hob.runtime.desktopControl.connected(client, "hob");
+    try {
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const control = (action: string) => app.request("/api/desktop/control", { method: "POST", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ client, screen: "hob", action }) });
+      expect((await control("take")).status).toBe(200);
+      expect((await control("release")).status).toBe(200);
+      expect(requests).toEqual(["/api/screens/hob/browser/sync"]);
+      expect((await control("take")).status).toBe(200);
+      expect((await control("release")).status).toBe(200);
+      expect(requests).toEqual(["/api/screens/hob/browser/sync", "/api/screens/hob/browser/sync"]);
+    } finally { request.mockRestore(); hob.close(); }
+  });
+
   it("云桌面错误中的令牌会打码", async () => {
     const server = createServer((_req, res) => {
       res.writeHead(403, { "content-type": "application/json" });
@@ -238,23 +271,6 @@ describe("云桌面配置", () => {
       expect(events).toEqual([true, false, true]);
     } finally { unsubscribe(); control.dispose(); hob.close(); vi.useRealTimers(); }
   });
-  it("公共屏幕授权经设置接口校验并持久化", async () => {
-    const hob = makeHob();
-    try {
-      const app = createApp(hob.runtime, { home: hob.home });
-      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
-      const cookie = login.headers.get("set-cookie")!.split(";")[0];
-      const save = (revision: number, assistants: string[]) => app.request("/api/desktop/public", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ revision, assistants }) });
-      expect((await save(1, ["unknown"])).status).toBe(400);
-      expect((await save(1, ["hob"])).status).toBe(200);
-      expect(new SettingsStore(hob.home).settings.desktop?.publicAssistants).toEqual(["hob"]);
-      expect((await save(1, [])).status).toBe(409);
-      hob.runtime.settings.setDesktop(2, { url: "http://localhost:6080", enabled: true });
-      expect(new SettingsStore(hob.home).settings.desktop?.publicAssistants).toEqual(["hob"]);
-      const screens = await (await app.request("/api/desktop/screens", { headers: { cookie } })).json() as { profiles: Record<string, string> };
-      expect(screens.profiles.hob).toBe("hob");
-    } finally { hob.close(); }
-  });
   it("两种截图按身份落盘并返回精确文字，不能看图时仍保存", async () => {
     const hob = makeHob();
     const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
@@ -301,62 +317,14 @@ describe("云桌面配置", () => {
       expect(files[19]).toBe("20261106T153012144.png");
     } finally { clock.mockRestore(); request.mockRestore(); await session.dispose(); hob.close(); }
   });
-  it("公共屏幕权限决定工具参数且硬传也拒绝", async () => {
+  it("屏幕工具不暴露屏幕选择参数", async () => {
     const hob = makeHob();
     const session = new DesktopToolSession(hob.runtime, "hob", true);
     try {
-      const tools = session.tools();
-      expect(tools.every((tool) => !("screen" in tool.parameters.properties))).toBe(true);
-      const rejected = await tools[0].execute("test", { url: "https://example.com", screen: "public" });
-      expect(rejected.isError).toBe(true);
-      expect(rejected.content[0]).toMatchObject({ text: expect.stringContaining("没有使用公共屏幕的权限") });
-      hob.runtime.settings.setDesktop(1, { url: "", enabled: false, publicAssistants: ["hob"] });
-      expect(session.tools().every((tool) => "screen" in tool.parameters.properties)).toBe(true);
-      expect(desktopProfile("public")).not.toBe("public");
+      expect(session.tools().every((tool) => !("screen" in tool.parameters.properties))).toBe(true);
+      const result = await session.tools()[0]!.execute("test", { url: "https://example.com", screen: "other" });
+      expect(result.isError).toBe(true);
     } finally { await session.dispose(); hob.close(); }
-  });
-  it("任务持有公共屏幕至结束，其他任务等待但自己的屏幕不受阻", async () => {
-    const hob = makeHob();
-    hob.runtime.settings.setDesktop(1, { url: "", enabled: false, publicAssistants: ["hob", "other"] });
-    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
-    const a = new DesktopToolSession(hob.runtime, "hob", true);
-    const b = new DesktopToolSession(hob.runtime, "other", true);
-    const tool = (session: DesktopToolSession) => session.tools().find((entry) => entry.name === "desktop_screenshot")!;
-    try {
-      expect((await tool(a).execute("a", { screen: "public" })).isError).not.toBe(true);
-      const waiting = tool(b).execute("b", { screen: "public" });
-      await Promise.resolve();
-      expect((await tool(b).execute("own", {})).isError).not.toBe(true);
-      expect(request.mock.calls.filter(([path]) => String(path).includes("/public/"))).toHaveLength(2);
-      await a.dispose();
-      expect((await waiting).isError).not.toBe(true);
-      expect(request.mock.calls.filter(([path]) => String(path).includes("/public/"))).toHaveLength(4);
-    } finally { await a.dispose(); await b.dispose(); request.mockRestore(); hob.close(); }
-  });
-  it("公共屏幕排队、取消及超时均释放占用", async () => {
-    vi.useFakeTimers();
-    const lock = new DesktopPublicLock(100);
-    const a = {}, b = {}, c = {};
-    try {
-      await lock.acquire(a, "甲");
-      const waiting = lock.acquire(b, "乙");
-      const timeout = lock.acquire(c, "丙");
-      const assertion = expect(timeout).rejects.toThrow("公共屏幕正被『甲』的任务使用");
-      const waitingAssertion = expect(waiting).rejects.toThrow("公共屏幕正被『甲』的任务使用");
-      await vi.advanceTimersByTimeAsync(100);
-      await assertion;
-      await waitingAssertion;
-      const next = lock.acquire(b, "乙");
-      lock.release(a);
-      await next;
-      const cancelled = lock.acquire(c, "丙");
-      const cancelledAssertion = expect(cancelled).rejects.toThrow("任务已结束");
-      lock.cancelWait(c);
-      await cancelledAssertion;
-      lock.release(b);
-      await lock.acquire(c, "丙");
-      lock.release(c);
-    } finally { vi.useRealTimers(); }
   });
   it("转发屏幕快照并在断线后重连", async () => {
     const hob = makeHob();
@@ -418,7 +386,7 @@ describe("云桌面配置", () => {
       await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
-  it("屏幕接口只允许已存在的助手与公共屏幕", async () => {
+  it("屏幕接口只允许已存在的助手屏幕", async () => {
     const hob = makeHob();
     const requests: string[] = [];
     const server = createServer((req, res) => { requests.push(req.url ?? ""); res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); });
@@ -431,10 +399,9 @@ describe("云桌面配置", () => {
       const cookie = login.headers.get("set-cookie")!.split(";")[0];
       const start = (id: string) => app.request(`/api/desktop/screens/${id}/start`, { method: "POST", headers: { cookie } });
       expect((await start("hob")).status).toBe(200);
-      expect((await start("public")).status).toBe(200);
       expect((await start("unknown")).status).toBe(404);
       expect((await start("Bad")).status).toBe(400);
-      expect(requests).toEqual(["/api/screens/hob/start", "/api/screens/public/start"]);
+      expect(requests).toEqual(["/api/screens/hob/start"]);
     } finally { hob.close(); await new Promise<void>((resolve) => server.close(() => resolve())); }
   });
   it("接管按屏幕隔离", () => {
@@ -443,12 +410,12 @@ describe("云桌面配置", () => {
     const a = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const b = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     try {
-      control.connected(a, "hob"); control.connected(b, "public");
+      control.connected(a, "hob"); control.connected(b, "other");
       control.take(a, "hob");
-      expect(control.state(b, "public").taken).toBe(false);
-      control.take(b, "public");
+      expect(control.state(b, "other").taken).toBe(false);
+      control.take(b, "other");
       control.release(a, "hob");
-      expect(control.state(b, "public").mine).toBe(true);
+      expect(control.state(b, "other").mine).toBe(true);
     } finally { control.dispose(); hob.close(); }
   });
   it("未配置或服务不健康时没有工具，接管中所有工具返回错误", async () => {
@@ -534,31 +501,13 @@ describe("云桌面配置", () => {
       hob.runtime.router.releaseSessions();
       await new Promise((resolve) => setTimeout(resolve, 0));
       expect(browser.close).toHaveBeenCalledTimes(2);
-      hob.runtime.settings.setDesktop(hob.runtime.settings.get().revision, { url: "http://localhost:6080", enabled: true, publicAssistants: ["hob"] });
       state = await hob.runtime.router.ensure("hob");
-      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).toHaveProperty("screen");
+      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).not.toHaveProperty("screen");
       const client = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
       hob.runtime.desktopControl.connected(client); hob.runtime.desktopControl.take(client);
       expect((await state.desktop!.tools().find((tool) => tool.name === "browser_snapshot")!.execute("taken", {})).content[0]).toMatchObject({ text: expect.stringContaining("用户正在操作云桌面") });
       expect(request).toHaveBeenCalled();
     } finally { await worker.dispose(); connect.mockRestore(); hob.close(); }
-  });
-  it("助手不持有公共屏幕锁，不妨碍任务使用", async () => {
-    const hob = makeHob();
-    hob.runtime.settings.setDesktop(1, { url: "http://localhost:6080", enabled: true, publicAssistants: ["hob"] });
-    writeSecret(hob.home, "desktop:token", "token");
-    vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response('{"cdp":"/cdp/public"}'));
-    const page = { isClosed: () => false, setDefaultTimeout: vi.fn(), ariaSnapshot: vi.fn().mockResolvedValue("页面") };
-    const browser = { isConnected: () => true, contexts: () => [{ newPage: vi.fn().mockResolvedValue(page) }], close: vi.fn().mockResolvedValue(undefined) };
-    const connect = vi.spyOn(chromium, "connectOverCDP").mockResolvedValue(browser as never);
-    const router = new DesktopToolSession(hob.runtime, "hob", true, undefined, true);
-    const worker = new DesktopToolSession(hob.runtime, "hob", true, "公共任务");
-    try {
-      const tool = (session: DesktopToolSession) => session.tools().find((entry) => entry.name === "browser_snapshot")!;
-      expect((await tool(router).execute("router", { screen: "public" })).isError).not.toBe(true);
-      expect((await tool(worker).execute("worker", { screen: "public" })).isError).not.toBe(true);
-      expect((await tool(router).execute("busy", { screen: "public" })).content[0]).toMatchObject({ text: expect.stringContaining("任务「公共任务」正在用浏览器") });
-    } finally { await worker.dispose(); await router.dispose(); connect.mockRestore(); hob.close(); }
   });
   it("过长助手 id 映射成稳定且符合 desktopd 约束的 profile", async () => {
     const hob = makeHob();

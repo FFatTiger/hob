@@ -28,7 +28,7 @@ import { MCP_SESSION_TOOLS, mcpEnabled, mcpServerDisplay } from "./mcp.ts";
 import { jobModel, assistantInGroup } from "./models.ts";
 import { duration, jobProcessLines } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
-import { pushJobEnd } from "./push.ts";
+import { pushApproval, pushJobEnd } from "./push.ts";
 import { buildWorkerPrompt, userReadsEnglish, type Abilities, type PromptSettings } from "./prompt.ts";
 import { generalSkillsDir, loadedVisibleSkills, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
 import { assistantSkillsDir, combinedSkills, groupSkillsDir, lockSkillsDir, recordSkillUse, unlockSkillsDir, usableAssistantSkills } from "./assistant-skills.ts";
@@ -38,7 +38,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
 import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, deriveSteps, textOfContent, toolStep, withOutput } from "./transcript.ts";
-import { registerAskTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
+import { registerAskLoginTool, registerAskTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
 import { searchTools } from "./search.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
@@ -417,11 +417,11 @@ export class JobManager {
   }
 
   /** 事件送到哪个助手的会话：群里的任务回它的群会话，其余回单聊。派给别的成员做的，回派任务的助手。 */
-  private notifyAssistant(job: Job, text: string): Promise<void> {
+  private notifyAssistant(job: Job, text: string, workDone = false): Promise<boolean> {
     const speaker = job.startedBy ?? job.assistantId;
-    return job.groupId
-      ? this.runtime.router.event(speaker, text, undefined, job.groupId)
-      : this.runtime.router.event(speaker, text);
+    const details = workDone ? { workDone: true as const } : undefined;
+    if (job.groupId) return this.runtime.router.event(speaker, text, details, job.groupId);
+    return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
 
   private nextJobId(): string {
@@ -490,7 +490,7 @@ export class JobManager {
     // 提示词里的「不能做」跟着这一轮实际给的工具走：沉淀一定要有 write、edit
     const promptAbilities: Abilities = sediment ? { ...abilities, write: true } : abilities;
     const knowledge = await boundKnowledge(this.runtime, job.assistantId);
-    const customTools = [registerReportTool(this.runtime, job.id, sediment), registerAskTool(this.runtime, job.id, sediment), findKnowledgeTool(this.runtime)];
+    const customTools = [registerReportTool(this.runtime, job.id, sediment), registerAskTool(this.runtime, job.id, sediment), registerAskLoginTool(this.runtime, job.id, sediment), findKnowledgeTool(this.runtime)];
     if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, job.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, job.id));
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
@@ -873,6 +873,7 @@ export class JobManager {
     // 结果里的「用了技能「X」」和沉淀提醒都要标题：任一档都算，只读的那几份没有 fromJobId，不会被当成沉淀目标
     const resultSkills = visibleSkills(this.runtime, job.assistantId, next.groupId ? this.store.group(next.groupId) : undefined);
 
+    let continued = false;
     if (job.routineId) {
       const routine = this.store.routine(job.routineId);
       if (routine) {
@@ -886,17 +887,22 @@ export class JobManager {
         const updated = { ...routine, runs };
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
-        await this.runtime.router
+        continued = await this.runtime.router
           .event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
+            workDone: true,
           }, next.groupId)
-          .catch(() => undefined);
+          .catch(() => false);
       }
     } else if (assistant) {
       const text = assistantJobResultEvent(this.runtime.home, next, { toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills });
-      if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
-      else await this.notifyAssistant(next, text).catch(() => undefined);
+      if (delegationId) {
+        continued = await this.runtime.router.relay(job.assistantId, text, delegationId, { workDone: true }).catch(() => false);
+      } else {
+        continued = await this.notifyAssistant(next, text, true).catch(() => false);
+      }
     }
+    if (!continued) pushJobEnd({ push: this.runtime.push, store: this.store }, next);
   }
 
   async reply(jobId: string, text: string, source: "user" | "router" = "user"): Promise<void> {
@@ -1228,7 +1234,7 @@ export class JobManager {
   /** Worker 的 ask_user：出审批卡、把任务标成待确认，阻塞到用户答复。 */
   async askQuestion(
     jobId: string,
-    input: { title: string; detail?: string; options: ApprovalOption[]; recommended?: ApprovalOption["key"]; ruleText?: string },
+    input: { title: string; detail?: string; options: ApprovalOption[]; recommended?: ApprovalOption["key"]; ruleText?: string; login?: { site: string; reason: string } },
   ): Promise<string> {
     const job = this.store.job(jobId);
     if (!job) throw new Error(`任务不存在：${jobId}`);
@@ -1245,6 +1251,7 @@ export class JobManager {
       jobId,
       ...(job.groupId ? { groupId: job.groupId } : {}),
       ...(input.ruleText ? { ruleText: input.ruleText } : {}),
+      ...(input.login ? { login: input.login } : {}),
       createdAt: new Date().toISOString(),
     };
     this.store.saveApproval(approval);
@@ -1256,6 +1263,7 @@ export class JobManager {
     worker.job = waiting;
     worker.pausedAt = Date.now();
     this.bus.emit({ type: "job", job: waiting });
+    pushApproval({ push: this.runtime.push, store: this.store }, approval);
     const sentence = (value: string) => /[。！？.!?]\s*$/.test(value) ? value : `${value}。`;
     const text = `任务「${job.title}」（${job.id}）在等你回复：${sentence(input.title)}${input.detail ? sentence(input.detail) : ""}选项：${input.options.map((option) => `${option.key} ${option.label}${option.key === input.recommended ? "（推荐）" : ""}`).join("、")}。`;
     if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));

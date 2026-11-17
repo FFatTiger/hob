@@ -1,16 +1,17 @@
-import { existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import type { Assistant, Group, GroupItem, Item, Job, TodoItem } from "../../shared/types.ts";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
+import type { Approval, Assistant, Delegation, Group, GroupItem, Item, Job, TodoItem } from "../../shared/types.ts";
 import { buildSystemPrompt, buildWorkerPrompt, TODOS_LINE } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
-import { TODOS_STALE_MS, TODO_REMINDER_ROUNDS } from "../src/todos.ts";
+import { releaseIdleTodos, releaseIdleTodosAtStartup, TODO_REMINDER_ROUNDS } from "../src/todos.ts";
 import { registerReportTool } from "../src/worker-tools.ts";
 import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 function addAssistant(hob: TestHob, id: string, name: string, duty: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }
@@ -242,13 +243,15 @@ function archivedTodos(items: Item[]): Extract<Item, { kind: "todos" }>[] {
 
 const todosFile = (hob: TestHob, assistantId = "hob") => join(hob.home, "assistants", assistantId, "todos.json");
 
-function putTodos(path: string, items: [string, TodoItem["status"]][], hoursAgo = 0): void {
+function putTodos(path: string, items: [string, TodoItem["status"]][]): void {
   mkdirSync(join(path, ".."), { recursive: true });
   writeFileSync(path, JSON.stringify(items.map(([text, status]) => ({ text, status }))));
-  if (hoursAgo) {
-    const at = new Date(Date.now() - hoursAgo * 3600 * 1000);
-    utimesSync(path, at, at);
-  }
+}
+
+/** 手上还有一个在跑的任务：这份待办会一轮一轮留着（看提醒、看每轮带不带）。 */
+function busyJob(hob: TestHob): void {
+  const job: Job = { id: "t-busy", assistantId: "hob", title: "整理单据", instruction: "", status: "running", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] };
+  hob.runtime.store.saveJob(job);
 }
 
 describe("转交时待办跟着走", () => {
@@ -299,6 +302,7 @@ describe("好几轮没更新的待办", () => {
   it("到了 N 轮才在「手上的待办」后面接一句，之前不出", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
+      busyJob(hob);
       await toolOf(hob, "update_todos").execute("t", { items: items(["查日志", "doing"], ["改配置", "todo"]) });
       for (let i = 1; i < TODO_REMINDER_ROUNDS; i += 1) {
         await send(hob, `第 ${i} 句`);
@@ -320,6 +324,7 @@ describe("好几轮没更新的待办", () => {
   it("提醒过一次，再过 N 轮还没更新才再提醒", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
+      busyJob(hob);
       await toolOf(hob, "update_todos").execute("t", { items: items(["查日志", "doing"]) });
       for (let i = 1; i <= TODO_REMINDER_ROUNDS + 1; i += 1) await send(hob, `第 ${i} 句`);
       expect(lastPrompt(hob)).toContain("这份待办已经");
@@ -343,6 +348,7 @@ describe("好几轮没更新的待办", () => {
   it("更新过就不再提醒", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
+      busyJob(hob);
       await toolOf(hob, "update_todos").execute("t", { items: items(["查日志", "doing"]) });
       for (let i = 1; i <= TODO_REMINDER_ROUNDS + 1; i += 1) await send(hob, `第 ${i} 句`);
       expect(lastPrompt(hob)).toContain("这份待办已经");
@@ -357,6 +363,8 @@ describe("每轮带上手上的待办", () => {
   it("有待办时逐字带进用户消息，没有就不带，系统提示词里没有", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
+      // 手上还有一个在跑的任务：这份待办留到下一轮
+      busyJob(hob);
       hob.faux.setResponses([call("update_todos", { items: items(["查日志", "done"], ["改配置", "doing"]) }), text("列好了")]);
       await hob.runtime.router.send("hob", { text: "帮我查" });
       await hob.runtime.router.waitIdle("hob");
@@ -476,44 +484,169 @@ describe("一份待办有头有尾", () => {
   });
 });
 
-describe("搁久了", () => {
-  it("超过一天没更新、没有在跑的任务，下一轮开始前清掉", async () => {
+describe("一轮结束时手上没活就收", () => {
+  const todosOf = (hob: TestHob) => hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos ?? [];
+
+  it("没有活：这一轮说完就收起，不进时间线，下一轮不再带", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
-      putTodos(todosFile(hob), [["盘一下日志", "done"], ["改成按天切", "todo"]], 25);
-      hob.faux.setResponses([text("换个事做")]);
-      await hob.runtime.router.send("hob", { text: "先放一放" });
+      putTodos(todosFile(hob), [["盘一下日志", "done"], ["改成按天切", "todo"]]);
+      hob.faux.setResponses([text("弄好了")]);
+      await hob.runtime.router.send("hob", { text: "怎么样" });
       await hob.runtime.router.waitIdle("hob");
-      expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos).toEqual([]);
+      expect(todosOf(hob)).toEqual([]);
+      expect(JSON.parse(readFileSync(todosFile(hob), "utf8"))).toEqual([]);
+      // 收起的待办不进对话
       expect(archivedTodos(hob.runtime.router.items("hob").items)).toEqual([]);
+      // 下一轮不再带
+      hob.faux.setResponses([text("换一件事")]);
+      await hob.runtime.router.send("hob", { text: "再帮个忙" });
+      await hob.runtime.router.waitIdle("hob");
       expect(userPrompts(hob.runtime.store.routerFile("hob")).at(-1)).not.toContain("手上的待办");
     } finally { hob.close(); }
   });
 
-  it("这个会话里还有在跑的任务就不收", async () => {
+  it("事件那一轮也一样：事件说完手上没活就收", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
-      putTodos(todosFile(hob), [["改成按天切", "doing"]], 25);
-      const job: Job = { id: "t-busy", assistantId: "hob", title: "切日志", instruction: "", status: "running", createdAt: new Date().toISOString(), startedAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] };
-      hob.runtime.store.saveJob(job);
-      hob.faux.setResponses([text("还在跑")]);
-      await hob.runtime.router.send("hob", { text: "怎么还没好" });
-      await hob.runtime.router.waitIdle("hob");
-      expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos).toEqual(items(["改成按天切", "doing"]));
-      expect(archivedTodos(hob.runtime.router.items("hob").items)).toEqual([]);
-      // 天数按日历日算：25 小时前在凌晨 1 点前是「2 天前」
-      expect(userPrompts(hob.runtime.store.routerFile("hob")).at(-1)).toMatch(/手上的待办 0\/1，(昨天|2 天前)更新：\n→ 改成按天切/);
+      putTodos(todosFile(hob), [["等对方回话", "doing"]]);
+      hob.faux.setResponses([text("知道了")]);
+      await hob.runtime.router.event("hob", "任务「整理单据」做完了");
+      await waitFor(() => todosOf(hob).length === 0);
     } finally { hob.close(); }
   });
 
-  it("刚更新过的、不到一天的不收", async () => {
+  it("出错结束的那一轮不清，下一轮正常结束才收", async () => {
+    const hob = makeHob({}, { memory: "off", retry: { maxRetries: 2, baseDelayMs: 1 } });
+    try {
+      putTodos(todosFile(hob), [["盘一下日志", "done"], ["改成按天切", "todo"]]);
+      hob.faux.setResponses([0, 1, 2, 3].map(() => fauxAssistantMessage("", { stopReason: "error", errorMessage: "上游 502" })));
+      await hob.runtime.router.send("hob", { text: "在吗" });
+      // 留了那行说明，就说明这一轮已经收尾了
+      await waitFor(() => hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.text.includes("没能回复")));
+      expect(todosOf(hob)).toEqual(items(["盘一下日志", "done"], ["改成按天切", "todo"]));
+      hob.faux.setResponses([text("弄好了")]);
+      await hob.runtime.router.send("hob", { text: "再试一次" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(todosOf(hob)).toEqual([]);
+    } finally { hob.close(); }
+  });
+});
+
+describe("手上还有活就留着", () => {
+  const todosOf = (hob: TestHob) => hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos ?? [];
+  const topicTodos = (hob: TestHob, gid: string) => hob.runtime.groups.summary(gid).todos ?? [];
+  const at = new Date().toISOString();
+
+  it("在跑、排队或等待中的任务：任务结束就收", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
-      putTodos(todosFile(hob), [["改成按天切", "doing"]], Math.floor(TODOS_STALE_MS / 3600 / 1000) - 1);
-      hob.faux.setResponses([text("接着做")]);
-      await hob.runtime.router.send("hob", { text: "继续" });
-      await hob.runtime.router.waitIdle("hob");
-      expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos).toHaveLength(1);
+      const job: Job = { id: "t-busy", assistantId: "hob", title: "切日志", instruction: "", status: "running", createdAt: at, startedAt: at, stats: { reads: 0, commands: 0, edits: 0 }, activity: [] };
+      hob.runtime.store.saveJob(job);
+      for (const status of ["running", "queued", "waiting"] as const) {
+        hob.runtime.store.saveJob({ ...job, status });
+        putTodos(todosFile(hob), [["改成按天切", "doing"]]);
+        releaseIdleTodos(hob.runtime, "hob");
+        expect(todosOf(hob), status).toEqual(items(["改成按天切", "doing"]));
+      }
+      hob.runtime.store.saveJob({ ...job, status: "done", endedAt: at });
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual([]);
+      // 别的助手单聊里的任务不是这个会话的
+      putTodos(todosFile(hob), [["改成按天切", "doing"]]);
+      hob.runtime.store.saveJob({ ...job, id: "t-other", assistantId: "ops", status: "running" });
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("从这个会话发出、还没结束的转交：转交结束就收", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      for (const status of ["running", "waiting"] as const) {
+        const record: Delegation = { id: `dg-${status}`, from: "hob", to: "ops", text: "整理单据", createdAt: at, status, jobIds: [] };
+        hob.runtime.store.saveDelegation(record);
+        putTodos(todosFile(hob), [["等对方回话", "doing"]]);
+        releaseIdleTodos(hob.runtime, "hob");
+        expect(todosOf(hob), status).toEqual(items(["等对方回话", "doing"]));
+        hob.runtime.store.saveDelegation({ ...record, status: "done", endedAt: at, reportedAt: at });
+        releaseIdleTodos(hob.runtime, "hob");
+        expect(todosOf(hob), status).toEqual([]);
+      }
+    } finally { hob.close(); }
+  });
+
+  it("交给群、话题还没关的：话题关了才收", () => {
+    const { hob, group } = setup();
+    try {
+      const { topic } = hob.runtime.groups.handOver(group.id, "对账出错", "hob", { text: "对账出错", files: [] });
+      putTodos(todosFile(hob), [["等群的结论", "doing"]]);
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual(items(["等群的结论", "doing"]));
+      hob.runtime.groups.closeByOwner(topic.id, "对上了");
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("这个会话里还在等用户回答的提问卡：答了就收", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const approval: Approval = { id: "ap-1", assistantId: "hob", title: "发不发", options: [{ key: "A", label: "发" }, { key: "B", label: "不发" }], status: "pending", source: "router", createdAt: at };
+      hob.runtime.store.saveApproval(approval);
+      putTodos(todosFile(hob), [["等用户选", "doing"]]);
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual(items(["等用户选", "doing"]));
+      hob.runtime.store.saveApproval({ ...approval, status: "answered", chosen: "A", answeredAt: at });
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual([]);
+      // 别的助手单聊里的提问卡不是这个会话的
+      putTodos(todosFile(hob), [["等用户选", "doing"]]);
+      hob.runtime.store.saveApproval({ ...approval, id: "ap-2", assistantId: "ops", status: "pending" });
+      releaseIdleTodos(hob.runtime, "hob");
+      expect(todosOf(hob)).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("群会话里别的成员还在这一轮：那一轮完了才收", async () => {
+    const { hob, group } = setup();
+    try {
+      const topic = hob.runtime.groups.createTopic(group.id, "换硬盘", "user");
+      putTodos(join(hob.home, "groups", topic.id, "todos.json"), [["装新盘", "doing"]]);
+      // 另一个成员这一轮还没说完
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      hob.faux.setResponses([async () => { await gate; return text("我说完了"); }]);
+      const running = hob.runtime.groups.deliverEvent(topic.id, "ops", "用户问了一句");
+      await waitFor(() => hob.runtime.router.busyMembers(topic.id).includes("ops"));
+      releaseIdleTodos(hob.runtime, "hob", topic.id);
+      expect(topicTodos(hob, topic.id)).toEqual(items(["装新盘", "doing"]));
+      release();
+      await running;
+      releaseIdleTodos(hob.runtime, "ops", topic.id);
+      expect(topicTodos(hob, topic.id)).toEqual([]);
+    } finally { hob.close(); }
+  });
+});
+
+describe("启动时", () => {
+  it("手上没活的收起来，还没结束的转交留着", () => {
+    const { hob, group } = setup();
+    try {
+      const topic = hob.runtime.groups.createTopic(group.id, "换硬盘", "user");
+      putTodos(todosFile(hob), [["盘一下日志", "done"], ["改成按天切", "todo"]]);
+      putTodos(join(hob.home, "groups", topic.id, "todos.json"), [["拆旧盘", "doing"]]);
+      releaseIdleTodosAtStartup(hob.runtime);
+      expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos ?? []).toEqual([]);
+      expect(hob.runtime.groups.summary(topic).todos ?? []).toEqual([]);
+      // 还在等对方回话的那份留着
+      putTodos(todosFile(hob), [["等对方回话", "doing"]]);
+      hob.runtime.store.saveDelegation({ id: "dg-1", from: "hob", to: "ops", text: "整理单据", createdAt: new Date().toISOString(), status: "running", jobIds: [] });
+      putTodos(join(hob.home, "groups", topic.id, "todos.json"), [["拆旧盘", "doing"]]);
+      releaseIdleTodosAtStartup(hob.runtime);
+      expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos ?? []).toEqual(items(["等对方回话", "doing"]));
+      // 单聊里发出的转交不按住群会话那份
+      expect(hob.runtime.groups.summary(topic).todos ?? []).toEqual([]);
     } finally { hob.close(); }
   });
 });

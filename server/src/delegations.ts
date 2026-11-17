@@ -21,22 +21,23 @@ export class DelegationManager {
     });
   }
 
-  async start(to: string, text: string, files: string[] = []): Promise<Delegation> {
+  async start(from: string, to: string, text: string, files: string[] = []): Promise<Delegation> {
+    const source = this.runtime.store.assistant(from);
     const target = this.runtime.store.assistant(to);
-    if (!target || to === "hob") throw new Error("目标助手不存在或不能转交给自己。");
-    const delegation: Delegation = { id: newId("dg-"), from: "hob", to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
+    if (!source || !target || from === to) throw new Error("目标助手不存在或不能转交给自己。");
+    const delegation: Delegation = { id: newId("dg-"), from, to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
     this.runtime.store.saveDelegation(delegation);
-    await this.runtime.router.addItem("hob", { kind: "delegation", delegationId: delegation.id });
+    await this.runtime.router.addItem(from, { kind: "delegation", delegationId: delegation.id });
     let sourceUserId: string;
     try {
-      const forwarded = await this.runtime.router.addForwarded(to, text, delegation.id, "hob", files);
+      const forwarded = await this.runtime.router.addForwarded(to, text, delegation.id, from, files);
       sourceUserId = forwarded.id;
     } catch (error) {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
       throw error;
     }
     this.runtime.bus.emit({ type: "delegation", delegation });
-    void this.runtime.router.relay(to, `转自 Hob：${text}`, delegation.id, { sourceUserId }, text).catch((error: unknown) => {
+    void this.runtime.router.relay(to, `转自「${source.name}」：${text}`, delegation.id, { sourceUserId }, text).catch((error: unknown) => {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
     });
     return delegation;
@@ -90,7 +91,7 @@ export class DelegationManager {
     return true;
   }
 
-  returnToHob(id: string, text: string, reason: string): void {
+  returnTo(id: string, text: string, reason: string): void {
     const record = this.runtime.store.internalDelegation(id);
     if (!record || record.turnFinished) throw new Error("转交已结束，无法退回");
     this.runtime.store.saveDelegation({ ...record, status: "returned", reply: `退回：${reason}`, returnedText: text, turnFinished: true });

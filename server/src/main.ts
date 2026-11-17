@@ -9,6 +9,7 @@ import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
 import { generalSkillsDir, syncGeneralIndex } from "./skills.ts";
 import { readLegacyModels } from "./settings.ts";
+import { releaseIdleTodosAtStartup } from "./todos.ts";
 
 export interface StartOptions {
   home?: string;
@@ -45,6 +46,8 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.jobs.recover();
   runtime.delegations.recover();
   runtime.groups.recoverHandovers();
+  // 重启后没有在跑的一轮，任务按中断、转交按中断处理过了：手上没活的待办这时候收起
+  releaseIdleTodosAtStartup(runtime);
   runtime.routines.start();
   runtime.jobs.startWatchdog();
   runtime.desktopEvents.restart();

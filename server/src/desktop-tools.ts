@@ -19,11 +19,18 @@ const action = Type.Object({
 });
 
 type PageConnection = { browser?: Browser; page?: Page; opening?: Promise<Page> };
+
+async function loginHint(page: Page): Promise<string> {
+  const url = typeof page.url === "function" ? page.url() : "";
+  let password = 0;
+  try { if (typeof page.locator === "function") password = await page.locator('input[type="password"]').count(); } catch { /* 页面刚好在导航 */ }
+  return /(^|\.)accounts\.google\.com\//i.test(url) || password > 0 ? "这一页要登录：要用户来登，就用 ask_login。" : "";
+}
+
 const jobConnections = new WeakMap<HobRuntime, Map<string, Map<DesktopToolSession, string>>>();
 
 export class DesktopToolSession {
   private connections = new Map<string, PageConnection>();
-  private publicWait?: Promise<void>;
   private active = new Set<Promise<unknown>>();
   private disposed = false;
   private profile: string;
@@ -38,23 +45,9 @@ export class DesktopToolSession {
       if (session.connections.get(screen)?.browser?.isConnected()) throw new Error(`任务「${title}」正在用浏览器，等它做完，或者用 reply_job 让它停下来。`);
     }
   }
-  private async screen(value: unknown): Promise<string> {
-    if (value !== undefined && value !== "own" && value !== "public") throw new Error("屏幕参数无效。");
-    const screen = value === "public" ? "public" : this.profile;
-    this.check(screen);
-    if (screen === "public") {
-      if (!this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId)) throw new Error("这个助手没有使用公共屏幕的权限。");
-      if (!this.router) {
-        if (!this.publicWait) {
-          const name = this.runtime.store.assistant(this.assistantId)?.name ?? this.assistantId;
-          this.publicWait = this.runtime.desktopPublic.acquire(this, name).catch((error) => { this.publicWait = undefined; throw error; });
-        }
-        await this.publicWait;
-      }
-      this.check(screen);
-      if (!this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId)) throw new Error("这个助手没有使用公共屏幕的权限。");
-    }
-    return screen;
+  private async screen(): Promise<string> {
+    this.check(this.profile);
+    return this.profile;
   }
   private async getPage(screen: string): Promise<Page> {
     this.check(screen);
@@ -93,13 +86,11 @@ export class DesktopToolSession {
   }
   async dispose() {
     this.disposed = true;
-    this.runtime.desktopPublic.cancelWait(this);
     await Promise.allSettled([...this.active]);
     await Promise.all([...this.connections.values()].map(async (connection) => {
       await connection.opening?.catch(() => undefined);
       await connection.browser?.close().catch(() => undefined);
     }));
-    this.runtime.desktopPublic.release(this);
     const screens = jobConnections.get(this.runtime);
     for (const [screen, jobs] of screens ?? []) {
       jobs.delete(this);
@@ -108,15 +99,14 @@ export class DesktopToolSession {
     this.connections.clear();
   }
   tools(canSeeImages = this.canSeeImages): ToolDefinition<any, any>[] {
-    const allowPublic = this.runtime.settings.settings.desktop?.publicAssistants?.includes(this.assistantId) ?? false;
     const make = (name: string, label: string, description: string, parameters: any, run: (params: any, screen: string) => Promise<string | Buffer>): ToolDefinition<any, any> => ({
       name, label, description,
-      parameters: Type.Object({ ...parameters.properties, ...(allowPublic ? { screen: Type.Optional(Type.Union([Type.Literal("own"), Type.Literal("public")])) } : {}) }),
+      parameters,
       execute: async (_id, params) => {
         const operation = (async () => {
           try {
             const values = (params ?? {}) as Record<string, unknown>;
-            const screen = await this.screen(values.screen);
+            const screen = await this.screen();
             const value = await run(values, screen);
             if (Buffer.isBuffer(value)) {
               const dir = resolve(this.screenshotDir);
@@ -150,13 +140,15 @@ export class DesktopToolSession {
       make("browser_open", "打开网页", this.router ? "在你的云桌面浏览器里打开网页（HTTP 或 HTTPS）。" : "在助手的云桌面浏览器里打开网页（HTTP 或 HTTPS）。" , Type.Object({ url: Type.String() }), async ({ url }, screen) => {
         const target = new URL(url);
         if (target.protocol !== "http:" && target.protocol !== "https:") throw new Error("只支持 HTTP(S) 网页。");
-        const page = await this.getPage(screen); this.check(screen); await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 }); return `已打开 ${page.url()}`;
+        const page = await this.getPage(screen); this.check(screen); await page.goto(target.toString(), { waitUntil: "domcontentloaded", timeout: 30_000 });
+        const hint = await loginHint(page);
+        return `已打开 ${page.url()}${hint ? `。${hint}` : ""}`;
       }),
-      make("browser_snapshot", "读取页面", "读取当前页面的无障碍快照；里面的引用用于点击或输入。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); return page.ariaSnapshot({ mode: "ai" }); }),
-      make("browser_click", "点击网页", "点击最新页面快照中的引用。", Type.Object({ ref: Type.String() }), async ({ ref }, screen) => { const page = await this.getPage(screen); this.check(screen); await page.getByRef(ref).click(); return "已点击。"; }),
-      make("browser_type", "输入文字", "向最新页面快照中的引用输入文字。", Type.Object({ ref: Type.String(), text: Type.String(), submit: Type.Optional(Type.Boolean()) }), async ({ ref, text, submit }, screen) => { const page = await this.getPage(screen); this.check(screen); const target = page.getByRef(ref); await target.fill(text); if (submit) { this.check(screen); await target.press("Enter"); } return "已输入。"; }),
+      make("browser_snapshot", "读取页面", "读取当前页面的无障碍快照；里面的引用用于点击或输入。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); const snapshot = await page.ariaSnapshot({ mode: "ai" }); const hint = await loginHint(page); return `${snapshot}${hint ? `\n\n${hint}` : ""}`; }),
+      make("browser_click", "点击网页", "点击最新页面快照中的引用。", Type.Object({ ref: Type.String() }), async ({ ref }, screen) => { const page = await this.getPage(screen); this.check(screen); await page.getByRef(ref).click(); const hint = await loginHint(page); return `已点击。${hint ? ` ${hint}` : ""}`; }),
+      make("browser_type", "输入文字", "向最新页面快照中的引用输入文字。", Type.Object({ ref: Type.String(), text: Type.String(), submit: Type.Optional(Type.Boolean()) }), async ({ ref, text, submit }, screen) => { const page = await this.getPage(screen); this.check(screen); const target = page.getByRef(ref); await target.fill(text); if (submit) { this.check(screen); await target.press("Enter"); } const hint = await loginHint(page); return `已输入。${hint ? ` ${hint}` : ""}`; }),
       make("browser_press", "按键", "向当前网页发送按键，如 Enter、Control+L。", Type.Object({ key: Type.String() }), async ({ key }, screen) => { const page = await this.getPage(screen); this.check(screen); await page.keyboard.press(key); return "已按键。"; }),
-      make("browser_back", "返回网页", "返回浏览器上一页。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); await page.goBack({ waitUntil: "domcontentloaded" }); return `当前页面：${page.url()}`; }),
+      make("browser_back", "返回网页", "返回浏览器上一页。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); await page.goBack({ waitUntil: "domcontentloaded" }); const hint = await loginHint(page); return `当前页面：${page.url()}${hint ? `。${hint}` : ""}`; }),
       make("browser_screenshot", "网页截图", "截取当前浏览器页面。", Type.Object({}), async (_, screen) => { const page = await this.getPage(screen); this.check(screen); return page.screenshot(); }),
       make("desktop_screenshot", "桌面截图", "截取整个云桌面。", Type.Object({}), async (_, screen) => {
         await this.runtime.desktop.request(`/api/screens/${screen}/start`, { method: "POST" });
@@ -178,12 +170,12 @@ export class DesktopToolSession {
   }
 }
 
-/** 公共屏幕保留 public；无效或冲突的助手 id 用稳定哈希。 */
+/** 无效或过长的助手 id 用稳定哈希。 */
 export function desktopProfile(assistantId: string): string {
-  return assistantId !== "public" && /^[a-z0-9-]{1,64}$/.test(assistantId) ? assistantId : `p-${createHash("sha256").update(assistantId).digest("hex").slice(0, 62)}`;
+  return /^[a-z0-9-]{1,64}$/.test(assistantId) ? assistantId : `p-${createHash("sha256").update(assistantId).digest("hex").slice(0, 62)}`;
 }
 
-/** 在云桌面里打开（或提到最前）这个助手的浏览器：用户接管后自己登录网站用。 */
+/** 在云桌面里打开（或提到最前）这个助手的浏览器，供用户接管并手动登录。 */
 export async function openDesktopBrowser(runtime: HobRuntime, assistantId: string): Promise<void> {
   const profile = encodeURIComponent(desktopProfile(assistantId));
   await runtime.desktop.request(`/api/screens/${profile}/browser/start`, { method: "POST" });

@@ -29,7 +29,7 @@ import { TopicCard } from "./components/Items.tsx";
 const at = (h: number, m = 0) => new Date(2026, 10, 8, h, m).toISOString();
 
 function asst(id: string, name: string, duty = ""): AssistantSummary {
-  return { id, name, duty, sprite: "page", primary: false, pinned: false, hidden: false, notify: false, instructions: "", createdAt: at(8), unread: 0, busy: false };
+  return { id, name, duty, sprite: "page", primary: false, pinned: false, hidden: false, notify: false, createdAt: at(8), unread: 0, busy: false };
 }
 
 function group(id: string, extra: Partial<GroupSummary> = {}): GroupSummary {

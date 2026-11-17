@@ -14,7 +14,7 @@ const PNG = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR
 
 function addAssistant(hob: TestHob, id: string, name: string, duty: string): Assistant {
   const base = hob.runtime.store.assistant("hob")!;
-  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page", instructions: "" };
+  const assistant: Assistant = { ...base, id, name, duty, primary: false, pinned: false, sprite: "page" };
   hob.runtime.store.saveAssistant(assistant);
   return assistant;
 }
@@ -311,8 +311,6 @@ describe("群里的卡片和结果回流", () => {
       expect(names).not.toContain("show_page");
       expect(names).toContain("set_rule");
       expect(names).toContain("create_routine");
-      // 自己的补充说明自己改（群里也拿得到）；主助手另有 update_*，群里也不发给它
-      expect(names).toContain("edit_notes");
     } finally {
       hob.close();
     }

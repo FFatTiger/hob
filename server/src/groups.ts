@@ -12,7 +12,7 @@ import type {
 } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
-import { clearTodos, pruneStaleTodos, readTodos } from "./todos.ts";
+import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
 import { checkAssistantModels } from "./models.ts";
@@ -87,9 +87,9 @@ export interface CreateGroupInput {
 export interface UpdateGroupInput {
   name?: unknown;
   purpose?: unknown;
-  instructions?: unknown;
   ownerId?: unknown;
   members?: unknown;
+  listOrder?: unknown;
 }
 
 export class GroupManager {
@@ -353,24 +353,18 @@ export class GroupManager {
   update(gid: string, patch: UpdateGroupInput): Group {
     const group = this.group(gid);
     if (group.parentId) {
-      if (patch.instructions !== undefined) {
-        this.update(group.parentId, { instructions: patch.instructions });
-        const { instructions: _instructions, ...rest } = patch;
-        return Object.keys(rest).length ? this.renameTopic(group, rest) : this.group(gid);
-      }
       return this.renameTopic(group, patch);
     }
     const members = patch.members === undefined ? group.members : this.membersOf(patch.members, "群里至少要留一个成员");
     const ownerId = patch.ownerId === undefined ? group.ownerId : this.ownerOf(patch.ownerId, members);
     if (!members.includes(ownerId)) throw new Error("群主要在成员里");
-    if (patch.instructions !== undefined && typeof patch.instructions !== "string") throw new Error("补充说明必须是文字");
     const next: Group = {
       ...group,
       members,
       ownerId,
       ...(patch.name !== undefined ? { name: this.text(patch.name, "群名", 40) } : {}),
       ...(patch.purpose !== undefined ? { purpose: this.text(patch.purpose, "负责什么", 200) } : {}),
-      ...(typeof patch.instructions === "string" ? { instructions: patch.instructions } : {}),
+      ...(typeof patch.listOrder === "number" && Number.isFinite(patch.listOrder) ? { listOrder: Math.max(0, Math.round(patch.listOrder)) } : {}),
     };
     if (group.memberModels) next.memberModels = Object.fromEntries(Object.entries(group.memberModels).filter(([id]) => members.includes(id)));
     this.store.saveGroup(next);
@@ -581,12 +575,12 @@ export class GroupManager {
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: string): Promise<void> {
+  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: string, workDone = false): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
     const previous = this.queues.get(key) ?? Promise.resolve();
     const next = previous
-      .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event))
+      .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event, workDone))
       .catch(() => undefined);
     this.queues.set(key, next);
     void next.then(() => {
@@ -625,10 +619,10 @@ export class GroupManager {
    * 开一轮（不然流式的文字没有归属，会被丢掉），它说的话照常进时间线。
    * 一个事件算新的一串回合（新的 Wave）。
    */
-  async deliverEvent(gid: string, assistantId: string, text: string, triggerId = ""): Promise<void> {
+  async deliverEvent(gid: string, assistantId: string, text: string, triggerId = "", workDone = false): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
-    await this.schedule(gid, assistantId, { turns: 0, stopped: false }, triggerId, text);
+    await this.schedule(gid, assistantId, { turns: 0, stopped: false }, triggerId, text, workDone);
   }
 
   /**
@@ -650,7 +644,7 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: string): Promise<void> {
+  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: string, workDone = false): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
     // 用户按了停止：这一轮不再开始
@@ -666,8 +660,6 @@ export class GroupManager {
       }
       return;
     }
-    // 搁久了的那份在轮到这一轮之前收起，这一段带给模型的就是当前这份
-    await pruneStaleTodos(this.runtime, assistantId, gid);
     // 排到的这一轮已经没有新东西给它（前面那一轮已经带上了）：不跑，不调模型
     const input = this.windowFor(group, assistantId, event === undefined ? triggerId : "");
     if (event === undefined && !input) return;
@@ -678,7 +670,7 @@ export class GroupManager {
     let text = "";
     try {
       const prompt = this.inputText(assistantId, group, input ?? { items: [] }, event);
-      await this.runtime.router.deliverMember(gid, assistantId, prompt, () => this.markSeen(gid, assistantId, input?.seenTo), input ? this.inputFiles(input) : []);
+      await this.runtime.router.deliverMember(gid, assistantId, prompt, () => this.markSeen(gid, assistantId, input?.seenTo), input ? this.inputFiles(input) : [], event === undefined || workDone);
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       text = turn.text;
     } catch (error) {

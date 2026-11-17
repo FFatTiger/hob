@@ -239,7 +239,6 @@ describe("换头像", () => {
         routines: [],
         routinesText: "",
         askFirst: [],
-        instructions: [],
         carry: { conversations: 0 },
         createdAt: new Date().toISOString(),
       };
@@ -268,7 +267,6 @@ describe("换头像", () => {
         routines: [],
         routinesText: "",
         askFirst: [],
-        instructions: [],
         carry: { conversations: 0 },
         createdAt: new Date().toISOString(),
       };
@@ -380,7 +378,7 @@ describe("set_avatar 工具", () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([
-        call("create_assistant", { name: "代理", duty: "代理转发", dutyLong: "负责代理和转发。", sprite: "custom", prop_art: GOOD, facts: ["负责代理"] }),
+        call("create_assistant", { name: "代理", duty: "代理转发", dutyLong: "负责代理和转发。", sprite: "custom", prop_art: GOOD }),
         text("建好了。"),
       ]);
       await hob.runtime.router.send("hob", { text: "代理和转发的事多，分个助手吧" });
@@ -391,7 +389,7 @@ describe("set_avatar 工具", () => {
       expect(hob.runtime.store.assistant(draft.createdAssistantId!)?.prop).toEqual(GOOD);
 
       hob.faux.appendResponses([
-        call("create_assistant", { name: "错了", duty: "试试", dutyLong: "试试。", sprite: "custom", prop_art: { ...GOOD, pal: { h: "yellow" } }, facts: ["试试"] }),
+        call("create_assistant", { name: "错了", duty: "试试", dutyLong: "试试。", sprite: "custom", prop_art: { ...GOOD, pal: { h: "yellow" } } }),
         text("重画了。"),
       ]);
       await hob.runtime.router.send("hob", { text: "再画一个试试" });

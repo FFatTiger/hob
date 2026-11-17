@@ -60,6 +60,21 @@ describe("沉淀是任务的又一轮", () => {
     } finally { hob.close(); }
   });
 
+  it("受阻的任务也能沉淀，还在跑的不行", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      hob.runtime.store.saveJob(doneJob({ status: "running" }));
+      expect(() => hob.runtime.jobs.startSediment("t-sed")).toThrow("任务还没结束");
+      hob.runtime.store.saveJob(doneJob({ status: "stuck", endedAt: new Date().toISOString() }));
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
+      hob.faux.setResponses([call("report", { outcome: "done", result: "没有要补的" }), text("好")]);
+      hob.runtime.jobs.startSediment("t-sed");
+      await hob.runtime.jobs.waitIdle();
+      expect(hob.runtime.store.job("t-sed")!.sediment?.status).toBe("empty");
+      expect(hob.runtime.store.job("t-sed")!.status).toBe("stuck");
+    } finally { hob.close(); }
+  });
+
   it("在已有技能上改：版本加一，旧版进历史，标题和说明跟着 SKILL.md", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {

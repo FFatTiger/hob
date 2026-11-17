@@ -363,7 +363,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     {
       name: "save_job_as_skill",
       label: "沉淀技能",
-      description: `让一个已完成的任务把它的做法写成技能。它在自己的会话里写，能把脚本和命令真跑一遍验证；进度和结果显示在任务卡片上。${groupId ? "群里的任务新沉淀的技能归这个群；into 填哪份就改哪份。" : ""}`,
+      description: `让一个已经结束的任务（做完、受阻、失败或停下的都行）把它的做法写成技能。它在自己的会话里写，能把脚本和命令真跑一遍验证；进度和结果显示在任务卡片上。${groupId ? "群里的任务新沉淀的技能归这个群；into 填哪份就改哪份。" : ""}`,
       parameters: Type.Object({ jobId: Type.String(), into: Type.Optional(Type.String({ description: "可选，在哪个已有技能的基础上改，填技能名；不填就新建。" })), general: intoGeneralParam(!!groupId), note: Type.Optional(Type.String({ description: "可选，要交代给任务的话，比如用户的反馈和纠正、要一起并进来的技能。" })) }),
       execute: async (_id, params: { jobId: string; into?: string; general?: boolean; note?: string }) => {
         const job = store.job(params.jobId);

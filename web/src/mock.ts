@@ -217,7 +217,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.8.0",
+  version: "1.8.1",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };

@@ -1008,7 +1008,9 @@ export class JobManager {
   startSediment(jobId: string, options: { into?: string; note?: string; manual?: boolean; general?: boolean } = {}): void {
     const job = this.store.job(jobId);
     if (!job) throw new Error("任务不存在");
-    if (job.status !== "done" || this.finishing.has(jobId) || this.workers.has(jobId)) throw new Error("只有已完成的任务可以沉淀");
+    // 结束了的都能沉淀：受阻、失败的那一趟也常有值得记下的做法（比如查清了为什么不通），值不值得由助手判断
+    const ended = job.status === "done" || job.status === "stuck" || job.status === "failed" || job.status === "stopped";
+    if (!ended || this.finishing.has(jobId) || this.workers.has(jobId)) throw new Error("任务还没结束，结束以后再沉淀");
     if (this.sediments.has(jobId)) throw new Error("任务正在沉淀技能");
     const group = job.groupId ? this.store.group(job.groupId) : undefined;
     const skills = visibleSkills(this.runtime, job.assistantId, group);

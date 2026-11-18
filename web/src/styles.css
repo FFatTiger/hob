@@ -4857,7 +4857,7 @@ button.screen,
   display: block;
   white-space: pre-wrap;
 }
-/* 交给任务、转给别的助手的话里「最近的对话」：给模型补的上下文，默认折着，点开是灰字 */
+/* 交给任务、转给别的助手的话里只有助手写的交接说明，默认折着，点开是灰字 */
 .brief-recent {
   margin-top: 8px;
   font-size: 13px;

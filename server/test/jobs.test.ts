@@ -618,27 +618,16 @@ describe("任务做完就提醒沉淀，写明用了哪些技能", () => {
     } finally { hob.close(); }
   });
 
-  it("定时任务：读到了绑定的技能也提醒，并且写出标题", async () => {
+  it("定时任务不绑定技能，先把任务本身交给助手", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
-      const routine = hob.runtime.routines.create({ assistantId: "hob", name: "每日简报", instruction: "整理简报", schedules: ["0 9 * * *"] });
-      const skill = saveAssistantSkill(hob.home, "hob", { name: "daily-brief", title: "每日简报", description: "整理简报", content: "步骤" });
-      hob.runtime.routines.update(routine.id, { skill: "daily-brief" });
-      // 没读技能：提醒里没用到技能
-      hob.faux.setResponses([call("report", { outcome: "done", result: "简报写好了" })]);
+      const routine = hob.runtime.routines.create({ assistantId: "hob", name: "每日简报", instruction: "整理简报", schedules: ["0 9 * * *"], skill: "daily-brief" } as never);
+      saveAssistantSkill(hob.home, "hob", { name: "daily-brief", title: "每日简报", description: "整理简报", content: "步骤" });
+      expect(routine).not.toHaveProperty("skill");
       await hob.runtime.routines.runNow(routine.id);
-      await hob.runtime.jobs.waitIdle();
-      const first = String(event.mock.calls.at(-1)![1]);
-      expect(first.startsWith("定时任务「每日简报」")).toBe(true);
-      expect(first.split("\n")[2]).toBe(hint);
-      // 读了技能：照样提醒，并且写清用了哪份
-      hob.faux.setResponses([call("read", { path: skill.path }), call("report", { outcome: "done", result: "简报写好了" })]);
-      await hob.runtime.routines.runNow(routine.id);
-      await hob.runtime.jobs.waitIdle();
-      const second = String(event.mock.calls.at(-1)![1]);
-      expect(second.startsWith("定时任务「每日简报」")).toBe(true);
-      expect(second).toContain(usedHint(["每日简报"]));
+      expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("整理简报"), expect.anything());
+      expect(event.mock.calls.at(-1)?.[1]).not.toContain("按技能");
     } finally { hob.close(); }
   });
 });

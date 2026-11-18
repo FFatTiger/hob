@@ -378,13 +378,11 @@ export interface Routine {
   groupId?: string; // 结果发到的群或话题
   name: string; // 如 "每日简报"
   instruction: string; // 要做什么
-  instructionBy?: string; // 「要做的事」是谁写的："user" 是用户自己写的（界面上建、改过它）；助手用工具写的存助手 id；旧数据没有
-  userWords?: { text: string; at: Iso }[]; // 助手用工具建、改这条定时任务时，那一轮用户的原话，按时间先后，留最近 3 条
+  instructionBy?: string; // 「要做的事」是谁写的："user" 是用户自己写的；助手写的存助手 id；旧数据没有
   schedules: string[]; // cron 表达式（如 "0 9 * * *"）或具体时间（如 "2026-11-08T09:00"）；可多个（"再加一个"）
   active: boolean;
   createdAt: Iso;
   runs: RoutineRun[]; // 最近 20 次，新的在前
-  skill?: string; // 绑定这个助手自己的技能（AssistantSkill.name）：每次执行按它做
   check?: RoutineCheck; // 到点先跑脚本，多数时候没变化就不开任务
   checks?: RoutineChecks; // 检查计数和最近一次失败的原因
   once?: boolean; // 做成一次就停：没有检查脚本的跑完就停，有检查的第一次有输出就停
@@ -596,7 +594,7 @@ export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info" | "skill
 export type Item = (
   | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string } }
   | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string; jobId?: string }; quote?: { itemId: string; text: string } }
-  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; handbackId?: string; path?: string; targetGroupId?: string; detail?: string } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
+  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; routineId?: string; handbackId?: string; path?: string; targetGroupId?: string; detail?: string } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
   | { kind: "todos"; id: string; at: Iso; items: TodoItem[]; why: TodoArchiveWhy } // 老数据：以前收起的一份待办。现在不再写入，界面不显示（对话里只放用户需要看的东西）
   | { kind: "question"; id: string; at: Iso; approvalId: string }
   | { kind: "job"; id: string; at: Iso; jobId: string; round?: number } // 第几轮（续做一次 +1），缺省是第 0 轮

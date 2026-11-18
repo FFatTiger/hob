@@ -28,16 +28,14 @@ export class DelegationManager {
     const delegation: Delegation = { id: newId("dg-"), from, to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
     this.runtime.store.saveDelegation(delegation);
     await this.runtime.router.addItem(from, { kind: "delegation", delegationId: delegation.id });
-    let sourceUserId: string;
     try {
-      const forwarded = await this.runtime.router.addForwarded(to, text, delegation.id, from, files);
-      sourceUserId = forwarded.id;
+      await this.runtime.router.addForwarded(to, text, delegation.id, from, files);
     } catch (error) {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
       throw error;
     }
     this.runtime.bus.emit({ type: "delegation", delegation });
-    void this.runtime.router.relay(to, `转自「${source.name}」：${text}`, delegation.id, { sourceUserId }, text).catch((error: unknown) => {
+    void this.runtime.router.relay(to, `转自「${source.name}」：${text}`, delegation.id, undefined, text).catch((error: unknown) => {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
     });
     return delegation;
@@ -48,7 +46,7 @@ export class DelegationManager {
     for (const record of store.internalDelegations()) {
       if (record.to !== to || record.reportedAt || (record as StoredDelegation).pendingResult || record.status === "interrupted") continue;
       const now = new Date().toISOString();
-      const delegation: StoredDelegation = { ...record, status: "takenOver", endedAt: now, pendingResult: `转交给「${store.assistant(to)?.name ?? to}」的事已被用户接手。原请求：${record.text}` };
+      const delegation: StoredDelegation = { ...record, status: "takenOver", endedAt: now, pendingResult: `转交给「${store.assistant(to)?.name ?? to}」的事已被用户接手。交接说明：${record.text}` };
       store.saveDelegation(delegation);
       bus.emit({ type: "delegation", delegation: publicDelegation(delegation) });
       this.deliverResult(delegation);

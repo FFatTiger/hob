@@ -123,7 +123,7 @@ describe("群里的卡片和结果回流", () => {
     const { hob, group } = setup();
     try {
       hob.faux.setResponses([
-        call("start_job", { title: "数文件" }),
+        call("start_job", { title: "数文件", note: "查一下 /tmp/x 里有几个文件" }),
         call("report", { outcome: "done", result: "/tmp/x 里有 3 个文件" }),
         text("好"),
         text("查完了：3 个文件。@Hob 你看要不要留"),
@@ -138,7 +138,7 @@ describe("群里的卡片和结果回流", () => {
       const job = hob.runtime.store.job((card as { jobId: string }).jobId)!;
       expect(job.groupId).toBe(group.id);
       // 用户原话取自群的时间线
-      expect(job.instruction).toContain("查一下 /tmp/x 里有几个文件");
+      expect(job.instruction).toBe("查一下 /tmp/x 里有几个文件");
 
       // 结果进了它的群会话，它说的话写在时间线上；回复里 @ 了 Hob，接着轮到 Hob
       expect(userTexts(hob.runtime.store.groupMemberFile(group.id, "ops")).at(-1)).toContain("[hob-event] 「服务器」的任务「数文件」");
@@ -184,7 +184,7 @@ describe("群里的卡片和结果回流", () => {
       state.currentDelegationId = "dg-test";
       const tools = buildRouterTools(hob.runtime, "ops", group.id);
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("好")]);
-      await tools.find((tool) => tool.name === "start_job")!.execute("call", { title: "测试任务" });
+      await tools.find((tool) => tool.name === "start_job")!.execute("call", { title: "测试任务", note: "测试任务交接说明" });
       const job = hob.runtime.store.jobs().find((item) => item.title === "测试任务")!;
       expect(job.delegationId).toBeUndefined();
       const addApproval = vi.spyOn(hob.runtime.delegations, "addApproval");

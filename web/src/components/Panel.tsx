@@ -11,7 +11,7 @@ import { skillUsage } from "../skill-usage.ts";
 import { commandSummary } from "../../../shared/command.ts";
 import type { ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
-import { assistantStatus, followingModel, formatNext, nextRoutine, routineSkillOptions, sidebarJobs } from "../sidebar-data.ts";
+import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
 import { PanelRootDetails } from "./PanelRootDetails.tsx";
 import { fitThinking } from "../model-list.ts";
 import { COLOR_IDS, COLORS, customSprite, parseSprite, PROP_IDS, PROPS, spriteId } from "../../../shared/sprites.ts";
@@ -32,7 +32,6 @@ import {
   loadModels,
   loadKnowledge,
   loadAssistantSkills,
-  loadVisibleSkills,
   loadGroupProfile,
   openKnowledge,
   openFilePreview,
@@ -478,11 +477,7 @@ function NewRoutine({ groupId }: { groupId?: string }) {
   const [instruction, setInstruction] = useState("");
   const [schedule, setSchedule] = useState("0 9 * * *");
   const [active, setActive] = useState(true);
-  const [skill, setSkill] = useState("");
   const [busy, setBusy] = useState(false);
-  const visibleKey = `${aid}:${groupId ?? ""}`;
-  const visible = s.visibleSkills[visibleKey];
-  useEffect(() => { if (aid) void loadVisibleSkills(aid, groupId); }, [aid, groupId]);
   const ready = name.trim() !== "" && instruction.trim() !== "" && !busy;
   const create = async () => {
     setBusy(true);
@@ -493,7 +488,6 @@ function NewRoutine({ groupId }: { groupId?: string }) {
       instruction: instruction.trim(),
       schedules: [schedule],
       active,
-      ...(skill ? { skill } : {}),
     });
     setBusy(false);
   };
@@ -522,9 +516,6 @@ function NewRoutine({ groupId }: { groupId?: string }) {
       </div>
 
       {group ? <RoutineTarget group={group} destination={destination} onDestination={setDestination} /> : null}
-      <div className="lbl">{t("技能")}</div>
-      {visible?.error ? <div className="badline">{t("加载失败：{error}", { error: visible.error })} <button onClick={() => void loadVisibleSkills(aid, groupId)}>{t("重试")}</button></div> : null}
-      <div className="group-card sidebar-card-group"><Select aria-label={t("技能")} value={skill} disabled={!visible || visible.loading || !!visible.error} onChange={setSkill} options={[{ value: "", label: t("不用技能") }, ...routineSkillOptions(visible?.skills ?? [])]} /></div>
       <div className="ctl">
         <span className="sp" />
         <button className="hob-btn" onClick={backPanel}>
@@ -546,11 +537,8 @@ function RoutineTarget({ group, destination, onDestination }: { group: GroupSumm
 function RoutineEditor({ id }: { id: string }) {
   const s = useApp();
   const r = s.routines.find((x) => x.id === id);
-  const aid = r?.assistantId;
   const place = s.groups.find((group) => group.id === r?.groupId);
   const group = s.groups.find((item) => item.id === (place?.parentId ?? place?.id));
-  const visible = s.visibleSkills[`${r?.assistantId ?? ""}:${group?.id ?? ""}`];
-  useEffect(() => { if (r) void loadVisibleSkills(r.assistantId, group?.id); }, [r?.assistantId, group?.id]);
   if (!r) return <Empty>{t("这个定时任务已不存在。")}</Empty>;
 
   return (
@@ -617,14 +605,6 @@ function RoutineEditor({ id }: { id: string }) {
       ) : null}
 
       {group ? <RoutineTarget group={group} destination={r.groupId ?? group.id} onDestination={(groupId) => void saveRoutine(r.id, { groupId })} /> : null}
-      <div className="lbl">{t("技能")}</div>
-      {visible?.error ? <div className="badline">{t("加载失败：{error}", { error: visible.error })} <button onClick={() => void loadVisibleSkills(r.assistantId, group?.id)}>{t("重试")}</button></div> : null}
-      <div className="group-card sidebar-card-group"><Select aria-label={t("技能")} value={r.skill ?? ""} disabled={!visible || visible.loading || !!visible.error} onChange={(value) => void saveRoutine(r.id, { skill: value || null })} options={[
-        { value: "", label: t("不用技能") },
-        ...(r.skill && !visible?.skills.some((skill) => skill.name === r.skill && skill.enabled !== false) ? [{ value: r.skill, label: r.skill, disabled: true }] : []),
-        ...routineSkillOptions(visible?.skills ?? []),
-      ]} /></div>
-
       {r.check ? (
         <>
           <div className="lbl">{t("检查")}</div>

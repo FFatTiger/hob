@@ -33,7 +33,7 @@ import { buildWorkerPrompt, userReadsEnglish, type Abilities, type PromptSetting
 import { generalSkillsDir, loadedVisibleSkills, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
 import { assistantSkillsDir, combinedSkills, groupSkillsDir, lockSkillsDir, recordSkillUse, unlockSkillsDir, usableAssistantSkills } from "./assistant-skills.ts";
 import type { VisibleSkill } from "../../shared/skills.ts";
-import { reconcileSkills, restoreSkills, snapshotSkills, type SkillSaved } from "./sediment.ts";
+import { reconcileSkills, restoreSkills, snapshotSkills } from "./sediment.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
@@ -1137,14 +1137,7 @@ export class JobManager {
     const chosen = outcome.saved.find((item) => item.name === this.sediments.get(job.id)?.into) ?? outcome.saved[0]!;
     this.setSediment(job.id, { status: "saved", name: chosen.name, title: chosen.title, version: chosen.version, updated: chosen.updated });
     this.bus.emit({ type: "skills", assistantId: job.assistantId });
-    for (const saved of outcome.saved) this.bindRoutineSkill(job, saved);
     return { ok: true, text: "技能已保存。" };
-  }
-
-  /** 定时任务还没绑技能的，绑上新沉淀的那份。技能的变化不在对话里落行：任务卡上写着沉淀状态，技能页看得到版本。 */
-  private bindRoutineSkill(job: Job, saved: SkillSaved): void {
-    const routine = job.routineId ? this.store.routine(job.routineId) : undefined;
-    if (routine && !routine.skill) this.runtime.routines.update(routine.id, { skill: saved.name });
   }
 
   /** 沉淀就是任务的又一轮：同一个会话、同一套工具，直接改技能目录，收尾时对账。 */

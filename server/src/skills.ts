@@ -1,5 +1,5 @@
 // 技能按「谁能用」分三档：本群、助手自己、通用。通用里 Lore 和本机 ~/.agents/skills 不归 Hob 管，只读。
-// 一个助手看得到哪些技能、每份能不能改，只在这里算；提示词、任务、改删、定时绑定都用这一份。
+// 一个助手看得到哪些技能、每份能不能改，只在这里算；提示词、任务、改删都用这一份。
 import { loadSkillsFromDir, type Skill } from "@earendil-works/pi-coding-agent";
 import { homedir } from "node:os";
 import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync } from "node:fs";

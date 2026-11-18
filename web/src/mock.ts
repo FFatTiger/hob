@@ -217,7 +217,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.8.1",
+  version: "1.8.2",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
@@ -649,7 +649,6 @@ function buildDb(scene: SceneId): Db {
     },
     {
       id: "r-daily",
-      skill: "daily-brief",
       assistantId: "bird",
       name: L("每日简报", "Daily brief"),
       instruction: L(
@@ -929,8 +928,8 @@ cp now.txt "$seen"`,
   }
   if (scene.startsWith("d-")) {
     const status = scene === "d-waiting" || scene === "d-mobile" ? "waiting" : scene === "d-done" ? "done" : "running";
-    // 转过去的话和真的一样带着段头：原话、最近的对话（界面上折起来）、备注
-    const brief = L("用户原话（11月13日 09:13）：\n检查一下服务器的磁盘和服务状态。\n\n最近的对话：\n用户（09:10）：昨晚的备份好像跑得很慢\nHob（09:11）：我先看看备份任务的记录。\n\nHob 的备注：清理前先确认，不要影响正在运行的服务。", "Your words (Nov 13, 09:13):\nCheck the server disks and services.\n\nHob's note: confirm before cleaning; don't disturb running services.");
+    // 转交内容只显示助手写的交接说明和显式附件
+    const brief = L("清理前先确认，不要影响正在运行的服务。", "Before cleaning, confirm first; don't disturb running services.");
     const delegation: Delegation = { id: "dg-demo", from: "hob", to: "server", text: brief, createdAt: minsAgo(6), status, jobIds: ["t-delegated"], approvalIds: [] };
     delegations[delegation.id] = delegation;
     jobs["t-delegated"] = { ...jobRunning, id: "t-delegated", assistantId: "server", delegationId: delegation.id, title: "检查服务器状态", instruction: brief, status: status === "waiting" ? "waiting" : status };
@@ -2219,18 +2218,6 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     importSkills: async (_source, ids) => ({ imported: ids, skipped: [], errors: [] }),
     deleteSkill: async () => {},
     rollbackGeneralSkill: async (name) => ({ name, title: name, description: "回退后的技能", path: `/skills/${name}/SKILL.md`, version: 1, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), uses: 0, enabled: true }),
-    visibleSkills: async (assistantId, groupId) => {
-      const base = [
-        { name: "weekly-report", title: "每周周报", description: "按固定结构整理本周进展", path: `/skills/weekly-report/SKILL.md`, dir: "/skills/weekly-report", scope: "assistant" as const, editable: true, version: 3, updatedAt: new Date().toISOString(), enabled: true },
-        { name: "browser", description: "在浏览器中操作并截图", path: "/home/.agents/skills/browser/SKILL.md", dir: "/home/.agents/skills/browser", scope: "general" as const, editable: false, source: "local" as const, enabled: true },
-      ];
-      if (!groupId) return clone(base);
-      return clone([
-        { name: "trip-plan", title: "旅行行程", description: "排旅行行程", path: `/groups/${groupId}/skills/trip-plan/SKILL.md`, dir: `/groups/${groupId}/skills/trip-plan`, scope: "group" as const, editable: true, version: 1, updatedAt: new Date().toISOString(), enabled: true },
-        { name: "shared-notes", title: "共享纪要", description: "所有人共用的纪要做做法", path: "/skills/shared-notes/SKILL.md", dir: "/skills/shared-notes", scope: "general" as const, editable: true, version: 2, updatedAt: new Date().toISOString(), enabled: true },
-        ...base.filter((skill) => skill.name !== "weekly-report"),
-      ]);
-    },
     desktop: async () => clone(desktop),
     desktopScreens: async () => ({ screens: desktopMockScene() === "failed" ? [] : [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }], profiles: { hob: "hob" } }),
     saveDesktop: async (body) => {
@@ -2754,10 +2741,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const r = db.routines.find((x) => x.id === routineId);
       if (!r) return;
       if (r.groupId && patch.assistantId !== undefined) throw new Error("群的定时由群主处理");
-      const { skill, ...rest } = patch;
-      Object.assign(r, rest);
-      if (skill === null) delete r.skill;
-      else if (skill !== undefined) r.skill = skill;
+      Object.assign(r, patch);
       emit({ type: "routine", routine: clone(r) });
     },
     deleteRoutine: async (routineId) => {

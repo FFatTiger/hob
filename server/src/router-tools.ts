@@ -34,7 +34,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { assistantSkillsDir, groupSkillsDir, listSkills, readAssistantSkillBody, saveSkill, moveSkill } from "./assistant-skills.ts";
 import { generalSkillsDir, notEditable, skillDirOf, syncGeneralIndex, visibleSkills } from "./skills.ts";
 import { jobView } from "./job-view.ts";
-import { HANDOVER_EVENT, requestText } from "./groups.ts";
+import { HANDOVER_EVENT } from "./groups.ts";
 import { sessionOrigin } from "./origin.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
@@ -143,8 +143,12 @@ function endTurn(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined, terminate: true };
 }
 
-/** 开任务、转交时备注的上限。线上被拒的备注九成五在 400 字以内（多是 200 到 400），再长的基本是在重抄原话。 */
-const NOTE_LIMIT = 400;
+/** 四个交接入口共用的说明格式。 */
+export const HANDOFF_NOTE_DESCRIPTION = `交接说明。接手的一方只看得到这段说明和 files 里的文件，看不到你和用户的对话，所以它要知道的都写在这里。按这几项写，用不上的项省掉：
+要办成什么：交什么结果，做到什么程度算完。
+背景：这件事是怎么来的，已经知道的情况（路径、名字、查过的结论、前几次做到了哪）。
+用户的要求：用户明确说过的要求和在意的事，照用户的原话引用；用户没提的要求不加。
+先问用户的：哪些事要先回来问用户。`;
 
 function fail(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined, isError: true };
@@ -344,7 +348,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       description: `删除一个技能。技能会移到归档，不会彻底删掉。${groupId ? "在群里按名字先找本群的技能，再找你自己的。" : ""}`,
       parameters: Type.Object({
         name: Type.String({ description: "技能名。" }),
-        replaced_by: Type.Optional(Type.String({ description: "可选，被哪个技能接替，填技能名。用到它的定时任务会改用接替的技能。" })),
+        replaced_by: Type.Optional(Type.String({ description: "可选，被哪个技能接替，填技能名。" })),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
       execute: async (_id, params: { name: string; replaced_by?: string; assistantId?: string }) => {
@@ -407,10 +411,10 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     {
       name: "start_job",
       label: "创建任务",
-      description: "把事情交给后台任务去做。用户这次的原话、引用、附件和最近几条对话会自动带给任务，note 只补原话里看不出的背景。",
+      description: "把事情交给后台任务去做。任务只看得到你写的 note 和 files 里的文件。",
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
-        note: Type.Optional(Type.String({ description: `任务从原话里看不出、又需要知道的背景，最多 ${NOTE_LIMIT} 字。` })),
+        note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
         cwd: Type.Optional(
           Type.String({
             description:
@@ -419,7 +423,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         ),
         files: Type.Optional(
           Type.Array(Type.String(), {
-            description: "要交给任务的文件路径（用户发来的附件）；图片会直接给模型看",
+            description: "要交给任务的文件路径；图片会直接给模型看",
           }),
         ),
         ...(groupId ? { assistantId: Type.Optional(Type.String({ description: "谁来做：群里一位成员的 id，任务以它的身份跑，用它的技能和记忆。不填就是你自己。" })) } : {}),
@@ -433,25 +437,25 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       execute: async (_id, params: any) => {
         try {
           if (params.expect_minutes != null && (!Number.isInteger(params.expect_minutes) || params.expect_minutes < 1 || params.expect_minutes > 10080)) return fail("expect_minutes 要在 1 到 10080 之间");
-          const note = params.note == null ? "" : String(params.note);
-          if ([...note].length > NOTE_LIMIT) return fail(`备注 ${[...note].length} 字，最多 ${NOTE_LIMIT} 字。用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景，改短后再调用一次。`);
+          const note = String(params.note ?? "").trim();
+          if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
+          const files = Array.isArray(params.files) ? params.files.map(String) : [];
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
-          // 模型可能照着旧对话多填 skills：任务现在带上它能用的全部技能，多填的不报错、不起作用
-          const original = router.originalWords(assistantId, note, true, Array.isArray(params.files) ? params.files.map(String) : [], groupId);
           const job = await jobs.start(assignee.id, {
             title: String(params.title),
             ...(groupId ? { groupId } : {}),
             ...(assignee.id === assistantId ? {} : { startedBy: assistantId }),
             ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
-            instruction: original.text,
+            instruction: note,
             ...(Array.isArray(params.after) && params.after.length ? { after: params.after.map(String) } : {}),
             ...(params.cwd ? { cwd: String(params.cwd) } : {}),
-            ...(original.files.length ? { files: original.files } : {}),
+            ...(files.length ? { files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
             ...(router.currentDelegation(assistantId, groupId) ? { delegationId: router.currentDelegation(assistantId, groupId) } : {}),
+            ...(router.currentRoutineId(assistantId, groupId) ? { routineId: router.currentRoutineId(assistantId, groupId) } : {}),
           });
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
           if (assignee.id !== assistantId) return endTurn(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
@@ -643,7 +647,6 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         name: Type.String({ description: "定时任务名称，如「每日简报」" }),
         instruction: Type.String({ description: "到点要执行的内容" }),
         schedules: Type.Array(Type.String({ description: "cron 表达式或具体时间" }), { description: SCHEDULES_DESCRIPTION }),
-        skill: Type.Optional(Type.String({ description: "可选，按哪个技能做，填技能名。" })),
         check: Type.Optional(checkParam(!!groupId)),
         once: Type.Optional(Type.Boolean({ description: ONCE_DESCRIPTION })),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
@@ -652,16 +655,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         const target = targetOf(groupId ? undefined : params.assistantId);
         if ("error" in target) return fail(target.error);
         try {
-          const words = router.userWords(assistantId, groupId);
           const routine = routines.create({
             assistantId: target.id,
             ...(groupId ? { groupId } : {}),
             name: String(params.name),
             instruction: String(params.instruction),
             instructionBy: assistantId,
-            ...(words ? { userWords: [words] } : {}),
             schedules: (params.schedules as string[]) ?? [],
-            ...(params.skill ? { skill: String(params.skill) } : {}),
             ...(params.check ? { check: params.check as RoutineCheck } : {}),
             ...(params.once ? { once: true } : {}),
           });
@@ -676,14 +676,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     {
       name: "update_routine",
       label: "修改定时任务",
-      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、按哪个技能做、检查脚本、启用状态。",
+      description: "修改一个定时任务：名称、内容、执行时间（schedules 会整体替换）、检查脚本、启用状态。",
       parameters: Type.Object({
         routineId: Type.String(),
         name: Type.Optional(Type.String()),
         instruction: Type.Optional(Type.String()),
         schedules: Type.Optional(Type.Array(Type.String({ description: "cron 表达式或具体时间" }), { description: SCHEDULES_DESCRIPTION })),
         active: Type.Optional(Type.Boolean()),
-        skill: Type.Optional(Type.String({ description: "按哪个技能做，填技能名；填空字符串表示不用技能。" })),
         check: Type.Optional(Type.Union([checkParam(!!groupId), Type.Null()], { description: `${checkDescription(!!groupId)}传 null 去掉检查。` })),
         once: Type.Optional(Type.Boolean({ description: ONCE_DESCRIPTION })),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
@@ -694,18 +693,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         try {
           const found = store.routine(String(params.routineId));
           if (!found || (groupId ? !sameGroup(groupId, found.groupId) : !!found.groupId || found.assistantId !== target.id)) return fail(`没有这个定时任务：${params.routineId}。${routinesLeft(target.id)}`);
-          const words = router.userWords(assistantId, groupId);
           const instruction = params.instruction ? String(params.instruction) : undefined;
           const routine = routines.update(String(params.routineId), {
             ...(params.name ? { name: String(params.name) } : {}),
             ...(instruction ? { instruction } : {}),
-            // 改了内容：这份是当前助手写的，到点时要把原话和它的转述分开给
+            // 改了内容：这份是当前助手写的，到点时写明是谁写的
             ...(instruction && instruction !== found.instruction ? { instructionBy: assistantId } : {}),
-            // 只改时间、技能、启停也是用户在交代，这一轮的话照记
-            ...(words ? { userWords: [words] } : {}),
             ...(params.schedules ? { schedules: params.schedules as string[] } : {}),
             ...(typeof params.active === "boolean" ? { active: params.active } : {}),
-            ...(typeof params.skill === "string" ? { skill: params.skill } : {}),
             ...(params.check === null || params.check ? { check: params.check as RoutineCheck | null } : {}),
             ...(typeof params.once === "boolean" ? { once: params.once } : {}),
           });
@@ -861,10 +856,11 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       {
         name: "message_assistant",
         label: "转交其他助手",
-        description: "把一件事转给另一个助手（见「助手」一节），由它负责到底。用户的原话和附件会自动转过去，对方的回复和结果会回到这里。",
+        description: "把一件事转给另一个助手（见「助手」一节），由它负责到底。对方只看得到你写的 note 和 files 里的文件；它的回复和结果会回到这里。",
         parameters: Type.Object({
           assistantId: Type.String({ description: "目标助手 id" }),
-          note: Type.Optional(Type.String({ description: `可选，对方需要知道的背景，最多 ${NOTE_LIMIT} 字。` })),
+          note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
+          files: Type.Optional(Type.Array(Type.String({ description: "要交给对方的文件路径" }))),
         }),
         execute: async (_id, params: any) => {
           const targetId = String(params.assistantId);
@@ -880,13 +876,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           // 转给主助手的事它没法再往下转（转交中不能再转交，它也没有 hand_back），交回才能由它接着转
           if (target.primary && !assistant().primary) return fail(`要交给「${target.name}」，用 hand_back：它会接过去，转给合适的助手。`);
           try {
-            const note = params.note == null ? "" : String(params.note);
-            if ([...note].length > NOTE_LIMIT) return fail(`备注 ${[...note].length} 字，最多 ${NOTE_LIMIT} 字。用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景，改短后再调用一次。`);
-            const original = router.originalWords(assistantId, note, true);
-            // 手上这份还没做完的项一起交过去：它们写在转交内容里，接手的助手自己决定要不要照这几项列
+            const note = String(params.note ?? "").trim();
+            if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
+            const files = Array.isArray(params.files) ? params.files.map(String) : [];
             const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, groupId)).filter((item) => item.status !== "done");
-            const carried = unfinished.length ? `${original.text}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}` : original.text;
-            await runtime.delegations.start(assistantId, targetId, carried, original.files);
+            const carried = unfinished.length
+              ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
+              : note;
+            await runtime.delegations.start(assistantId, targetId, carried, files);
             if (!unfinished.length) return endTurn(`已转交给「${target.name}」。`);
             await handOffTodos(runtime, assistantId, groupId);
             return endTurn(`已转交给「${target.name}」。你手上那份待办（没做完 ${unfinished.length} 项）一起交过去了，已经清掉。`);
@@ -898,11 +895,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       {
         name: "message_group",
         label: "交给群",
-        description: "把一件事交给一个群办：在群里开一个话题，把用户的原话、前面几句对话和你的备注转进去，由群主接手。群主关话题时写的结论会回到这里。",
+        description: "把一件事交给一个群办：在群里开一个话题，你写的 note 是话题的第一条，由群主接手。群主关话题时写的结论会回到这里。",
         parameters: Type.Object({
           groupId: Type.String({ description: "群 id（见「群」一节）。" }),
           title: Type.String({ description: "话题名，写这件事，如「相册备份出错」，最多 40 字。" }),
-          note: Type.Optional(Type.String({ description: `可选，群里需要知道、原话里看不出的背景，最多 ${NOTE_LIMIT} 字。` })),
+          note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
+          files: Type.Optional(Type.Array(Type.String({ description: "要交给群的文件路径" }))),
         }),
         execute: async (_id, params: any) => {
           const id = String(params.groupId ?? "").trim();
@@ -916,12 +914,11 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           const title = typeof params.title === "string" ? params.title.trim() : "";
           if (!title) return fail("title 不能为空：写这件事，如「相册备份出错」。");
           if ([...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
-          const note = params.note == null ? "" : String(params.note);
-          if ([...note].length > NOTE_LIMIT) return fail(`备注 ${[...note].length} 字，最多 ${NOTE_LIMIT} 字。用户原话和最近的对话会自动带上，备注只写从原话里看不出的背景，改短后再调用一次。`);
+          const note = String(params.note ?? "").trim();
+          if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
+          const files = Array.isArray(params.files) ? params.files.map(String) : [];
           try {
-            // 原话取这次调用所在会话的（单聊或群），不是要交给的那个群的：主助手是目标群的成员时不能拿那边的综合当原话
-            const original = router.originalWords(assistantId, note, true, [], groupId);
-            const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, original);
+            const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, { text: note, files });
             // 这次说话所在的对话里落一张话题卡：进度、等你回答、结论都在卡上
             await router.addItem(assistantId, { kind: "topic", topicId: topic.id }, groupId);
             void runtime.groups.deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id).catch((error) => console.error("交给群的事件没送到：", error));
@@ -1013,46 +1010,43 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       tools.push({
         name: "open_topic",
         label: "开话题",
-        description: "开一个话题，把触发这一轮的消息（用户的话，或者定时任务到点的那条）转进去，到话题里接着办。topic 填已有话题的 id，就转到那个话题（关了的会重新打开）。",
+        description: "开一个话题，把你的交接说明放进话题，由群主接手。topic 填已有话题的 id，就转到那个话题（关了的会重新打开）。",
         parameters: Type.Object({
           title: Type.Optional(Type.String({ description: "新话题的名字，写这件事，如「相册备份出错」。转到已有话题时不填。" })),
           topic: Type.Optional(Type.String({ description: "已有话题的 id。开新话题时不填。" })),
-          note: Type.Optional(Type.String({ description: "话题里看不到、你已经知道的背景，比如前面查到的情况。会和用户的原话一起交给话题里的你。" })),
+          note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
+          files: Type.Optional(Type.Array(Type.String({ description: "要交给话题的文件路径" }))),
         }),
         execute: async (_id, params: any) => {
           const problem = notOwner();
           if (problem) return fail(problem);
           const title = typeof params.title === "string" ? params.title.trim() : "";
           const topicId = typeof params.topic === "string" ? params.topic.trim() : "";
-          const note = typeof params.note === "string" ? params.note.trim() : "";
           if (!title && !topicId) return fail("title 和 topic 要填一个：开新话题填 title，转到已有话题填 topic。");
           if (title && topicId) return fail("title 和 topic 只能填一个：开新话题填 title，转到已有话题填 topic。");
           if (title && [...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
-          const user = runtime.groups.requestItem(gid, assistantId);
-          if (!user) return fail("综合里还没有用户的消息，没有可以转过去的话：直接在这里办，或者等用户说话以后再开话题。");
-          // 来由和综合里前面几句对话：取法和派任务带的一样（定时来由不带前面几句）
-          const original = router.originalWords(assistantId, note || undefined, true, [], gid);
-          const routine = user.kind === "note";
-          const reason = routine ? "上面是定时任务到点的记录。" : "上面是用户在综合里的原话。";
-          const event = `这个话题是你从综合开的，${reason}\n\n${original.text}`;
+          const note = typeof params.note === "string" ? params.note.trim() : "";
+          if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
+          const files = Array.isArray(params.files) ? params.files.map(String) : [];
+          const event = `这个话题是你从综合开的，上面是交接说明。\n\n${note}`;
+
           try {
             if (topicId) {
               const target = store.group(topicId);
               if (!target || target.parentId !== gid) return fail(`「${topicId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
               // 关了的话题先重新打开，接着在里面办
               const topic = target.closedAt ? runtime.groups.reopen(topicId) : target;
-              runtime.groups.forwardUserItem(gid, topicId, user);
+              runtime.groups.appendItem(topicId, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
               runtime.groups.note(gid, assistantId, `转到了话题「${topic.name}」`, "info");
-              void runtime.groups.deliverEvent(topicId, assistantId, `${reason}\n\n${original.text}`).catch((error) => console.error("转到话题的事件没送到：", error));
+              void runtime.groups.deliverEvent(topicId, assistantId, event).catch((error) => console.error("转到话题的事件没送到：", error));
               return endTurn(`已转到话题「${topic.name}」（${topic.id}），接下来在话题里办。`);
             }
             const topic = runtime.groups.createTopic(gid, title, assistantId);
-            runtime.groups.forwardUserItem(gid, topic.id, user);
+            runtime.groups.appendItem(topic.id, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
             void runtime.groups
               .deliverEvent(topic.id, assistantId, event)
               .catch((error) => console.error("开话题的事件没送到：", error));
-            if (routine) return ok(`话题「${topic.name}」（${topic.id}）已开，定时任务到点的记录已转过去，话题里的你已经接手，这一件在综合里不用再管。这次定时查到的其他条目，接着按分量办；都安排完了，在综合里说一句这次各是怎么安排的。`);
-            return endTurn(`话题「${topic.name}」（${topic.id}）已开，用户的消息已转过去，接下来在话题里办。`);
+            return endTurn(`话题「${topic.name}」（${topic.id}）已开，交接说明已转过去，接下来在话题里办。`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
           }

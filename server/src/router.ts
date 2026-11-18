@@ -34,9 +34,8 @@ import { visibleSkills } from "./skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
-import { requestText } from "./groups.ts";
+
 import { pushAssistantTurnEnd } from "./push.ts";
-import { monthDayTimeText } from "./time.ts";
 import { DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
@@ -49,19 +48,14 @@ export const EVENT_TYPE = "hob.event";
 /** 只给助手知道、不开一轮的事（用户直接对任务说的话）。 */
 const CONTEXT_TYPE = "hob.context";
 
-/** 用户那句话本身：有引用就另起一行带上引用。 */
-function quoted(text: string, quote?: string): string {
-  return quote ? `${text}\n（引用：「${quote}」）` : text;
-}
-
 /** 会话条目的 id 和 at 由会话文件给出，写卡片时不用传。 */
 /** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
 export interface EventDetails {
   routine?: { id: string; name: string; jobId?: string };
+  routineTrigger?: { id: string; name: string };
   cont?: true;
   returnedDelegationId?: string;
   delegationId?: string;
-  sourceUserId?: string;
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
   /** 任务或转交结果已送来：本轮收尾时统一通知，避免任务结束和助手回复各推一次 */
@@ -133,8 +127,7 @@ interface RouterState {
   releaseAfterTurn?: boolean;
   /** 还在跑的记忆写入工具：参数只在 tool_execution_start 里有，按 toolCallId 存着给 note 用 */
   currentDelegationId?: string;
-  currentUserId?: string;
-  pendingUsers?: { prompt: string; id: string }[];
+  turnRoutine?: { id: string; name: string };
   pendingDelivery?: Promise<void>;
   knowledgeNames?: string[];
   delegationReply?: string[];
@@ -614,7 +607,10 @@ export class RouterManager {
       void this.reportTurnFailure(state).catch((error) => console.error("写失败说明失败：", error));
       if (!failed) releaseIdleTodos(this.runtime, assistantId, state.groupId);
     }
-    if (event.type === "agent_end") this.flushEventTurn(state, assistantId);
+    if (event.type === "agent_end") {
+      state.turnRoutine = undefined;
+      this.flushEventTurn(state, assistantId);
+    }
     this.progress(state);
     if (event.type === "agent_start" || (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_start")) {
       state.thinkingText = "";
@@ -640,13 +636,6 @@ export class RouterManager {
     if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
     // 一轮结束：有副作用的调用里没办成、后来也没办成的，各留一行提示（原因是工具报错的原文）
     if (event.type === "agent_end") void this.flushTurnFailures(state).catch((error) => console.error("写失败提示失败：", error));
-    if (event.type === "message_start" && event.message.role === "user") {
-      // 用户插进了事件那一轮：从这句起是他那一轮，前面攒着的文字先收尾，之后的字边写边推
-      this.flushEventTurn(state, assistantId);
-      const prompt = messageText(event.message.content);
-      const index = state.pendingUsers?.findIndex((user) => user.prompt.trim() === prompt) ?? -1;
-      if (index >= 0) state.currentUserId = state.pendingUsers!.splice(index, 1)[0].id;
-    }
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       // 事件那一轮：文字先攒着，这一轮结束时再决定出不出现
       this.flushEventTurn(state, assistantId);
@@ -654,9 +643,7 @@ export class RouterManager {
       const details = event.message.details as EventDetails | undefined;
       state.turnDelegation ||= Boolean(details?.delegationId);
       state.turnWorkDone ||= Boolean(details?.workDone);
-      const users = this.derived(assistantId).result.items.filter((item) => item.kind === "user");
-      const source = details?.sourceUserId ? users.find((item) => item.id === details.sourceUserId) : undefined;
-      state.currentUserId = (source ?? users.at(-1))?.id;
+      state.turnRoutine = details?.routineTrigger;
       if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
         state.currentDelegationId = details.delegationId;
         state.delegationReply = [];
@@ -1024,56 +1011,8 @@ export class RouterManager {
     return groupId ? undefined : this.routers.get(assistantId)?.currentDelegationId;
   }
 
-  /**
-   * 取这一轮的来由：用户的消息（文字、引用、附件）或者定时任务到点的记录，和它之前的最近几句对话。
-   * 单聊和群里的表头不一样，拼法一样（见 originalWordsText）。
-   */
-  originalWords(assistantId: string, note?: string, recent = false, extraFiles: string[] = [], groupId?: string): { text: string; files: string[]; itemId?: string } {
-    const group = this.groupFor(assistantId, groupId);
-    if (group) return this.groupOriginalWords(assistantId, group, note, recent, extraFiles);
-    const items = this.derived(assistantId).result.items;
-    const state = this.routers.get(assistantId);
-    const source = items.find((item) => item.kind === "user" && item.id === state?.currentUserId)
-      ?? items.findLast((item) => item.kind === "user");
-    const user = source?.kind === "user" ? source : undefined;
-    const files = [...new Set([...(user?.files ?? []), ...extraFiles])];
-    const name = this.assistant(assistantId).name;
-    const previous = user && recent
-      ? items.slice(0, items.indexOf(user)).filter((item) => item.kind === "user" || item.kind === "assistant").slice(-6)
-        .map((item) => ({ at: item.at, who: item.kind === "user" ? "用户" : name, text: item.text }))
-      : [];
-    return {
-      text: this.originalWordsText({
-        name,
-        ...(user ? { header: `${user.from ? `${user.from.name} 转来` : "用户原话"}（${monthDayTimeText(this.timezone, new Date(user.at))}）`, text: user.text } : {}),
-        ...(user?.quote ? { quote: user.quote.text } : {}),
-        previous,
-        files,
-        ...(note ? { note } : {}),
-      }),
-      files,
-      ...(user ? { itemId: user.id } : {}),
-    };
-  }
-
-  /**
-   * 这一轮用户说的话本身：单聊是这一轮对应的那条用户消息，群里是 requestItem。
-   * 只取这句话（有引用就带上引用），不要「最近的对话」、附件和备注。
-   * 来由不是用户说的话（群里是定时到点的记录这类）就没有：那不是用户这次交代的话。
-   */
-  userWords(assistantId: string, groupId?: string): { text: string; at: Iso } | undefined {
-    const group = this.groupFor(assistantId, groupId);
-    if (group) {
-      // 来由是定时到点的记录、或者其他不是用户说的话时，没有这次交代的原话
-      const request = this.runtime.groups.requestItem(group.id, assistantId);
-      if (!request || request.kind !== "user") return undefined;
-      return { text: quoted(request.text, request.quote?.text), at: request.at };
-    }
-    const state = this.routers.get(assistantId);
-    if (!state) return undefined;
-    const source = this.derived(assistantId).result.items.find((item) => item.kind === "user" && item.id === state.currentUserId);
-    if (source?.kind !== "user") return undefined;
-    return { text: quoted(source.text, source.quote?.text), at: source.at };
+  currentRoutineId(assistantId: string, groupId?: string): string | undefined {
+    return this.routers.get(this.keyOf(assistantId, groupId))?.turnRoutine?.id;
   }
 
   async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob", files: string[] = []): Promise<Item> {
@@ -1297,7 +1236,7 @@ export class RouterManager {
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
-    void this.deliver(state, basePrompt, { itemId: id, ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text });
+    void this.deliver(state, basePrompt, { ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text });
     return item;
   }
 
@@ -1349,7 +1288,7 @@ export class RouterManager {
   private async deliver(
     state: RouterState,
     text: string,
-    options: { itemId?: string; files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
+    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
   ): Promise<void> {
     const previousDelivery = state.pendingDelivery;
     let releaseDelivery!: () => void;
@@ -1370,7 +1309,6 @@ export class RouterManager {
     try {
       const promptText = options.knowledgeQuery === undefined ? text : text + await this.automaticKnowledge(state, options.knowledgeQuery);
       await previousDelivery;
-      if (options.itemId) (state.pendingUsers ??= []).push({ prompt: promptText, id: options.itemId });
       await this.applyConversationModel(state);
       await this.refreshTools(state);
       // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
@@ -1579,72 +1517,5 @@ export class RouterManager {
   /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文；群里提的问题回群会话）。 */
   async answerEvent(assistantId: string, text: string, groupId?: string): Promise<void> {
     await this.event(assistantId, text, undefined, groupId);
-  }
-
-  /** 群里的来由：触发这一轮的那条用户消息或定时到点记录，和它前面几句。 */
-  private groupOriginalWords(assistantId: string, group: Group, note?: string, recent = false, extraFiles: string[] = []): { text: string; files: string[]; itemId?: string } {
-    const request = this.runtime.groups.requestItem(group.id, assistantId);
-    const items = this.runtime.groups.timeline(group.id);
-    const routine = request?.kind === "note";
-    const files = [...new Set([...(request?.kind === "user" ? request.files ?? [] : []), ...extraFiles])];
-    const name = this.assistant(assistantId).name;
-    // 定时到点之前群里聊的是别的事，不带「最近的对话」
-    const previous = request && recent && !routine
-      ? items.slice(0, Math.max(0, items.findIndex((item) => item.id === request.id))).filter((item) => item.kind === "user" || item.kind === "assistant").slice(-6)
-        .map((item) => ({ at: item.at, who: item.kind === "user" ? "用户" : this.store.assistant(item.speaker)?.name ?? item.speaker, text: item.text }))
-      : [];
-    return {
-      text: this.originalWordsText({
-        name,
-        ...(request ? {
-          header: `${routine ? "定时任务到点的记录" : "用户原话"}（${monthDayTimeText(this.timezone, new Date(request.at))}，${this.groupPlace(group)}）`,
-          text: requestText(request),
-        } : {}),
-        ...(request?.kind === "user" && request.quote ? { quote: request.quote.text } : {}),
-        previous,
-        files,
-        ...(note ? { note } : {}),
-      }),
-      files,
-      ...(request ? { itemId: request.id } : {}),
-    };
-  }
-
-  /** 这个会话在群里怎么说：在群「…」里 / 在群「…」的话题「…」里。 */
-  private groupPlace(group: Group): string {
-    const parent = group.parentId ? this.store.group(group.parentId) : undefined;
-    return parent ? `在群「${parent.name}」的话题「${group.name}」里` : `在群「${group.name}」里`;
-  }
-
-  /**
-   * 交给任务的「来由」：表头、原话、引用、最近的对话、附件和备注。
-   * 单聊和群里都调它，两侧只差来由和「最近的对话」里谁说的话。
-   */
-  private originalWordsText(input: {
-    name: string;
-    header?: string;
-    text?: string;
-    quote?: string;
-    previous: { at: string; who: string; text: string }[];
-    files: string[];
-    note?: string;
-  }): string {
-    const sections: string[] = [];
-    if (input.header !== undefined) {
-      const lines = [`${input.header}：`, input.text ?? ""];
-      if (input.quote) lines.push(`（引用：「${input.quote}」）`);
-      sections.push(lines.filter(Boolean).join("\n"));
-    }
-    if (input.previous.length) {
-      sections.push(`最近的对话：\n${input.previous.map((item) => {
-        const clock = new Intl.DateTimeFormat("sv-SE", { timeZone: this.timezone, hour: "2-digit", minute: "2-digit", hour12: false }).format(new Date(item.at));
-        const characters = [...item.text];
-        const text = characters.length > 1500 ? `${characters.slice(0, 1500).join("")}…` : item.text;
-        return `${item.who}（${clock}）：${text}`;
-      }).join("\n")}`);
-    }
-    if (input.files.length) sections.push(`附件：${input.files.join("、")}`);
-    if (input.note) sections.push(`${input.name} 的备注：${input.note}`);
-    return sections.join("\n\n");
   }
 }

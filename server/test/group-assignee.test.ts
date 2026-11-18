@@ -34,7 +34,8 @@ function setup(): { hob: TestHob; group: Group; topic: Group } {
 
 async function runTool(hob: TestHob, assistantId: string, gid: string | undefined, name: string, params: Record<string, unknown>) {
   const tool = buildRouterTools(hob.runtime, assistantId, gid).find((item) => item.name === name)!;
-  return tool.execute("call-1", params, undefined, undefined, {} as never) as Promise<{ content: { text: string }[] }>;
+  const handoff = ["start_job", "message_assistant", "message_group", "open_topic"].includes(name) && !("note" in params) ? { ...params, note: "测试交接说明" } : params;
+  return tool.execute("call-1", handoff, undefined, undefined, {} as never) as Promise<{ content: { text: string }[] }>;
 }
 
 const groupItems = (hob: TestHob, gid: string) => hob.runtime.groups.items(gid).items;

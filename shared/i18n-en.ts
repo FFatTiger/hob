@@ -40,7 +40,6 @@ export const EN: Record<string, TranslationEntry> = {
   "搜索助手": "Search assistants",
   "关闭搜索": "Close search",
   "首页": "Home",
-  "通用": "General",
   "规则": "Rules",
   "服务商": "Providers",
   "模型": "Models",

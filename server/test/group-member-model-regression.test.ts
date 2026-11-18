@@ -78,7 +78,7 @@ describe("群成员模型回归", () => {
         await hob.runtime.router.ensure("hob", group.id);
         const start = opened.at(-1)!.customTools.find((tool) => tool.name === "start_job")!;
         expect(start.parameters.properties.model.description).toContain(`hob-faux/${model}（默认）`);
-        const result = await start.execute("test", { title: `任务${model}` });
+        const result = await start.execute("test", { title: `任务${model}`, note: "按当前模型执行任务" });
         expect(result.isError).not.toBe(true);
         expect(hob.runtime.store.jobs().find((job) => job.title === `任务${model}`)?.model).toBe(`hob-faux/${model}`);
       }

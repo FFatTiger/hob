@@ -91,7 +91,7 @@ describe("Router 技能工具", () => {
       expect(hob.runtime.router.items("hob").items.filter((item) => item.kind === "note")).toEqual([]);
     } finally { hob.close(); }
   });
-  it("通用技能也是普通技能：能改、能绑定时、能删；只读的那两类才拦住", async () => {
+  it("通用技能可改可删；定时任务不绑定技能，只读技能仍拦住", async () => {
     const hob = makeHob();
     const previous = process.env.HOME;
     const temp = join(hob.home, "fake-home");
@@ -102,23 +102,16 @@ describe("Router 技能工具", () => {
       const local = join(temp, ".agents", "skills", "local-only");
       mkdirSync(local, { recursive: true });
       writeFileSync(join(local, "SKILL.md"), "---\nname: local-only\ndescription: 本机别的工具也用\n---\n正文\n");
-      hob.runtime.store.saveJob({ ...base, status: "done" });
       const tools = buildRouterTools(hob.runtime, "hob");
       const run = async (name: string, params: Record<string, unknown>) => (await tools.find((tool) => tool.name === name)!.execute("id", params as never, undefined, undefined, {} as never)).content[0].text;
-      // 通用技能能改、能绑、能删
       expect(await run("edit_skill", { name: "table-summary", edits: [{ old: "正文", new: "新正文" }] })).toBe("已更新技能「table-summary」，第 2 版。");
       expect(readFileSync(join(hob.home, "skills", "table-summary", "SKILL.md"), "utf8")).toContain("新正文");
       const bind = await tools.find((tool) => tool.name === "create_routine")!.execute("id", { name: "汇总", instruction: "汇总表格", schedules: ["0 9 * * *"], skill: "table-summary" } as never, undefined, undefined, {} as never);
       expect(bind.isError).not.toBe(true);
-      expect(hob.runtime.store.routines()[0].skill).toBe("table-summary");
-      // 两样都没填、名字也不对：说清怎么改
+      expect(hob.runtime.store.routines()[0]).not.toHaveProperty("skill");
       expect(await run("edit_skill", { name: "table-summary" })).toBe("edits 和 general 至少填一样：改正文填 edits，换给谁用填 general。");
       expect(await run("edit_skill", { name: "none", edits: [] })).toBe("没有这个技能：none");
-      // 只读的本机技能拦得住
       expect(await run("edit_skill", { name: "local-only", edits: [{ old: "正文", new: "新" }] })).toBe("local-only 在本机 ~/.agents/skills 里，只能照着用，Hob 里改不了；要改得在那个目录里改，或者让任务另存一份 Hob 的技能。");
-      // 绑着它的定时任务没改绑之前不让删
-      expect(await run("delete_skill", { name: "table-summary" })).toContain("被定时任务「汇总」用着");
-      expect(await run("update_routine", { routineId: hob.runtime.store.routines()[0].id, skill: "" })).toContain("已修改");
       expect(await run("delete_skill", { name: "table-summary" })).toBe("已删除技能「table-summary」，移到了归档。");
     } finally {
       if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
@@ -134,7 +127,7 @@ describe("Router 技能工具", () => {
       const tool = tools.find((item) => item.name === "start_job")!;
       // 参数里去掉了 skills：任何情况下都没东西可填错，也没有名字校验
       expect(tool.parameters.properties.skills).toBeUndefined();
-      const execute = (extra: Record<string, unknown>) => tool.execute("id", { title: "测试", ...extra }, undefined, undefined, {} as never);
+      const execute = (extra: Record<string, unknown>) => tool.execute("id", { title: "测试", note: "执行测试任务", ...extra }, undefined, undefined, {} as never);
       // 旧对话里带下来的 skills：不报错、不起作用，照常开任务
       expect((await execute({ skills: ["missing", "dir-size"] })).isError).not.toBe(true);
       expect(start.mock.calls[0]![1].instruction).not.toContain("按技能");

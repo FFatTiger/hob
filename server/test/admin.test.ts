@@ -479,7 +479,7 @@ describe("manage_topic", () => {
       expect(hob.runtime.router.items("hob").items).toContainEqual(expect.objectContaining({ kind: "note", text: "已在家里设备开了话题「NAS 备份」", targetGroupId: other.id }));
       expect(hob.runtime.store.groupItems(other.id)).toContainEqual(expect.objectContaining({ kind: "note", text: "Hob 开了话题「NAS 备份」", targetGroupId: other.id }));
       // Hob 是这个群的群主，又在这个群的会话里
-      expect(said(await run(hob, "hob", "manage_topic", { action: "open", groupId: group.id, title: "新话题" }, group.id))).toBe("在这个群开话题用 open_topic，它会把用户的原话转进话题。");
+      expect(said(await run(hob, "hob", "manage_topic", { action: "open", groupId: group.id, title: "新话题" }, group.id))).toBe("在这个群开话题用 open_topic，它会把你的交接说明放进话题。");
     } finally { hob.close(); }
   });
 

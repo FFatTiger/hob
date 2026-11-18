@@ -255,28 +255,26 @@ function busyJob(hob: TestHob): void {
 }
 
 describe("转交时待办跟着走", () => {
-  it("有没做完的：清空、写进转交内容、返回新句子、不往时间线写", async () => {
+  it("有没做完的：清空，并把待办附在交接说明后", async () => {
     const { hob } = setup();
     try {
       await toolOf(hob, "update_todos").execute("t", { items: items(["清点单据", "done"], ["按日期成表", "doing"], ["挑出重复的", "todo"]) });
-      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops" });
+      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops", note: "继续整理单据。" });
       expect(textOf(result)).toBe("已转交给「服务器」。你手上那份待办（没做完 2 项）一起交过去了，已经清掉。");
       expect(hob.runtime.router.summary(hob.runtime.store.assistant("hob")!).todos).toEqual([]);
       expect(JSON.parse(readFileSync(todosFile(hob), "utf8"))).toEqual([]);
       expect(archivedTodos(hob.runtime.router.items("hob").items)).toEqual([]);
-      const [delegation] = hob.runtime.store.delegations();
-      expect(delegation.text).toContain("「Hob」转交前列过的待办，没做完的：\n· 按日期成表\n· 挑出重复的");
-      expect(delegation.text).not.toContain("清点单据");
+      expect(hob.runtime.store.delegations()[0]!.text).toBe("继续整理单据。\n\n「Hob」转交前列过的待办，没做完的：\n· 按日期成表\n· 挑出重复的");
     } finally { hob.close(); }
   });
 
-  it("没有待办：不写那一段，返回还是原来那句", async () => {
+  it("没有待办：只传交接说明", async () => {
     const { hob } = setup();
     try {
-      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops" });
+      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops", note: "没有额外背景。" });
       expect(textOf(result)).toBe("已转交给「服务器」。");
       expect(archivedTodos(hob.runtime.router.items("hob").items)).toEqual([]);
-      expect(hob.runtime.store.delegations()[0].text).not.toContain("转交前列过的待办");
+      expect(hob.runtime.store.delegations()[0]!.text).toBe("没有额外背景。");
     } finally { hob.close(); }
   });
 
@@ -284,7 +282,7 @@ describe("转交时待办跟着走", () => {
     const { hob } = setup();
     try {
       await toolOf(hob, "update_todos").execute("t", { items: items(["清点单据", "done"]) });
-      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops" });
+      const result = await toolOf(hob, "message_assistant").execute("t", { assistantId: "ops", note: "按已经约定的方式处理。" });
       expect(textOf(result)).toBe("已转交给「服务器」。");
       expect(archivedTodos(hob.runtime.router.items("hob").items)).toEqual([]);
     } finally { hob.close(); }

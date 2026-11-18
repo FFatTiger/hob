@@ -39,6 +39,11 @@ function withoutRevision<T>(item: StoredRecord<T>): T {
   return value as T;
 }
 
+function withoutRoutineFields(item: StoredRecord<Routine>): Routine {
+  const { _hobRevision: _revision, skill: _skill, userWords: _userWords, ...value } = item as StoredRecord<Routine> & { skill?: unknown; userWords?: unknown };
+  return value as Routine;
+}
+
 function readJsonl<T>(path: string): T[] {
   if (!existsSync(path)) return [];
   const out: T[] = [];
@@ -424,7 +429,7 @@ export class Store {
       const old = found.get(item.id);
       if (!old || (item._hobRevision ?? 0) > (old.item._hobRevision ?? 0) || ((item._hobRevision ?? 0) === (old.item._hobRevision ?? 0) && modified > old.modified)) found.set(item.id, { item, modified });
     }
-    return [...found.values()].map(({ item }) => withoutRevision(item));
+    return [...found.values()].map(({ item }) => withoutRoutineFields(item));
   }
 
   routine(id: string): Routine | undefined {
@@ -439,7 +444,9 @@ export class Store {
     const records = files.map((file) => ({ file, list: readJson<StoredRecord<Routine>[]>(file, []) }));
     const revision = 1 + Math.max(0, ...records.flatMap(({ list }) => list.filter((item) => item.id === routine.id).map((item) => item._hobRevision ?? 0)));
     const list = records.find(({ file }) => file === target)!.list.filter((r) => r.id !== routine.id);
-    list.push({ ...routine, _hobRevision: revision });
+    const clean = routine as Routine & { skill?: unknown; userWords?: unknown };
+    const { skill: _skill, userWords: _userWords, ...withoutRemovedFields } = clean;
+    list.push({ ...withoutRemovedFields, _hobRevision: revision });
     writeJsonAtomic(target, list);
     for (const { file, list: old } of records) {
       if (file === target) continue;

@@ -546,7 +546,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           // 在自己是群主的那个群的会话里开这个群的话题：用 open_topic，它会带上用户的原话
           const current = groupId ? store.group(groupId) : undefined;
           const here = group.parentId ? group.parentId : (current?.parentId ?? current?.id);
-          if (here === group.id && group.ownerId === assistantId) return fail("在这个群开话题用 open_topic，它会把用户的原话转进话题。");
+          if (here === group.id && group.ownerId === assistantId) return fail("在这个群开话题用 open_topic，它会把你的交接说明放进话题。");
           try {
             const topic = runtime.groups.createTopic(group.id, title, assistantId);
             await announce({ conversation: `已在${group.name}开了话题「${topic.name}」`, group: { gid: group.id, text: `${nameOf(assistantId)} 开了话题「${topic.name}」` } });

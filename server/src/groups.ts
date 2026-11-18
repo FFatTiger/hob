@@ -30,7 +30,7 @@ export const CLOSED_TOPIC_REASON = "用户关闭了这个话题";
 /** 主助手交来的话题关的时候要写结论：结论会转给主助手。 */
 export const HANDOVER_NOTE_REQUIRED = "note 不能为空：这个话题是 Hob 交给这个群的，结论会转给 Hob，由它告诉用户；不做了的写明原因。";
 /** 群主在话题里收到的那条：这件事是主助手交来的。 */
-export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是转来的原话。办完用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
+export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。办完用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
 
 /** 系统写的条目（停下、重启）的发言人。 */
 const SYSTEM = "system";
@@ -239,7 +239,7 @@ export class GroupManager {
    */
   forwardUserItem(gid: string, topicId: string, item: GroupItem): GroupItem | undefined {
     if (item.kind === "note" && item.icon === "routine") {
-      return this.appendItem(topicId, item.speaker, { kind: "note", icon: "routine", text: item.text, ...(item.request ? { request: item.request } : {}), forwardedFrom: { groupId: gid, itemId: item.id } });
+      return this.appendItem(topicId, item.speaker, { kind: "note", icon: "routine", text: item.text, ...(item.routineId ? { routineId: item.routineId } : {}), ...(item.request ? { request: item.request } : {}), forwardedFrom: { groupId: gid, itemId: item.id } });
     }
     if (item.kind !== "user") return undefined;
     return this.appendItem(topicId, "user", {
@@ -252,7 +252,7 @@ export class GroupManager {
   }
 
   /**
-   * 主助手把一件事交给这个群：开一个话题，把拼好的原话作为第一条用户条目转进去，
+   * 主助手把一件事交给这个群：开一个话题，把交接说明作为第一条用户条目转进去，
    * 记下是它交来的，综合里落一行。叫醒群主由调用方发（它还要结束这一轮）。
    */
   handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string }): { topic: Group; item: GroupItem } {

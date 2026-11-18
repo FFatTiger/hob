@@ -279,7 +279,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json(skill);
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
-  // 一个助手看得到哪些技能：定时任务的技能下拉用它（本群、自己、通用、只读）
+  // 一个助手看得到哪些技能：本群、自己、通用和只读技能。
   app.get("/api/skills/visible", (c) => {
     const assistantId = c.req.query("assistantId") ?? "hob";
     if (!store.assistant(assistantId)) return c.json({ error: "助手不存在" }, 404);
@@ -1099,7 +1099,6 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const body = (await c.req.json().catch(() => ({}))) as {
       assistantId?: string;
       groupId?: string;
-      skill?: string;
       active?: boolean;
       name?: string;
       instruction?: string;
@@ -1120,7 +1119,6 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
         instructionBy: "user",
         schedules: body.schedules,
         ...(body.active !== undefined ? { active: body.active } : {}),
-        ...(body.skill !== undefined ? { skill: body.skill } : {}),
         ...(body.check ? { check: body.check } : {}),
         ...(body.once ? { once: true } : {}),
       });
@@ -1138,7 +1136,6 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       instruction?: string;
       schedules?: string[];
       active?: boolean;
-      skill?: string | null;
       check?: RoutineCheck | null;
       once?: boolean;
     };
@@ -1147,10 +1144,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const found = store.routine(id);
       // 界面常常整张表单一起提交：内容没变的不算用户改了它
       const changed = typeof body.instruction === "string" && body.instruction !== found?.instruction;
-      const { instructionBy: _ignoredBy, userWords: _ignoredWords, ...patch } = body as typeof body & { instructionBy?: unknown; userWords?: unknown };
+      const { instructionBy: _ignoredBy, userWords: _ignoredWords, skill: _ignoredSkill, ...patch } = body as typeof body & { instructionBy?: unknown; userWords?: unknown; skill?: unknown };
       const routine = routines.update(id, {
         ...patch,
-        ...(changed ? { instructionBy: "user", userWords: null } : {}),
+        ...(changed ? { instructionBy: "user" } : {}),
       });
       return c.json({ routine });
     } catch (error) {

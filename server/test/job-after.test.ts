@@ -129,13 +129,13 @@ describe("任务依赖（after）", () => {
       expect(hob.runtime.store.jobs().find((job) => job.title === "再写总结")?.after).toEqual([a.id]);
       await hob.runtime.jobs.waitIdle();
 
-      const missing = await tool.execute("call", { title: "写总结", after: ["t-nope"] }) as { content: { text: string }[]; isError?: boolean };
+      const missing = await tool.execute("call", { title: "写总结", note: "检查前置任务", after: ["t-nope"] }) as { content: { text: string }[]; isError?: boolean };
       expect(missing.isError).toBe(true);
       expect(missing.content[0].text).toBe("没有这个任务：t-nope");
 
       const failed: Job = { id: "t-old", assistantId: "hob", title: "老任务", instruction: "老活", status: "failed", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] };
       hob.runtime.store.saveJob(failed);
-      const bad = await tool.execute("call", { title: "写总结", after: ["t-old"] }) as { content: { text: string }[]; isError?: boolean };
+      const bad = await tool.execute("call", { title: "写总结", note: "等待老任务", after: ["t-old"] }) as { content: { text: string }[]; isError?: boolean };
       expect(bad.isError).toBe(true);
       expect(bad.content[0].text).toBe("前置任务「老任务」（t-old）失败，等不到它做完了。");
       expect(hob.runtime.store.jobs().filter((job) => job.title === "写总结")).toHaveLength(0);

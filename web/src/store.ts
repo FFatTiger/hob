@@ -50,7 +50,7 @@ import type {
   UsageModelPrice,
   UsageView,
 } from "../../shared/types.ts";
-import type { AssistantSkill, VisibleSkill } from "../../shared/skills.ts";
+import type { AssistantSkill } from "../../shared/skills.ts";
 import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup } from "../../shared/knowledge.ts";
 import { defaultSearch, type SearchProviderName, type SearchSettings } from "../../shared/search.ts";
 import { ApiError, realApi, type HobApi } from "./api.ts";
@@ -152,8 +152,6 @@ export interface State {
   groupProfiles: Record<string, { value?: GroupProfile; error?: string }>;
   profiles: Record<string, Profile>;
   assistantSkills: Record<string, { skills: AssistantSkill[]; loaded: boolean; loading: boolean; error: string | null }>;
-  /** 一个助手（在一个群里）看得到的全部技能：定时任务的技能下拉用，键是 `${助手id}:${群id}`。 */
-  visibleSkills: Record<string, { skills: VisibleSkill[]; loaded: boolean; loading: boolean; error: string | null }>;
   sidebarJobs: Record<string, SidebarPage<Job>>;
   sidebarFiles: Record<string, SidebarPage<KnowledgeEntry>>;
   sel: string | null;
@@ -293,7 +291,6 @@ function initial(): State {
     profiles: {},
     groupProfiles: {},
     assistantSkills: {},
-    visibleSkills: {},
     sidebarJobs: {},
     sidebarFiles: {},
     sel: null, // 没选中对话就是首页
@@ -1184,7 +1181,6 @@ export function applyEvent(ev: HobEvent) {
       // 通用技能变了（改、删、新建、换进换出）对所有助手都成立：事件里的和已经拉过的清单全部重拉
       void loadAssistantSkills(ev.assistantId);
       for (const id of Object.keys(state.assistantSkills)) if (id !== ev.assistantId) void loadAssistantSkills(id);
-      for (const key of Object.keys(state.visibleSkills)) void loadVisibleSkills(key.slice(0, key.indexOf(":")), key.slice(key.indexOf(":") + 1) || undefined);
       break;
     case "group": {
       // 正看着这个群：新消息直接算已读，不亮未读
@@ -1995,20 +1991,6 @@ export async function loadAssistantSkills(id: string) {
   }
 }
 
-const visibleSkillLoads: Record<string, number> = {};
-/** 定时任务的技能下拉要的：本群、自己的、通用（含只读）。 */
-export async function loadVisibleSkills(assistantId: string, groupId?: string) {
-  const key = `${assistantId}:${groupId ?? ""}`;
-  const generation = visibleSkillLoads[key] = (visibleSkillLoads[key] ?? 0) + 1;
-  set((s) => ({ visibleSkills: { ...s.visibleSkills, [key]: { skills: s.visibleSkills[key]?.skills ?? [], loaded: s.visibleSkills[key]?.loaded ?? false, loading: true, error: null } } }));
-  try {
-    const skills = await api.visibleSkills(assistantId, groupId);
-    if (visibleSkillLoads[key] === generation) set((s) => ({ visibleSkills: { ...s.visibleSkills, [key]: { skills, loaded: true, loading: false, error: null } } }));
-  } catch (e) {
-    if (visibleSkillLoads[key] === generation) set((s) => ({ visibleSkills: { ...s.visibleSkills, [key]: { skills: s.visibleSkills[key]?.skills ?? [], loaded: s.visibleSkills[key]?.loaded ?? false, loading: false, error: errText(e) } } }));
-  }
-}
-
 export async function changeAssistantSkill(id: string, name: string, action: "enable" | "disable" | "rollback" | "delete") {
   try {
     const group = state.groups.some((item) => item.id === id);
@@ -2029,11 +2011,10 @@ export async function sedimentJob(id: string) {
 
 /* ---------------- 定时任务 ---------------- */
 
-export async function saveRoutine(id: string, patch: Omit<Partial<Routine>, "skill"> & { skill?: string | null }) {
+export async function saveRoutine(id: string, patch: Partial<Routine>) {
   const before = state.routines.find((r) => r.id === id);
   if (!before) return;
-  const { skill, ...rest } = patch;
-  set((s) => ({ routines: s.routines.map((r) => r.id === id ? { ...r, ...rest, ...(skill !== undefined ? { skill: skill ?? undefined } : {}) } : r) }));
+  set((s) => ({ routines: s.routines.map((r) => r.id === id ? { ...r, ...patch } : r) }));
   try {
     await api.patchRoutine(id, patch);
   } catch (e) {

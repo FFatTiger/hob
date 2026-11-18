@@ -9,7 +9,7 @@ describe("任务耗时督办", () => {
     try {
       const start = vi.spyOn(hob.runtime.jobs, "start").mockImplementation(async (_id, input) => ({ id: "t-1", assistantId: "hob", title: input.title, instruction: "", status: "queued", createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [], expect: input.expectMinutes === undefined ? { minutes: 10, source: "default" } : { minutes: input.expectMinutes, source: "assistant" } }));
       const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "start_job")!;
-      const run = (value?: unknown) => tool.execute("id", { title: "测试", ...(value === undefined ? {} : { expect_minutes: value }) }, undefined, undefined, {} as never);
+      const run = (value?: unknown) => tool.execute("id", { title: "测试", note: "执行测试任务", ...(value === undefined ? {} : { expect_minutes: value }) }, undefined, undefined, {} as never);
       for (const value of [0, 10081, 1.5, -1, "5"]) expect((await run(value)).content[0].text).toBe("expect_minutes 要在 1 到 10080 之间");
       expect(start).not.toHaveBeenCalled();
       expect((await run(5)).content[0].text).toBe("任务「测试」（t-1）已开始，预计 5 分钟。");
@@ -18,12 +18,15 @@ describe("任务耗时督办", () => {
     } finally { hob.close(); }
   });
 
-  it("定时用最近五次完成的中位数，续做回到默认", async () => {
+  it("定时交给助手后，助手开的任务使用最近五次完成用时的中位数", async () => {
     const hob = makeHob({}, { settings: { work: { maxJobs: 1 } } });
     try {
-      const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "做", schedules: ["0 9 * * *"] });
       vi.spyOn(hob.runtime.jobs, "pump").mockImplementation(() => {});
-      const empty = (await hob.runtime.routines.runNow(routine.id)).job!;
+      const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "做", schedules: ["0 9 * * *"] });
+      hob.faux.setResponses([call("start_job", { title: "巡检", note: "按定时任务处理" })]);
+      await hob.runtime.routines.runNow(routine.id);
+      await waitFor(() => hob.runtime.store.jobs().some((item) => item.title === "巡检"));
+      const empty = hob.runtime.store.jobs().find((item) => item.title === "巡检")!;
       expect(empty.expect).toEqual({ minutes: 10, source: "default" });
       hob.runtime.store.saveRoutine({ ...routine, runs: [
         { jobId: "a", at: "", status: "done", durationMs: 61_000 }, { jobId: "b", at: "", status: "failed", durationMs: 999_000 },
@@ -31,11 +34,11 @@ describe("任务耗时督办", () => {
         { jobId: "e", at: "", status: "done", durationMs: 180_000 }, { jobId: "f", at: "", status: "done", durationMs: 300_000 },
         { jobId: "g", at: "", status: "done", durationMs: 1 },
       ] });
-      const job = (await hob.runtime.routines.runNow(routine.id)).job!;
+      hob.faux.setResponses([call("start_job", { title: "巡检", note: "按历史用时处理" })]);
+      await hob.runtime.routines.runNow(routine.id);
+      await waitFor(() => hob.runtime.store.jobs().filter((item) => item.title === "巡检").length >= 2);
+      const job = hob.runtime.store.jobs().filter((item) => item.title === "巡检").at(-1)!;
       expect(job.expect).toEqual({ minutes: 3, source: "routine", runs: 5 });
-      hob.runtime.store.saveJob({ ...job, status: "done" });
-      await hob.runtime.jobs.reply(job.id, "继续");
-      expect(hob.runtime.store.job(job.id)?.expect).toEqual({ minutes: 10, source: "default" });
     } finally { hob.close(); }
   });
 

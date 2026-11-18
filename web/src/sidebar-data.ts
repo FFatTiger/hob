@@ -2,25 +2,10 @@ import { currentLocale, t } from "../../shared/i18n.ts";
 import { Cron } from "croner";
 import type { Approval, AssistantSummary, Delegation, Job, Routine } from "../../shared/types.ts";
 import type { KnowledgeEntry } from "../../shared/knowledge.ts";
-import type { AssistantSkill, VisibleSkill } from "../../shared/skills.ts";
 
 export function followingModel(source: "group" | "assistant" | "global", name: string) {
   const label = source === "group" ? t("本群") : t("助手");
   return { text: t("跟随{label} · {name}", { label, name }), option: t("跟随{label}（{name}）", { label, name }) };
-}
-
-export function routineSkills(group: AssistantSkill[], member: AssistantSkill[]) {
-  const own = group.filter((skill) => skill.enabled);
-  return [...own.map((skill) => ({ skill, group: true })), ...member.filter((skill) => skill.enabled && !own.some((item) => item.name === skill.name)).map((skill) => ({ skill, group: false }))];
-}
-
-/** 定时任务的技能下拉：看得到的全列上，本群、自己的、通用（含只读的），通用的标「（通用）」。 */
-export function routineSkillOptions(skills: VisibleSkill[]): { value: string; label: string }[] {
-  return skills.filter((skill) => skill.enabled !== false).map((skill) => {
-    const title = skill.title ?? skill.name;
-    const scope = skill.scope === "group" ? `（${t("本群")}）` : skill.scope === "general" ? `（${t("通用")}）` : "";
-    return { value: skill.name, label: `${title}${scope}` };
-  });
 }
 
 export function nextRoutine(routines: Routine[], timezone: string, now = new Date()): { routine: Routine; at: Date } | undefined {

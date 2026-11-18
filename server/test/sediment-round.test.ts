@@ -223,7 +223,7 @@ describe("沉淀是任务的又一轮", () => {
     } finally { hob.close(); }
   });
 
-  it("从定时任务来的任务新建技能：定时任务绑上，对话里不落行", async () => {
+  it("从定时任务来的任务沉淀技能时不修改定时任务", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
@@ -236,7 +236,8 @@ describe("沉淀是任务的又一轮", () => {
       ]);
       hob.runtime.jobs.startSediment("t-sed");
       await hob.runtime.jobs.waitIdle();
-      expect(hob.runtime.store.routine(routine.id)?.skill).toBe("daily-check");
+      expect(hob.runtime.store.routine(routine.id)).not.toHaveProperty("skill");
+      expect(listAssistantSkills(hob.home, "hob").map((item) => item.name)).toEqual(["daily-check"]);
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "note")).toBe(false);
     } finally { hob.close(); }
   });

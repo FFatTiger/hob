@@ -58,7 +58,7 @@ import type {
 
 import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrigin, KnowledgePage, KnowledgeEntryView } from "../../shared/knowledge.ts";
 
-import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView, VisibleSkill } from "../../shared/skills.ts";
+import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
 import type { McpImportResult, McpImportView, McpSecretMutation, McpServerPatch, McpServerSave, McpServerView, McpTestResult, McpView } from "../../shared/mcp.ts";
 
@@ -151,7 +151,6 @@ export interface HobApi {
   importSkills(source: SkillImportSource, ids: string[], overwrite: boolean): Promise<SkillImportResult>;
   deleteSkill(id: string): Promise<void>;
   rollbackGeneralSkill(name: string): Promise<AssistantSkill>;
-  visibleSkills(assistantId: string, groupId?: string): Promise<VisibleSkill[]>;
   desktop(): Promise<DesktopView>;
   desktopScreens(): Promise<{ screens: DesktopScreen[]; profiles: Record<string, string> }>;
 
@@ -193,7 +192,7 @@ export interface HobApi {
   createDraft(draftId: string): Promise<void>;
   dismissDraft(draftId: string): Promise<void>;
   createRoutine(body: Omit<Routine, "id" | "createdAt" | "runs">): Promise<{ routine: Routine }>;
-  patchRoutine(routineId: string, patch: Omit<Partial<Routine>, "skill"> & { skill?: string | null }): Promise<void>;
+  patchRoutine(routineId: string, patch: Partial<Routine>): Promise<void>;
   deleteRoutine(routineId: string): Promise<void>;
   runRoutine(routineId: string): Promise<RoutineTick | undefined>;
   replyJob(jobId: string, text: string): Promise<void>;
@@ -306,7 +305,6 @@ export const realApi: HobApi = {
   importSkills: (source: SkillImportSource, ids: string[], overwrite: boolean) => req<SkillImportResult>(`/api/skills/import/${source}`, json({ ids, overwrite })),
   deleteSkill: (id) => req<void>(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" }),
   rollbackGeneralSkill: (name) => req<AssistantSkill>(`/api/skills/${encodeURIComponent(name)}/rollback`, { method: "POST" }),
-  visibleSkills: (assistantId, groupId) => req<VisibleSkill[]>(`/api/skills/visible?assistantId=${encodeURIComponent(assistantId)}${groupId ? `&groupId=${encodeURIComponent(groupId)}` : ""}`),
   desktop: () => req<DesktopView>("/api/desktop"),
   desktopScreens: () => req<{ screens: DesktopScreen[]; profiles: Record<string, string> }>("/api/desktop/screens"),
   saveDesktop: (body) => req<DesktopView>("/api/desktop", json(body, "PUT")),

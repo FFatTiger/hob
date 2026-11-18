@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import type { Approval, ApprovalOption, Delegation, Draft, GroupItem, GroupSummary, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
+import { isRoutineDueNote } from "../../../shared/routine-note.ts";
 import { visibleLiveCards } from "../page-live.ts";
 import { Markdown } from "./Markdown.tsx";
 import { splitTables } from "../markdown.ts";
@@ -697,7 +698,7 @@ export function TopicCard({ topicId, fresh, itemId }: { topicId: string; fresh: 
   if (!g) {
     return (
       <div className={`hov${fresh ? " enter" : ""}`} data-item-id={itemId}>
-        <div className="b topiccard gone">{t("话题已不在")}</div>
+        <div className="b topiccard gone">{t("话题已不存在")}</div>
       </div>
     );
   }
@@ -855,8 +856,8 @@ function ItemView({
   }
 
   if (item.kind === "note") {
-    // 定时任务到点：只写一行。老记录里带着检查到的原始内容，那是给群主的材料，不显示
-    if (item.icon === "routine" && item.text.includes("到点了")) {
+    // 定时任务到执行时间：只写一行。老记录里带着检查到的原始内容，那是给群主的材料，不显示
+    if (item.icon === "routine" && isRoutineDueNote(item.text, item.routineId)) {
       return <div className={`sys routine-note${fresh ? " enter-fade" : ""}`}><Icon name="clock" size={14} /><span>{item.text.replace(/，检查到：[\s\S]*$/u, "")}</span></div>;
     }
     // 带原因的（工具没办成）：点开看工具报错的原文
@@ -1078,7 +1079,7 @@ export function ItemList({ items: all }: { items: Item[] }) {
   for (const page of visibleLiveCards(Object.values(s.livePages), s.sel)) {
     rows.push(<button key={page.callId} className={`att filecard${page.state === "failed" ? " bad" : ""}`} onClick={() => openLivePreview(page.callId)}>
       <span className="ico"><Icon name={page.state === "writing" ? "spin" : "close"} className={page.state === "writing" ? "spin" : ""} size={18} /></span>
-      <span><span className="n" style={{ display: "block" }}>{page.title || t("正在写页面…")}</span><span className="m">{page.state === "failed" ? t("生成失败：{error}", { error: page.error ?? "" }) : t("生成中")}</span></span>
+      <span><span className="n" style={{ display: "block" }}>{page.title || t("正在生成页面…")}</span><span className="m">{page.state === "failed" ? t("生成失败：{error}", { error: page.error ?? "" }) : t("生成中")}</span></span>
     </button>);
   }
   return <>{rows}</>;

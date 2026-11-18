@@ -100,7 +100,7 @@ function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; 
   const pinned = useRef(round === undefined && (job ? active(job) : true));
   const [models, setModels] = useState<ModelInfo[] | null>(null);
   const [showDesktop, setShowDesktop] = useState(false);
-  // 看桌面看的是这个任务所属助手的那块屏幕，不是默认的主助手
+  // 查看桌面看的是这个任务所属助手的那块屏幕，不是默认的主助手
   const desktop = useDesktopScreens();
   // 续做过的任务：看第几轮。没点过就跟着最新一轮；从对话里的卡点进来，就是那张卡那一轮
   const [picked, setPicked] = useState(round);
@@ -162,7 +162,7 @@ function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; 
     <>
       <PanelHead className="jdhead" title={<span className="t">{t("任务")}</span>} close>
         {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={job.sediment?.status === "running"} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{job.sediment?.status === "running" ? t("正在沉淀…") : t("沉淀成技能")}</button> : null}
-        {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="hob-btn hob-btn-compact" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />{t("看桌面")}</button> : null}
+        {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="hob-btn hob-btn-compact" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />{t("查看桌面")}</button> : null}
         <button className="hob-icon-btn fp-act fp-wide-btn" title={t("切换全宽")} onClick={togglePreviewFull}>
           <Icon name={full ? "shrink" : "expand"} size={17} />
         </button>
@@ -232,7 +232,7 @@ function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; 
 function AfterList({ ids }: { ids: string[] }) {
   const s = useApp();
   return <>
-    <div className="lbl">{t("要等的")}</div>
+    <div className="lbl">{t("等待的任务")}</div>
     <div className="jd-files">
       {ids.map((id) => {
         const before = s.jobs[id];
@@ -297,7 +297,7 @@ function ReplyBox({ job }: { job: Job }) {
       <div className="jd-comp">
         <input
           value={text}
-          placeholder={active(job) ? t("补充说明或更正方向") : t("接着说…")}
+          placeholder={active(job) ? t("补充说明或更正方向") : t("继续输入…")}
           onChange={(event) => setText(event.target.value)}
           onKeyDown={(event) => {
             event.stopPropagation();
@@ -327,7 +327,7 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
       return (
         <div className={`jd-mine${step.queued ? " queued" : ""}`}>
           {step.text}
-          {step.queued ? <div className="jd-mine-note">{t("已送达，当前这一步做完后读取")}</div> : null}
+          {step.queued ? <div className="jd-mine-note">{t("已送达，当前步骤完成后读取")}</div> : null}
         </div>
       );
     }

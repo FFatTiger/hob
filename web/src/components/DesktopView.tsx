@@ -382,7 +382,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", 
           title={takenByOther ? t("其他人正在接管") : undefined}
           onClick={() => login && control.mine ? onClose() : void toggle()}
         >
-          {login && control.mine ? t("好了") : control.mine ? t("交还") : t("接管")}
+          {login && control.mine ? t("完成") : control.mine ? t("交还") : t("接管")}
         </button>
         <button className="hob-icon-btn" title={t("关闭")} aria-label={t("关闭云桌面")} onClick={onClose}>
           <Icon name="close" size={18} />

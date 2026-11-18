@@ -308,7 +308,7 @@ function RulesSection() {
 
   const change = (next: { id?: string; text: string; mode: Rule["mode"] }[]) => saveRules(next);
   return <>
-    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。「执行前确认」的事项，助手执行前会征求你的确认；「一律照做」是做事的规则。每个助手自己的规则在它的档案里修改。")} />
+    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。「执行前确认」的规则，助手执行前会征求你的确认；「一律照做」表示无需确认即可执行。每个助手自己的规则在其档案中修改。")} />
     {error ? <div className="badline" role="status">{error}</div> : null}
     {rules === null ? error ? <button className="hob-btn" onClick={() => void loadRules()}>{t("重试")}</button> : <Empty><DelayedText text={t("正在读取全局规则…")} /></Empty> :
       ([{ mode: "ask", label: t("执行前确认") }, { mode: "allow", label: t("一律照做") }] as const).map(({ mode, label }) => <Group key={mode}>
@@ -411,7 +411,7 @@ function DesktopSection() {
 
   return (
     <>
-      <PageHead title={t("云桌面")} desc={t("云桌面需要单独部署。登录 Hob 的人可以观看和接管桌面。")} />
+      <PageHead title={t("云桌面")} desc={t("云桌面需要单独部署。登录 Hob 的用户可以观看和接管桌面。")} />
       {deployed ? (
         <Group>
           <div className="note">{t("由部署配置（compose 的 desktop 服务）")}</div>
@@ -436,7 +436,7 @@ function DesktopSection() {
             <div className="ctl">
               <button className={`tog${enabled ? "" : " off"}`} aria-label={t("启用云桌面")} aria-pressed={enabled} disabled={!view} onClick={() => setEnabled(!enabled)} />
               <span className="note">
-                {(enabled ? t("已启用。登录 Hob 的人可以观看桌面，接管后可以操作。") : t("未启用。界面不打开桌面，任务也不能使用桌面。")) + (enabledPending ? t("（保存后生效）") : "")}
+                {(enabled ? t("已启用。登录 Hob 的用户可以观看桌面，接管后可以操作。") : t("未启用。界面不打开桌面，任务也不能使用桌面。")) + (enabledPending ? t("（保存后生效）") : "")}
               </span>
             </div>
           </Group>
@@ -773,7 +773,7 @@ function ThinkingLevels({
                   className="ttext"
                   value={row.text}
                   placeholder={t("默认")}
-                  title={t("留空就按服务商协议的默认值发")}
+                  title={t("留空则按服务商协议的默认值发送")}
                   onChange={(e) =>
                     edit(
                       rows.map((item) => (item.level === row.level ? { ...item, text: e.target.value } : item)),
@@ -784,11 +784,11 @@ function ThinkingLevels({
                   disabled={busy || disabled}
                 />
                 {row.level === "off" ? (
-                  <span className="rremove still" title={t("关闭这一档不能删")} aria-hidden />
+                  <span className="rremove still" title={t("「关闭」这一档不能删除")} aria-hidden />
                 ) : (
                   <button
                     className="rremove"
-                    title={t("删掉「{level}」", { level: thinkingText(row.level) })}
+                    title={t("删除「{level}」", { level: thinkingText(row.level) })}
                     onClick={() => save(rows.filter((item) => item.level !== row.level))}
                     disabled={busy || disabled}
                   >
@@ -799,7 +799,7 @@ function ThinkingLevels({
             ))}
           </div>
           <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-            <Select value={pick} onChange={(value) => setPick(value as ThinkingLevel | "")} disabled={busy || disabled || !rest.length} aria-label={t("添加思考档")} options={[{ value: "", label: rest.length ? t("选择档位") : t("七个档都用上了") }, ...rest.map((level) => ({ value: level, label: thinkingText(level) }))]} />
+            <Select value={pick} onChange={(value) => setPick(value as ThinkingLevel | "")} disabled={busy || disabled || !rest.length} aria-label={t("添加思考档")} options={[{ value: "", label: rest.length ? t("选择档位") : t("七个档位均已使用") }, ...rest.map((level) => ({ value: level, label: thinkingText(level) }))]} />
             <button
               className="hob-btn"
               onClick={() => {
@@ -819,7 +819,7 @@ function ThinkingLevels({
             ) : null}
           </div>
           <div className="note">
-            {t("留空就按服务商协议的默认值发；填了才按你写的发（例如 DeepSeek 的「中」填 high）。关闭这一档不能删，其余档删掉后不再出现在思考强度里。")}
+            {t("留空则按服务商协议的默认值发送；填写后按所填的值发送（例如 DeepSeek 的「中」填 high）。「关闭」这一档不能删除，其余档删除后不再出现在思考强度中。")}
           </div>
           {error ? <div className="badline">{error}</div> : null}
           {saved ? <div className="okline">{t("已保存思考档")}</div> : null}
@@ -1873,7 +1873,7 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
     if (!saved || entry.scoresConfirmed !== true || saved.smart !== next.smart || saved.cost !== next.cost || saved.speed !== next.speed) save(next);
   };
   if (!expanded) return <div className="ctl"><span className="note">{scoreSummary(entry.scores ?? scores)}</span><button className="hob-btn" onClick={() => setExpanded(true)}>{t("修改")}</button></div>;
-  const names = { smart: t("聪明程度"), cost: t("成本"), speed: t("速度") } as const;
+  const names = { smart: t("智能程度"), cost: t("成本"), speed: t("速度") } as const;
   return (
     <div className="group">
       <div className="note">{t("Hob 按用途选择分派任务的模型。")} {initial.unconfirmed ? t("数值按模型名称推测，请确认。") : ""}</div>
@@ -2128,7 +2128,7 @@ function AddModels({ view }: { view: ModelsView }) {
   return (
     <>
       <SubBack />
-      <PageHead title={t("添加模型")} desc={t("「服务商」提供的全部模型，打勾的已在可用模型中。")} />
+      <PageHead title={t("添加模型")} desc={t("「服务商」提供的全部模型，已勾选的已在可用模型中。")} />
       <SaveFeedback message={feedback.message} toast />
       {view.models.length === 0 ? (
         <Group>
@@ -3013,11 +3013,11 @@ function SkillDetail({ skill, onDeleted, onRolledBack }: { skill: SkillView | un
   const [error, setError] = useState<string | null>(null);
   if (!skill) return <><SubBack label={t("技能")} /><div className="note">{t("技能不存在或已删除。")}</div></>;
   const remove = async () => {
-    if (!window.confirm(t("把技能「{name}」移到归档？它不再出现在技能列表里，文件还在归档目录。", { name: skill.title || skill.name }))) return;
+    if (!window.confirm(t("把技能「{name}」移到归档？它将不再出现在技能列表中，文件仍保留在归档目录。", { name: skill.title || skill.name }))) return;
     try { await deleteSkill(skill.name); onDeleted(t("已把「{name}」移到归档", { name: skill.title || skill.name })); } catch (e) { setError(errText(e)); }
   };
   const rollback = async () => {
-    if (!window.confirm(t("把技能「{name}」回退到上一版？现在的这一版会留在历史里。", { name: skill.title || skill.name }))) return;
+    if (!window.confirm(t("把技能「{name}」回退到上一版？当前版本将保留在历史记录中。", { name: skill.title || skill.name }))) return;
     try { await rollbackGeneralSkill(skill.name); setError(null); onRolledBack(); } catch (e) { setError(errText(e)); }
   };
   return (
@@ -3518,7 +3518,7 @@ function McpDetail({
                     );
                   })}
                 </div>
-                <div className="note">{t("关掉的工具不声明给模型；改动对之后新开的任务生效。")}</div>
+                <div className="note">{t("已关闭的工具不声明给模型；改动对新创建的任务生效。")}</div>
               </>
             ) : (
               <div className="note">{t("服务已连接，但没有提供工具。")}</div>
@@ -3536,7 +3536,7 @@ function McpDetail({
         <button className="hob-btn hob-btn-danger" disabled={busy} onClick={() => void remove()}>{t("删除服务")}</button>
         {error ? <div className="badline" role="alert">{error}</div> : null}
       </Group>
-      <div className="note">{t("环境变量和请求头的值不回显；留空表示沿用已保存的值。删除整行表示删掉这个值。")}</div>
+      <div className="note">{t("环境变量和请求头的值不回显；留空表示沿用已保存的值。删除整行表示移除该值。")}</div>
     </>
   );
 }

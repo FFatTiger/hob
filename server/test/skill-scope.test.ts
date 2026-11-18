@@ -221,7 +221,7 @@ describe("新建在哪、换范围", () => {
       expect(existsSync(join(dir, ".history", "1", "SKILL.md"))).toBe(true);
       expect(listSkills(join(hob.home, "assistants", "hob", "skills"))).toEqual([]);
       const notes = hob.runtime.router.items("hob").items.filter((item) => item.kind === "note");
-      expect(notes.at(-1)).toMatchObject({ icon: "skill", text: "已把技能「每周周报」换成通用的" });
+      expect(notes.at(-1)).toMatchObject({ icon: "skill", text: "已把技能「每周周报」改为通用技能" });
       expect(saved.version).toBe(1);
 
       // 收回来：还在原位置，提示行说收回
@@ -238,7 +238,7 @@ describe("新建在哪、换范围", () => {
       saveSkill(generalSkillsDir(hob.home), hobSkill);
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "周报", instruction: "写周报", schedules: ["0 9 * * *"], skill: hobSkill.name } as never);
       expect(routine).not.toHaveProperty("skill");
-      expect(() => moveSkill(join(hob.home, "assistants", "hob", "skills"), generalSkillsDir(hob.home), hobSkill.name, "通用技能里已经有叫 weekly-report 的技能")).toThrow("通用技能里已经有叫 weekly-report 的技能");
+      expect(() => moveSkill(join(hob.home, "assistants", "hob", "skills"), generalSkillsDir(hob.home), hobSkill.name, "已有名为 weekly-report 的通用技能")).toThrow("已有名为 weekly-report 的通用技能");
       archiveSkill(generalSkillsDir(hob.home), hobSkill.name);
       moveSkill(join(hob.home, "assistants", "hob", "skills"), generalSkillsDir(hob.home), hobSkill.name, "冲突");
       expect(visibleSkills(hob.runtime, "hob").map((skill) => skill.name)).toContain(hobSkill.name);

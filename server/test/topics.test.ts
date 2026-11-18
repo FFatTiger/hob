@@ -168,7 +168,7 @@ describe("话题的接口", () => {
 
       const nested = await post(`/api/groups/${topic.id}/topics`, { title: "再开一个" });
       expect(nested.status).toBe(400);
-      expect(await nested.json()).toMatchObject({ error: "话题挂在群下面：话题里不能再开话题。" });
+      expect(await nested.json()).toMatchObject({ error: "话题挂在群下面：话题里不能再创建话题。" });
 
       expect((await post(`/api/groups/${group.id}/topics`, { title: "  " })).status).toBe(400);
       expect((await post(`/api/groups/${group.id}/topics`, { title: "字".repeat(41) })).status).toBe(400);
@@ -178,6 +178,16 @@ describe("话题的接口", () => {
     } finally {
       hob.close();
     }
+  });
+
+  it("用户关话题没写说明：关闭说明写「你关闭了这个话题」", async () => {
+    const { hob, group } = setup();
+    try {
+      const { post } = await loggedIn(hob);
+      const topic = hob.runtime.groups.createTopic(group.id, "整理票据", "user");
+      expect((await post(`/api/groups/${topic.id}/close`, {})).status).toBe(200);
+      expect(hob.runtime.store.group(topic.id)).toMatchObject({ closeNote: "你关闭了这个话题" });
+    } finally { hob.close(); }
   });
 
   it("关闭、重新打开；关了以后发消息回 400，文字照票上写的", async () => {
@@ -238,7 +248,7 @@ describe("话题的接口", () => {
       for (const body of [{ members: ["hob"] }, { ownerId: "ops" }, { purpose: "别的事" }]) {
         const result = await patch(`/api/groups/${topic.id}`, body);
         expect(result.status, JSON.stringify(body)).toBe(400);
-        expect(await result.json()).toMatchObject({ error: "话题的成员、群主、负责什么跟着所属的群，在群里改" });
+        expect(await result.json()).toMatchObject({ error: "话题的成员、群主与职责随所属的群，请在群设置中修改。" });
       }
 
     } finally { hob.close(); }
@@ -264,7 +274,7 @@ describe("话题的接口", () => {
 
       expect(inputBody(memberFile(hob, topic.id, "hob")).split("\n\n")).toEqual([
         "用户：备份目录是 /vol/photo",
-        "[hob-event] 这个话题是你从综合开的，上面是交接说明。",
+        "[hob-event] 这个话题是你从综合创建的，上面是交接说明。",
         "备份目录是 /vol/photo",
       ]);
     } finally {
@@ -290,7 +300,7 @@ describe("话题的接口", () => {
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
 
       // 事件只包含这次助手填写的交接说明
-      expect(delivered.at(-1)).toBe("这个话题是你从综合开的，上面是交接说明。\n\n测试交接说明");
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n测试交接说明");
       expect(delivered.at(-1)).not.toContain("这周整理相册");
       expect(delivered.at(-1)).not.toContain("相册备份一直报错");
 
@@ -315,7 +325,7 @@ describe("话题的接口", () => {
       hob.faux.setResponses([text("接着办")]);
       const result = await toolOf(hob, "open_topic", group.id).execute("c", { topic: topic.id, note: "继续处理打印机问题。" });
       expect(isError(result)).toBe(false);
-      expect(textOf(result)).toBe(`已转到话题「打印机连不上」（${topic.id}），接下来在话题里办。`);
+      expect(textOf(result)).toBe(`已转到话题「打印机连不上」（${topic.id}），接下来在话题里处理。`);
       expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
       expect(hob.runtime.store.groupItems(group.id).find((item) => item.kind === "note" && item.text.startsWith("转到了话题"))).toMatchObject({
         speaker: "hob",
@@ -323,7 +333,7 @@ describe("话题的接口", () => {
       });
       await waitFor(() => userTexts(memberFile(hob, topic.id, "hob")).length > 0);
       const body = inputBody(memberFile(hob, topic.id, "hob"));
-      expect(body).toContain("[hob-event] 这个话题是你从综合开的，上面是交接说明。\n\n继续处理打印机问题。");
+      expect(body).toContain("[hob-event] 这个话题是你从综合创建的，上面是交接说明。\n\n继续处理打印机问题。");
       expect(body).not.toContain("打印机又连不上了");
     } finally {
       hob.close();
@@ -337,7 +347,7 @@ describe("话题的接口", () => {
       hob.faux.setResponses([text("看到话题了")]);
       await hob.runtime.groups.send(group.id, { text: "@服务器 顺便看下相册备份" });
       await waitFor(() => userTexts(memberFile(hob, group.id, "ops")).length > 0);
-      expect(inputBody(memberFile(hob, group.id, "ops")).split("\n")).toContain("用户：开了话题「相册备份出错」");
+      expect(inputBody(memberFile(hob, group.id, "ops")).split("\n")).toContain("用户：创建了话题「相册备份出错」");
     } finally {
       hob.close();
     }
@@ -443,7 +453,7 @@ describe("交接：来由只从 requestItem 取", () => {
     instruction: "看看有没有新 PR",
     schedules: ["0 9 * * *"],
   });
-  const fullText = "定时任务「看 PR」到点了，要做的事：看看有没有新 PR";
+  const fullText = "定时任务「看 PR」已到执行时间，任务内容：看看有没有新 PR";
 
   it("定时到点的记录带着交给群主的全文，转进话题以后还在", async () => {
     const { hob, group } = setup();
@@ -454,7 +464,7 @@ describe("交接：来由只从 requestItem 取", () => {
       expect(await hob.runtime.routines.runNow(routine.id)).toMatchObject({ outcome: "handed" });
 
       const note = hob.runtime.store.groupItems(group.id).find((item) => item.kind === "note" && item.icon === "routine")!;
-      expect(note).toMatchObject({ text: "定时任务「看 PR」到点了", request: fullText });
+      expect(note).toMatchObject({ text: "定时任务「看 PR」已到执行时间", request: fullText });
       expect(delivered[0]).toMatchObject({ gid: group.id, trigger: note.id, text: fullText });
 
       // 事件回合（时间线上最近一条是定时记录）：取到的是它
@@ -482,7 +492,7 @@ describe("交接：来由只从 requestItem 取", () => {
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
       expect(hob.runtime.store.groupItems(topic.id).some((item) => item.kind === "user" && item.text === "请接着处理定时任务。")).toBe(true);
       await waitFor(() => userTexts(memberFile(hob, topic.id, "hob")).length > 0);
-      expect(inputBody(memberFile(hob, topic.id, "hob"))).toContain("这个话题是你从综合开的，上面是交接说明。\n\n请接着处理定时任务。");
+      expect(inputBody(memberFile(hob, topic.id, "hob"))).toContain("这个话题是你从综合创建的，上面是交接说明。\n\n请接着处理定时任务。");
       expect(inputBody(memberFile(hob, topic.id, "hob"))).not.toContain("定时任务到点的记录");
       expect(inputBody(memberFile(hob, topic.id, "hob"))).not.toContain("昨天的旧消息");
     } finally { hob.close(); }
@@ -496,13 +506,13 @@ describe("交接：来由只从 requestItem 取", () => {
       hob.runtime.groups.deliverEvent = async (_gid, _aid, text) => { delivered.push(text); };
       const result = await toolOf(hob, "open_topic", group.id).execute("c", { title: "回 PR", note: "先看标题" });
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
-      expect(textOf(result)).toBe(`话题「回 PR」（${topic.id}）已开，交接说明已转过去，接下来在话题里办。`);
-      expect(delivered.at(-1)).toBe("这个话题是你从综合开的，上面是交接说明。\n\n先看标题");
+      expect(textOf(result)).toBe(`话题「回 PR」（${topic.id}）已创建，交接说明已转过去，接下来在话题里处理。`);
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n先看标题");
 
       // 转到已有话题：事件第一句换成「上面是…」
       await hob.runtime.routines.runNow(routine.id);
       await toolOf(hob, "open_topic", group.id).execute("c2", { topic: topic.id, note: "再看一次" });
-      expect(delivered.at(-1)).toBe("这个话题是你从综合开的，上面是交接说明。\n\n再看一次");
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n再看一次");
     } finally { hob.close(); }
   });
 

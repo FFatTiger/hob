@@ -319,7 +319,7 @@ describe("set_avatar 工具", () => {
       expect(result.isError).toBe(false);
       expect(hob.runtime.store.assistant("hob")!.sprite).toBe("wifi:green");
       expect(
-        hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.icon === "info" && item.text.startsWith("已换头像")),
+        hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.icon === "info" && item.text.startsWith("已更换头像")),
       ).toBe(true);
       expect(sprites).toContain("wifi:green");
       const bad = await run(hob, "hob", "set_avatar", { sprite: "nope" });
@@ -362,7 +362,7 @@ describe("set_avatar 工具", () => {
       expect(hob.runtime.store.assistant("ops")!.sprite).toBe("bird");
       // 提示行出在主助手的对话里，写明换的是谁
       expect(
-        hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.text.includes("已换头像 · 运维")),
+        hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.text.includes("已更换头像 · 运维")),
       ).toBe(true);
 
       const byOps = await run(hob, "ops", "set_avatar", { sprite: "coin", assistant: "hob" });

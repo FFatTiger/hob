@@ -91,7 +91,7 @@ function memoryLabel(name: string): string | undefined {
     case "memory_restore": return t("恢复记忆");
     case "memory_status": case "lore_list_domains": case "lore_status": return t("查看记忆状态");
     case "lore_move_node": return t("整理记忆");
-    default: return /^(memory_|lore_|scratchpad)/.test(name) ? t("翻记忆") : undefined;
+    default: return /^(memory_|lore_|scratchpad)/.test(name) ? t("搜索记忆") : undefined;
   }
 }
 
@@ -123,8 +123,8 @@ export function toolTitle(name: string, args: Record<string, unknown>, mcpServer
     case "overview": return t("查看最近 {hours} 小时的记录", { hours: Number(args.sinceHours ?? 24) });
     case "generate_image": return t("生成图片：{prompt}", { prompt: oneLine(String(args.prompt ?? ""), 60) });
     case "web_search": return t("联网搜索：{query}", { query: oneLine(String(args.query ?? ""), 60) });
-    case "find_knowledge": return args.query ? t("找资料：{query}", { query: oneLine(String(args.query), 60) }) : t("找资料");
-    case "search_knowledge": return args.query ? t("查知识库：{query}", { query: oneLine(String(args.query), 60) }) : t("查知识库");
+    case "find_knowledge": return args.query ? t("查找资料：{query}", { query: oneLine(String(args.query), 60) }) : t("查找资料");
+    case "search_knowledge": return args.query ? t("搜索知识库：{query}", { query: oneLine(String(args.query), 60) }) : t("搜索知识库");
     case "web_fetch": return t("读取网页：{url}", { url: oneLine(String(args.url ?? ""), 60) });
     case "browser_open": {
       let target = oneLine(String(args.url ?? ""), 60);
@@ -218,7 +218,7 @@ export function withOutput(
   if (!full) return next;
   if (full.length <= options.limit) return { ...next, output: full };
   const path = options.save?.(step.id, full);
-  const note = `\n\n[${t("输出共 {total} 字，这里截到 {limit} 字。{full}", { total: full.length, limit: options.limit, full: path ? t("完整输出在 {path}", { path }) : "" })}]`;
+  const note = `\n\n[${t("输出共 {total} 字，此处截取至 {limit} 字。{full}", { total: full.length, limit: options.limit, full: path ? t("完整输出在 {path}", { path }) : "" })}]`;
   return { ...next, output: full.slice(0, options.limit) + note, ...(path ? { outputPath: path } : {}) };
 }
 

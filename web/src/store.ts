@@ -1015,7 +1015,7 @@ async function loadBootstrap(reconnect = false) {
       phase: "ready",
       error: null,
       offline: null,
-      assistants: boot.assistants,
+      assistants: mergeAssistantSummaries(boot.assistants),
       jobs: index(boot.jobs),
       delegations: index(boot.delegations ?? []),
       routines: boot.routines,
@@ -1088,11 +1088,11 @@ export function applyEvent(ev: HobEvent) {
       break;
     }
     case "assistant": {
-      // 正看着这个助手的对话：新回复直接算已读，不亮未读
+      const current = state.assistants.find((a) => a.id === ev.assistant.id);
       const read = ev.assistant.unread > 0 && viewing(ev.assistant.id);
       if (read) void api.markRead(ev.assistant.id).catch(() => {});
-      // 设置页读的是档案里的助手：头像、名字在别处改了也跟着变
-      const assistant = read ? { ...ev.assistant, unread: 0 } : ev.assistant;
+      // 已读请求和实时摘要可能交错：旧摘要不能把本地已经清掉的未读重新带回来。
+      const assistant = mergeAssistantEvent(current, ev.assistant, read);
       const oldModels = state.assistants.find((a) => a.id === assistant.id)?.models;
       if (JSON.stringify(oldModels) !== JSON.stringify(assistant.models)) refreshGroupProfiles(assistant.id);
       set((s) => ({
@@ -1260,14 +1260,51 @@ function withoutActivity(map: State["groupActivity"], groupId: string, speaker: 
   return { ...map, [groupId]: current };
 }
 
+function latestIso(a?: string, b?: string): string | undefined {
+  if (!a) return b;
+  if (!b) return a;
+  return a >= b ? a : b;
+}
+
+/** 已读先在本地生效；服务端请求完成前到达的旧摘要仍按这个时间点合并。 */
+function markAssistantRead(id: string): void {
+  const readAt = new Date().toISOString();
+  set((s) => ({
+    assistants: s.assistants.map((a) => a.id === id ? { ...a, unread: 0, readAt } : a),
+  }));
+  void api.markRead(id).catch(() => {});
+}
+
+function mergeAssistantEvent(current: AssistantSummary | undefined, incoming: AssistantSummary, read: boolean): AssistantSummary {
+  const readAt = read ? new Date().toISOString() : latestIso(current?.readAt, incoming.readAt);
+  const oldMessage = Boolean(current?.readAt && (incoming.last?.at ?? "") <= current.readAt);
+  return {
+    ...incoming,
+    ...(readAt ? { readAt } : {}),
+    ...(read || oldMessage ? { unread: 0 } : {}),
+  };
+}
+
+function mergeAssistantSummaries(incoming: AssistantSummary[]): AssistantSummary[] {
+  return incoming.map((assistant) => {
+    const current = state.assistants.find((item) => item.id === assistant.id);
+    if (!current?.readAt) return assistant;
+    const oldMessage = (assistant.last?.at ?? "") <= current.readAt;
+    return {
+      ...assistant,
+      readAt: latestIso(current.readAt, assistant.readAt),
+      ...(oldMessage ? { unread: 0 } : {}),
+    };
+  });
+}
+
 /** 页面在前台就不推（服务端根据这个决定）。只存内存，SSE 断开会自动清掉。 */
 function reportVisibility(): void {
   void api.visibility(CLIENT_ID, document.visibilityState === "visible").catch(() => undefined);
   // 切回来时正开着的那个助手 / 群攒下的未读算看过了
   const a = state.assistants.find((x) => x.id === state.sel);
   if (a && a.unread > 0 && viewing(a.id)) {
-    set((s) => ({ assistants: s.assistants.map((x) => (x.id === a.id ? { ...x, unread: 0 } : x)) }));
-    void api.markRead(a.id).catch(() => {});
+    markAssistantRead(a.id);
   }
   const g = state.groups.find((x) => x.id === state.gsel);
   if (g && g.unread > 0 && viewingGroup(g.id)) {
@@ -1472,8 +1509,7 @@ export async function select(id: string, nav = true, keepStack = false) {
   }));
   const a = state.assistants.find((x) => x.id === id);
   if (a && a.unread > 0) {
-    set((s) => ({ assistants: s.assistants.map((x) => (x.id === id ? { ...x, unread: 0 } : x)) }));
-    void api.markRead(id).catch(() => {});
+    markAssistantRead(id);
   }
   await Promise.all([loadItems(id), loadProfile(id)]);
 }
@@ -2042,9 +2078,9 @@ export async function deleteRoutine(id: string) {
 export async function runRoutine(id: string) {
   try {
     const result = await api.runRoutine(id);
-    if (result?.outcome === "quiet") set({ notice: t("检查过了，没有变化") });
+    if (result?.outcome === "quiet") set({ notice: t("已检查，没有变化") });
     else if (result?.outcome === "failed") set({ notice: t("检查失败：{error}", { error: result.reason ?? t("原因未知") }) });
-    else if (result?.outcome === "notify") set({ notice: t("检查有新内容，已发到对话") });
+    else if (result?.outcome === "notify") set({ notice: t("检查发现新内容，已发送到对话") });
   } catch (e) {
     set({ notice: t("运行失败：{error}", { error: errText(e) }) });
   }
@@ -2466,7 +2502,7 @@ export async function deleteKnowledgeCollection(id: string) {
     const { deleted } = await api.deleteKnowledgeCollection(id);
     if (state.knowledge.category === id) setKnowledgeFilter({ category: "all" });
     else await loadKnowledge(false, true);
-    set({ notice: deleted ? t("已删除知识库，一起删掉 {n} 个文件", { n: deleted }) : t("已删除知识库") });
+    set({ notice: deleted ? t("已删除知识库，同时删除 {n} 个文件", { n: deleted }) : t("已删除知识库") });
   } catch (e) { set({ notice: t("删除失败：{error}", { error: errText(e) }) }); }
 }
 export async function patchKnowledgeEntry(id: string, patch: { name?: string; collections?: string[] }) {
@@ -2497,7 +2533,7 @@ export async function jumpToItem(assistantId: string, itemId: string) {
       const el = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
       if (!el) {
         if (performance.now() < deadline) requestAnimationFrame(locate);
-        else set({ notice: t("没能定位到这条消息") });
+        else set({ notice: t("未能定位到这条消息") });
         return;
       }
       flashItem(el);

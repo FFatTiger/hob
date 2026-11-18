@@ -116,7 +116,7 @@ function isGone(status: number | undefined, reason: string): boolean {
 
 function describeFailure(error: unknown, status: number | undefined, reason: string): string {
   if (status) return t("推送服务拒绝（{status}{reason}）", { status, reason: reason ? ` ${reason}` : "" });
-  return t("连不上推送服务（{reason}）", { reason: error instanceof Error ? error.message : String(error) });
+  return t("无法连接推送服务（{reason}）", { reason: error instanceof Error ? error.message : String(error) });
 }
 
 /** 推送服务（可见性只在内存里：进程重启后没有前台客户端）。 */
@@ -317,7 +317,7 @@ export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): 
   const group = turn.groupId ? deps.store.group(turn.groupId) : undefined;
   const title = group?.name ?? assistant.name;
   const body = turn.error
-    ? t("没做成：{reason}", { reason: plainText(turn.error) })
+    ? t("执行失败：{reason}", { reason: plainText(turn.error) })
     : turn.text?.trim()
       ? plainText(turn.text).replace(/\s+/g, " ").slice(0, 160)
       : t("已完成");

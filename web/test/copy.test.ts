@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { describe, expect, it } from "vitest";
 
 // 界面文字规范见 docs/copy.md：用户能看到的文字一律用书面中文，口语词不再出现。
-const BANNED = ["干活", "派活", "拍板", "卡住", "没动静", "试一张", "先问你", "直接做"];
+const BANNED = ["干活", "派活", "拍板", "卡住", "没动静", "试一张", "先问你", "直接做", "到点了", "只触发"];
 // 状态词全站统一成这七个，旧的写法不许再出现。
 const OLD_STATUS = ["等你批"];
 

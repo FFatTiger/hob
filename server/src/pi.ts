@@ -361,7 +361,7 @@ export class PiHost {
     mkdirSync(dirname(options.file), { recursive: true });
     const model = await this.model(options.model);
     const manager = SessionManager.open(options.file, dirname(options.file), options.cwd);
-    const settingsManager = SettingsManager.inMemory({ compaction: { enabled: true }, retry: { enabled: true, ...(this.options.retry ?? {}) } });
+    const settingsManager = SettingsManager.inMemory({ cacheWarming: "streaming", compaction: { enabled: true }, retry: { enabled: true, ...(this.options.retry ?? {}) } });
     const resourceLoader = await this.resourceLoader(options, settingsManager);
     const memoryTools = MEMORY_TOOL_PATTERNS[options.memory ?? "off"];
     const { session } = await createAgentSession({

@@ -21,16 +21,16 @@ import type { HobRuntime } from "./runtime.ts";
 
 /** 一条用户消息引出的助手回合上限：挡来回 @ 的死循环，不是限制正常协作。 */
 export const MAX_WAVE_TURNS = 20;
-export const RELAY_NOTE = "群里接力太多次，先停在这里";
-export const RESTART_NOTE = "服务重启，这一轮中断了";
+export const RELAY_NOTE = "群内转交次数过多，已在此暂停。";
+export const RESTART_NOTE = "服务已重启，本轮已中断。";
 /** 话题关了以后发消息：话题关了不能再发，能重新打开。 */
 export const TOPIC_CLOSED = "这个话题已关闭，重新打开后才能发消息";
-/** 用户关闭话题时没写说明就记这句。 */
-export const CLOSED_TOPIC_REASON = "用户关闭了这个话题";
+/** 用户关闭话题时没写说明就记这句；助手关闭时由调用方给出说明。 */
+export const CLOSED_TOPIC_REASON = "你关闭了这个话题";
 /** 主助手交来的话题关的时候要写结论：结论会转给主助手。 */
 export const HANDOVER_NOTE_REQUIRED = "note 不能为空：这个话题是 Hob 交给这个群的，结论会转给 Hob，由它告诉用户；不做了的写明原因。";
 /** 群主在话题里收到的那条：这件事是主助手交来的。 */
-export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。办完用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
+export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。完成后用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
 
 /** 系统写的条目（停下、重启）的发言人。 */
 const SYSTEM = "system";
@@ -192,18 +192,18 @@ export class GroupManager {
 
   create(input: CreateGroupInput): Group {
     // 话题是挂在群下面的群，但得先有群：建群的接口不建话题
-    if (input.parentId !== undefined) throw new Error("建群不接受 parentId：话题在群里开（POST /api/groups/:gid/topics）。");
+    if (input.parentId !== undefined) throw new Error("创建群不接受 parentId：话题在群里创建（POST /api/groups/:gid/topics）。");
     const members = this.membersOf(input.members, "群里至少要有一个助手");
     const group: Group = {
       id: newId("g-"),
       name: this.text(input.name, "群名", 40),
-      purpose: this.text(input.purpose, "负责什么", 200),
+      purpose: this.text(input.purpose, "职责", 200),
       ownerId: this.ownerOf(input.ownerId, members),
       members,
       createdAt: new Date().toISOString(),
     };
     this.store.saveGroup(group);
-    this.note(group.id, SYSTEM, t("建了群「{name}」", { name: group.name }), "info");
+    this.note(group.id, SYSTEM, t("已创建群「{name}」", { name: group.name }), "info");
     this.publish(group.id);
     return group;
   }
@@ -214,7 +214,7 @@ export class GroupManager {
    */
   createTopic(gid: string, title: unknown, createdBy: string): Group {
     const group = this.group(gid);
-    if (group.parentId) throw new Error("话题挂在群下面：话题里不能再开话题。");
+    if (group.parentId) throw new Error("话题挂在群下面：话题里不能再创建话题。");
     const topic: Group = {
       id: newId("g-"),
       name: this.text(title, "话题名", 40),
@@ -264,15 +264,15 @@ export class GroupManager {
       forwardedFrom: { assistantId: by, ...(original.itemId ? { itemId: original.itemId } : {}) },
     });
     this.store.saveGroup({ ...this.group(topic.id), handover: { by, at: new Date().toISOString() } });
-    this.note(gid, by, t("Hob 把「{topic}」交给了这个群", { topic: topic.name }));
+    this.note(gid, by, t("Hob 已将「{topic}」交由这个群处理", { topic: topic.name }));
     return { topic: this.group(topic.id), item };
   }
 
-  /** 用户关闭话题：写上时间和说明；没有填写时用固定的关闭说明。正在跑的回合和任务不停。 */
-  closeByUser(tid: string, note: unknown): Group {
+  /** 用户或助手关闭话题：写上时间和说明；用户本人没填时用固定的关闭说明。正在跑的回合和任务不停。 */
+  closeByUser(tid: string, note: unknown, by: "user" | "assistant" = "user"): Group {
     const topic = this.topic(tid);
     const text = typeof note === "string" ? note.trim() : "";
-    return this.closeTopic(topic, text || t("用户关闭了这个话题"), text);
+    return this.closeTopic(topic, text || (by === "user" ? t("你关闭了这个话题") : ""), text, by);
   }
 
   /** 群主关话题：主助手交来的，要写给用户的结论。 */
@@ -293,7 +293,7 @@ export class GroupManager {
     return this.group(tid);
   }
 
-  private closeTopic(topic: Group, note: unknown, conclusion: string): Group {
+  private closeTopic(topic: Group, note: unknown, conclusion: string, by: "user" | "assistant" = "user"): Group {
     const text = typeof note === "string" ? note.trim() : "";
     const next: Group = { ...topic, closedAt: new Date().toISOString(), ...(text ? { closeNote: text } : {}) };
     // 上一句结论还在时，这次没给说明就把它清掉，免得卡片上留着旧话
@@ -308,7 +308,7 @@ export class GroupManager {
       const groupName = host?.name ?? topic.parentId ?? "";
       const result = conclusion
         ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}${this.topicJobsLine(topic.id)}`
-        : `交给群「${groupName}」的话题「${topic.name}」被用户关了，没有写结论。${this.topicJobsLine(topic.id)}`;
+        : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。${this.topicJobsLine(topic.id)}`;
       this.store.saveGroup({ ...this.group(topic.id), handover: { ...topic.handover, result } });
       this.deliverHandover(topic.id);
     }
@@ -357,13 +357,13 @@ export class GroupManager {
     }
     const members = patch.members === undefined ? group.members : this.membersOf(patch.members, "群里至少要留一个成员");
     const ownerId = patch.ownerId === undefined ? group.ownerId : this.ownerOf(patch.ownerId, members);
-    if (!members.includes(ownerId)) throw new Error("群主要在成员里");
+    if (!members.includes(ownerId)) throw new Error("群主必须是成员之一");
     const next: Group = {
       ...group,
       members,
       ownerId,
       ...(patch.name !== undefined ? { name: this.text(patch.name, "群名", 40) } : {}),
-      ...(patch.purpose !== undefined ? { purpose: this.text(patch.purpose, "负责什么", 200) } : {}),
+      ...(patch.purpose !== undefined ? { purpose: this.text(patch.purpose, "职责", 200) } : {}),
       ...(typeof patch.listOrder === "number" && Number.isFinite(patch.listOrder) ? { listOrder: Math.max(0, Math.round(patch.listOrder)) } : {}),
     };
     if (group.memberModels) next.memberModels = Object.fromEntries(Object.entries(group.memberModels).filter(([id]) => members.includes(id)));
@@ -433,7 +433,7 @@ export class GroupManager {
   /** 话题只能改名：成员、群主、负责什么跟着所属的群。 */
   private renameTopic(topic: Group, patch: UpdateGroupInput): Group {
     if (patch.members !== undefined || patch.ownerId !== undefined || patch.purpose !== undefined) {
-      throw new Error("话题的成员、群主、负责什么跟着所属的群，在群里改");
+      throw new Error("话题的成员、群主与职责随所属的群，请在群设置中修改。");
     }
     const next: Group = { ...topic, ...(patch.name !== undefined ? { name: this.text(patch.name, "话题名", 40) } : {}) };
     this.store.saveGroup(next);
@@ -483,7 +483,7 @@ export class GroupManager {
       const ownerId = group.ownerId === assistantId ? members[0]! : group.ownerId;
       this.update(group.id, { members, ownerId });
       this.forgetMemberSessions([group.id, ...this.topicsOf(group.id).map((topic) => topic.id)], assistantId);
-      this.note(group.id, SYSTEM, t("「{name}」归档了，已移出这个群", { name: this.nameOf(assistantId) }), "info");
+      this.note(group.id, SYSTEM, t("「{name}」已归档，并移出此群", { name: this.nameOf(assistantId) }), "info");
       this.publish(group.id);
       for (const topic of this.topicsOf(group.id)) this.publish(topic.id);
     }
@@ -491,7 +491,7 @@ export class GroupManager {
 
   private topic(id: string): Group {
     const group = this.group(id);
-    if (!group.parentId) throw new Error("关闭和重新打开只对话题用：群用归档。");
+    if (!group.parentId) throw new Error("关闭和重新打开仅适用于话题；群请使用归档。");
     return group;
   }
 
@@ -504,7 +504,7 @@ export class GroupManager {
 
   /** members 里至少要有一个助手；空了就抛 tooFew（建群和改群的说法不一样）。 */
   private membersOf(value: unknown, tooFew: string): string[] {
-    if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !id)) throw new Error("成员要是助手 id 的列表");
+    if (!Array.isArray(value) || value.some((id) => typeof id !== "string" || !id)) throw new Error("成员必须是助手 ID 的列表");
     const ids = [...new Set(value as string[])];
     if (!ids.length) throw new Error(tooFew);
     for (const id of ids) {
@@ -515,8 +515,8 @@ export class GroupManager {
 
   private ownerOf(value: unknown, members: string[]): string {
     if (value === undefined) throw new Error("群主不能为空");
-    if (typeof value !== "string" || !value) throw new Error("群主要填助手 id");
-    if (!members.includes(value)) throw new Error("群主要在成员里");
+    if (typeof value !== "string" || !value) throw new Error("群主须填写助手 ID");
+    if (!members.includes(value)) throw new Error("群主必须是成员之一");
     return value;
   }
 
@@ -677,7 +677,7 @@ export class GroupManager {
       // 中途出错：没说到 NO_REPLY，已经写好的那几段照常出（和单聊一致），再写失败原因
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       const message = error instanceof Error ? error.message : String(error);
-      this.note(gid, assistantId, t("回复失败：{error}。@{name} 说一句即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
+      this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
     } finally {
       this.turns.delete(key);
     }
@@ -741,23 +741,23 @@ export class GroupManager {
         return `${who}：${item.text}`;
       case "job": {
         const job = this.store.job(item.jobId);
-        return `${who}：开了任务「${job?.title ?? item.jobId}」`;
+        return `${who}：创建了任务「${job?.title ?? item.jobId}」`;
       }
       case "question": {
         const approval = this.store.approval(item.approvalId);
-        return `${who}：问了用户${approval ? `「${approval.title}」` : "一个问题"}`;
+        return `${who}：询问了用户${approval ? `「${approval.title}」` : "一个问题"}`;
       }
       case "file":
-        return `${who}：发了文件「${item.name}」`;
+        return `${who}：发送了文件「${item.name}」`;
       case "image":
-        return `${who}：画了一张图`;
+        return `${who}：生成了一张图片`;
       case "draft":
-        return `${who}：提议新建一个助手`;
+        return `${who}：提议创建一个助手`;
       case "delegation":
         return `${who}：转交了一件事`;
       case "topic": {
         const topic = this.store.group(item.topicId);
-        return `${who}：开了话题「${topic?.name ?? item.topicId}」`;
+        return `${who}：创建了话题「${topic?.name ?? item.topicId}」`;
       }
       default:
         return "";
@@ -865,7 +865,7 @@ export class GroupManager {
 
   /** 一行系统提示（停下、重启、无响应、记忆已更新）。 */
   note(gid: string, speaker: string, text: string, icon: NoteIcon = "info", detail?: string): GroupItem {
-    const visibleText = text === RELAY_NOTE ? t("群里接力太多次，先停在这里") : text === RESTART_NOTE ? t("服务重启，这一轮中断了") : text;
+    const visibleText = text === RELAY_NOTE ? t("群内转交次数过多，已在此暂停。") : text === RESTART_NOTE ? t("服务已重启，本轮已中断。") : text;
     return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}) });
   }
 

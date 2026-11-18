@@ -50,12 +50,12 @@ export function PushPrompt() {
 
   return (
     <div className="push-prompt" role="status">
-      <div className="push-prompt-main">{t("打开通知：助手需要你回答或做完时，这台设备会收到提醒")}</div>
+      <div className="push-prompt-main">{t("打开通知：助手需要你回答或已完成时，这台设备会收到提醒")}</div>
       <div className="push-prompt-actions">
         <button className="hob-btn hob-btn-primary" onClick={() => void enable()} disabled={busy}>
           {busy ? t("正在打开…") : t("打开")}
         </button>
-        <button className="hob-btn" onClick={dismiss} disabled={busy}>{t("不用了")}</button>
+        <button className="hob-btn" onClick={dismiss} disabled={busy}>{t("暂不开启")}</button>
       </div>
       {error ? <div className="push-prompt-error">{error}</div> : null}
     </div>

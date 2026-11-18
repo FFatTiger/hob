@@ -181,7 +181,7 @@ describe("定时任务的检查脚本", () => {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "每日简报", instruction: "整理简报", schedules: ["0 9 * * *"] });
       const tick = await hob.runtime.routines.runNow(routine.id);
       expect(tick.outcome).toBe("handed");
-      expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("定时任务「每日简报」到点了，要做的事：整理简报"), expect.anything());
+      expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("定时任务「每日简报」已到执行时间，任务内容：整理简报"), expect.anything());
       expect(hob.runtime.store.routine(routine.id)?.checks).toBeUndefined();
       await hob.runtime.jobs.waitIdle();
     } finally {

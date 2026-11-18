@@ -9,10 +9,10 @@ describe("定时任务到点先交给单聊助手", () => {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "每日检查", instruction: "检查固定目录", instructionBy: "user", schedules: ["0 9 * * *"] });
       const result = await hob.runtime.routines.runNow(routine.id);
       expect(result.outcome).toBe("handed");
-      expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("用户写的要做的事：检查固定目录"), expect.objectContaining({ routineTrigger: { id: routine.id, name: "每日检查" } }));
+      expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("用户填写的任务内容：检查固定目录"), expect.objectContaining({ routineTrigger: { id: routine.id, name: "每日检查" } }));
       expect(hob.runtime.store.routine(routine.id)?.runs[0]).toMatchObject({ status: "handed" });
       const note = hob.runtime.router.items("hob").items.find((item) => item.kind === "note" && item.icon === "routine");
-      expect(note).toMatchObject({ text: "定时任务「每日检查」到点了", routineId: routine.id });
+      expect(note).toMatchObject({ text: "定时任务「每日检查」已到执行时间", routineId: routine.id });
     } finally { hob.close(); }
   });
 

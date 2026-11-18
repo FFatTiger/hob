@@ -287,10 +287,10 @@ describe("云桌面配置", () => {
           expect(file).toMatch(/^\d{8}T\d{9}\.png$/);
           expect(readFileSync(path).toString()).toBe("image");
           expect(lookupFile(hob.home, path).ok).toBe(true);
-          const send = router ? "用 send_file 发它" : "report 时放进 files";
+          const send = router ? "使用 send_file 发送" : "在 report 时放进 files";
           expect(result.content).toEqual(canSee
-            ? [{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" }, { type: "text", text: `截图已存到 ${path}。要给用户看，${send}。` }]
-            : [{ type: "text", text: `当前模型不能看图。截图已存到 ${path}：要给用户看，${send}；要自己读页面内容，用 browser_snapshot。` }]);
+            ? [{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" }, { type: "text", text: `截图已保存到 ${path}。要发送给用户，${send}。` }]
+            : [{ type: "text", text: `当前模型无法查看图片。截图已保存到 ${path}：要发送给用户，${send}；要自行读取页面内容，请使用 browser_snapshot。` }]);
         } finally { await session.dispose(); }
       }
     } finally { request.mockRestore(); hob.close(); }
@@ -308,7 +308,7 @@ describe("云桌面配置", () => {
         const result = await screenshot.execute(String(i), {});
         expect(result.isError).not.toBe(true);
         const text = (result.content[1] as { text: string }).text;
-        const path = text.slice("截图已存到 ".length, text.indexOf("。"));
+        const path = text.slice("截图已保存到 ".length, text.indexOf("。"));
         expect(existsSync(path)).toBe(true);
       }
       const files = readdirSync(dir).sort();

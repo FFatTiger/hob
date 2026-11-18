@@ -97,7 +97,7 @@ describe("群规则", () => {
       hob.runtime.store.saveRules("ops", [{ id: "own-ask", text: "个人先问", mode: "ask", changedAt: new Date().toISOString() }, { id: "own-allow", text: "个人直接做", mode: "allow", changedAt: new Date().toISOString() }]);
       const prompt = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: second });
       expect(prompt).toContain("本群的规则：\n- 执行前确认：发布前确认\n你自己的规则：");
-      expect(prompt).toContain("本群的规则和你自己的规则说法不一样时，在这个群里按本群的办。");
+      expect(prompt).toContain("本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
       hob.runtime.store.saveJob({ id: "t-rules", assistantId: "ops", title: "规则测试", instruction: "测试", groupId: second.id, status: "done", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       const worker = buildWorkerPrompt(hob.runtime.store, "t-rules", options);
       expect(worker).toContain("发布前确认");
@@ -308,6 +308,7 @@ describe("群里的卡片和结果回流", () => {
       expect(names).toContain("start_job");
       expect(names).toContain("ask_user");
       expect(names).toContain("save_job_as_skill");
+      expect(names).toContain("update_todos");
       expect(names).not.toContain("show_page");
       expect(names).toContain("set_rule");
       expect(names).toContain("create_routine");

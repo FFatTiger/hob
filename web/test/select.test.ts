@@ -50,7 +50,7 @@ describe("Select", () => {
     expect(await menu.getByRole("option", { name: /Hob 开发/ }).isVisible()).toBe(true);
     expect(await menu.getByRole("option", { name: /登录页加/ }).count()).toBe(0);
     await menu.getByRole("option", { name: /Hob 开发/ }).click();
-    expect(await page.locator('.gcreate .select-trigger').textContent()).toContain('照着「Hob 开发」建');
+    expect(await page.locator('.gcreate .select-trigger').textContent()).toContain('沿用「Hob 开发」创建');
   }, BROWSER_TEST_TIMEOUT);
   it("点击外部或按 Escape 关闭", async () => {
     await fixture();

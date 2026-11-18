@@ -5,7 +5,7 @@ import { makeHob, waitFor, type TestHob } from "./helpers.ts";
 
 const UPSTREAM = 'my-gateway API error (502): {"message":"Bad Gateway"}';
 const failed = () => fauxAssistantMessage("", { stopReason: "error", errorMessage: UPSTREAM });
-const LINE = "没能回复：调用模型失败（模型服务返回 502：Bad Gateway）。可以再发一次。";
+const LINE = "未能回复：模型调用失败（模型服务返回 502：Bad Gateway）。可重新发送。";
 
 /** 重试三次再放弃，但间隔调成 1 毫秒：要验的是放弃以后留下什么，不是退避多久。 */
 const options = { memory: "off" as const, retry: { maxRetries: 2, baseDelayMs: 1 } };

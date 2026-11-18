@@ -68,7 +68,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill",
+  "read", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -118,6 +118,8 @@ interface RouterState {
   turnError?: string;
   /** 这一轮最后一条可见回复，用于完成通知正文 */
   turnLastText?: string;
+  /** 这一轮最后一段以 NO_REPLY 收尾：助手决定不出声，没有新内容给用户看，不推「做完了」 */
+  turnSilent?: boolean;
   /** agent_settled 捕获的失败原因，reportTurnFailure 会清掉 turnError */
   turnFailure?: string;
   /** 这一轮开始前或事件带来的工作状态 */
@@ -533,7 +535,7 @@ export class RouterManager {
   private async automaticKnowledge(state: RouterState, query: string): Promise<string> {
     const ids = this.store.assistant(state.assistantId)?.knowledge ?? [];
     if ([...query.trim()].length < 4 || !ids.length || this.runtime.settings.settings.knowledge?.embedding.source !== "openai") return "";
-    this.setActivity(state, { state: "tool", label: t("正在查知识库") });
+    this.setActivity(state, { state: "tool", label: t("正在搜索知识库") });
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const results = await Promise.race([
@@ -546,7 +548,7 @@ export class RouterManager {
       return "";
     } finally {
       if (timer) clearTimeout(timer);
-      if (state.activity?.label === t("正在查知识库")) this.setActivity(state, null);
+      if (state.activity?.label === t("正在搜索知识库")) this.setActivity(state, null);
     }
   }
 
@@ -614,7 +616,7 @@ export class RouterManager {
     this.progress(state);
     if (event.type === "agent_start" || (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_start")) {
       state.thinkingText = "";
-      this.setActivity(state, { state: "thinking", label: t("正在想…") });
+      this.setActivity(state, { state: "thinking", label: t("正在思考…") });
       if (event.type === "agent_start") state.turnCalls = undefined;
       if (event.type === "agent_start") {
         state.turnLastText = undefined;
@@ -625,14 +627,14 @@ export class RouterManager {
       if (event.assistantMessageEvent.type === "thinking_delta") state.thinkingText = (state.thinkingText ?? "") + event.assistantMessageEvent.delta;
       // 节流；思考结束时补发一次完整的最后一段
       if (event.assistantMessageEvent.type === "thinking_end" || Date.now() - (state.activityLast ?? 0) >= 200) {
-        this.setActivity(state, { state: "thinking", label: thinkingLine(state.thinkingText ?? "") ?? t("正在想…") });
+        this.setActivity(state, { state: "thinking", label: thinkingLine(state.thinkingText ?? "") ?? t("正在思考…") });
         state.activityLast = Date.now();
       }
     }
     // 工具跑完、整理上下文时不再挂着上一个工具的名字
-    if (event.type === "turn_end" && state.activity?.state === "tool") this.setActivity(state, { state: "thinking", label: t("正在想…") });
+    if (event.type === "turn_end" && state.activity?.state === "tool") this.setActivity(state, { state: "thinking", label: t("正在思考…") });
     if (event.type === "compaction_start" && state.running > 0) this.setActivity(state, { state: "thinking", label: t("正在整理前面的对话…") });
-    if (event.type === "compaction_end" && state.running > 0) this.setActivity(state, { state: "thinking", label: t("正在想…") });
+    if (event.type === "compaction_end" && state.running > 0) this.setActivity(state, { state: "thinking", label: t("正在思考…") });
     if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
     // 一轮结束：有副作用的调用里没办成、后来也没办成的，各留一行提示（原因是工具报错的原文）
     if (event.type === "agent_end") void this.flushTurnFailures(state).catch((error) => console.error("写失败提示失败：", error));
@@ -742,7 +744,12 @@ export class RouterManager {
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
       const text = errorEcho(event.message) ? "" : messageText(event.message.content).trim();
-      state.turnLastText = text || state.turnLastText;
+      // 推送正文用用户看得到的文字：NO_REPLY 这个词不出现；以它收尾的一轮整轮不出声
+      if (text) {
+        state.turnSilent = saysNoReply(text);
+        const shown = stripNoReply(text);
+        if (shown && !state.turnSilent) state.turnLastText = shown;
+      }
       if (state.groupId) {
         this.runtime.groups?.settle(state.groupId, state.assistantId, text);
         return;
@@ -782,7 +789,7 @@ export class RouterManager {
     const calls = state.turnCalls;
     state.turnCalls = undefined;
     if (!calls?.size) return;
-    for (const { label, error } of calls.values()) await this.note(state, "info", t("「{tool}」没有成功", { tool: label }), error);
+    for (const { label, error } of calls.values()) await this.note(state, "info", t("「{tool}」执行失败", { tool: label }), error);
   }
 
   /**
@@ -829,7 +836,7 @@ export class RouterManager {
   private armStall(state: RouterState): void {
     state.stalled = false;
     state.turnError = undefined;
-    if (state.running === 1 && !state.session?.isStreaming) this.setActivity(state, { state: "thinking", label: t("正在想…") });
+    if (state.running === 1 && !state.session?.isStreaming) this.setActivity(state, { state: "thinking", label: t("正在思考…") });
     this.progress(state);
   }
 
@@ -1109,7 +1116,7 @@ export class RouterManager {
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
-    if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy) {
+    if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy && (error || !state.turnSilent)) {
       pushAssistantTurnEnd(
         { push: this.runtime.push, store: this.store },
         {
@@ -1123,6 +1130,7 @@ export class RouterManager {
     state.turnWorkDone = false;
     state.turnDelegation = false;
     state.turnFailure = undefined;
+    state.turnSilent = undefined;
     state.turnLastText = undefined;
   }
 
@@ -1144,7 +1152,7 @@ export class RouterManager {
     const error = state.turnError;
     state.turnError = undefined;
     if (!error || state.stalled) return;
-    const text = t("没能回复：调用模型失败（{error}）。可以再发一次。", { error: briefModelError(error) });
+    const text = t("未能回复：模型调用失败（{error}）。可重新发送。", { error: briefModelError(error) });
     await this.note(state, "info", text);
     // 单聊里这一行是卡片，不进模型上下文：另记一句，下一轮它知道上一轮没有回出去。群里那行本来就在时间线上
     if (!state.groupId) await this.remember(state.assistantId, text).catch(() => undefined);

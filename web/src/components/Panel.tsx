@@ -153,7 +153,7 @@ function GroupPanel({ g }: { g: GroupSummary }) {
           </span>
           <em className={busy.size ? "active" : ""}><span key={busy.size ? "busy" : "idle"}>{busy.size ? t("执行中") : t("空闲")}</span></em>
         </div>
-        <div className="gpanel-origin"><small>{t("负责什么")}</small>{g.purpose || t("还没写")}</div>
+        <div className="gpanel-origin"><small>{t("职责")}</small>{g.purpose || t("未填写")}</div>
       </div>
 
       <PanelRootDetails groupId={g.id} part="info" />
@@ -171,7 +171,7 @@ function GroupPanel({ g }: { g: GroupSummary }) {
                 <Avatar sprite={m.sprite} prop={m.prop} size={30} />
                 <span><strong>{m.name}</strong><small>{m.id === g.ownerId ? t("群主 · {duty}", { duty: m.duty }) : m.duty}</small></span>
               </button>
-              <em className={count ? "busy" : ""}>{count ? t("在办 {n} 件", { n: count }) : busy.has(m.id) ? t("在说") : t("空闲")}</em>
+              <em className={count ? "busy" : ""}>{count ? t("进行中 {n}", { n: count }) : busy.has(m.id) ? t("正在发言") : t("空闲")}</em>
               {/* 群主没有操作菜单：占住同样的宽度，状态和别的行对齐 */}
               {m.id === g.ownerId ? <i className="gm-dots gm-dots-gap" aria-hidden="true"><Icon name="more" size={18} /></i> : (
                 <button className="gm-dots" aria-label={t("{name}的操作", { name: m.name })} onClick={(event) => menu.toggle(m.id, event.currentTarget)}><Icon name="more" size={18} /></button>
@@ -192,7 +192,7 @@ function GroupPanel({ g }: { g: GroupSummary }) {
                 <em className="gm-pick-add"><Icon name="plus" size={14} />{t("加入")}</em>
               </button>
             ))}
-            {s.assistants.every((a) => g.members.includes(a.id)) ? <div className="gm-empty">{t("所有助手都在这个群里了")}</div> : null}
+            {s.assistants.every((a) => g.members.includes(a.id)) ? <div className="gm-empty">{t("所有助手均已加入此群")}</div> : null}
           </div>
         ) : (
           <button className="gm-row gm-add-row" onClick={() => setAdding(true)}>
@@ -205,7 +205,7 @@ function GroupPanel({ g }: { g: GroupSummary }) {
 
       {ending ? (
         <div className="group-card sidebar-card-group mergeconfirm">
-          {t("结束「{name}」？群会归档，时间线和任务都留着，不会转给别人。", { name: g.name })}
+          {t("结束「{name}」？群会归档，时间线与任务均保留，不会转交给其他助手。", { name: g.name })}
           <div className="acts">
             <button className="hob-btn hob-btn-primary" onClick={() => void archiveGroup(g.id)}>{t("确认结束")}</button>
             <button className="hob-btn" onClick={() => setEnding(false)}>{t("取消")}</button>
@@ -319,7 +319,7 @@ function GroupSettings({ id }: { id: string }) {
   return <>
     <div className="pgroup"><div className="bigav"><GroupCluster g={group} assistants={s.assistants} size={64} /></div>
       <div className="sech"><span>{t("基本信息")}</span></div><div className="group-card sidebar-card-group">
-      {([ ["name", t("群名")], ["purpose", t("负责什么")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
+      {([ ["name", t("群名")], ["purpose", t("职责")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
       </div></div>
     <div className="pgroup"><div className="sech"><span>{t("模型")}</span></div>
     <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...settings.roster.map((entry) => ({ value: entry.ref, label: view?.models.find((item) => item.ref === entry.ref)?.name ?? entry.ref }))]} /></div>)}
@@ -361,8 +361,8 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
 
 /** 停了的定时任务怎么说：列表和详情用同一句，详情后面再带时间。 */
 function stoppedText(routine: Routine): string | undefined {
-  if (routine.stopReason === "hit") return t("已触发，已停");
-  if (routine.stopReason === "finished") return t("已跑完");
+  if (routine.stopReason === "hit") return t("已触发，已停止");
+  if (routine.stopReason === "finished") return t("已完成");
   return undefined;
 }
 
@@ -505,7 +505,7 @@ function NewRoutine({ groupId }: { groupId?: string }) {
         <textarea
           rows={4}
           value={instruction}
-          placeholder={groupId ? t("到点后交给群主处理的内容，写清楚需要什么结果") : t("到点后交给后台任务执行的内容，写清楚需要什么结果")}
+          placeholder={groupId ? t("执行时交给群主处理的内容，写明所需结果") : t("执行时交给后台任务执行的内容，写明所需结果")}
           onChange={(e) => setInstruction(e.target.value)}
         />
       </label>
@@ -600,7 +600,7 @@ function RoutineEditor({ id }: { id: string }) {
       </div>
       {r.once || stoppedText(r) ? (
         <div className="rt-when-note">
-          {[r.once ? t("触发一次就停") : "", stoppedText(r) ? `${stoppedText(r)}${r.stoppedAt ? ` · ${fmtWhen(r.stoppedAt)}` : ""}` : ""].filter(Boolean).join(" · ")}
+          {[r.once ? t("运行一次后停止") : "", stoppedText(r) ? `${stoppedText(r)}${r.stoppedAt ? ` · ${fmtWhen(r.stoppedAt)}` : ""}` : ""].filter(Boolean).join(" · ")}
         </div>
       ) : null}
 
@@ -847,7 +847,7 @@ function AssistantSkills({ aid }: { aid: string }) {
       <button className="assistant-skill-info" onClick={() => openFilePreview(skill.path)} title={`${skill.description} · ${skillUsage(skill)}`}><strong>{skill.title}</strong><span>{skill.description} · {skillUsage(skill)}</span></button>
       <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={skill.title} aria-pressed={skill.enabled} onClick={() => void changeAssistantSkill(aid, skill.name, skill.enabled ? "disable" : "enable")} />
       <button className="knowledge-dots" aria-label={t("{name}的操作", { name: skill.title })} onClick={(e) => menu.toggle(skill.name, e.currentTarget)}><Icon name="more" size={18} /></button>
-    </div>)}</div> : <Empty>{t("还没有技能。助手会把做成的事沉淀成技能，你也可以在任务详情里点「沉淀成技能」。")}</Empty>}
+    </div>)}</div> : <Empty>{t("还没有技能。助手会把完成的任务沉淀成技能，你也可以在任务详情中点击「沉淀成技能」。")}</Empty>}
     {selected && menu.menu && createPortal(<div className="amenu knowledge-popup" ref={menu.box}>
       <button onClick={() => { menu.close(); openFilePreview(selected.path); }}>{t("查看")}</button>
       {selected.version > 1 ? <button onClick={() => { menu.close(); void changeAssistantSkill(aid, selected.name, "rollback"); }}>{t("回退到上一版")}</button> : null}
@@ -994,9 +994,9 @@ function AssistantSettings() {
     <>
       <div className="pgroup">
         <div className="bigav">
-          <Avatar sprite={a.sprite} prop={a.prop} size={96} motion="home" onClick={() => setPicking((v) => !v)} title={t("换头像")} />
+          <Avatar sprite={a.sprite} prop={a.prop} size={96} motion="home" onClick={() => setPicking((v) => !v)} title={t("更换头像")} />
         </div>
-        <div className="avatar-hint">{t("点头像更换")}</div>
+        <div className="avatar-hint">{t("点击头像更换")}</div>
         {picking ? <SpritePicker aid={aid} sprite={a.sprite} prop={a.prop} onDone={() => setPicking(false)} /> : null}
 
         <PanelSaveStatus message={feedback.message} />
@@ -1044,7 +1044,7 @@ function AssistantSettings() {
             onClick={() => void feedback.save({ notify: !a.notify })}
           />
         </div>
-        <div className="note">{t("要在手机上接收推送，请先在 设置 → 通知 中开启本机推送。")}</div>
+        <div className="note">{t("如需在手机上接收推送，请先在 设置 → 通知 中开启本机推送。")}</div>
 
         {a.primary ? null : (
           <>
@@ -1071,7 +1071,7 @@ function AssistantSettings() {
           <div className="mergebar sidebar-group">
             {archiving ? (
               <div className="mergeconfirm">
-                {t("归档「{name}」？它会从列表中移除，定时任务一并停掉。对话、规则和历史任务都留着，不会转给 Hob。", { name: a.name })}
+                {t("归档「{name}」？它将从列表中移除，定时任务一并停止。对话、规则和历史任务均保留，不会转交给 Hob。", { name: a.name })}
                 <div className="acts">
                   <button className="hob-btn hob-btn-primary" onClick={() => void archiveAssistant(aid)}>
                     {t("确认归档")}

@@ -3,7 +3,7 @@
 // 一份待办有头有尾：全做完了、被清掉了、话题关了、一轮结束时手上没活了、转交出去，就清空当前这份；收起的那些不进对话，也不进时间线。
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Iso, TodoItem } from "../../shared/types.ts";

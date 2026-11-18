@@ -39,11 +39,11 @@ describe("任务", () => {
 
   it("任务事件按完整结果长度分段，缺结果说明原因", () => {
     const job = { id: "t-1", assistantId: "hob", assistantName: "Hob", title: "测试", instruction: "", status: "done" as const, createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [], reportPath: "/tmp/report.md" };
-    expect(jobResultEvent({ ...job, summary: "短结果" })).toBe("「Hob」的任务「测试」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果：\n短结果");
+    expect(jobResultEvent({ ...job, summary: "短结果" })).toBe("「Hob」的任务「测试」（t-1）已完成。\n过程：工具操作 0 次，没用技能。\n结果：\n短结果");
     const long = "字".repeat(3001);
-    expect(jobResultEvent({ ...job, summary: long })).toBe(`「Hob」的任务「测试」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果（共 3001 字，以下是前 3,000 字；全文：/tmp/report.md）：\n${long.slice(0, 3000)}`);
-    expect(jobResultEvent({ ...job, status: "failed", statusReason: "中断" })).toBe("「Hob」的任务「测试」（t-1）失败。\n过程：动手 0 次，没用技能。\n中断");
-    expect(jobResultEvent({ ...job, summary: "短结果" }, "定时任务「每日」")).toBe("定时任务「每日」（t-1）已完成。\n过程：动手 0 次，没用技能。\n结果：\n短结果");
+    expect(jobResultEvent({ ...job, summary: long })).toBe(`「Hob」的任务「测试」（t-1）已完成。\n过程：工具操作 0 次，没用技能。\n结果（共 3001 字，以下是前 3,000 字；全文：/tmp/report.md）：\n${long.slice(0, 3000)}`);
+    expect(jobResultEvent({ ...job, status: "failed", statusReason: "中断" })).toBe("「Hob」的任务「测试」（t-1）失败。\n过程：工具操作 0 次，没用技能。\n中断");
+    expect(jobResultEvent({ ...job, summary: "短结果" }, "定时任务「每日」")).toBe("定时任务「每日」（t-1）已完成。\n过程：工具操作 0 次，没用技能。\n结果：\n短结果");
   });
   it("report 的 outcome 不认识就退回重填，不当成已完成", async () => {
     const hob = makeHob();
@@ -577,7 +577,7 @@ describe("任务做完就提醒沉淀，写明用了哪些技能", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const lines = assistantJobResultEvent(hob.home, makeJob(), { toolCount: 3 }).split("\n");
-      expect(lines.slice(0, 4)).toEqual(["「Hob」的任务「整理报告」（t-hint）已完成。", "过程：动手 3 次，没用技能。", hint, "结果："]);
+      expect(lines.slice(0, 4)).toEqual(["「Hob」的任务「整理报告」（t-hint）已完成。", "过程：工具操作 3 次，没用技能。", hint, "结果："]);
     } finally { hob.close(); }
   });
 

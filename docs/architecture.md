@@ -22,8 +22,9 @@ Hob 是常驻助手。你只跟助手说话；活由后台任务去干，干完�
 ## 进程和底座
 
 - 单个 Node 22 进程：`server/`（Hono + SSE）+ `web/`（Vite + React，构建后由 server 静态托管）。入口是 `server/src/boot.ts`。
-- 底座是 pi SDK `@earendil-works/pi-coding-agent@1.3.0`（引擎），在进程内 `createAgentSession`。界面、提示词、错误信息里不出现 pi：用户不需要知道它。
+- 底座是 pi SDK `@earendil-works/pi-coding-agent@1.5.2`（引擎），在进程内 `createAgentSession`。界面、提示词、错误信息里不出现 pi：用户不需要知道它。
   - 服务商和凭据全归 Hob 自己管：引擎目录是 `HOB_HOME/system/engine`（`authPath` 在这里，模型配置 `modelsPath` 是 `HOB_HOME/system/engine/models.json`），不读不写任何别的工具的配置。
+  - Hob 为每个 Router 和 Worker 会话显式设置 `cacheWarming: "streaming"`。1.5.1 的默认值改为 `idle`，只对模型声明了 prompt cache 生命周期且预计节省达到阈值的请求生效；Hob 同时维护许多可独立空闲的会话，idle 会在两轮之间额外发刷新请求，因此保留升级前只在活动运行期间预热的行为。
   - 启动时和每次服务商变动，把设置里的服务商套进引擎：内置服务商 `setRuntimeApiKey` / `removeRuntimeApiKey`，兼容接口 `registerProvider` / `unregisterProvider`。
   - 思考档也按 Hob 自己的设置写给引擎（见下文“思考档”）：兼容接口写进模型的 `thinkingLevelMap`，内置服务商写进 `HOB_HOME/system/engine/models.json` 的 `providers.<id>.modelOverrides`，写完 `refresh()` 一次让引擎重读。
   - 会话文件一律放在 `HOB_HOME` 下（不放进引擎目录）。

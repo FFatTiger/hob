@@ -65,7 +65,7 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   const { store, bus, router, jobs } = runtime;
   const approval = store.approval(approvalId);
   if (!approval) return { status: 404, body: { error: "审批不存在" } };
-  if (approval.status !== "pending") return { status: 409, body: { error: "这个审批已经答复过了" } };
+  if (approval.status !== "pending") return { status: 409, body: { error: "这个审批已答复" } };
   const questions = approval.questions?.length ? approval.questions : undefined;
   // 多问题卡：每个问题都要答（选了选项或自己写了一句都算），补充说明可有可无
   let answers: ApprovalAnswer[] = [];
@@ -216,7 +216,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
   const { store, bus, router, routines } = runtime;
   const draft = store.draft(draftId);
   if (!draft) return { status: 404, body: { error: "草稿不存在" } };
-  if (draft.status !== "pending") return { status: 409, body: { error: "这个草稿已经处理过了" } };
+  if (draft.status !== "pending") return { status: 409, body: { error: "这个草稿已处理" } };
   const id = slugify(draft.name);
   if (store.assistant(id)) {
     return { status: 409, body: { error: `已存在名称为「${draft.name}」的助手` } };
@@ -292,7 +292,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
 export function dismissDraft(runtime: HobRuntime, draftId: string): ActionResult {
   const draft = runtime.store.draft(draftId);
   if (!draft) return { status: 404, body: { error: "草稿不存在" } };
-  if (draft.status !== "pending") return { status: 409, body: { error: "这个草稿已经处理过了" } };
+  if (draft.status !== "pending") return { status: 409, body: { error: "这个草稿已处理" } };
   const next: Draft = { ...draft, status: "dismissed" };
   runtime.store.saveDraft(next);
   runtime.bus.emit({ type: "draft", draft: next });

@@ -84,8 +84,8 @@ describe("server user-facing translations", () => {
       hob.faux.setResponses([call("start_job", { title: "Check disk", note: "" }), text("Let me fix that.")]);
       await hob.runtime.router.send("hob", { text: "Check the disk" });
       await hob.runtime.router.waitIdle("hob");
-      const note = hob.runtime.router.items("hob").items.find((item) => item.kind === "note" && item.text.includes("did not succeed"));
-      expect(note).toMatchObject({ kind: "note", text: "“创建任务” did not succeed" });
+      const note = hob.runtime.router.items("hob").items.find((item) => item.kind === "note" && item.text.includes("failed"));
+      expect(note).toMatchObject({ kind: "note", text: "“创建任务” failed" });
     } finally { hob.close(); }
   });
 

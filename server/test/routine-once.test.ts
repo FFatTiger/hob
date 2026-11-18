@@ -33,14 +33,14 @@ describe("定时任务：具体时间点和一次就停", () => {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "交房租", instruction: "提醒我交房租", schedules: ["2026-11-08T09:00"] });
       expect(hob.runtime.routines.nextRuns(routine.id)).toHaveLength(1);
 
-      setNow("2026-11-08T01:00:05Z"); // 上海 09:00:05，到点了
+      setNow("2026-11-08T01:00:05Z"); // 上海 09:00:05，已到执行时间
       await hob.runtime.routines.fire(routine.id);
 
       const saved = hob.runtime.store.routine(routine.id)!;
       expect(saved).toMatchObject({ active: false, stopReason: "finished" });
       expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("提醒我交房租"), expect.anything());
       expect(hob.runtime.store.jobs()).toHaveLength(0);
-      expect(routineNotes(hob)).toContain("定时任务「交房租」已跑完最后一次，停了");
+      expect(routineNotes(hob)).toContain("定时任务「交房租」已完成最后一次运行，已停止");
       expect(hob.runtime.routines.nextRuns(routine.id)).toHaveLength(0);
     } finally {
       hob.close();
@@ -73,7 +73,9 @@ describe("定时任务：具体时间点和一次就停", () => {
       await hob.runtime.routines.fire(routine.id);
       expect(hob.runtime.store.routine(routine.id)).toMatchObject({ active: false, stopReason: "hit" });
       expect(event).toHaveBeenCalledWith("hob", expect.stringContaining("提醒我交房租"), expect.anything());
-      expect(routineNotes(hob)).toContain("定时任务「交房租」已触发，按设置停了");
+      // 到执行时间那一行就写明停了，不再另起一行「已触发，已按设置停止」
+      expect(routineNotes(hob)).toContain("定时任务「交房租」已到执行时间，仅运行一次，已停用");
+      expect(routineNotes(hob)).not.toContain("定时任务「交房租」已触发，已按设置停止");
     } finally {
       hob.close();
     }
@@ -176,20 +178,20 @@ describe("定时任务：具体时间点和一次就停", () => {
     }
   });
 
-  it("工具：once 和具体时间传进去，返回里写清只跑一次、触发一次就停", async () => {
+  it("工具：once 和具体时间传进去，返回里写清只运行一次、运行一次后停止", async () => {
     setNow("2026-11-08T00:30:00Z");
     const hob = makeHob();
     try {
       const create = tool(hob, "create_routine");
       const created = await create({ name: "交房租", instruction: "提醒我交房租", schedules: ["2026-11-08T09:00"], once: true });
       expect(created.isError).toBeFalsy();
-      expect(created.content[0].text).toContain("定时任务「交房租」已创建，11月8日 09:00跑一次；触发一次就停。");
+      expect(created.content[0].text).toContain("定时任务「交房租」已创建，11月8日 09:00运行一次；运行一次后停止。");
       const routine = hob.runtime.store.routines()[0];
       expect(routine).toMatchObject({ schedules: ["2026-11-08T09:00"], once: true });
 
       const update = tool(hob, "update_routine");
       const updated = await update({ routineId: routine.id, active: true, once: false });
-      expect(updated.content[0].text).toContain("已修改，11月8日 09:00跑一次。");
+      expect(updated.content[0].text).toContain("已修改，11月8日 09:00运行一次。");
       expect(hob.runtime.store.routine(routine.id)?.once).toBe(false);
     } finally {
       hob.close();
@@ -200,11 +202,11 @@ describe("定时任务：具体时间点和一次就停", () => {
     const hob = makeHob();
     try {
       const tools = buildRouterTools(hob.runtime, "hob");
-      const expected = "一个或多个；可以是 cron 表达式，也可以是具体时间（如 2026-11-08T09:00），到点只跑一次。";
+      const expected = "一个或多个；可以是 cron 表达式，也可以是具体时间（如 2026-11-08T09:00），到执行时间只运行一次。";
       for (const name of ["create_routine", "update_routine"]) {
         const found = tools.find((item) => item.name === name)!;
         expect(found.parameters.properties.schedules.description, name).toBe(expected);
-        expect(found.parameters.properties.once.description, name).toContain("为 true 时做成一次就停");
+        expect(found.parameters.properties.once.description, name).toContain("设置为仅运行一次");
       }
     } finally {
       hob.close();

@@ -88,7 +88,7 @@ describe("交回 Hob", () => {
       const tool = buildRouterTools(hob.runtime, "write").find((item) => item.name === "message_assistant")!;
       const result = await tool.execute("call", { assistantId: "hob", note: "交回主助手" }) as { isError?: boolean; error?: string };
       expect(result).toMatchObject({ isError: true });
-      expect(result.error ?? result.content?.[0]?.text).toBe("你在办「服务器」转来的事：不归你管就用 hand_back 交回它，由它再转。");
+      expect(result.error ?? result.content?.[0]?.text).toBe("你在处理「服务器」转来的事：不归你管就用 hand_back 交回它，由它再转。");
     } finally { hob.close(); }
   });
 
@@ -198,7 +198,7 @@ describe("交回 Hob", () => {
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
       const prompt = buildSystemPrompt(hob.runtime.store, "ops", { timezone, aboutYou, memory: "local" });
       expect(prompt).not.toContain("## 转来的事");
-      expect(prompt).toContain("转来的消息是转交方写的交接说明，里面引用的用户原话等同用户本人的要求");
+      expect(prompt).toContain("交来的消息是交接方写的交接说明，里面引用的用户原话等同用户本人的要求");
       expect(prompt).toContain("先给结论，用规范的书面中文。长短跟着事情的分量走");
       const primary = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
       expect(primary).toContain("任务只向你汇报，给用户看什么由你决定。");

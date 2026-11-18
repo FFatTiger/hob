@@ -20,7 +20,7 @@ export function membersLine(g: GroupSummary): string {
 
 function Unread({ g }: { g: GroupSummary }) {
   if (g.unread > 0) return <span className="topic-unread">{g.unread}</span>;
-  if (g.busy.length) return <span className="topic-busy" title={t("正在做")} aria-label={t("正在做")} />;
+  if (g.busy.length) return <span className="topic-busy" title={t("进行中")} aria-label={t("进行中")} />;
   return null;
 }
 
@@ -105,7 +105,7 @@ export function GroupSidebar({ groupId }: { groupId?: string }) {
           <strong>{g.name}</strong>
           <small>{membersLine(g)}</small>
         </span>
-        <button className="hob-icon-btn" title={t("开新话题")} onClick={() => setCreating(true)}>
+        <button className="hob-icon-btn" title={t("创建新话题")} onClick={() => setCreating(true)}>
           <Icon name="plus" size={19} />
         </button>
       </div>
@@ -151,7 +151,7 @@ export function MobileTopics({ groupId }: { groupId?: string }) {
           <small>{membersLine(g)}</small>
         </span>
         <span className="sp" />
-        <button className="hob-icon-btn" title={t("开新话题")} onClick={() => setCreating(true)}>
+        <button className="hob-icon-btn" title={t("创建新话题")} onClick={() => setCreating(true)}>
           <Icon name="plus" size={20} />
         </button>
       </div>
@@ -179,7 +179,7 @@ export function PlaceJobs({ ids, where = true }: { ids: string[]; where?: boolea
   if (!jobs.length) return null;
   return (
     <div className="group-card gmembers place-jobs">
-      <span className="gm-title">{t("正在做 · {n}", { n: jobs.length })}</span>
+      <span className="gm-title">{t("进行中 · {n}", { n: jobs.length })}</span>
       {jobs.map((job) => {
         const a = s.assistants.find((x) => x.id === job.assistantId);
         const place = s.groups.find((g) => g.id === job.groupId);
@@ -213,7 +213,7 @@ export function NewTopicDialog({ group, onClose }: { group: GroupSummary; onClos
     if (failure) setError(failure);
     else onClose();
   };
-  return <DialogShell label={t("新话题")} title={t("新话题")} className="topic-create" onClose={onClose} onSubmit={(event) => { event.preventDefault(); void submit(); }} actions={<><button type="button" className="hob-btn" onClick={onClose}>{t("取消")}</button><button type="submit" className="hob-btn hob-btn-primary" disabled={busy || !title.trim()}>{t("开话题")}</button></>}>
+  return <DialogShell label={t("新话题")} title={t("新话题")} className="topic-create" onClose={onClose} onSubmit={(event) => { event.preventDefault(); void submit(); }} actions={<><button type="button" className="hob-btn" onClick={onClose}>{t("取消")}</button><button type="submit" className="hob-btn hob-btn-primary" disabled={busy || !title.trim()}>{t("创建话题")}</button></>}>
         <label className="gcreate-field">
           <span>{t("话题名")}</span>
           <input autoFocus maxLength={40} value={title} placeholder={t("一件事，如「相册备份出错」")} onChange={(event) => setTitle(event.target.value)} />
@@ -261,7 +261,7 @@ export function TopicPanel({ topic }: { topic: GroupSummary }) {
 
       {spoken.length ? (
         <div className="group-card gmembers topic-spoken">
-          <span className="gm-title">{t("话题里说过话的")}</span>
+          <span className="gm-title">{t("在话题中发言过的成员")}</span>
           <div className="topic-spoken-row">
             {spoken.map((a) => <Avatar key={a.id} sprite={a.sprite} prop={a.prop} size={26} />)}
             <span>{spoken.map((a) => a.name).join(t("、"))}</span>

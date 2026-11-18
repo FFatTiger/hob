@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { mkdirSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { chromium, type Browser, type Page } from "playwright-core";
 import { assistantFilesDir } from "./config.ts";
@@ -123,9 +123,9 @@ export class DesktopToolSession {
               }
               const files = readdirSync(dir).filter((name) => /^\d{8}T\d{9}\.png$/.test(name)).sort();
               for (const name of files.slice(0, -20)) unlinkSync(join(dir, name));
-              const send = this.router ? "用 send_file 发它" : "report 时放进 files";
-              if (!(typeof canSeeImages === "function" ? canSeeImages() : canSeeImages)) return { content: [{ type: "text" as const, text: `当前模型不能看图。截图已存到 ${path}：要给用户看，${send}；要自己读页面内容，用 browser_snapshot。` }], details: undefined };
-              return { content: [{ type: "image" as const, data: value.toString("base64"), mimeType: "image/png" }, { type: "text" as const, text: `截图已存到 ${path}。要给用户看，${send}。` }], details: undefined };
+              const send = this.router ? "使用 send_file 发送" : "在 report 时放进 files";
+              if (!(typeof canSeeImages === "function" ? canSeeImages() : canSeeImages)) return { content: [{ type: "text" as const, text: `当前模型无法查看图片。截图已保存到 ${path}：要发送给用户，${send}；要自行读取页面内容，请使用 browser_snapshot。` }], details: undefined };
+              return { content: [{ type: "image" as const, data: value.toString("base64"), mimeType: "image/png" }, { type: "text" as const, text: `截图已保存到 ${path}。要发送给用户，${send}。` }], details: undefined };
             }
             return { content: [{ type: "text" as const, text: value }], details: undefined };
           } catch (error) {

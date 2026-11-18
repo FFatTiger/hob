@@ -61,7 +61,7 @@ describe("任务耗时督办", () => {
       check(minute * first * 60_000 - 1);
       expect(event).not.toHaveBeenCalled();
       check(minute * first * 60_000);
-      const expectedSource = source === "assistant" ? "派活时估的" : source === "routine" ? "这个定时任务以前 1 次的中位数" : "默认 10 分钟";
+      const expectedSource = source === "assistant" ? "分派任务时估计的" : source === "routine" ? "这个定时任务以前 1 次的中位数" : "默认 10 分钟";
       expect(event.mock.calls[0][0]).toBe("hob");
       expect(event.mock.calls[0][1]).toContain(`预计的 ${minute} 分钟（${expectedSource}）。\n最近的过程（新的在前）：`);
       hob.runtime.jobs.checkStalls();

@@ -13,7 +13,7 @@ describe("工具说明和确认选项", () => {
       const ask = vi.spyOn(hob.runtime.jobs, "askQuestion").mockResolvedValue("选了");
       const worker = registerAskTool(hob.runtime, "t-test");
       const input = { title: "清理吗", options: [{ label: "清理" }, { label: "不清理" }], remember: "清理临时目录" };
-      const expected = { ruleText: "清理临时目录", options: [{ key: "A", label: "清理" }, { key: "B", label: "不清理" }, { key: "C", label: "以后「清理临时目录」直接做", always: true }] };
+      const expected = { ruleText: "清理临时目录", options: [{ key: "A", label: "清理" }, { key: "B", label: "不清理" }, { key: "C", label: "以后「清理临时目录」直接执行", always: true }] };
       await router.execute("r", input);
       expect(hob.runtime.store.approvals()[0]).toMatchObject(expected);
       await worker.execute("w", input);
@@ -37,10 +37,10 @@ describe("工具说明和确认选项", () => {
       const params = { site: "测试站", reason: "需要用户完成两步验证" };
       await router.execute("r", params);
       const approval = hob.runtime.store.approvals()[0];
-      expect(approval).toMatchObject({ login: params, source: "router", options: [{ key: "A", label: "好了" }] });
+      expect(approval).toMatchObject({ login: params, source: "router", options: [{ key: "A", label: "已登录" }] });
       expect(hob.runtime.router.items("hob").items).toContainEqual(expect.objectContaining({ kind: "question", approvalId: approval.id }));
       await worker.execute("w", params);
-      expect(ask).toHaveBeenCalledWith("t-login", { title: "需要登录：测试站", detail: params.reason, options: [{ key: "A", label: "好了" }], recommended: "A", login: params });
+      expect(ask).toHaveBeenCalledWith("t-login", { title: "需要登录：测试站", detail: params.reason, options: [{ key: "A", label: "已登录" }], recommended: "A", login: params });
     } finally { hob.close(); }
   });
 

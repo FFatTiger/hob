@@ -52,8 +52,8 @@ describe("群定时", () => {
       const delivered: { gid: string; aid: string; event: string; trigger?: string }[] = [];
       hob.runtime.groups.deliverEvent = async (gid, aid, event, trigger) => { delivered.push({ gid, aid, event, trigger }); };
       expect(await hob.runtime.routines.runNow(routine.id)).toEqual({ outcome: "handed" });
-      const note = hob.runtime.groups.items(topic.id).items.find((item) => item.kind === "note" && item.text.includes("到点了"))!;
-      expect(delivered[0]).toMatchObject({ gid: topic.id, aid: "hob", trigger: note.id, event: expect.stringContaining("服务器写的要做的事：检查") });
+      const note = hob.runtime.groups.items(topic.id).items.find((item) => item.kind === "note" && item.text.includes("已到执行时间"))!;
+      expect(delivered[0]).toMatchObject({ gid: topic.id, aid: "hob", trigger: note.id, event: expect.stringContaining("服务器 填写的任务内容：检查") });
       expect(hob.runtime.store.jobs()).toHaveLength(0);
       expect(hob.runtime.store.routine(routine.id)?.runs[0]).toMatchObject({ status: "handed" });
       hob.runtime.groups.update(group.id, { ownerId: "ops" });

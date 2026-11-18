@@ -46,14 +46,14 @@ const ACTIVITY_LIMIT = 200;
 const ENDED: JobStatus[] = ["done", "stuck", "failed", "stopped"];
 
 /** 这一轮没交结果时的提醒：续做、沉淀都用这一句。 */
-const NO_RESULT_PROMPT = "这一轮结束了，还没有交结果。做完了就调用 report 交结果；没做完，也用 report 说明做到哪、卡在哪。";
+const NO_RESULT_PROMPT = "这一轮结束了，还没有提交结果。完成后调用 report 提交结果；未完成时，也用 report 说明做到哪、受阻原因、缺什么。";
 
 /** 沉淀消息的前四段（从 SEDIMENT_PROMPT_HEAD 接下去），和以前逐字一致。 */
 const SEDIMENT_BODY = `，下次接到同类的事，照着它就能一次做成用户要的样子。
 
 下一次的情况会和这次不一样，所以技能写这一类事怎么做，不写这一次的经过和数据。按做事的顺序写步骤，带上要用的命令、查询和判断点，怎么判断结果对不对，写在对应的那一步里。用户在过程中纠正过的做法、对结果提过的要求，最能帮下次少走弯路，要写进去。踩过的坑写成一条规则加一句原因，放在它影响的那一步；会变的情况写怎么查，不写死。每条经验只写一次，修补时直接改掉写错的那句。
 
-技能要照着能跑通。写进去的只读命令和查询，存之前再跑一遍，确认照着写的就能用；能写成脚本的步骤，写成只读脚本放在 scripts/，一次输出要看的全部结果，跑一遍、输出对得上再保存。会改东西的步骤只写在正文里，留给以后的任务确认后再执行。偶尔才用得上的细节放 references/，按主题起文件名。
+技能要照着能实际运行。写进去的只读命令和查询，保存之前再运行一遍，确认照着写的就能用；能写成脚本的步骤，写成只读脚本放在 scripts/，一次输出要查看的全部结果，运行一遍、输出对得上再保存。会修改东西的步骤只写在正文里，留给以后的任务确认后再执行。偶尔才用得上的细节放 references/，按主题起文件名。
 
 有几类东西留在技能外面：临时故障和网络错误，环境没装好、没配好导致的失败只写怎么装好、配好；「某个工具不能用」这类结论，环境修好以后它还会一直挡路；这次没走通的尝试。助手的规则和工具说明里已经有的，也不用重复。
 
@@ -65,7 +65,7 @@ export function sedimentMessage(input: { into?: VisibleSkill; skillsDir: string;
     ? `这次在技能「${input.into.title ?? input.into.name}」（${input.into.name}，第 ${input.into.version} 版）的基础上改：它在 ${input.into.dir}，先读它现在的内容，再直接改这个目录里的文件。`
     : `这次新建一个技能，名字和说明按这一类事来起，不按这一次。建在 ${input.skillsDir}/<名字>/，名字只用小写字母、数字和连字符，如 weekly-report。SKILL.md 开头这样写：\n\`\`\`\n---\nname: <名字>\ndescription: <什么时候用，一句话，120 字以内>\nmetadata:\n  title: <${input.english ? "英文名，如「Weekly report」" : "中文名，如「每周周报」"}>\n---\n\`\`\``;
   const note = input.note ? `\n「${input.assistantName}」交代：${input.note}` : "";
-  return `${SEDIMENT_PROMPT_HEAD}${SEDIMENT_BODY}${fifth}${note}\n\n写好以后调用 report，result 里写这次新建或改了哪些地方。一次性的事、几步就做完的事，或者照常做就不会走弯路的事，没有值得沉淀的，不用动技能，调用 report 说一句为什么就好。`;
+  return `${SEDIMENT_PROMPT_HEAD}${SEDIMENT_BODY}${fifth}${note}\n\n写好以后调用 report，result 里写这次新建或修改了哪些地方。一次性的事、几步就完成的事，或者照常执行就不会走弯路的事，没有值得沉淀的，不用修改技能，调用 report 说一句为什么就好。`;
 }
 
 const ALL_ABILITIES: Abilities = { exec: true, write: true, image: true };
@@ -94,7 +94,7 @@ export function validateJobCwd(home: string, cwd: string): void {
   };
   const path = relative(canonical(home), canonical(cwd));
   if (!path || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))) {
-    throw new Error("不能在 Hob 的数据目录里干活；不填 cwd 就在任务自己的目录里做。");
+    throw new Error("不能在 Hob 的数据目录里执行任务；不填 cwd 就在任务自己的目录里执行。");
   }
 }
 
@@ -197,7 +197,7 @@ export function jobResultHeader(job: Job): string {
 export function jobResultEvent(job: Job, prefix = jobResultHeader(job), skillTitles: string[] = [], toolCount = job.stats.reads + job.stats.commands + job.stats.edits, hint?: string): string {
   const status = job.status === "done" ? "已完成" : job.status === "stuck" ? "受阻" : job.status === "stopped" ? "已停止" : "失败";
   const result = job.summary;
-  const header = `${prefix}（${job.id}）${status}${job.durationMs !== undefined ? `，用时 ${duration(job.durationMs)}${job.expect ? `，预计 ${job.expect.minutes} 分钟` : ""}` : ""}。\n过程：动手 ${toolCount} 次，${skillTitles.length ? `用了技能${skillTitles.map((title) => `「${title}」`).join("")}` : "没用技能"}。${hint ? `\n${hint}` : ""}`;
+  const header = `${prefix}（${job.id}）${status}${job.durationMs !== undefined ? `，用时 ${duration(job.durationMs)}${job.expect ? `，预计 ${job.expect.minutes} 分钟` : ""}` : ""}。\n过程：工具操作 ${toolCount} 次，${skillTitles.length ? `用了技能${skillTitles.map((title) => `「${title}」`).join("")}` : "没用技能"}。${hint ? `\n${hint}` : ""}`;
   if (!result) return `${header}\n${job.statusReason ?? "没有结果"}`;
   return result.length > EVENT_SUMMARY_MAX
     ? `${header}\n结果（共 ${result.length} 字，以下是前 3,000 字；全文：${job.reportPath}）：\n${result.slice(0, EVENT_SUMMARY_MAX)}`
@@ -348,7 +348,7 @@ export class JobManager {
       const before = this.store.job(id);
       if (!before) throw new Error(`没有这个任务：${id}`);
       if (before.status === "stuck" || before.status === "failed" || before.status === "stopped") {
-        throw new Error(`前置任务「${before.title}」（${id}）${endWord(before.status)}，等不到它做完了。`);
+        throw new Error(`前置任务「${before.title}」（${id}）${endWord(before.status)}，无法等待它完成。`);
       }
     }
     if (input.cwd?.trim()) {
@@ -465,7 +465,7 @@ export class JobManager {
   private async blockDependents(job: Job): Promise<void> {
     if (job.status === "done") return;
     for (const dependent of this.store.jobs().filter((item) => item.status === "queued" && item.after?.includes(job.id))) {
-      await this.finish(dependent.id, "stuck", undefined, `前置任务「${job.title}」没做成`);
+      await this.finish(dependent.id, "stuck", undefined, `前置任务「${job.title}」未完成`);
     }
   }
 
@@ -1211,14 +1211,14 @@ export class JobManager {
     }
   }
 
-  async stop(jobId: string, reason = "你叫停了"): Promise<void> {
+  async stop(jobId: string, reason = "你停止了"): Promise<void> {
     const job = this.store.job(jobId);
     if (!job) throw new Error("没有这个任务。");
     const worker = this.workers.get(jobId);
     if (worker) {
       // 先标记再 abort：终止命令的过程中模型可能接着把 report 跑完，那不能把 stopped 改成完成
       worker.stopped = true;
-      worker.ask?.("（任务被停了）");
+      worker.ask?.("（任务已停止）");
       worker.ask = undefined;
       // abort 会把正在执行的工具（bash 子进程）一起终止
       await worker.session?.abort().catch(() => undefined);
@@ -1302,7 +1302,7 @@ export class JobManager {
         const elapsed = Math.max(0, now - Date.parse(job.startedAt) - worker.pausedMs);
         if (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) {
           while (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) worker.nextReminder *= 2;
-          const source = job.expect.source === "assistant" ? "派活时估的" : job.expect.source === "routine" ? `这个定时任务以前 ${job.expect.runs} 次的中位数` : "默认 10 分钟";
+          const source = job.expect.source === "assistant" ? "分派任务时估计的" : job.expect.source === "routine" ? `这个定时任务以前 ${job.expect.runs} 次的中位数` : "默认 10 分钟";
           const routine = job.routineId && this.store.routine(job.routineId);
           const prefix = routine ? `定时任务「${routine.name}」` : `任务「${job.title}」`;
           const steps = [...this.workerSteps(jobId), ...worker.queued];

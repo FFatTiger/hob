@@ -4,10 +4,10 @@ import type { Item } from "../../shared/types.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";
 
 const emptyNote = "";
-const notes = (items: Item[]) => items.filter((item) => item.kind === "note" && item.text.includes("没有成功"));
+const notes = (items: Item[]) => items.filter((item) => item.kind === "note" && item.text.includes("执行失败"));
 
 describe("没办成的事留一行给用户", () => {
-  it("一轮里开任务失败、后来没再开成：留一行「创建任务」没有成功，原因是工具报错的原文", async () => {
+  it("一轮里开任务失败、后来没再开成：留一行「创建任务」执行失败，原因是工具报错的原文", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       hob.faux.setResponses([call("start_job", { title: "查磁盘", note: emptyNote }), text("我改一下再说。")]);
@@ -15,7 +15,7 @@ describe("没办成的事留一行给用户", () => {
       await hob.runtime.router.waitIdle("hob");
       const left = notes(hob.runtime.router.items("hob").items);
       expect(left).toHaveLength(1);
-      expect(left[0]).toMatchObject({ icon: "info", text: "「创建任务」没有成功" });
+      expect(left[0]).toMatchObject({ icon: "info", text: "「创建任务」执行失败" });
       expect((left[0] as { detail?: string }).detail).toBe("note 不能为空：写清交接说明后再调用一次。");
     } finally { hob.close(); }
   });
@@ -52,7 +52,7 @@ describe("没办成的事留一行给用户", () => {
       await hob.runtime.router.waitIdle("hob");
       const left = notes(hob.runtime.router.items("hob").items);
       expect(left).toHaveLength(1);
-      expect(left[0]).toMatchObject({ text: "「转交其他助手」没有成功" });
+      expect(left[0]).toMatchObject({ text: "「转交其他助手」执行失败" });
       expect((left[0] as { detail?: string }).detail).toBe("没有这个助手：nobody");
     } finally { hob.close(); }
   });
@@ -90,7 +90,7 @@ describe("没办成的事留一行给用户", () => {
       await waitFor(() => notes(hob.runtime.store.groupItems(group.id) as Item[]).length > 0);
       const left = notes(hob.runtime.store.groupItems(group.id) as Item[]);
       expect(left).toHaveLength(1);
-      expect(left[0]).toMatchObject({ speaker: "hob", text: "「创建任务」没有成功" });
+      expect(left[0]).toMatchObject({ speaker: "hob", text: "「创建任务」执行失败" });
     } finally { hob.close(); }
   });
 });

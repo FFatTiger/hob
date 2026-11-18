@@ -117,7 +117,7 @@ describe("群里派任务可以指定成员", () => {
     const { hob, topic } = setup();
     try {
       const groupTool = buildRouterTools(hob.runtime, "hob", topic.id).find((item) => item.name === "start_job")!;
-      expect(groupTool.parameters.properties.assistantId.description).toBe("谁来做：群里一位成员的 id，任务以它的身份跑，用它的技能和记忆。不填就是你自己。");
+      expect(groupTool.parameters.properties.assistantId.description).toBe("谁来做：群里一位成员的 id，任务以它的身份运行，用它的技能和记忆。不填就是你自己。");
       const single = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "start_job")!;
       expect(single.parameters.properties.assistantId).toBeUndefined();
     } finally { hob.close(); }

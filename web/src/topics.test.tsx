@@ -142,7 +142,7 @@ describe("左栏二级页", () => {
     // 选中的话题高亮，返回按钮在头部
     expect(html).toMatch(/class="list-row home-row topic-row sel"/);
     expect(html).toContain("返回首页");
-    expect(html).toContain("开新话题");
+    expect(html).toContain("创建新话题");
   });
 
   it("超过五个已关闭的先列五个，给一个查看全部的入口", () => {
@@ -205,17 +205,17 @@ describe("话题行和话题卡", () => {
   it("话题已经不在了：卡片写一句，不给入口", () => {
     setState([host], "g-topics");
     const html = render(<TopicCard topicId="t-gone" fresh={false} itemId="gt-9" />);
-    expect(html).toContain("话题已不在");
+    expect(html).toContain("话题已不存在");
     expect(html).not.toContain("进入话题");
   });
 
-  it("右栏「正在做」：群和各话题里没结束的任务都列出来，写清在哪", () => {
+  it("右栏「进行中」：群和各话题里没结束的任务都列出来，写清在哪", () => {
     setState([host, doing], "g-topics");
     const job = (id: string, groupId: string, status: string, title: string) => ({ id, assistantId: "dev", groupId, status, title, instruction: "", createdAt: at(9), startedAt: at(9), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
     state.jobs = { a: job("a", "g-topics", "running", "查日志"), b: job("b", "t-remember", "queued", "实现「记住我」"), c: job("c", "t-remember", "done", "定方案") };
     const html = render(<PlaceJobs ids={["g-topics", "t-remember"]} />);
     state.jobs = {};
-    expect(html).toContain("正在做 · 2");
+    expect(html).toContain("进行中 · 2");
     expect(html).toContain("开发 · 综合");
     expect(html).toContain("开发 · 「登录页加「记住我」」");
     expect(html).not.toContain("定方案");

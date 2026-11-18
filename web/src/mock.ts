@@ -217,7 +217,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.8.2",
+  version: "1.9.0",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
@@ -402,7 +402,7 @@ function buildDb(scene: SceneId): Db {
       id: "po",
       name: L("产品负责人", "Product owner"),
       duty: L("统筹和优先级", "Coordination and priorities"),
-      dutyLong: L("接住用户和定时任务带来的事，按分量安排：一个任务能做完的，自己派任务或者叫合适的成员来做，结果回来核一遍再告诉用户；要几个人接力的，开一个话题，在里面安排，做完给用户一个结论。", "Take on what the user and the schedules bring and size it up: if one job can finish it, start that job yourself or bring in the right member, then check the result before telling the user; if it needs several people handing off, open a topic, run it there, and give the user a conclusion when it is done."),
+      dutyLong: L("接住用户和定时任务带来的事，按分量安排：一个任务能完成的，自己分派任务或者请合适的成员执行，结果回来核对后再告诉用户；要几个人接力的，创建一个话题，在里面安排，完成后给用户一个结论。", "Take on what the user and the schedules bring and size it up: if one job can finish it, assign that job yourself or ask the right member to execute it, then check the result before telling the user; if it needs several people handing off, create a topic, coordinate it there, and give the user a conclusion when it is complete."),
       sprite: "sticky:purple",
       primary: false,
       pinned: false,
@@ -956,7 +956,7 @@ cp now.txt "$seen"`,
   if (scene.startsWith("act-")) {
     const hob = assistants.find((a) => a.id === "hob")!;
     hob.busy = true;
-    hob.activity = scene === "act-think" || scene === "act-demo" ? { state: "thinking", label: "正在想…" } : { state: "tool", label: "搜索：最新 AI 动态" };
+    hob.activity = scene === "act-think" || scene === "act-demo" ? { state: "thinking", label: "正在思考…" } : { state: "tool", label: "搜索：最新 AI 动态" };
     items.hob = [{ kind: "user", id: "act-user", at: minsAgo(1), text: "帮我搜索最新 AI 动态。" }];
     if (scene === "act-home") assistants.find((a) => a.id === "page")!.busy = true;
   }
@@ -1121,7 +1121,7 @@ cp now.txt "$seen"`,
   };
 
   const homeItems: GroupItem[] = [
-    { kind: "note", id: "gh-1", at: at(2, 15, 0), icon: "split", text: "Hob 建了群「家里机器」：家里 NAS、服务器", speaker: "user" },
+    { kind: "note", id: "gh-1", at: at(2, 15, 0), icon: "split", text: "已创建群「家里机器」：家里 NAS、服务器", speaker: "user" },
     { kind: "user", id: "gh-2", at: at(0, 9, 12), text: "昨晚相册好像没备份上，看看怎么回事", speaker: "user" },
     { kind: "assistant", id: "gh-3", at: at(0, 9, 12), text: "@家里 NAS 先看下昨晚的备份日志，找到出错的地方。", speaker: "hob" },
     { kind: "job", id: "gh-4", at: at(0, 9, 13), jobId: "t-g-log", speaker: "house" },
@@ -1154,7 +1154,7 @@ cp now.txt "$seen"`,
 
   // 敏捷团队的综合：用户说一件事，成员回了话；要几步的事他们会开话题、列待办。
   const devItems: GroupItem[] = [
-    { kind: "note", id: "gd-1", at: at(5, 10, 0), icon: "split", text: "你建了群「敏捷团队」：产品负责人、架构师、开发、测试、发布", speaker: "user" },
+    { kind: "note", id: "gd-1", at: at(5, 10, 0), icon: "split", text: "已创建群「敏捷团队」：产品负责人、架构师、开发、测试、发布", speaker: "user" },
     { kind: "user", id: "gd-2", at: at(0, 9, 38), text: "登录页加一个「记住我」，下周发版前要上", speaker: "user" },
     { kind: "question", id: "gd-3", at: at(0, 9, 40), approvalId: "ap-g-dev", speaker: "po" },
     { kind: "assistant", id: "gd-4", at: at(0, 9, 41), text: "这件事要分几步，我开个话题列上待办，做完给你结论。", speaker: "po" },
@@ -1395,7 +1395,7 @@ cp now.txt "$seen"`,
     ];
     approvals["readme-topic-approval"] = { id: "readme-topic-approval", assistantId: product.id, groupId: readmeTopic.id, title: L("深色模式怎么切换？", "How should dark mode switch?"), detail: L("这决定入口放在哪里，也影响首次打开时的颜色。", "This decides where the toggle goes and the color you see on first open."), options: [{ key: "A", label: L("跟随系统，也保留手动切换", "Follow the system, keep a manual toggle") }, { key: "B", label: L("只提供手动切换", "Manual toggle only") }], status: "answered", chosen: "A", source: "router", createdAt: minsAgo(7), answeredAt: minsAgo(6) };
     readmeTopicItems[readmeGroup.id] = [
-      { kind: "note", id: "readme-group-note", at: at(4, 10), icon: "split", text: L("你建了群「网站项目」：产品负责人、开发、测试", "You created the group \"Website project\": Product owner, Developer, Tester"), speaker: "user" },
+      { kind: "note", id: "readme-group-note", at: at(4, 10), icon: "split", text: L("已创建群「网站项目」：产品负责人、开发、测试", "Created the group \"Website project\": Product owner, Developer, Tester"), speaker: "user" },
       { kind: "topic", id: "readme-topic-card", at: minsAgo(8), topicId: readmeTopic.id, speaker: product.id },
     ];
   }
@@ -1546,7 +1546,7 @@ cp now.txt "$seen"`,
 
       // 综合：闲聊 + 三张话题卡
       topicItems[host.id] = [
-        { kind: "note", id: "gt-1", at: at(30, 10, 0), icon: "split", text: "你建了群「Hob 开发」：产品负责人、架构师、开发、测试、发布", speaker: "user" },
+        { kind: "note", id: "gt-1", at: at(30, 10, 0), icon: "split", text: "已创建群「Hob 开发」：产品负责人、架构师、开发、测试、发布", speaker: "user" },
         { kind: "topic", id: "gt-2", at: at(0, 9, 30), topicId: tExport.id, speaker: "po" },
         { kind: "user", id: "gt-4", at: at(0, 9, 39), text: "今天线上好像有点慢，是不是我们昨天发的版本？", speaker: "user" },
         { kind: "assistant", id: "gt-5", at: at(0, 9, 40), text: "@架构师 看一下线上昨天以后的响应时间，和昨天的发版对得上吗？", speaker: "po" },
@@ -1853,7 +1853,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     groupRules[group.id] = ["发布前先确认", "删除数据前先确认"].map((text, i) => ({ id: `owns-rule-${i}`, text, mode: "ask", changedAt: at(0, 9) }));
     db.assistantSkills[group.id] = ["问清要做什么", "代码审查", "发布前确认"].map((title, i) => ({ name: `team-${i}`, title, description: `团队${title}的做法`, path: `/mock/groups/${group.id}/skills/team-${i}/SKILL.md`, version: 1, createdAt: at(3, 9), updatedAt: at(1, 9), uses: 0, enabled: true }));
     for (let i = 0; i < 2; i++) db.routines.push({ id: `owns-routine-${i}`, assistantId: group.ownerId, groupId: i ? topic.id : group.id, name: i ? "监听项目动态" : "每日进度汇总", instruction: "检查进展并汇报", schedules: [i ? "*/15 * * * *" : "0 9 * * *"], active: true, createdAt: at(2, 9), runs: [{ at: at(0, 9), status: "handed" }] });
-    (db.groupItems[group.id] ??= []).push({ id: "owns-routine-note", kind: "note", icon: "routine", speaker: group.ownerId, at: at(0, 9), text: "定时任务「监听项目动态」到点了，检查到：\n问题一：登录异常\n问题二：保存失败\n问题三：加载缓慢\n问题四：显示错位\n问题五：链接失效\n问题六：通知延迟\n问题七：搜索错误" });
+    (db.groupItems[group.id] ??= []).push({ id: "owns-routine-note", kind: "note", icon: "routine", speaker: group.ownerId, at: at(0, 9), text: "定时任务「监听项目动态」已到执行时间，检查到：\n问题一：登录异常\n问题二：保存失败\n问题三：加载缓慢\n问题四：显示错位\n问题五：链接失效\n问题六：通知延迟\n问题七：搜索错误" });
     const example = Object.values(db.jobs)[0]!;
     delete db.jobs["t-g-dev"];
     group.busy = ["dev"];
@@ -2441,7 +2441,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       };
       db.groups.push({ ...group, unread: 0, busy: [] });
       db.groupItems[group.id] = [
-        { kind: "note", id: uid("g"), at: group.createdAt, icon: "split", text: `你建了群「${group.name}」：${members.map(assistantName).join("、")}`, speaker: "user" },
+        { kind: "note", id: uid("g"), at: group.createdAt, icon: "split", text: `已创建群「${group.name}」：${members.map(assistantName).join("、")}`, speaker: "user" },
       ];
       emitGroup(group.id);
       return clone(group);
@@ -2596,7 +2596,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       group.last = { at: time, speaker: "user", text: body.text };
       group.busy = [speaker];
       emitGroup(groupId);
-      emit({ type: "group-activity", groupId, speaker, activity: { state: "thinking", label: "正在想…" } });
+      emit({ type: "group-activity", groupId, speaker, activity: { state: "thinking", label: "正在思考…" } });
       setTimeout(() => {
         const reply: GroupItem = { kind: "assistant", id: uid("g"), at: new Date().toISOString(), text: `收到，我看一下。`, speaker };
         list.push(reply);
@@ -2755,7 +2755,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (r.groupId) {
         const group = db.groups.find((item) => item.id === r.groupId);
         if (!group) throw new Error("群不存在");
-        const item: GroupItem = { kind: "note", icon: "routine", id: uid("g-"), at: time, speaker: group.ownerId, text: `定时任务「${r.name}」到点了` };
+        const item: GroupItem = { kind: "note", icon: "routine", id: uid("g-"), at: time, speaker: group.ownerId, text: `定时任务「${r.name}」已到执行时间` };
         (db.groupItems[group.id] ??= []).push(item);
         r.runs = [{ at: time, status: "handed" as const }, ...r.runs].slice(0, 20);
         emit({ type: "group-item", groupId: group.id, item });

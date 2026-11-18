@@ -43,6 +43,20 @@ describe("Router", () => {
     } finally { hob.close(); }
   });
 
+  it("事件那一轮以 NO_REPLY 收尾：不推完成通知，推送里也不会出现 NO_REPLY", async () => {
+    const hob = makeHob();
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      hob.faux.setResponses([text("NO_REPLY")]);
+      await hob.runtime.router.event("hob", "任务已完成", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      hob.faux.setResponses([text("没什么要说的。NO_REPLY")]);
+      await hob.runtime.router.event("hob", "又一个任务已完成", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+    } finally { hob.close(); }
+  });
+
   it("用户发来的话答完、手上没别的活就推一条完成通知", async () => {
     const hob = makeHob();
     try {
@@ -694,7 +708,7 @@ describe("Router", () => {
     }
   });
 
-  it("模型出错（限流等）不再悄无声息：对话里补一行没能回复", async () => {
+  it("模型出错（限流等）不再悄无声息：对话里补一行未能回复", async () => {
     const hob = makeHob();
     try {
       const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
@@ -709,9 +723,9 @@ describe("Router", () => {
       await hob.runtime.router.event("hob", "任务「查资料」已完成：结果在这里");
       await hob.runtime.router.waitIdle("hob");
       const notes = hob.runtime.router.items("hob").items.filter((item) => item.kind === "note");
-      expect(notes.at(-1)).toMatchObject({ kind: "note", text: expect.stringMatching(/^没能回复：调用模型失败（模型服务返回 400：request exceeds client API key limits）。可以再发一次。$/) });
+      expect(notes.at(-1)).toMatchObject({ kind: "note", text: expect.stringMatching(/^未能回复：模型调用失败（模型服务返回 400：request exceeds client API key limits）。可重新发送。$/) });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "Hob", body: expect.stringContaining("没做成") }));
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "Hob", body: expect.stringContaining("执行失败") }));
     } finally {
       hob.close();
     }
@@ -727,13 +741,13 @@ describe("Router", () => {
       await hob.runtime.router.waitIdle("hob");
       off();
       const items = hob.runtime.router.items("hob").items;
-      expect(items.some((item) => item.kind === "note" && item.text.includes("没能回复"))).toBe(true);
+      expect(items.some((item) => item.kind === "note" && item.text.includes("未能回复"))).toBe(true);
       expect(items.some((item) => item.kind === "assistant" && item.text.includes("ECONNRESET"))).toBe(false);
       expect(mergeItems([], events).some((item) => item.kind === "assistant" && item.text.includes("ECONNRESET"))).toBe(false);
     } finally { hob.close(); }
   });
 
-  it("断流前已经写出来的正文照常留着，下面补一行没能回复", async () => {
+  it("断流前已经写出来的正文照常留着，下面补一行未能回复", async () => {
     const hob = makeHob();
     try {
       hob.faux.setResponses([fauxAssistantMessage([fauxText("我先查一下订阅列表")], { stopReason: "aborted", errorMessage: "stream ended before a terminal response event" })]);
@@ -741,7 +755,7 @@ describe("Router", () => {
       await hob.runtime.router.waitIdle("hob");
       const items = hob.runtime.router.items("hob").items;
       expect(items.some((item) => item.kind === "assistant" && item.text === "我先查一下订阅列表")).toBe(true);
-      expect(items.some((item) => item.kind === "note" && item.text.includes("没能回复"))).toBe(true);
+      expect(items.some((item) => item.kind === "note" && item.text.includes("未能回复"))).toBe(true);
     } finally { hob.close(); }
   });
 

@@ -1,6 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { Type } from "@earendil-works/pi-ai";
+import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { toolFailureText } from "../src/pi.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";

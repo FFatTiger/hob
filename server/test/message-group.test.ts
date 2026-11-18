@@ -108,7 +108,7 @@ describe("message_group", () => {
       const result = await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "相册备份出错", note: "备份目录在 /vol/photo" });
       expect(isError(result)).toBe(false);
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
-      expect(textOf(result)).toBe(`已交给群「家里机器」：开了话题「相册备份出错」（${topic.id}），群主「服务器」接手。有了结论会回到这里。`);
+      expect(textOf(result)).toBe(`已交给群「家里机器」：创建了话题「相册备份出错」（${topic.id}），群主「服务器」接手。有了结论会回到这里。`);
       expect(result).toMatchObject({ terminate: true });
 
       // 话题（群记录）上记着是主助手交来的
@@ -124,11 +124,11 @@ describe("message_group", () => {
       await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
       const body = inputBody(hob, topic.id, "ops");
       expect(body).toContain("备份目录在 /vol/photo");
-      expect(body).toContain("[hob-event] 这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。办完用 close_topic 写结论，结论会转给 Hob，由它告诉用户。");
+      expect(body).toContain("[hob-event] 这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。完成后用 close_topic 写结论，结论会转给 Hob，由它告诉用户。");
 
       // 主助手的对话里有话题卡；群的综合里有那一行
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "topic" && item.topicId === topic.id)).toBeTruthy();
-      expect(hob.runtime.store.groupItems(group.id).find((item) => item.kind === "note" && item.text === "Hob 把「相册备份出错」交给了这个群")).toMatchObject({ speaker: "hob" });
+      expect(hob.runtime.store.groupItems(group.id).find((item) => item.kind === "note" && item.text === "Hob 已将「相册备份出错」交由这个群处理")).toMatchObject({ speaker: "hob" });
     } finally {
       hob.close();
     }
@@ -163,7 +163,7 @@ describe("message_group", () => {
 
       const asTopic = await toolOf(hob, "message_group").execute("c", { groupId: topic.id, title: "做事" });
       expect(isError(asTopic)).toBe(true);
-      expect(textOf(asTopic)).toBe(`${topic.id} 是话题，不是群：groupId 填群 id，会在群里开一个新话题。`);
+      expect(textOf(asTopic)).toBe(`${topic.id} 是话题，不是群：groupId 填群 id，会在群里创建一个新话题。`);
 
       const here = await toolOf(hob, "message_group", group.id).execute("c", { groupId: group.id, title: "做事" });
       expect(isError(here)).toBe(true);
@@ -390,8 +390,8 @@ describe("主助手的提示词", () => {
     try {
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
       const group = hob.runtime.store.groups().find((item) => item.name === "家里机器")!;
-      expect(prompt).toContain(`- 家里机器（${group.id}）：负责机器上的事；群主 服务器；成员 Hob、服务器、写作`);
-      expect(prompt).toContain("一件事要几个助手接力，又有管这类事的群，用 message_group 交给那个群：群里会开一个话题，群主接手，按群里的分工安排成员，有了结论会回到你这里，这期间同一件事你这边不再另派。群里记着分工和本群的技能，成员在同一个话题里交接，彼此看得到做到哪儿；一个个转给成员，这些都用不上。");
+      expect(prompt).toContain(`- 家里机器（${group.id}）：职责：机器上的事；群主 服务器；成员 Hob、服务器、写作`);
+      expect(prompt).toContain("一件事要几个助手接力，又有管这类事的群，用 message_group 交给那个群：群里会创建一个话题，群主接手，按群里的分工安排成员，有了结论会回到你这里，这期间同一件事你这边不再另行分派。群里记着分工和本群的技能，成员在同一个话题里交接，彼此可以查看做到哪儿；一个个转给成员，这些都用不上。");
     } finally {
       hob.close();
     }
@@ -401,11 +401,11 @@ describe("主助手的提示词", () => {
     const { hob } = setup();
     try {
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
-      expect(prompt).toContain("建群时挑最能统筹的当群主：群主接没点名的消息和群里的定时，安排成员，最后给用户结论，要知道这件事要办成什么、看得懂各个成员的活。成员里有职责就是统筹这类事的，让它当；成员各管一摊、没有谁看得到全局的，你自己进群当群主。");
+      expect(prompt).toContain("创建群时选择最能统筹的当群主：群主接没点名的消息和群里的定时任务，安排成员，最后给用户结论，要知道这件事要完成什么、能够理解各个成员的任务。成员里有职责就是统筹这类事的，让它担任群主；成员各管一摊、没有谁能看到全局的，你自己进群当群主。");
       // 接在 ADMIN_LINE 后面
-      const admin = "助手、群和话题，你都能直接建和改，和用户在界面上操作一样。用户要你改的，直接改，改完说一句改了什么。你自己觉得该改的，比如同类的事反复出现又没有合适的助手管、某个群缺了该在的成员，先跟用户说你的想法，用户同意了再改。归档助手和群、助手能用的能力（跑命令、改文件、生图），由用户在界面上操作。";
+      const admin = "助手、群和话题，你都能直接创建和修改，和用户在界面上操作一样。用户要你修改的，直接修改，完成后说一句修改了什么。你自己觉得该修改的，比如同类的事反复出现又没有合适的助手管、某个群缺了该在的成员，先跟用户说你的想法，用户同意了再修改。归档助手和群、助手能用的能力（运行命令、修改文件、生成图片），由用户在界面上操作。";
       expect(prompt.indexOf(admin)).toBeGreaterThan(-1);
-      expect(prompt.indexOf("建群时挑最能统筹的当群主")).toBe(prompt.indexOf(admin) + admin.length + 1);
+      expect(prompt.indexOf("创建群时选择最能统筹的当群主")).toBe(prompt.indexOf(admin) + admin.length + 1);
     } finally {
       hob.close();
     }

@@ -135,7 +135,7 @@ export const EN: Record<string, TranslationEntry> = {
   "测试和验证": "Testing and verification",
   "发布和上线": "Release and deployment",
   "把用户的想法问清楚，写成需求说明和验收标准，拆成子任务分给合适的成员；做完以后对照验收标准验收。拿不准用户要什么时先问用户。": "Clarify the user's idea, turn it into a spec and acceptance criteria, split it into subtasks for the right members, and review the result against the criteria. Ask the user when their intent is unclear.",
-  "接住用户和定时任务带来的事，按分量安排：一个任务能做完的，自己派任务或者叫合适的成员来做，结果回来核一遍再告诉用户；要几个人接力的，开一个话题，在里面安排，做完给用户一个结论。": "Take on what the user and the schedules bring and size it up: if one job can finish it, start that job yourself or bring in the right member, then check the result before telling the user; if it needs several people handing off, open a topic, run it there, and give the user a conclusion when it is done.",
+  "接住用户和定时任务带来的事，按分量安排：一个任务能完成的，自己分派任务或者请合适的成员执行，结果回来核对后再告诉用户；要几个人接力的，创建一个话题，在里面安排，完成后给用户一个结论。": "Take on what the user and the schedules bring and size it up: if one job can finish it, assign that job yourself or ask the right member to execute it, then check the result before telling the user; if it needs several people handing off, create a topic, coordinate it there, and give the user a conclusion when it is complete.",
   "定技术方案和模块边界，评估改动的影响和风险，审查关键代码。": "Set the technical design and module boundaries, assess the impact and risks of changes, and review critical code.",
   "按子任务写代码和测试，做完说明改了什么、怎么验证的。": "Write code and tests for subtasks, then explain what changed and how it was verified.",
   "对照验收标准测试，发现问题写清复现步骤和实际结果。": "Test against the acceptance criteria, and record reproduction steps and actual results when something is wrong.",

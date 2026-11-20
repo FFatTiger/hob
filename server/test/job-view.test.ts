@@ -37,6 +37,19 @@ describe("任务查看", () => {
     expect(line).toBe("11-05 23:59 运行 `cd /tmp/lane1 && timeout 60 git cherry-pick abc`");
     expect(jobProcessLines([{ id: "d", kind: "tool", name: "bash", title: "运行 `npm test`", at }], "Asia/Shanghai", now)[0]).toContain("运行 `npm test`");
   });
+  it("同一轮重复查看没有新步骤时只回一句，状态变化后恢复完整过程", async () => {
+    const hob = makeHob();
+    try {
+      await hob.runtime.router.ensure("hob");
+      hob.runtime.store.saveJob(base);
+      const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "check_job")!;
+      const run = async () => (await tool.execute("id", { jobId: base.id }, undefined, undefined, {} as never)).content[0].text as string;
+      expect(await run()).toContain("任务「检查」（t-1）：");
+      expect(await run()).toBe("和你上次查看时一样，没有新的步骤。任务结束或提问时会通知你。");
+      hob.runtime.store.saveJob({ ...base, status: "done", endedAt: now.toISOString() });
+      expect(await run()).toContain("已完成");
+    } finally { hob.close(); }
+  });
   it("不是这个会话开的任务：查看多一行出处", async () => {
     const hob = makeHob();
     try {
@@ -151,14 +164,14 @@ describe("Router 技能工具", () => {
       const stop = vi.spyOn(hob.runtime.jobs, "stop").mockResolvedValue();
       const run = async (gid: string, name: string) => (await buildRouterTools(hob.runtime, "hob", gid).find((tool) => tool.name === name)!.execute("id", { jobId: "t-1", text: "再查一次" }, undefined, undefined, {} as never)).content[0].text as string;
       // 在综合里：任务在话题「相册」
-      expect(await run(group.id, "reply_job")).toBe("已交给任务「检查」（t-1），它会继续执行。这个任务是话题「相册」创建的，结果回到那边。");
+      expect(await run(group.id, "reply_job")).toBe("已交给任务「检查」（t-1），它会接着做。这个任务是话题「相册」创建的，结果回到那边。");
       expect(await run(group.id, "stop_job")).toBe("已停止。这个任务是话题「相册」创建的。");
       expect(stop).toHaveBeenLastCalledWith("t-1", `${hob.runtime.store.assistant("hob")!.name}在综合停止了`);
       // 在话题 B 里停话题 A 的任务：原因写话题「B」
       expect(await run(topicB.id, "stop_job")).toBe("已停止。这个任务是话题「相册」创建的。");
       expect(stop).toHaveBeenLastCalledWith("t-1", `${hob.runtime.store.assistant("hob")!.name}在话题「打印机」停止了`);
       // 这个会话自己开的：和以前一样
-      expect(await run(topicA.id, "reply_job")).toBe("已交给任务「检查」（t-1），它会继续执行。");
+      expect(await run(topicA.id, "reply_job")).toBe("已交给任务「检查」（t-1），它会接着做，结果会回到这里。");
       expect(await run(topicA.id, "stop_job")).toBe("已停止。");
       expect(stop).toHaveBeenLastCalledWith("t-1", `${hob.runtime.store.assistant("hob")!.name}停止了`);
       expect(reply).toHaveBeenCalled();

@@ -20,7 +20,7 @@ describe("定时任务到点先交给单聊助手", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "整理收件箱", instruction: "整理新增文件", instructionBy: "hob", schedules: ["0 9 * * *"] });
-      hob.faux.setResponses([call("start_job", { title: "整理收件箱", note: "背景：收件箱在 /data/inbox；完成标准：整理后汇报文件名。" }), call("report", { outcome: "done", result: "已整理" }), text("已整理")]);
+      hob.faux.setResponses([call("start_job", { title: "整理收件箱", note: "背景：收件箱在 /data/inbox；完成标准：整理后汇报文件名。" }), text("已安排。"), call("report", { outcome: "done", result: "已整理" }), text("已整理")]);
       await hob.runtime.routines.runNow(routine.id);
       await waitFor(() => hob.runtime.store.jobs().some((job) => job.routineId === routine.id));
       await hob.runtime.jobs.waitIdle();

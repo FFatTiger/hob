@@ -13,6 +13,7 @@ import { Avatar } from "../sprites.tsx";
 import { applyMention, filterMembers, mentionAt, stepPick } from "../mention.ts";
 import {
   expandPanel,
+  toggleSideCollapsed,
   focusComposer,
   groupById,
   groupChatItems,
@@ -394,6 +395,7 @@ export function Chat() {
   return (
     <main className="chat">
       <div className="chead">
+        {s.sideCollapsed ? <button className="hob-icon-btn side-expand" title={t("展开左栏")} aria-label={t("展开左栏")} onClick={toggleSideCollapsed}><Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} /></button> : null}
         <ChatHead g={g} a={a} parent={parent} />
         {s.collapsed ? (
           <button className="chead-btn right" title={t("展开右栏")} onClick={expandPanel}>

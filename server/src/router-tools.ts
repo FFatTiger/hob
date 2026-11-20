@@ -2,8 +2,8 @@ import { t } from "../../shared/i18n.ts";
 import { Type } from "typebox";
 import { propArtSchema } from "./prop-art-schema.ts";
 import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { basename, dirname, extname, join, relative, resolve } from "node:path";
+import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
 import { lookupFile, isInPagesDir } from "./files.ts";
@@ -32,7 +32,7 @@ import { pushApproval } from "./push.ts";
 import { searchTools } from "./search.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { assistantSkillsDir, groupSkillsDir, listSkills, readAssistantSkillBody, saveSkill, moveSkill } from "./assistant-skills.ts";
-import { generalSkillsDir, notEditable, skillDirOf, syncGeneralIndex, visibleSkills } from "./skills.ts";
+import { bundledPlaywrightSkillDir, generalSkillsDir, notEditable, skillDirOf, syncGeneralIndex, visibleSkills } from "./skills.ts";
 import { jobView } from "./job-view.ts";
 import { HANDOVER_EVENT } from "./groups.ts";
 import { sessionOrigin } from "./origin.ts";
@@ -49,7 +49,7 @@ const SCHEDULES_DESCRIPTION = "一个或多个；可以是 cron 表达式，也�
 const ONCE_DESCRIPTION = "可选。为 true 时设置为仅运行一次：没有检查脚本的，运行一次后停止；有检查脚本的，第一次有输出后停止。已停止的定时任务还在，可以重新启用。";
 
 /** 检查脚本参数：create_routine 和 update_routine 共用。 */
-const CHECK_DESCRIPTION = "可选。到执行时间先运行的 bash 脚本，填脚本全文：没有输出就这次什么都不做；有输出时，then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出启动任务。脚本在这个定时任务自己的目录里运行，状态文件存在当前目录，记住上次看到哪里；第一次运行还没有状态时只记下现状，不输出。非零退出算检查失败。脚本用到的其他文件也放在这个目录，跟着定时任务走。";
+const CHECK_DESCRIPTION = "可选。到执行时间先运行的 bash 脚本，填脚本全文：没有输出就这次什么都不做；有输出时，then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出启动任务。每次有输出都会这样处理一次，不看上一次的处理完没有：同一件事连着输出几次，就会处理几次；只该处理一次的，在状态文件里记下已经输出过的，下次跳过。脚本在这个定时任务自己的目录里运行，状态文件存在当前目录，记住上次看到哪里；第一次运行还没有状态时只记下现状，不输出。非零退出算检查失败。脚本用到的其他文件也放在这个目录，跟着定时任务走。";
 
 const checkDescription = (group: boolean) => group ? CHECK_DESCRIPTION.replace("then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出启动任务", "then 为 notify 就把输出作为提醒发到群里，为 job 就带着输出交给群主处理") : CHECK_DESCRIPTION;
 const checkParam = (group: boolean) => Type.Object({
@@ -168,7 +168,7 @@ function fileMeta(path: string): string | undefined {
 }
 
 /** 一个助手的 Router 能用的全部工具。改状态的工具都写卡片 + 发事件。 */
-export function buildRouterTools(runtime: HobRuntime, assistantId: string, groupId?: string): Tool[] {
+export function buildRouterTools(runtime: HobRuntime, assistantId: string, groupId?: string, cwd = runtime.home): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
   const assistant = () => {
     const found = store.assistant(assistantId);
@@ -271,11 +271,16 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
   const modelText = modelList.length ? modelList.join("\n") : "（现在没有可用的模型）";
 
   const checkFile = (path: string) => {
-    const found = lookupFile(runtime.home, path, store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []));
+    try {
+      const root = realpathSync(bundledPlaywrightSkillDir());
+      const file = realpathSync(path);
+      if (file.startsWith(`${root}${sep}`) && statSync(file).isFile()) return file;
+    } catch { /* 交给普通文件规则报告错误 */ }
+    const found = lookupFile(runtime.home, path, [...store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []), cwd]);
     if (!found.ok) throw new Error(found.error);
     return found.info.path;
   };
-  const read = createReadToolDefinition(runtime.home, { operations: {
+  const read = createReadToolDefinition(cwd, { operations: {
     access: async (path) => { checkFile(path); },
     readFile: async (path) => readFile(checkFile(path)),
     detectImageMimeType: async (path) => IMAGE_TYPES[extname(checkFile(path)).toLowerCase()],
@@ -291,7 +296,11 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         const job = store.job(params.jobId);
         if (!job || !canManageJob(params.jobId)) return fail(`没有这个任务：${params.jobId}`);
         try {
-          return ok(jobView({ ...job, cwd: job.cwd ?? store.workDir(job.id) }, jobs.transcript(job.id), store.approvals(), visibleSkills(runtime, job.assistantId, job.groupId ? store.group(job.groupId) : undefined), runtime.settings.settings.general.timezone, undefined, jobOrigin(job)));
+          const transcript = jobs.transcript(params.jobId);
+          if (router.checkJobUnchanged(assistantId, groupId, params.jobId, job, transcript)) {
+            return ok("和你上次查看时一样，没有新的步骤。任务结束或提问时会通知你。");
+          }
+          return ok(jobView({ ...job, cwd: job.cwd ?? store.workDir(job.id) }, transcript, store.approvals(), visibleSkills(runtime, job.assistantId, job.groupId ? store.group(job.groupId) : undefined), runtime.settings.settings.general.timezone, undefined, jobOrigin(job)));
         } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
@@ -382,7 +391,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       description: "读取文件或查看图片：用户发来的附件、任务的目录和产出、页面。长文件用 offset 分段读取。",
       execute: async (id, args: { path: string; offset?: number; limit?: number }, signal, update, ctx) => {
         try {
-          const path = checkFile(resolve(runtime.home, args.path));
+          const path = checkFile(resolve(cwd, args.path));
           if (IMAGE_TYPES[extname(path).toLowerCase()]) {
             if (ctx?.model && !ctx.model.input.includes("image")) return fail("当前对话模型无法查看图片");
             return await read.execute(id, { ...args, path }, signal, update, ctx);
@@ -418,12 +427,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         cwd: Type.Optional(
           Type.String({
             description:
-              "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。",
+              "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。",
           }),
         ),
         files: Type.Optional(
           Type.Array(Type.String(), {
-            description: "要交给任务的文件路径；图片会直接给模型查看",
+            description: "要交给任务的文件路径；相对路径以你的工作目录为准，图片会直接给模型查看",
           }),
         ),
         ...(groupId ? { assistantId: Type.Optional(Type.String({ description: "谁来做：群里一位成员的 id，任务以它的身份运行，用它的技能和记忆。不填就是你自己。" })) } : {}),
@@ -439,7 +448,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           if (params.expect_minutes != null && (!Number.isInteger(params.expect_minutes) || params.expect_minutes < 1 || params.expect_minutes > 10080)) return fail("expect_minutes 要在 1 到 10080 之间");
           const note = String(params.note ?? "").trim();
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-          const files = Array.isArray(params.files) ? params.files.map(String) : [];
+          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
@@ -450,7 +459,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
             instruction: note,
             ...(Array.isArray(params.after) && params.after.length ? { after: params.after.map(String) } : {}),
-            ...(params.cwd ? { cwd: String(params.cwd) } : {}),
+            ...(params.cwd ? { cwd: resolve(cwd, String(params.cwd)) } : {}),
             ...(files.length ? { files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
@@ -458,12 +467,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             ...(router.currentRoutineId(assistantId, groupId) ? { routineId: router.currentRoutineId(assistantId, groupId) } : {}),
           });
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
-          if (assignee.id !== assistantId) return endTurn(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
+          if (assignee.id !== assistantId) return ok(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
           if (job.after?.length) {
             const titles = job.after.map((id) => `「${store.job(id)?.title ?? id}」`).join("、");
-            return endTurn(`任务「${job.title}」（${job.id}）已排上，等${titles}做完就开始。`);
+            return ok(`任务「${job.title}」（${job.id}）已排上，等${titles}做完就开始。`);
           }
-          return endTurn(
+          return ok(
             `任务「${job.title}」（${job.id}）已开始，预计 ${job.expect?.minutes ?? 10} 分钟${params.expect_minutes == null ? "（默认）" : ""}。`,
           );
         } catch (error) {
@@ -483,10 +492,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         try {
           const jobId = String(params.jobId);
           if (!canManageJob(jobId)) return fail(`没有这个任务：${jobId}`);
-          await jobs.reply(jobId, String(params.text), "router");
           const job = store.job(jobId)!;
+          await jobs.reply(jobId, String(params.text), "router");
           const origin = jobOrigin(job);
-          return ok(`已交给任务「${job.title}」（${jobId}），它会继续执行。${origin ? `这个任务是${origin}创建的，结果回到那边。` : ""}`);
+          return ok(origin
+            ? `已交给任务「${job.title}」（${jobId}），它会接着做。这个任务是${origin}创建的，结果回到那边。`
+            : `已交给任务「${job.title}」（${jobId}），它会接着做，结果会回到这里。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -740,9 +751,9 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       name: "send_file",
       label: "发送文件",
       description: "把一个文件（任务交来的文件、截图、任务生成的图）作为卡片发到对话里，图片直接显示。",
-      parameters: Type.Object({ path: Type.String({ description: "文件的绝对路径" }) }),
+      parameters: Type.Object({ path: Type.String({ description: "文件路径；相对路径以你的工作目录为准" }) }),
       execute: async (_id, params: any) => {
-        const requested = String(params.path);
+        const requested = resolve(cwd, String(params.path));
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
         const path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
@@ -878,7 +889,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           try {
             const note = String(params.note ?? "").trim();
             if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-            const files = Array.isArray(params.files) ? params.files.map(String) : [];
+            const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
             const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, groupId)).filter((item) => item.status !== "done");
             const carried = unfinished.length
               ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
@@ -916,7 +927,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           if ([...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
           const note = String(params.note ?? "").trim();
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-          const files = Array.isArray(params.files) ? params.files.map(String) : [];
+          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           try {
             const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, { text: note, files });
             // 这次说话所在的对话里落一张话题卡：进度、等你回答、结论都在卡上
@@ -1027,7 +1038,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           if (title && [...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
           const note = typeof params.note === "string" ? params.note.trim() : "";
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-          const files = Array.isArray(params.files) ? params.files.map(String) : [];
+          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           const event = `这个话题是你从综合创建的，上面是交接说明。\n\n${note}`;
 
           try {

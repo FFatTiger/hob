@@ -1,21 +1,18 @@
-import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import type { AddressInfo } from "node:net";
 import { once } from "node:events";
 import { WebSocket, WebSocketServer } from "ws";
-import { chromium } from "playwright-core";
 import { pointerEventLength } from "../../desktop/desktopd/pointer-event.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { DesktopControl, RfbClientFilter, attachDesktopWebSocket } from "../src/desktop-control.ts";
-import { availableDesktopTools, DesktopToolSession, desktopProfile } from "../src/desktop-tools.ts";
 import { createApp } from "../src/http.ts";
 import { makeHob } from "./helpers.ts";
 import { DesktopService, checkDesktopUrl } from "../src/desktop.ts";
 import { SettingsStore } from "../src/settings.ts";
 import { writeSecret } from "../src/secrets.ts";
-import { lookupFile } from "../src/files.ts";
 
 const homes: string[] = [];
 afterEach(() => { for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
@@ -271,61 +268,6 @@ describe("云桌面配置", () => {
       expect(events).toEqual([true, false, true]);
     } finally { unsubscribe(); control.dispose(); hob.close(); vi.useRealTimers(); }
   });
-  it("两种截图按身份落盘并返回精确文字，不能看图时仍保存", async () => {
-    const hob = makeHob();
-    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
-    try {
-      for (const router of [true, false]) for (const canSee of [true, false]) for (const name of ["browser_screenshot", "desktop_screenshot"]) {
-        const dir = router ? join(hob.home, "assistants", "hob", "files", "screenshots") : join(hob.runtime.store.workDir("t-1234"), "screenshots");
-        const session = new DesktopToolSession(hob.runtime, "hob", canSee, router ? undefined : "任务", router, dir);
-        vi.spyOn(session as any, "getPage").mockResolvedValue({ screenshot: async () => Buffer.from("image") });
-        try {
-          const result = await session.tools().find((tool) => tool.name === name)!.execute("test", {});
-          expect(result.isError).not.toBe(true);
-          const file = readdirSync(dir).sort().at(-1)!;
-          const path = join(dir, file);
-          expect(file).toMatch(/^\d{8}T\d{9}\.png$/);
-          expect(readFileSync(path).toString()).toBe("image");
-          expect(lookupFile(hob.home, path).ok).toBe(true);
-          const send = router ? "使用 send_file 发送" : "在 report 时放进 files";
-          expect(result.content).toEqual(canSee
-            ? [{ type: "image", data: Buffer.from("image").toString("base64"), mimeType: "image/png" }, { type: "text", text: `截图已保存到 ${path}。要发送给用户，${send}。` }]
-            : [{ type: "text", text: `当前模型无法查看图片。截图已保存到 ${path}：要发送给用户，${send}；要自行读取页面内容，请使用 browser_snapshot。` }]);
-        } finally { await session.dispose(); }
-      }
-    } finally { request.mockRestore(); hob.close(); }
-  });
-  it("截图在同一毫秒也不覆盖，超过 20 张删除最旧文件", async () => {
-    const hob = makeHob();
-    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response("image"));
-    const clock = vi.spyOn(Date, "now").mockReturnValue(1793979012123);
-    const session = new DesktopToolSession(hob.runtime, "hob", true, undefined, true);
-    const dir = join(hob.home, "assistants", "hob", "files", "screenshots");
-    try {
-      expect(existsSync(dir)).toBe(false);
-      const screenshot = session.tools().find((tool) => tool.name === "desktop_screenshot")!;
-      for (let i = 0; i < 22; i++) {
-        const result = await screenshot.execute(String(i), {});
-        expect(result.isError).not.toBe(true);
-        const text = (result.content[1] as { text: string }).text;
-        const path = text.slice("截图已保存到 ".length, text.indexOf("。"));
-        expect(existsSync(path)).toBe(true);
-      }
-      const files = readdirSync(dir).sort();
-      expect(files).toHaveLength(20);
-      expect(files[0]).toBe("20261106T153012125.png");
-      expect(files[19]).toBe("20261106T153012144.png");
-    } finally { clock.mockRestore(); request.mockRestore(); await session.dispose(); hob.close(); }
-  });
-  it("屏幕工具不暴露屏幕选择参数", async () => {
-    const hob = makeHob();
-    const session = new DesktopToolSession(hob.runtime, "hob", true);
-    try {
-      expect(session.tools().every((tool) => !("screen" in tool.parameters.properties))).toBe(true);
-      const result = await session.tools()[0]!.execute("test", { url: "https://example.com", screen: "other" });
-      expect(result.isError).toBe(true);
-    } finally { await session.dispose(); hob.close(); }
-  });
   it("转发屏幕快照并在断线后重连", async () => {
     const hob = makeHob();
     const realSetTimeout = globalThis.setTimeout;
@@ -417,125 +359,6 @@ describe("云桌面配置", () => {
       control.release(a, "hob");
       expect(control.state(b, "other").mine).toBe(true);
     } finally { control.dispose(); hob.close(); }
-  });
-  it("未配置或服务不健康时没有工具，接管中所有工具返回错误", async () => {
-    const hob = makeHob();
-    const server = createServer((_req, res) => { res.writeHead(503); res.end(); });
-    server.listen(0, "127.0.0.1"); await once(server, "listening");
-    try {
-      expect(await availableDesktopTools(hob.runtime, "hob", true)).toBeUndefined();
-      hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, enabled: true });
-      writeSecret(hob.home, "desktop:token", "token");
-      expect(await availableDesktopTools(hob.runtime, "hob", true)).toBeUndefined();
-      server.removeAllListeners("request");
-      server.on("request", (_req, res) => { res.writeHead(200, { "content-type": "application/json" }); res.end("{}"); });
-      const session = await availableDesktopTools(hob.runtime, "hob", true);
-      expect(session?.tools()).toHaveLength(9);
-      const client = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-      hob.runtime.desktopControl.connected(client); hob.runtime.desktopControl.take(client);
-      for (const tool of session!.tools()) {
-        const result = await tool.execute("test", {});
-        expect(result.isError).toBe(true);
-        expect(result.content[0]).toMatchObject({ text: expect.stringContaining("用户正在操作云桌面") });
-      }
-      await session!.dispose();
-    } finally {
-      hob.runtime.desktopControl.dispose();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      hob.close();
-    }
-  });
-  it("同一任务复用浏览器连接，结束时只断开连接", async () => {
-    const hob = makeHob();
-    const requests: string[] = [];
-    const server = createServer((req, res) => {
-      requests.push(req.url!);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(req.url === "/api/health" ? "{}" : '{"cdp":"/cdp/hob"}');
-    });
-    server.listen(0, "127.0.0.1"); await once(server, "listening");
-    const page = { isClosed: () => false, setDefaultTimeout: vi.fn(), ariaSnapshot: vi.fn().mockResolvedValue("页面") };
-    const newPage = vi.fn().mockResolvedValue(page);
-    const browser = { isConnected: () => true, contexts: () => [{ newPage }], close: vi.fn().mockResolvedValue(undefined) };
-    const connect = vi.spyOn(chromium, "connectOverCDP").mockResolvedValue(browser as never);
-    try {
-      hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, enabled: true });
-      writeSecret(hob.home, "desktop:token", "token");
-      const session = await availableDesktopTools(hob.runtime, "hob", true);
-      const snapshot = session!.tools().find((tool) => tool.name === "browser_snapshot")!;
-      expect((await snapshot.execute("first", {})).isError).not.toBe(true);
-      expect((await snapshot.execute("second", {})).isError).not.toBe(true);
-      await session!.dispose();
-      expect(connect).toHaveBeenCalledTimes(1);
-      expect(browser.close).toHaveBeenCalledTimes(1);
-      expect(newPage).toHaveBeenCalledTimes(1);
-      expect(requests.filter((path) => path === "/api/screens/hob/browser/start")).toHaveLength(1);
-      expect(requests.some((path) => path.endsWith("/stop"))).toBe(false);
-    } finally {
-      connect.mockRestore();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      hob.close();
-    }
-  });
-  it("助手工具随配置变化，并在任务占用时拒绝操作，释放时断开连接", async () => {
-    const hob = makeHob();
-    const page = { isClosed: () => false, setDefaultTimeout: vi.fn(), ariaSnapshot: vi.fn().mockResolvedValue("Example Domain") };
-    const browser = { isConnected: () => true, contexts: () => [{ newPage: vi.fn().mockResolvedValue(page) }], close: vi.fn().mockResolvedValue(undefined) };
-    const connect = vi.spyOn(chromium, "connectOverCDP").mockResolvedValue(browser as never);
-    const request = vi.spyOn(hob.runtime.desktop, "request").mockImplementation(async () => new Response('{"cdp":"/cdp/hob"}'));
-    const worker = new DesktopToolSession(hob.runtime, "hob", true, "查资料");
-    try {
-      let state = await hob.runtime.router.ensure("hob");
-      expect(state.session!.getActiveToolNames().filter((name) => name.startsWith("browser_"))).toHaveLength(0);
-      hob.runtime.settings.setDesktop(1, { url: "http://localhost:6080", enabled: true });
-      writeSecret(hob.home, "desktop:token", "token");
-      hob.runtime.router.releaseSessions();
-      state = await hob.runtime.router.ensure("hob");
-      expect(state.session!.getActiveToolNames().filter((name) => name.startsWith("browser_"))).toHaveLength(7);
-      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).not.toHaveProperty("screen");
-      await worker.tools().find((tool) => tool.name === "browser_snapshot")!.execute("worker", {});
-      const snapshot = state.desktop!.tools().find((tool) => tool.name === "browser_snapshot")!;
-      expect((await snapshot.execute("router", {})).content[0]).toMatchObject({ text: "任务「查资料」正在用浏览器，等它做完，或者用 reply_job 让它停下来。" });
-      await worker.dispose();
-      expect((await snapshot.execute("router", {})).isError).not.toBe(true);
-      hob.runtime.router.releaseSessions();
-      await new Promise((resolve) => setTimeout(resolve, 0));
-      expect(browser.close).toHaveBeenCalledTimes(2);
-      state = await hob.runtime.router.ensure("hob");
-      expect(state.desktop!.tools().find((tool) => tool.name === "browser_open")!.parameters.properties).not.toHaveProperty("screen");
-      const client = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-      hob.runtime.desktopControl.connected(client); hob.runtime.desktopControl.take(client);
-      expect((await state.desktop!.tools().find((tool) => tool.name === "browser_snapshot")!.execute("taken", {})).content[0]).toMatchObject({ text: expect.stringContaining("用户正在操作云桌面") });
-      expect(request).toHaveBeenCalled();
-    } finally { await worker.dispose(); connect.mockRestore(); hob.close(); }
-  });
-  it("过长助手 id 映射成稳定且符合 desktopd 约束的 profile", async () => {
-    const hob = makeHob();
-    const paths: string[] = [];
-    const server = createServer((req, res) => {
-      paths.push(req.url!);
-      res.writeHead(200, { "content-type": "application/json" });
-      res.end(req.url === "/api/health" ? "{}" : '{"cdp":"invalid"}');
-    });
-    server.listen(0, "127.0.0.1"); await once(server, "listening");
-    try {
-      hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(server.address() as AddressInfo).port}`, enabled: true });
-      writeSecret(hob.home, "desktop:token", "token");
-      for (const id of ["a".repeat(65), "a".repeat(65), "a".repeat(64) + "b", "hob"]) {
-        const session = await availableDesktopTools(hob.runtime, id, true);
-        await session!.tools().find((tool) => tool.name === "browser_open")!.execute("test", { url: "http://example.com" });
-        await session!.dispose();
-      }
-      const profiles = paths.filter((path) => path.includes("/start")).map((path) => path.split("/")[3]);
-      expect(profiles).toHaveLength(4);
-      expect(profiles[0]).toMatch(/^[a-z0-9-]{1,64}$/);
-      expect(profiles[0]).toBe(profiles[1]);
-      expect(profiles[0]).not.toBe(profiles[2]);
-      expect(profiles[3]).toBe("hob");
-    } finally {
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-      hob.close();
-    }
   });
   it("拒绝在地址中嵌入令牌", () => {
     expect(() => checkDesktopUrl("http://user:password@localhost")).toThrow();

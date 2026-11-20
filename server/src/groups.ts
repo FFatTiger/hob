@@ -16,7 +16,7 @@ import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
 import { checkAssistantModels } from "./models.ts";
-import type { NewItem } from "./router.ts";
+import type { EventText, NewItem } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
 
 /** 一条用户消息引出的助手回合上限：挡来回 @ 的死循环，不是限制正常协作。 */
@@ -129,6 +129,7 @@ export class GroupManager {
   summary(groupOrId: Group | string): GroupSummary {
     const group = typeof groupOrId === "string" ? this.group(groupOrId) : groupOrId;
     const items = this.timeline(group.id);
+    const activity = this.runtime.router.groupActivity(group.id);
     let last: GroupSummary["last"];
     for (const item of items) {
       if (item.kind === "assistant" || item.kind === "user" || item.kind === "note") last = { at: item.at, speaker: item.speaker, text: item.text };
@@ -139,6 +140,7 @@ export class GroupManager {
       unread: this.unread(group.id, items),
       busy: this.busyOf(group.id),
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
+      ...(Object.keys(activity).length ? { activity } : {}),
     };
   }
 
@@ -252,8 +254,8 @@ export class GroupManager {
   }
 
   /**
-   * 主助手把一件事交给这个群：开一个话题，把交接说明作为第一条用户条目转进去，
-   * 记下是它交来的，综合里落一行。叫醒群主由调用方发（它还要结束这一轮）。
+   * 任意助手把一件事交给这个群：开一个话题，把交接说明作为第一条用户条目转进去，
+   * 记下是谁交来的，综合里落一行。叫醒群主由调用方发（它还要结束这一轮）。
    */
   handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string }): { topic: Group; item: GroupItem } {
     const topic = this.createTopic(gid, title, by);
@@ -264,7 +266,8 @@ export class GroupManager {
       forwardedFrom: { assistantId: by, ...(original.itemId ? { itemId: original.itemId } : {}) },
     });
     this.store.saveGroup({ ...this.group(topic.id), handover: { by, at: new Date().toISOString() } });
-    this.note(gid, by, t("Hob 已将「{topic}」交由这个群处理", { topic: topic.name }));
+    const byName = this.nameOf(by);
+    this.note(gid, by, t("{name} 已将「{topic}」交由这个群处理", { name: byName, topic: topic.name }));
     return { topic: this.group(topic.id), item };
   }
 
@@ -526,6 +529,13 @@ export class GroupManager {
   async send(gid: string, body: SendMessageBody): Promise<GroupItem> {
     const group = this.group(gid);
     if (group.closedAt) throw new Error(TOPIC_CLOSED);
+    // 和单聊一样：用户在这里又发了话，成员在这里出的、还没答的问题卡就过期了（显示「已结束」），这句话算什么由成员自己判断
+    for (const approval of this.store.approvals()) {
+      if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending") continue;
+      const expired = { ...approval, status: "expired" as const };
+      this.store.saveApproval(expired);
+      this.bus.emit({ type: "approval", approval: expired });
+    }
     const item = this.append(gid, {
       kind: "user",
       speaker: "user",
@@ -575,7 +585,7 @@ export class GroupManager {
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: string, workDone = false): Promise<void> {
+  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = false): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
     const previous = this.queues.get(key) ?? Promise.resolve();
@@ -619,7 +629,7 @@ export class GroupManager {
    * 开一轮（不然流式的文字没有归属，会被丢掉），它说的话照常进时间线。
    * 一个事件算新的一串回合（新的 Wave）。
    */
-  async deliverEvent(gid: string, assistantId: string, text: string, triggerId = "", workDone = false): Promise<void> {
+  async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = false): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
     await this.schedule(gid, assistantId, { turns: 0, stopped: false }, triggerId, text, workDone);
@@ -644,7 +654,7 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: string, workDone = false): Promise<void> {
+  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = false): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
     // 用户按了停止：这一轮不再开始
@@ -709,9 +719,9 @@ export class GroupManager {
    * 这一轮的输入：这些条目按「名字：内容」一行一条，前面带现在的时间。
    * 事件那一轮还把事件接在后面，它先看到群里刚发生的事，不照着过时的事件做。
    */
-  private inputText(assistantId: string, group: Group, input: TurnInput, event?: string): string {
+  private inputText(assistantId: string, group: Group, input: TurnInput, event?: EventText): string {
     const lines = input.items.map((item) => this.lineOf(item, group.id)).filter(Boolean);
-    const body = [lines.join("\n"), ...(event === undefined ? [] : [`[hob-event] ${event}`])].filter(Boolean).join("\n\n");
+    const body = [lines.join("\n"), ...(event === undefined ? [] : [`[hob-event] ${typeof event === "function" ? event() : event}`])].filter(Boolean).join("\n\n");
     return `${nowBlock(this.runtime, assistantId, group.id)}\n\n${body}`;
   }
 

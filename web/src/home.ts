@@ -63,7 +63,7 @@ export function conversations(
         ...(latest && latest.id !== g.id ? { lastTopic: latest.name } : {}),
         unread: g.unread + topics.reduce((sum, t) => sum + t.unread, 0),
         busy: [...new Set([...g.busy, ...topics.flatMap((t) => t.busy)])],
-        waiting: Object.values(approvals).some((a) => a.status === "pending" && (a.groupId === g.id || topics.some((t) => t.id === a.groupId))),
+        waiting: Object.values(approvals).some((a) => a.status === "pending" && a.source !== "job" && (a.groupId === g.id || topics.some((t) => t.id === a.groupId))),
       },
       pinned: Boolean(pref?.pinned),
       hidden: false,
@@ -223,7 +223,7 @@ export function homeGroups(s: HomeSource, now = Date.now()): HomeGroups {
   const asks: Approval[] = searching
     ? []
     : Object.values(s.approvals)
-        .filter((a) => a.status === "pending")
+        .filter((a) => a.status === "pending" && a.source !== "job")
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
   const live = searching ? [] : jobs.filter(isLive).sort(byStarted);
   const recent = searching

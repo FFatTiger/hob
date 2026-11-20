@@ -154,7 +154,7 @@ describe("助手技能接入", () => {
     try {
       const sediment = vi.spyOn(hob.runtime.jobs, "startSediment");
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
-      hob.faux.setResponses([call("start_job", { title: "巡检", note: "检查" }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
+      hob.faux.setResponses([call("start_job", { title: "巡检", note: "检查" }), text("已安排。"), call("report", { outcome: "done", result: "完成" }), text("完成")]);
       await hob.runtime.routines.runNow(routine.id);
       await waitFor(() => hob.runtime.store.jobs().some((job) => job.title === "巡检" && job.status === "done"));
       await hob.runtime.jobs.waitIdle();
@@ -168,7 +168,7 @@ describe("助手技能接入", () => {
       const sediment = vi.spyOn(hob.runtime.jobs, "startSediment");
       const skill = saveAssistantSkill(hob.home, "hob", input);
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "检查", schedules: ["0 9 * * *"] });
-      hob.faux.setResponses([call("start_job", { title: "巡检", note: "检查并读可用技能" }), call("read", { path: skill.path }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
+      hob.faux.setResponses([call("start_job", { title: "巡检", note: "检查并读可用技能" }), text("已安排。"), call("read", { path: skill.path }), call("report", { outcome: "done", result: "完成" }), text("完成")]);
       await hob.runtime.routines.runNow(routine.id);
       await waitFor(() => hob.runtime.store.jobs().some((job) => job.title === "巡检" && job.status === "done"));
       await hob.runtime.jobs.waitIdle();

@@ -92,6 +92,21 @@ describe("谁能用哪些技能", () => {
   });
 });
 
+describe("Hob 自带的 playwright-cli 技能", () => {
+  it("只在云桌面开着时出现，只读", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      expect(visibleSkills(hob.runtime, "hob").some((skill) => skill.name === "playwright-cli")).toBe(false);
+      vi.spyOn(hob.runtime.desktop, "view").mockReturnValue({ ...hob.runtime.desktop.view(), enabled: true, url: "http://desktop.test", tokenConfigured: true });
+      const skill = visibleSkills(hob.runtime, "hob").find((item) => item.name === "playwright-cli");
+      expect(skill).toMatchObject({ source: "builtin", editable: false });
+    } finally {
+      vi.restoreAllMocks();
+      hob.close();
+    }
+  });
+});
+
 describe("通用技能和别的两档一样能改", () => {
   it("启动时给导入格式的技能补索引，目录改成 name，标题没有就用名字", () => {
     const hob = makeHob({}, { memory: "off" });

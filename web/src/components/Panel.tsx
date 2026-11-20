@@ -13,7 +13,7 @@ import type { ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, Mode
 import { Icon } from "../icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
 import { PanelRootDetails } from "./PanelRootDetails.tsx";
-import { fitThinking } from "../model-list.ts";
+import { fitThinking, rosterOptions } from "../model-list.ts";
 import { COLOR_IDS, COLORS, customSprite, parseSprite, PROP_IDS, PROPS, spriteId } from "../../../shared/sprites.ts";
 import { Avatar } from "../sprites.tsx";
 import { useLeave } from "../motion.ts";
@@ -23,7 +23,6 @@ import {
   archiveGroup,
   backPanel,
   changeAssistantSkill,
-  collapsePanel,
   createRoutine,
   deleteRule,
   deleteRoutine,
@@ -50,21 +49,26 @@ import {
   updateRule,
   runRoutine,
   saveRoutine,
+  showNowWide,
+  setNowWide,
   toggleNowWide,
   useApp,
   type PanelPage,
 } from "../store.ts";
 import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, timePointText, WEEK, type Schedule } from "../util.ts";
-import { PanelHead } from "./PanelHead.tsx";
+import { CollapsePanelButton, PanelHead } from "./PanelHead.tsx";
 import { panelAssistant } from "../panel-stack.ts";
+import { DesktopWakeTracker } from "../desktop-wake.ts";
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
 import { GroupCluster, membersOf } from "./Groups.tsx";
-import { PlaceJobs, TopicPanel } from "./Topics.tsx";
+import { PlaceJobs, TopicClose } from "./Topics.tsx";
 import { topicsOf } from "../topics.ts";
 
 // noVNC 要顶层 await，单独分包按需加载
 const DesktopMini = lazy(() => import("./DesktopView.tsx").then((m) => ({ default: m.DesktopMini })));
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((m) => ({ default: m.DesktopView })));
+
+const desktopWakeTracker = new DesktopWakeTracker();
 
 function verbLabel(verb: string): string {
   const labels: Record<string, string> = { 读: t("读取"), 跑: t("运行"), 改: t("修改"), 写: t("写入"), 搜: t("搜索") };
@@ -88,16 +92,19 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   const groupScope = "groupId" in panel && (panel.kind === "routines" || panel.kind === "skills" || panel.kind === "rules" || panel.kind === "newRoutine") ? panel.groupId : undefined;
   const [rootScrolled, setRootScrolled] = useState(false);
   const selectedAssistant = s.profiles[panelAssistant(s.panelStack, s.sel)]?.assistant ?? s.assistants.find((a) => a.id === (panelAssistant(s.panelStack, s.sel)));
+  const desktop = useDesktopScreens();
+  const focusScreen = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
+  const focus = !mobile && kind === "now" && !group && s.nowWide && !!focusScreen && desktop.screens.some((entry) => entry.id === focusScreen && entry.running);
   useEffect(() => setRootScrolled(false), [s.sel, s.gsel]);
   const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" ? t("执行前确认") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
-    <aside className="panel" onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
-      <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
-        {kind === "now" && !group ? <><button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button><button className="hob-icon-btn panel-close" title={t("收起右栏")} onClick={collapsePanel}><Icon name="dbl" size={17} /></button></> : null}
-        {kind === "now" && group ? <>{!group.parentId ? <button className="hob-icon-btn" title={t("编辑群")} onClick={() => openGroupSettings(group.id)}><Icon name="edit" size={17} /></button> : null}<button className="hob-icon-btn panel-close" title={t("收起右栏")} onClick={collapsePanel}><Icon name="dbl" size={17} /></button></> : null}
+    <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
+      {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
+        {kind === "now" && !group ? <button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button> : null}
+        {kind === "now" && group ? <button className="hob-icon-btn" title={t("编辑群")} onClick={() => openGroupSettings(group.parentId ?? group.id)}><Icon name="edit" size={17} /></button> : null}
         {kind === "routines" ? <button className="hob-icon-btn" title={t("新建定时任务")} onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}
         {panel.kind === "routine" ? <button className="hob-btn hob-btn-primary hob-btn-compact" onClick={() => void runRoutine(panel.id)}>{t("立即运行")}</button> : null}
-      </PanelHead>
+      </PanelHead> : null}
       <div className={`pbody sidebar-page-${kind}`}>
         {kind === "routine" ? (
           <RoutineEditor key={panel.kind === "routine" ? panel.id : ""} id={panel.kind === "routine" ? panel.id : ""} />
@@ -108,9 +115,9 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
         ) : kind === "assistant" ? (
           <AssistantSettings key={panelAssistant(s.panelStack, s.sel)} />
         ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group ? (
-          group.parentId ? <TopicPanel topic={group} /> : <GroupPanel g={group} />
+          group.parentId ? <><GroupPanel g={s.groups.find((g) => g.id === group.parentId) ?? group} /><TopicClose topic={group} /></> : <GroupPanel g={group} />
         ) : (
-          <><PanelNow />{member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}<PanelRootDetails /></>
+          <><PanelNow mobile={mobile} focus={focus} />{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails /> : null}</>
         )}
       </div>
     </aside>
@@ -226,7 +233,7 @@ function GroupPanel({ g }: { g: GroupSummary }) {
   );
 }
 
-function PanelNow() {
+function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
   const s = useApp();
   const aid = panelAssistant(s.panelStack, s.sel);
   const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
@@ -239,6 +246,14 @@ function PanelNow() {
   const desktop = useDesktopScreens();
   const screenId = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
   const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
+  const currentPanel = s.panelStack.at(-1);
+  const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
+  useEffect(() => {
+    const action = desktopWakeTracker.observe(desktop.screens, screenId, wakeEligible, s.collapsed, s.nowWide);
+    if (action === "restore") setNowWide(false);
+    else if (action === "expand") showNowWide();
+  }, [desktop.screens, screenId, wakeEligible, s.collapsed, s.nowWide]);
+  useEffect(() => () => desktopWakeTracker.unwatch(), []);
   const [screen, setScreen] = useState<null | "view" | "take">(null);
   const wide = desk && s.nowWide;
   const previousLines = useRef<ActivityLine[]>([]);
@@ -272,22 +287,35 @@ function PanelNow() {
     </button>
   );
 
+  if (focus && desk) return <div className="focus-desktop">
+    <div className="focus-head"><strong>{assistant?.name}</strong><span className="focus-live">{t("实时")}</span><span className="sp" />
+      <button className="hob-icon-btn" title={t("缩小右栏")} aria-label={t("缩小右栏")} onClick={toggleNowWide}><Icon name="shrink" size={17} /></button>
+      <button className="hob-icon-btn" title={t("全屏")} aria-label={t("全屏查看云桌面")} onClick={() => setScreen("view")}><Icon name="expand" size={17} /></button>
+      <button className="hob-icon-btn focus-take" title={t("接管云桌面")} onClick={() => setScreen("take")}><Icon name="pointer" size={14} />{t("接管")}</button>
+      <CollapsePanelButton />
+    </div>
+    <div className="now-screen"><Suspense fallback={null}><DesktopMini key={screenId} screen={screenId!} /></Suspense></div>
+    {job ? <button className="focus-job" onClick={() => openJob(job.id)}><span>{job.title}</span><small>{t("已进行 {time}", { time: fmtElapsed(job.startedAt ?? job.createdAt) })}</small></button> : null}
+    {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
+  </div>;
+
   return (
     <div className="group-card sidebar-card">
       {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
       {desk ? (
         <div className="now-desk">
           <div className="now-screen">
-            <button className="now-hit" title={wide ? t("收起") : t("在侧栏展开")} aria-label={wide ? t("收起") : t("在侧栏展开")} onClick={toggleNowWide} />
+            <button className="now-hit" title={wide ? t("缩小右栏") : t("在侧栏展开")} aria-label={wide ? t("缩小右栏") : t("在侧栏展开")} onClick={toggleNowWide} />
             <Suspense fallback={null}><DesktopMini key={screenId} screen={screenId!} /></Suspense>
             <span className="now-live">{t("实时")}</span>
             <div className="now-acts">
-              {wide ? <button className="now-btn" title={t("收起")} aria-label={t("收起")} onClick={toggleNowWide}><Icon name="shrink" size={15} /></button> : null}
+              {wide ? <button className="now-btn" title={t("缩小右栏")} aria-label={t("缩小右栏")} onClick={toggleNowWide}><Icon name="shrink" size={15} /></button> : null}
+              {!mobile && !wide ? <button className="now-btn" title={t("在侧栏展开")} aria-label={t("在侧栏展开")} onClick={toggleNowWide}><Icon name="panel" size={15} /></button> : null}
               <button className="now-btn" title={t("全屏")} aria-label={t("全屏查看云桌面")} onClick={() => setScreen("view")}><Icon name="expand" size={15} /></button>
               <button className="now-btn txt" title={t("接管云桌面")} onClick={() => setScreen("take")}><Icon name="pointer" size={14} />{t("接管")}</button>
             </div>
           </div>
-          {job ? log("strip", wide ? t("收起") : t("在侧栏展开"), toggleNowWide) : null}
+          {job ? log("strip", wide ? t("缩小右栏") : t("在侧栏展开"), toggleNowWide) : null}
         </div>
       ) : null}
       {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
@@ -322,7 +350,7 @@ function GroupSettings({ id }: { id: string }) {
       {([ ["name", t("群名")], ["purpose", t("职责")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
       </div></div>
     <div className="pgroup"><div className="sech"><span>{t("模型")}</span></div>
-    <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...settings.roster.map((entry) => ({ value: entry.ref, label: view?.models.find((item) => item.ref === entry.ref)?.name ?? entry.ref }))]} /></div>)}
+    <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...rosterOptions(settings.roster, group.models?.[key]?.ref, (ref) => view?.models.find((item) => item.ref === ref)?.name ?? ref)]} /></div>)}
     <div className="note">{t("成员在本群单独设过的，按成员的；都没设，跟随助手自己的。")}</div></div></div>
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
   </>;
@@ -352,7 +380,7 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
         <Select aria-label={label} value={pick?.ref ?? ""} onChange={(ref) => {
           const thinking = fitThinking(view?.models.find((model) => model.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings[key].thinking);
           void patchGroupMemberModels(group.id, aid, { [key]: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(group.id); });
-        }} options={[{ value: "", label: follow?.option ?? t("跟随") }, ...settings.roster.map((entry) => ({ value: entry.ref, label: name(entry.ref) }))]} />
+        }} options={[{ value: "", label: follow?.option ?? t("跟随") }, ...rosterOptions(settings.roster, pick?.ref, name)]} />
       </label>;
     })}
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
@@ -725,7 +753,7 @@ function AssistantModels({ aid }: { aid: string }) {
     <>
       <div className="lbl">{label}</div>
       <div className="ctl">
-        <Select className="grow" aria-label={label} value={models[key]?.ref ?? ""} onChange={pick(key)} options={[{ value: "", label: t("跟随全局（{name}）", { name: nameOf(key === "conversation" ? globals.conversation.ref : globals.work.ref) }) }, ...roster.map((entry) => ({ value: entry.ref, label: nameOf(entry.ref) }))]} />
+        <Select className="grow" aria-label={label} value={models[key]?.ref ?? ""} onChange={pick(key)} options={[{ value: "", label: t("跟随全局（{name}）", { name: nameOf(key === "conversation" ? globals.conversation.ref : globals.work.ref) }) }, ...rosterOptions(roster, models[key]?.ref, nameOf)]} />
       </div>
     </>
   );

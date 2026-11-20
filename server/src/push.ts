@@ -4,7 +4,7 @@ import { plainText } from "../../shared/plain-text.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import type { Approval, Job, PushDevice, PushSubscriptionJson, PushView } from "../../shared/types.ts";
+import type { Approval, PushDevice, PushSubscriptionJson, PushView } from "../../shared/types.ts";
 import { systemDir } from "./config.ts";
 import type { Store } from "./store.ts";
 
@@ -332,17 +332,5 @@ export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   // 推送的标题是卡片标题（一张卡可能问几个问题），正文写谁在等、等什么
   void deps.push
     .send({ title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) })
-    .catch(() => undefined);
-}
-
-/** 任务没有后续助手回合时的受阻或失败兜底通知。 */
-export function pushJobEnd(deps: NotifyDeps, job: Job): void {
-  if (job.status !== "stuck" && job.status !== "failed") return;
-  const assistant = deps.store.assistant(job.assistantId);
-  if (!assistant?.notify) return;
-  const status = job.status === "stuck" ? t("受阻") : t("失败");
-  const reason = job.statusReason ? t("：{reason}", { reason: plainText(job.statusReason) }) : "";
-  void deps.push
-    .send({ title: assistant.name, body: t("任务「{title}」{status}{reason}", { title: job.title, status, reason }), url: openUrl(job.assistantId, job.groupId) })
     .catch(() => undefined);
 }

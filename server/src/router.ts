@@ -7,7 +7,7 @@ import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } fr
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
 import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
-import { assistantTodosPath } from "./config.ts";
+import { assistantTodosPath, assistantWorkDir } from "./config.ts";
 import type {
   Assistant,
   AssistantSummary,
@@ -16,6 +16,9 @@ import type {
   Iso,
   Item,
   ItemsPage,
+  Job,
+  JobStatus,
+  JobStep,
   NoteIcon,
   PageLive,
   Profile,
@@ -36,10 +39,14 @@ import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
 
 import { pushAssistantTurnEnd } from "./push.ts";
-import { DesktopToolSession } from "./desktop-tools.ts";
+import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+
+export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
+export const IDLE_COMPACTION_TOKEN_THRESHOLD = 150_000;
+const IDLE_COMPACTION_INTERVAL_MS = 10 * 60 * 1000;
 
 export const ITEM_TYPE = "hob.item";
 export const ITEM_UPDATE_TYPE = "hob.item.update";
@@ -50,6 +57,8 @@ const CONTEXT_TYPE = "hob.context";
 
 /** 会话条目的 id 和 at 由会话文件给出，写卡片时不用传。 */
 /** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
+export type EventText = string | (() => string);
+
 export interface EventDetails {
   routine?: { id: string; name: string; jobId?: string };
   routineTrigger?: { id: string; name: string };
@@ -58,8 +67,18 @@ export interface EventDetails {
   delegationId?: string;
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
+  /** 任务事件按真正投递时的任务状态改写；同一任务排队时只留最新一条 */
+  job?: { id: string; round: number; kind?: "result" | "question" | "timeout" };
   /** 任务或转交结果已送来：本轮收尾时统一通知，避免任务结束和助手回复各推一次 */
   workDone?: true;
+}
+
+interface PendingEvent {
+  text: string;
+  details?: EventDetails;
+  knowledgeQuery?: string;
+  jobId?: string;
+  waiters: ((success: boolean) => void)[];
 }
 
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
@@ -68,7 +87,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill", "update_todos",
+  "read", "bash", "edit", "write", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -82,7 +101,7 @@ const GROUP_PRIMARY_TOOL_NAMES = new Set([
 ]);
 
 function groupTool(name: string, primary: boolean): boolean {
-  return GROUP_TOOL_NAMES.has(name) || (primary && GROUP_PRIMARY_TOOL_NAMES.has(name)) || name.startsWith("browser_") ||
+  return GROUP_TOOL_NAMES.has(name) || (primary && GROUP_PRIMARY_TOOL_NAMES.has(name)) ||
     Object.values(MEMORY_TOOL_PATTERNS).flat().some((pattern) => pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern);
 }
 
@@ -111,6 +130,12 @@ interface RouterState {
   eventTurn?: { held: { text: string; itemId?: string }[] };
   /** 这一轮最后一次有动静的时间，看门狗用它判断“没响应” */
   lastEventAt: number;
+  /** 上一轮结束的时间；重启后从最后一条 assistant 会话条目恢复 */
+  lastTurnEndedAt?: number;
+  /** 闲置整理正在进行时，新消息等它完成再进入模型 */
+  compactionPromise?: Promise<void>;
+  /** 最近一次成功整理对应的回合结束时间；真实会话重启后由 compaction 条目判断 */
+  compactedTurnAt?: number;
   stallTimer?: NodeJS.Timeout;
   /** 这一轮已经被叫停（没响应，或用户按了停止）：之后的报错不再写「没能回复」 */
   stalled: boolean;
@@ -131,9 +156,16 @@ interface RouterState {
   currentDelegationId?: string;
   turnRoutine?: { id: string; name: string };
   pendingDelivery?: Promise<void>;
+  /** 等会话空下来再送的事件。排着的每一条都记在 running 里：这一轮的收尾（完成通知、释放会话）等它们送完再做 */
+  pendingEvents?: PendingEvent[];
+  eventDispatch?: Promise<void>;
+  /** 正在判断这一轮停没停下来（abortOrForget）：这期间排着的事件先不送 */
+  stopping?: number;
   knowledgeNames?: string[];
   delegationReply?: string[];
   terminatingTools?: Set<string>;
+  /** 本轮已经查看过的任务快照，用于无变化时压缩 check_job 返回。 */
+  checkJobSnapshots?: Map<string, string>;
   desktop?: DesktopToolSession;
   /** 这个会话装的工具在界面上叫什么名字（只盯 Hob 自己装的那批） */
   toolLabels?: Map<string, string>;
@@ -314,8 +346,9 @@ export class RouterManager {
   private itemCache = new Map<string, { manager?: SessionManager; version: string; result: ReturnType<typeof walk>; positions: Map<string, number>; assistantTimes: string[]; last?: { text: string; at: Iso } }>();
   private livePages = new Map<string, Map<string, { page: PageLive; timer?: NodeJS.Timeout; last: number }>>();
   private liveJson = new Map<string, string>();
-  /** 云桌面：一个助手一个，单聊和群会话共用 */
-  private desktops = new Map<string, { session: DesktopToolSession; refs: number }>();
+  private idleCompactionTimer?: NodeJS.Timeout;
+  /** 不在内存里的会话：上次查过的会话文件修改时间，文件没变就不再打开 */
+  private idleChecked = new Map<string, number>();
 
   private liveUpdate(assistantId: string, callId: string, args: Record<string, unknown>, flush = false): void {
     let pages = this.livePages.get(assistantId);
@@ -348,6 +381,8 @@ export class RouterManager {
   stallOverrideMs?: number;
 
   constructor(private readonly runtime: HobRuntime) {
+    this.idleCompactionTimer = setInterval(() => { void this.compactIdleSessions().catch((error) => console.error("闲置会话检查失败：", error)); }, IDLE_COMPACTION_INTERVAL_MS);
+    this.idleCompactionTimer.unref?.();
     for (const assistant of runtime.store.assistants()) {
       const file = runtime.store.routerFile(assistant.id);
       if (!existsSync(file)) continue;
@@ -421,11 +456,14 @@ export class RouterManager {
       state = { key, assistantId, ...(groupId ? { groupId } : {}), running: 0, lastEventAt: Date.now(), stalled: false, turnHadWork: false, turnWorkDone: false, turnDelegation: false };
       this.routers.set(key, state);
     }
-    if (state.session) return state;
+    if (state.session) {
+      await this.compactIfIdle(state);
+      return state;
+    }
     state.opening ??= this.openSession(state, assistant).catch((error: unknown) => {
       state!.opening = undefined;
       if (state!.desktop && !state!.session) {
-        this.releaseDesktop(assistantId);
+        void state!.desktop.dispose();
         state!.desktop = undefined;
       }
       throw error;
@@ -444,48 +482,33 @@ export class RouterManager {
     return state.groupId ? this.store.groupMemberFile(state.groupId, state.assistantId) : this.store.routerFile(state.assistantId);
   }
 
-  /**
-   * 云桌面一个助手只有一个屏幕：单聊和它的群会话共用一个 DesktopToolSession，
-   * 按引用计数关：最后一个会话释放时才断开连接。
-   */
-  private desktopFor(assistantId: string): DesktopToolSession {
-    let entry = this.desktops.get(assistantId);
-    if (!entry) {
-      const shared = { refs: 0 } as { session: DesktopToolSession; refs: number };
-      shared.session = new DesktopToolSession(this.runtime, assistantId, false, undefined, true);
-      entry = shared;
-      this.desktops.set(assistantId, entry);
-    }
-    entry.refs += 1;
-    return entry.session;
-  }
-
-  private releaseDesktop(assistantId: string): void {
-    const entry = this.desktops.get(assistantId);
-    if (!entry) return;
-    entry.refs -= 1;
-    if (entry.refs > 0) return;
-    this.desktops.delete(assistantId);
-    void entry.session.dispose();
-  }
-
   private async openSession(state: RouterState, assistant: Assistant): Promise<void> {
     // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
     await this.runtime.models.get();
     const effectiveAssistant = assistantInGroup(assistant, state.groupId ? this.store.group(state.groupId) : undefined, this.runtime.models, this.runtime.settings.settings.models);
     const pick = conversationPick(this.runtime.settings.settings.models, effectiveAssistant);
     state.knowledgeNames = (await boundKnowledge(this.runtime, assistant.id)).map((collection) => collection.name);
-    state.desktop = this.desktopFor(assistant.id);
-    const available = [...buildRouterTools(this.runtime, assistant.id, state.groupId), ...state.desktop.tools(() => !!state.session?.model?.input.includes("image")).filter((tool) => tool.name.startsWith("browser_"))];
-    const tools = state.groupId ? available.filter((tool) => groupTool(tool.name, assistant.primary)) : available;
+    const desktop = this.runtime.desktop.view();
+    const desktopEnabled = desktop.enabled && !!desktop.url && desktop.tokenConfigured;
+    let cliEnvironment: Awaited<ReturnType<DesktopToolSession["preparePlaywrightCli"]>> | undefined;
+    if (desktopEnabled) {
+      state.desktop = new DesktopToolSession(this.runtime, assistant.id, false, undefined, true);
+      cliEnvironment = await state.desktop.preparePlaywrightCli();
+    }
+    const abilities = assistant.abilities ?? { exec: true, write: true, image: true };
+    const directToolNames = ["read", ...(abilities.exec ? ["bash"] : []), ...(abilities.write ? ["edit", "write"] : [])];
+    const workDir = assistantWorkDir(this.runtime.home, assistant.id);
+    mkdirSync(workDir, { recursive: true });
+    const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, workDir);
+    const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
+    const allowedTools = state.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
+    const tools = customTools.filter((tool) => allowedTools.includes(tool.name));
     const file = this.sessionFile(state);
     const groupId = state.groupId;
-    const desktop = this.runtime.desktop.view();
-    const enabled = desktop.enabled && !!desktop.url && desktop.tokenConfigured;
     const opened = await this.runtime.pi.open({
       file,
       spillDir: state.groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
-      cwd: this.store.home,
+      cwd: workDir,
       model: pick.ref,
       thinking: thinkingForPick(pick, this.runtime.models),
       memory: this.runtime.settings.memory().provider,
@@ -502,16 +525,18 @@ export class RouterManager {
           searchEnabled: this.runtime.settings.settings.search.some((provider) => provider.enabled),
           imageEnabled: tools.some((tool) => tool.name === "generate_image"),
           showPageEnabled: tools.some((tool) => tool.name === "show_page"),
-          desktopEnabled: desktop.enabled && !!desktop.url && desktop.tokenConfigured,
+          desktopEnabled: desktopEnabled,
           models: this.promptModels(assistant.id, groupId),
           skills: visibleSkills(this.runtime, assistant.id, group),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
+          abilities,
           knowledgeNames: state.knowledgeNames,
           ...(group ? { group } : {}),
         });
       },
-      tools: tools.filter((tool) => enabled || !tool.name.startsWith("browser_")).map((tool) => tool.name),
+      tools: allowedTools,
       customTools: tools,
+      bashSpawnHook: ({ command, cwd, env }) => ({ command, cwd, env: browserShellEnv(env, cliEnvironment) }),
     });
     state.toolLabels = new Map(tools.map((tool) => [tool.name, tool.label]));
     state.session = opened.session;
@@ -519,16 +544,16 @@ export class RouterManager {
     state.manager = opened.manager;
     state.opening = undefined;
     opened.session.subscribe((event) => this.onSessionEvent(state, assistant.id, event));
+    state.lastTurnEndedAt ??= this.lastTurnEndedAt(state);
+    await this.compactIfIdle(state);
     this.touch(state);
   }
 
   private async refreshTools(state: RouterState): Promise<void> {
     state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
     const primary = this.store.assistant(state.assistantId)?.primary === true;
-    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && !name.startsWith("browser_") && (!state.groupId || groupTool(name, primary)));
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.groupId || groupTool(name, primary)));
     if (state.knowledgeNames.length) names.push("search_knowledge");
-    const desktop = this.runtime.desktop.view();
-    if (desktop.enabled && desktop.url && desktop.tokenConfigured) names.push(...state.desktop!.tools().filter((tool) => tool.name.startsWith("browser_")).map((tool) => tool.name));
     refreshSystemPrompt(state.session!, names);
   }
 
@@ -604,6 +629,7 @@ export class RouterManager {
     // 整轮结束（包括重试）：模型一直没答成就明说一句，用户和下一轮都看得到；
     // 答成了的这一轮，手上没活的待办在这里收起（出错的那一轮留到下一轮）
     if (event.type === "agent_settled") {
+      state.lastTurnEndedAt = Date.now();
       const failed = Boolean(state.turnError);
       if (state.turnError) state.turnFailure = state.turnError;
       void this.reportTurnFailure(state).catch((error) => console.error("写失败说明失败：", error));
@@ -621,6 +647,7 @@ export class RouterManager {
       if (event.type === "agent_start") {
         state.turnLastText = undefined;
         state.turnFailure = undefined;
+        state.checkJobSnapshots = new Map();
       }
     }
     if (event.type === "message_update" && (event.assistantMessageEvent.type === "thinking_delta" || event.assistantMessageEvent.type === "thinking_end")) {
@@ -841,6 +868,9 @@ export class RouterManager {
   }
 
   /** 这一轮还有动静：重置看门狗。没有事件就说明模型憋住了。 */
+  /** 看门狗中断以后，等会话停下来的时间；过了还停不下就丢掉这份会话。测试里调短。 */
+  stallReleaseMs = 10_000;
+
   private stallMs(): number {
     return this.stallOverrideMs ?? this.runtime.settings.settings.work.routerStallMinutes * 60_000;
   }
@@ -868,9 +898,10 @@ export class RouterManager {
     state.stalled = true;
     this.setActivity(state, null);
     // 不 await：模型的那次请求可能收不了尾，但这行提示必须先出来
-    void state.session?.abort().catch(() => undefined);
+    const stopping = this.abortOrForget(state);
     const assistant = this.store.assistant(state.assistantId);
     await this.note(state, "info", t("{assistant} 无响应，已停止，可重新发送", { assistant: assistant?.name ?? state.assistantId }));
+    await stopping;
   }
 
   /** 空闲 30 分钟释放 Router 内存，下次用再打开会话文件。 */
@@ -878,7 +909,10 @@ export class RouterManager {
     if (!state.session) return;
     if (state.idleTimer) clearTimeout(state.idleTimer);
     state.idleTimer = setTimeout(() => {
-      if (!state.session || state.session.isStreaming) return;
+      if (!state.session || state.session.isStreaming || state.session.isCompacting || state.compactionPromise) {
+        this.touch(state);
+        return;
+      }
       this.close(state);
     }, 30 * 60 * 1000);
     state.idleTimer.unref?.();
@@ -888,7 +922,7 @@ export class RouterManager {
     if (state.idleTimer) clearTimeout(state.idleTimer);
     state.idleTimer = undefined;
     state.session?.dispose();
-    if (state.desktop) this.releaseDesktop(state.assistantId);
+    void state.desktop?.dispose();
     state.desktop = undefined;
     state.session = undefined;
     state.manager = undefined;
@@ -945,9 +979,96 @@ export class RouterManager {
 
   private maybeRelease(state: RouterState): void {
     if (!state.releaseAfterTurn) return;
-    if (state.running > 0 || state.session?.isStreaming) return;
+    if (state.running > 0 || state.session?.isStreaming || state.session?.isCompacting || state.compactionPromise) return;
     state.releaseAfterTurn = false;
     this.close(state);
+  }
+
+  private lastAssistantEntry(state: RouterState): SessionEntry | undefined {
+    return state.manager?.getEntries().findLast((entry) => entry.type === "message" && entry.message.role === "assistant");
+  }
+
+  private lastTurnEndedAt(state: RouterState): number | undefined {
+    const timestamp = this.lastAssistantEntry(state)?.timestamp;
+    if (!timestamp) return undefined;
+    const endedAt = Date.parse(timestamp);
+    return Number.isFinite(endedAt) ? endedAt : undefined;
+  }
+
+  private hasIdleWork(state: RouterState): boolean {
+    const active = new Set(["running", "queued", "waiting"]);
+    const jobs = this.store.jobs().some((job) => job.groupId === state.groupId && active.has(job.status) && (state.groupId !== undefined || job.assistantId === state.assistantId));
+    if (jobs) return true;
+    if (!state.groupId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
+    return this.store.approvals().some((approval) => approval.status === "pending" && (state.groupId ? approval.groupId === state.groupId : approval.assistantId === state.assistantId && !approval.groupId));
+  }
+
+  private alreadyCompactedAfterLastTurn(state: RouterState): boolean {
+    const assistant = this.lastAssistantEntry(state);
+    if (!assistant) return false;
+    const assistantAt = Date.parse(assistant.timestamp);
+    if (!Number.isFinite(assistantAt)) return false;
+    const compaction = state.manager?.getEntries().findLast((entry) => entry.type === "compaction");
+    return !!compaction && Date.parse(compaction.timestamp) >= assistantAt;
+  }
+
+  private canCompactIdle(state: RouterState, now: number): boolean {
+    if (!state.session || state.running > 0 || state.session.isStreaming || state.session.isCompacting || state.compactionPromise) return false;
+    const endedAt = state.lastTurnEndedAt ?? this.lastTurnEndedAt(state);
+    if (endedAt === undefined || now - endedAt < IDLE_COMPACTION_IDLE_MS || state.compactedTurnAt === endedAt || this.hasIdleWork(state) || this.alreadyCompactedAfterLastTurn(state)) return false;
+    const tokens = state.session.getContextUsage()?.tokens;
+    return tokens !== null && tokens !== undefined && tokens > IDLE_COMPACTION_TOKEN_THRESHOLD;
+  }
+
+  private async compactIfIdle(state: RouterState, now = Date.now()): Promise<void> {
+    if (!this.canCompactIdle(state, now)) return;
+    const session = state.session!;
+    const endedAt = state.lastTurnEndedAt ?? this.lastTurnEndedAt(state);
+    const run = (async () => {
+      try {
+        await session.compact();
+        if (endedAt !== undefined) state.compactedTurnAt = endedAt;
+      } catch (error) {
+        console.error(`闲置会话整理失败：${state.key}`, error);
+      }
+    })();
+    state.compactionPromise = run;
+    try {
+      await run;
+    } finally {
+      if (state.compactionPromise === run) state.compactionPromise = undefined;
+      this.maybeRelease(state);
+      this.touch(state);
+    }
+  }
+
+  /**
+   * 定时检查所有会话。会话空闲 30 分钟就从内存里放掉了，闲置满 6 小时的几乎都不在内存里，
+   * 所以按会话文件找：文件够久没动的打开查一次（openSession 里走同一条判定），同一个版本的文件只查一次。
+   * 一个一个来：整理要调一次模型，不同时压好几个。
+   */
+  async compactIdleSessions(now = Date.now()): Promise<void> {
+    const sessions: { assistantId: string; groupId?: string }[] = [
+      ...this.store.assistants().map((assistant) => ({ assistantId: assistant.id })),
+      ...this.store.groups().flatMap((group) => group.members.map((assistantId) => ({ assistantId, groupId: group.id }))),
+    ];
+    for (const { assistantId, groupId } of sessions) {
+      const key = this.keyOf(assistantId, groupId);
+      const state = this.routers.get(key);
+      if (state?.session) {
+        await this.compactIfIdle(state, now);
+        continue;
+      }
+      const file = groupId ? this.store.groupMemberFile(groupId, assistantId) : this.store.routerFile(assistantId);
+      const changedAt = statSync(file, { throwIfNoEntry: false })?.mtimeMs;
+      if (changedAt === undefined || now - changedAt < IDLE_COMPACTION_IDLE_MS || this.idleChecked.get(key) === changedAt) continue;
+      this.idleChecked.set(key, changedAt);
+      await this.ensure(assistantId, groupId).catch((error) => console.error(`闲置会话检查失败：${key}`, error));
+    }
+  }
+
+  private async waitForCompaction(state: RouterState): Promise<void> {
+    while (state.compactionPromise) await state.compactionPromise;
   }
 
   /** 新条目的时间取会话条目自己的时间，和 GET /items 推导出来的一致。 */
@@ -1035,8 +1156,8 @@ export class RouterManager {
   async event(assistantId: string, text: string, details?: EventDetails, groupId?: string): Promise<boolean> {
     const group = this.groupFor(assistantId, groupId);
     if (group) {
-      // 进它的群会话，并且让 GroupManager 开一轮：它说的话才写得到时间线上
-      void this.runtime.groups.deliverEvent(group.id, assistantId, text, "", details?.workDone).catch((error) => console.error("群事件投递失败：", error));
+      // 进它的群会话，并且让 GroupManager 开一轮：它说的话才写得到时间线上；事件正文在真正开轮时再按任务状态取。
+      void this.runtime.groups.deliverEvent(group.id, assistantId, () => this.eventText(text, details), "", details?.workDone).catch((error) => console.error("群事件投递失败：", error));
       return true;
     }
     try {
@@ -1048,25 +1169,30 @@ export class RouterManager {
     }
   }
 
-  /** 将转交结果送进接收会话；会话条目是去重依据。 */
-  async delegationResult(assistantId: string, id: string, text: string): Promise<boolean> {
-    const state = await this.ensure(assistantId);
-    const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
-    if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
-    return success && received();
+  /** 任务事件进会话前，检查任务是否已经进入下一轮；旧结果只留一条事实说明。 */
+  private eventText(text: string, details?: EventDetails): string {
+    const event = details?.job;
+    if (!event) return text;
+    const job = this.store.job(event.id);
+    if (!job) return text;
+    // 这里就是事件真正进会话的时候（单聊和群都在开这一轮前取正文）：任务的提问从这一刻起算送到了助手手上
+    if (event.kind === "question" && job.status === "waiting" && (job.rounds?.length ?? 0) === event.round) this.runtime.jobs.questionDelivered(job.id);
+    const currentRound = job.rounds?.length ?? 0;
+    if (currentRound === event.round) {
+      if (event.kind === "question" && job.status !== "waiting") return `任务「${job.title}」第 ${event.round + 1} 轮的提问已经处理，当前：${this.jobStatusText(job.status)}。`;
+      if (event.kind === "timeout" && job.status !== "running") return `任务「${job.title}」第 ${event.round + 1} 轮现在：${this.jobStatusText(job.status)}。`;
+      return text;
+    }
+    const current = currentRound + 1;
+    const kind = event.kind === "question" ? "提问" : event.kind === "timeout" ? "提醒" : "结果";
+    return `任务「${job.title}」第 ${event.round + 1} 轮的${kind}已经被第 ${current} 轮取代，第 ${current} 轮现在：${this.jobStatusText(job.status)}。`;
   }
 
-  /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string): Promise<boolean> {
-    const state = await this.ensure(assistantId);
-    const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
-    if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
-    return success && received();
+  private jobStatusText(status: JobStatus): string {
+    return ({ queued: "排队中", running: "进行中", waiting: "等你回复", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" } as Record<JobStatus, string>)[status];
   }
 
-  /** 事件进 Router 上下文（custom message，不进气泡）；这一轮跑完才返回。 */
+  /** 把事件放在 Hob 自己的队列里；等会话空闲后才交给 pi，避免引擎队列提前冻结正文。 */
   private async pushEvent(
     assistantId: string,
     text: string,
@@ -1074,20 +1200,73 @@ export class RouterManager {
     knowledgeQuery?: string,
   ): Promise<boolean> {
     const state = await this.ensure(assistantId);
-    const session = state.session!;
-    this.touch(state);
-    state.running += 1;
-    state.turnHadWork = state.turnHadWork || todosBusy(this.runtime, assistantId, state.groupId);
-    state.turnWorkDone ||= Boolean(details?.workDone);
-    state.turnDelegation ||= Boolean(details?.delegationId);
-    this.armStall(state);
-    this.publishBusy(state);
+    return await new Promise<boolean>((resolve) => {
+      const jobId = details?.job?.id;
+      const existing = jobId ? state.pendingEvents?.find((event) => event.jobId === jobId) : undefined;
+      if (existing) {
+        existing.text = text;
+        existing.details = details;
+        existing.knowledgeQuery = knowledgeQuery;
+        existing.waiters.push(resolve);
+      } else {
+        (state.pendingEvents ??= []).push({ text, details, knowledgeQuery, ...(jobId ? { jobId } : {}), waiters: [resolve] });
+        state.running += 1;
+      }
+      this.drainEvents(state);
+    });
+  }
+
+  private drainEvents(state: RouterState): void {
+    if (state.eventDispatch || state.stopping) return;
+    const dispatch = (async () => {
+      while (state.pendingEvents?.length && !state.stopping) {
+        if (state.session?.isStreaming) {
+          await state.session.waitForIdle();
+          continue;
+        }
+        const pending = state.pendingEvents.shift()!;
+        const success = await this.pushEventNow(state, pending.text, pending.details, pending.knowledgeQuery).catch((error) => {
+          console.error("事件投递失败：", error);
+          return false;
+        });
+        pending.waiters.forEach((resolve) => resolve(success));
+      }
+    })();
+    state.eventDispatch = dispatch;
+    void dispatch.finally(() => {
+      if (state.eventDispatch === dispatch) state.eventDispatch = undefined;
+      if (state.pendingEvents?.length) this.drainEvents(state);
+    });
+  }
+
+  /** 事件已经轮到发送：此处才生成状态正文和 nowBlock。 */
+  private async pushEventNow(
+    state: RouterState,
+    text: string,
+    details: EventDetails | undefined,
+    knowledgeQuery?: string,
+  ): Promise<boolean> {
+    const assistantId = state.assistantId;
+    const session = state.session;
+    // 会话已经被丢掉（助手归档等）：这条事件没处可送
+    if (!session) {
+      state.running = Math.max(0, state.running - 1);
+      return false;
+    }
     try {
+      this.touch(state);
+      state.turnHadWork = state.turnHadWork || todosBusy(this.runtime, assistantId, state.groupId);
+      state.turnWorkDone ||= Boolean(details?.workDone);
+      state.turnDelegation ||= Boolean(details?.delegationId);
+      this.armStall(state);
+      this.publishBusy(state);
+      await this.waitForCompaction(state);
       const knowledge = knowledgeQuery === undefined ? "" : await this.automaticKnowledge(state, knowledgeQuery);
-      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${text}${knowledge}`, display: false, details };
+      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`, display: false, details };
       await this.refreshTools(state);
       await this.applyConversationModel(state);
       if (session.isStreaming) {
+        // 上面几步等待的空当里用户的话先开了一轮：排在它后面，不插进那一轮中间
         await session.sendCustomMessage(message, { deliverAs: "followUp" });
         await session.waitForIdle();
       } else {
@@ -1109,6 +1288,22 @@ export class RouterManager {
       this.touch(state);
     }
   }
+  async delegationResult(assistantId: string, id: string, text: string): Promise<boolean> {
+    const state = await this.ensure(assistantId);
+    const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
+    if (received()) return true;
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
+    return success && received();
+  }
+
+  /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
+  async handoverResult(assistantId: string, topicId: string, text: string): Promise<boolean> {
+    const state = await this.ensure(assistantId);
+    const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
+    if (received()) return true;
+    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
+    return success && received();
+  }
 
   /** 这一轮的状态由调用方在真正收尾时判断；任务、转交和提问仍在时不发完成通知 */
   private finishTurn(state: RouterState): void {
@@ -1126,12 +1321,27 @@ export class RouterManager {
         },
       );
     }
+    void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.groupId).catch((error) => console.error("收尾任务提问失败：", error));
     state.turnHadWork = false;
     state.turnWorkDone = false;
     state.turnDelegation = false;
     state.turnFailure = undefined;
     state.turnSilent = undefined;
     state.turnLastText = undefined;
+  }
+
+  /** 同一模型回合内，判断 check_job 是否只是重复查看同一状态。 */
+  checkJobUnchanged(assistantId: string, groupId: string | undefined, jobId: string, job: Job, steps: JobStep[]): boolean {
+    const state = this.routers.get(this.keyOf(assistantId, groupId));
+    if (!state) return false;
+    const snapshot = JSON.stringify({
+      status: job.status,
+      statusReason: job.statusReason,
+      steps: steps.map((step) => step.id),
+    });
+    const previous = state.checkJobSnapshots?.get(jobId);
+    (state.checkJobSnapshots ??= new Map()).set(jobId, snapshot);
+    return previous === snapshot;
   }
 
   /** 忙闲变了告诉前端（“正在想”要看它）。 */
@@ -1256,6 +1466,7 @@ export class RouterManager {
   async remember(assistantId: string, text: string, groupId?: string): Promise<void> {
     const gid = this.groupFor(assistantId, groupId)?.id;
     const state = await this.ensure(assistantId, gid);
+    await this.waitForCompaction(state);
     await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
@@ -1317,6 +1528,7 @@ export class RouterManager {
     try {
       const promptText = options.knowledgeQuery === undefined ? text : text + await this.automaticKnowledge(state, options.knowledgeQuery);
       await previousDelivery;
+      await this.waitForCompaction(state);
       await this.applyConversationModel(state);
       await this.refreshTools(state);
       // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
@@ -1351,7 +1563,39 @@ export class RouterManager {
       state.stalled = true;
       this.setActivity(state, null);
     }
-    if (state?.session) await state.session.abort();
+    if (state) await this.abortOrForget(state);
+  }
+
+  /**
+   * 停下这一轮。中断收不了尾（请求挂死）时，这份会话会一直算「还在跑」，之后的消息全排在它后面、永远没人回：
+   * 等一小会儿还没停下，就把它从内存里丢掉，下一条消息从会话文件重新打开（对话都在文件里）。
+   * 挂着的那次调用以后要是收尾，只会动到丢掉的这份状态，不影响新会话。
+   */
+  private async abortOrForget(state: RouterState): Promise<void> {
+    const session = state.session;
+    if (!session) return;
+    // 判断停没停下来之前，排着的事件先不送：不然刚停下它们就开了新的一轮，看起来像没停住
+    state.stopping = (state.stopping ?? 0) + 1;
+    try {
+      const aborted = session.abort().catch(() => undefined);
+      await Promise.race([aborted, new Promise((resolve) => setTimeout(resolve, this.stallReleaseMs).unref?.())]);
+      if (this.routers.get(state.key) !== state || state.session !== session) return;
+      // 排着没送的事件也记在 running 里，它们不算没停下来
+      if (state.running === (state.pendingEvents?.length ?? 0) && !session.isStreaming) return;
+      state.turnHadWork = false;
+      state.turnWorkDone = false;
+      const pending = state.pendingEvents?.splice(0) ?? [];
+      this.forgetSession(state.assistantId, state.groupId);
+      this.publishBusy(state);
+      // 排着的事件（多半是任务的结果）换到重新打开的会话里送，不跟这份会话一起丢
+      for (const event of pending) {
+        const settle = (success: boolean) => event.waiters.forEach((resolve) => resolve(success));
+        void this.pushEvent(state.assistantId, event.text, event.details, event.knowledgeQuery).then(settle, () => settle(false));
+      }
+    } finally {
+      state.stopping -= 1;
+      if (!state.stopping) this.drainEvents(state);
+    }
   }
 
   isBusy(assistantId: string, groupId?: string): boolean {
@@ -1368,6 +1612,13 @@ export class RouterManager {
       if ((state.running ?? 0) > 0 || state.session?.isStreaming) busy.push(state.assistantId);
     }
     return busy;
+  }
+
+  /** 这个群里正在说话的成员各自在做什么（页面刚打开时补上「正在思考」）。 */
+  groupActivity(groupId: string): Record<string, RouterActivity> {
+    const activity: Record<string, RouterActivity> = {};
+    for (const state of this.routers.values()) if (state.groupId === groupId && state.activity) activity[state.assistantId] = state.activity;
+    return activity;
   }
 
   /** 等到这个助手没有在跑的回复，并且会话条目已经落定（测试和冒烟用）。 */
@@ -1505,11 +1756,11 @@ export class RouterManager {
 
   /** 进程退出或测试收尾：释放所有 Router 会话。 */
   disposeAll(): void {
+    if (this.idleCompactionTimer) clearInterval(this.idleCompactionTimer);
+    this.idleCompactionTimer = undefined;
     for (const state of this.routers.values()) this.close(state);
     this.routers.clear();
     this.itemCache.clear();
-    for (const entry of this.desktops.values()) void entry.session.dispose();
-    this.desktops.clear();
   }
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */

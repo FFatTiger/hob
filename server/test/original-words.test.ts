@@ -19,6 +19,7 @@ describe("交接只使用助手写的说明", () => {
         files: ["/draft.md"],
       });
       expect(result.isError).toBeUndefined();
+      expect(result.terminate).toBeUndefined();
       expect(start).toHaveBeenCalledWith("hob", expect.objectContaining({
         instruction: "用户要求：“只改第三章，图表别动，改完给我对比。”",
         files: ["/draft.md"],

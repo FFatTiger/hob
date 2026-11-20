@@ -323,6 +323,14 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
   const content = useLeave(open, 180);
 
   if (step.kind === "text") {
+    if (step.from === "hob") {
+      const minutes = step.args?.minutes;
+      return (
+        <div className="jd-reminder">
+          {typeof minutes === "number" ? t("已运行 {minutes} 分钟，超过预计的 {expect} 分钟，已提醒任务整理结果", { minutes, expect: String(step.args?.expect ?? "") }) : step.text}
+        </div>
+      );
+    }
     if (step.from === "user") {
       return (
         <div className={`jd-mine${step.queued ? " queued" : ""}`}>

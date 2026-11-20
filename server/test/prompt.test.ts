@@ -166,7 +166,7 @@ describe("提示词角色和内容", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const start = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "start_job")!;
-      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。");
+      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。");
     } finally { hob.close(); }
   });
 });
@@ -186,7 +186,7 @@ describe("可选能力和事件边界", () => {
         expect(prompt.includes("产出、网页")).toBe(!!(mask & 2));
         expect(prompt.includes("## 记忆")).toBe(!!(mask & 1));
         expect(prompt.includes("用户需要图片，用 generate_image 生成，生成后会显示在对话里。")).toBe(!!(mask & 4));
-        expect(prompt.includes("你和你的任务共用一个云桌面浏览器")).toBe(!!(mask & 8));
+        expect(prompt.includes("网页上的事用 playwright-cli 命令做，你和任务用的是同一个云桌面浏览器")).toBe(!!(mask & 8));
         expect(prompt).not.toContain("做成页面（show_page）更好读");
         expect(buildSystemPrompt(hob.runtime.store, "hob", { ...options, showPageEnabled: true })).toContain("做成页面（show_page）更好读");
         // 收起的助手（这里是默认带的那几位）照样能接转交，它们的回复也会送回来
@@ -195,7 +195,7 @@ describe("可选能力和事件边界", () => {
       const assistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...assistant, id: "other", primary: false });
       expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off" })).toContain("转交说明是转交方对用户要求的理解，里面引用的用户原话代表用户本人");
-      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off", desktopEnabled: true })).toContain("你和你的任务共用一个云桌面浏览器");
+      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...base, memory: "off", desktopEnabled: true })).toContain("网页上的事用 playwright-cli 命令做，你和任务用的是同一个云桌面浏览器");
     } finally { hob.close(); }
   });
 });
@@ -205,6 +205,22 @@ describe("系统提示词", () => {
     const { timezone, aboutYou } = hob.runtime.settings.settings.general;
     return buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, memory: "local" });
   };
+
+  it("助手的能力说明与开关一致", () => {
+    const hob = makeHob();
+    try {
+      const base = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+      for (const [exec, write, lead] of [
+        [true, true, "你自己能执行命令、读取和修改文件"],
+        [true, false, "你自己能执行命令、读取文件"],
+        [false, true, "你自己能读取和修改文件"],
+        [false, false, "你自己能读取文件"],
+      ] as const) {
+        const prompt = buildSystemPrompt(hob.runtime.store, "hob", { ...base, abilities: { exec, write, image: false } });
+        expect(prompt).toContain(`${lead}，也能把事情交给后台任务。`);
+      }
+    } finally { hob.close(); }
+  });
 
   it("任务提示词只在带上技能和云桌面工具时包含对应段落", () => {
     const hob = makeHob();
@@ -216,6 +232,7 @@ describe("系统提示词", () => {
       expect(buildWorkerPrompt(hob.runtime.store, job.id, options)).not.toContain("需要登录的网站");
       const prompt = buildWorkerPrompt(hob.runtime.store, job.id, { ...options, desktopEnabled: true, taskSkills: true });
       expect(prompt).toContain("技能是做某一类事的做法。要做的事对得上哪份，先读它的 SKILL.md 再执行，照着做能少走弯路。技能里有写错或过时的地方，按实际情况做对，并在 result 里写明是哪份技能、哪里不对，「Hob」会安排把技能改对。");
+      expect(prompt).toContain("网页上的事用 playwright-cli 命令做，它操作的是云桌面的浏览器，用户看得到、能接手，登录也一直保持。云桌面是另一台机器，局域网和外网都通，但打不开这台机器上只监听 127.0.0.1 的服务。");
       expect(prompt).toContain("需要登录的网站，用 ask_user 告诉「Hob」要登录哪个网站");
     } finally { hob.close(); }
   });
@@ -315,7 +332,7 @@ describe("系统提示词", () => {
       const prompt = promptOf(hob);
       expect(prompt).not.toContain("外部工作台");
       expect(prompt).not.toContain("via");
-      expect(prompt).toContain("在自己的会话和目录里执行");
+      expect(prompt).toContain("任务在自己的会话里做，不占你的对话");
     } finally {
       hob.close();
     }

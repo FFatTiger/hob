@@ -21,23 +21,23 @@ import type {
 import { IMAGE_TYPES, isImagePath } from "../../shared/media.ts";
 import { newId } from "./ids.ts";
 import { resolveMovedPath } from "./layout.ts";
-import { availableDesktopTools, type DesktopToolSession } from "./desktop-tools.ts";
+import { availableDesktopTools, browserShellEnv, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { MCP_SESSION_TOOLS, mcpEnabled, mcpServerDisplay } from "./mcp.ts";
 import { jobModel, assistantInGroup } from "./models.ts";
 import { duration, jobProcessLines } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
-import { pushApproval, pushJobEnd } from "./push.ts";
 import { buildWorkerPrompt, userReadsEnglish, type Abilities, type PromptSettings } from "./prompt.ts";
 import { generalSkillsDir, loadedVisibleSkills, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
 import { assistantSkillsDir, combinedSkills, groupSkillsDir, lockSkillsDir, recordSkillUse, unlockSkillsDir, usableAssistantSkills } from "./assistant-skills.ts";
 import type { VisibleSkill } from "../../shared/skills.ts";
 import { reconcileSkills, restoreSkills, snapshotSkills } from "./sediment.ts";
+import type { EventDetails } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
-import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, deriveSteps, textOfContent, toolStep, withOutput } from "./transcript.ts";
+import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, JOB_REMINDER_LEAD, browserCommandLabel, deriveSteps, reminderStep, textOfContent, toolStep, withOutput } from "./transcript.ts";
 import { registerAskLoginTool, registerAskTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
 import { searchTools } from "./search.ts";
 
@@ -94,7 +94,7 @@ export function validateJobCwd(home: string, cwd: string): void {
   };
   const path = relative(canonical(home), canonical(cwd));
   if (!path || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))) {
-    throw new Error("不能在 Hob 的数据目录里执行任务；不填 cwd 就在任务自己的目录里执行。");
+    throw new Error("不能把 Hob 的数据目录指定为任务工作目录；不填 cwd 就在任务自己的目录里执行，需要的文件放在 files 里。");
   }
 }
 
@@ -247,8 +247,10 @@ function activityFor(toolName: string, args: Record<string, unknown>, cwd = ""):
       return { at: new Date().toISOString(), verb: "读", text: path };
     case "ls":
       return { at: new Date().toISOString(), verb: "读", text: path || "." };
-    case "bash":
-      return { at: new Date().toISOString(), verb: "跑", text: trim(commandSummary(String(args.command ?? "")), 120) };
+    case "bash": {
+      const command = String(args.command ?? "");
+      return { at: new Date().toISOString(), verb: "跑", text: browserCommandLabel(command) ?? trim(commandSummary(command), 120) };
+    }
     case "edit":
       return { at: new Date().toISOString(), verb: "改", text: path };
     case "write":
@@ -417,9 +419,8 @@ export class JobManager {
   }
 
   /** 事件送到哪个助手的会话：群里的任务回它的群会话，其余回单聊。派给别的成员做的，回派任务的助手。 */
-  private notifyAssistant(job: Job, text: string, workDone = false): Promise<boolean> {
+  private notifyAssistant(job: Job, text: string, details?: EventDetails): Promise<boolean> {
     const speaker = job.startedBy ?? job.assistantId;
-    const details = workDone ? { workDone: true as const } : undefined;
     if (job.groupId) return this.runtime.router.event(speaker, text, details, job.groupId);
     return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
@@ -496,6 +497,7 @@ export class JobManager {
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
     const desktop = await availableDesktopTools(this.runtime, job.assistantId, !!this.runtime.models.find(job.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"), job.title, join(this.store.workDir(job.id), "screenshots"));
     if (desktop) customTools.push(...desktop.tools());
+    const cliEnvironment = desktop ? await desktop.preparePlaywrightCli() : undefined;
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报
     if (assistant?.primary) customTools.push(overviewTool(this.runtime));
     // MCP：配置里有启用中的服务才加载（改完配置，之后新开的任务生效）
@@ -523,6 +525,7 @@ export class JobManager {
         ]),
       ],
       customTools,
+      bashSpawnHook: ({ command, cwd, env }) => ({ command, cwd, env: browserShellEnv(env, cliEnvironment) }),
       mcp,
     });
     return { session: opened.session, manager: opened.manager, mcpServers: mcpServerDisplay(this.runtime.home), ...(desktop ? { desktop } : {}) };
@@ -549,7 +552,7 @@ export class JobManager {
       askedFollowUp: false,
       lastActivityAt: Date.now(),
       pausedMs: 0,
-      nextReminder: running.expect?.source === "routine" ? 1.5 : 1,
+      nextReminder: 1,
       steps: new Map(),
       readPaths: new Map(),
       queued: [],
@@ -638,7 +641,8 @@ export class JobManager {
       if (event.type === "agent_settled") void this.onSettled(worker);
     });
 
-    const instruction = followUp ?? [running.instruction, this.afterBrief(running)].filter(Boolean).join("\n\n");
+    const inputFiles = running.inputs?.length ? `附带文件：\n${running.inputs.map((file) => `- ${file}`).join("\n")}` : "";
+    const instruction = followUp ?? [running.instruction, inputFiles, this.afterBrief(running)].filter(Boolean).join("\n\n");
     void session
       .prompt(instruction, images.length ? { images } : undefined)
       .catch(async (error: unknown) => {
@@ -860,7 +864,6 @@ export class JobManager {
     // 转交里的任务：先把转交重新打开，结果由目标助手接着处理完才回流 Hob（见 DelegationManager.resume）
     const delegationId = !job.routineId && job.delegationId && this.runtime.delegations.resume(job.delegationId) ? job.delegationId : undefined;
     this.bus.emit({ type: "job", job: next });
-    pushJobEnd({ push: this.runtime.push, store: this.store }, next);
     this.publishBusy(next);
     const assistant = this.store.assistant(job.assistantId);
     this.store.addWorklog(job.assistantId, {
@@ -872,8 +875,8 @@ export class JobManager {
     const toolCount = this.workerSteps(job.id).filter((step) => step.kind === "tool" && (!next.startedAt || step.at >= next.startedAt)).length;
     // 结果里的「用了技能「X」」和沉淀提醒都要标题：任一档都算，只读的那几份没有 fromJobId，不会被当成沉淀目标
     const resultSkills = visibleSkills(this.runtime, job.assistantId, next.groupId ? this.store.group(next.groupId) : undefined);
+    const resultDetails: EventDetails = { job: { id: job.id, round: next.rounds?.length ?? 0, kind: "result" }, workDone: true };
 
-    let continued = false;
     if (job.routineId) {
       const routine = this.store.routine(job.routineId);
       if (routine) {
@@ -887,22 +890,23 @@ export class JobManager {
         const updated = { ...routine, runs };
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
-        continued = await this.runtime.router
+        void this.runtime.router
           .event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
-            workDone: true,
+            ...resultDetails,
           }, next.groupId)
-          .catch(() => false);
+          .catch((error) => console.error("发送定时任务结果失败：", error));
       }
     } else if (assistant) {
       const text = assistantJobResultEvent(this.runtime.home, next, { toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills });
       if (delegationId) {
-        continued = await this.runtime.router.relay(job.assistantId, text, delegationId, { workDone: true }).catch(() => false);
+        void this.runtime.router.relay(job.assistantId, text, delegationId, resultDetails).catch((error: unknown) => {
+          this.runtime.delegations.turnEnded(delegationId, error instanceof Error ? error.message : String(error), true);
+        });
       } else {
-        continued = await this.notifyAssistant(next, text, true).catch(() => false);
+        void this.notifyAssistant(next, text, resultDetails).catch((error) => console.error("发送任务结果失败：", error));
       }
     }
-    if (!continued) pushJobEnd({ push: this.runtime.push, store: this.store }, next);
   }
 
   async reply(jobId: string, text: string, source: "user" | "router" = "user"): Promise<void> {
@@ -1073,7 +1077,7 @@ export class JobManager {
       const sediment = this.store.job(job.id)?.sediment;
       // 只有失败才通知助手：沉淀出来什么了，任务卡片和对话里已经写着
       if (sediment?.status === "failed") {
-        await this.notifyAssistant(job, `任务「${job.title}」（${job.id}）沉淀完了：沉淀失败，${sediment.reason}。`).catch((error) => console.error("发送沉淀结果失败：", error));
+        void this.notifyAssistant(job, `任务「${job.title}」（${job.id}）沉淀完了：沉淀失败，${sediment.reason}。`).catch((error) => console.error("发送沉淀结果失败：", error));
       }
     } finally {
       // 被停下时恢复还没做：锁留到 stopSediment 收尾时再放，中途别的入口照样改不了
@@ -1226,7 +1230,7 @@ export class JobManager {
     await this.finish(jobId, "stopped", undefined, reason);
   }
 
-  /** Worker 的 ask_user：出审批卡、把任务标成待确认，阻塞到用户答复。 */
+  /** Worker 的 ask_user：只交给助手（用户只和助手打交道，不推送、不给用户出卡），把任务标成待确认，阻塞到助手或用户答复。 */
   async askQuestion(
     jobId: string,
     input: { title: string; detail?: string; options: ApprovalOption[]; recommended?: ApprovalOption["key"]; ruleText?: string; login?: { site: string; reason: string } },
@@ -1258,12 +1262,62 @@ export class JobManager {
     worker.job = waiting;
     worker.pausedAt = Date.now();
     this.bus.emit({ type: "job", job: waiting });
-    pushApproval({ push: this.runtime.push, store: this.store }, approval);
     const sentence = (value: string) => /[。！？.!?]\s*$/.test(value) ? value : `${value}。`;
     const text = `任务「${job.title}」（${job.id}）在等你回复：${sentence(input.title)}${input.detail ? sentence(input.detail) : ""}选项：${input.options.map((option) => `${option.key} ${option.label}${option.key === input.recommended ? "（推荐）" : ""}`).join("、")}。`;
-    if (delegationId) void this.runtime.router.relay(job.assistantId, text, delegationId).catch(() => this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
-    else void this.notifyAssistant(job, text).catch((error) => console.error("任务提问投递失败：", error));
+    const questionDetails: EventDetails = { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "question" } };
+    let delivered = false;
+    if (delegationId) {
+      delivered = await this.runtime.router.relay(job.assistantId, text, delegationId, questionDetails).catch((error) => {
+        this.runtime.delegations.turnEnded(delegationId, error instanceof Error ? error.message : String(error), true);
+        return false;
+      });
+    } else {
+      delivered = await this.notifyAssistant(job, text, questionDetails).catch((error) => {
+        console.error("任务提问投递失败：", error);
+        return false;
+      });
+    }
+    if (delivered === false) await this.finishUnsentQuestion(jobId, approval, "没有送到助手");
     return await answer;
+  }
+
+  /** 提问真正送进了助手会话的那张提问卡（id）。还排在队里没送到的不算，那一轮结束时不能当作没人接。 */
+  private deliveredQuestions = new Set<string>();
+
+  questionDelivered(jobId: string): void {
+    const approval = this.store.approvals().find((item) => item.jobId === jobId && item.status === "pending");
+    if (approval) this.deliveredQuestions.add(approval.id);
+  }
+
+  /** 同一回合结束时，任务的提问没有被助手接住就结束它，避免永久占着等待名额。 */
+  async finishUnansweredQuestions(assistantId: string, groupId?: string): Promise<void> {
+    const hasUserCard = this.store.approvals().some((approval) => approval.status === "pending" && approval.source === "router" && approval.assistantId === assistantId && (groupId ? approval.groupId === groupId : !approval.groupId));
+    if (hasUserCard) return;
+    const waiting = this.store.jobs().filter((job) => {
+      if (job.status !== "waiting") return false;
+      if (groupId !== undefined) return job.groupId === groupId && (job.startedBy ?? job.assistantId) === assistantId;
+      return !job.groupId && job.assistantId === assistantId;
+    });
+    for (const job of waiting) {
+      const approval = this.store.approvals().find((item) => item.jobId === job.id && item.status === "pending");
+      if (!approval || !this.deliveredQuestions.delete(approval.id)) continue;
+      const question = approval.title;
+      const expired = { ...approval, status: "expired" as const };
+      this.store.saveApproval(expired);
+      this.bus.emit({ type: "approval", approval: expired });
+      await this.finish(job.id, "stuck", undefined, `提问没有得到答复：${question}`);
+    }
+  }
+
+  /** 任务提问投递失败时立即收尾，原因写进任务报告和结果事件。 */
+  private async finishUnsentQuestion(jobId: string, approval: Approval, detail?: string): Promise<void> {
+    const current = this.store.approval(approval.id);
+    if (current?.status === "pending") {
+      const expired = { ...current, status: "expired" as const };
+      this.store.saveApproval(expired);
+      this.bus.emit({ type: "approval", approval: expired });
+    }
+    await this.finish(jobId, "stuck", undefined, `提问没有得到答复：${approval.title}${detail ? `（${detail}）` : ""}`);
   }
 
   /** Worker 的 ask_user 等答案时，审批被答复（answer 是回给模型的那句）。 */
@@ -1294,6 +1348,17 @@ export class JobManager {
     this.watchdog.unref?.();
   }
 
+  /** 把一次提醒送进任务会话，并在任务过程里记成不属于用户或助手的系统提醒。 */
+  private remindWorker(worker: WorkerState, text: string): void {
+    const step = reminderStep(`r${Date.now()}`, new Date().toISOString(), text);
+    this.emitStep(worker.job.id, step);
+    worker.lastActivityAt = Date.now();
+    const session = worker.session;
+    if (!session) return;
+    const send = session.isStreaming ? session.steer(text) : session.prompt(text);
+    void send.catch((error) => console.error("任务停滞提醒投递失败：", error));
+  }
+
   checkStalls(now = Date.now()): void {
     const idleMs = this.runtime.settings.settings.work.jobStallMinutes * 60_000;
     for (const [jobId, worker] of this.workers) {
@@ -1301,18 +1366,23 @@ export class JobManager {
       if (job?.status === "running" && job.startedAt && job.expect && worker.pausedAt === undefined) {
         const elapsed = Math.max(0, now - Date.parse(job.startedAt) - worker.pausedMs);
         if (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) {
+          const reminder = worker.nextReminder === 1;
           while (elapsed >= job.expect.minutes * 60_000 * worker.nextReminder) worker.nextReminder *= 2;
           const source = job.expect.source === "assistant" ? "分派任务时估计的" : job.expect.source === "routine" ? `这个定时任务以前 ${job.expect.runs} 次的中位数` : "默认 10 分钟";
           const routine = job.routineId && this.store.routine(job.routineId);
           const prefix = routine ? `定时任务「${routine.name}」` : `任务「${job.title}」`;
-          const steps = [...this.workerSteps(jobId), ...worker.queued];
-          for (const step of worker.steps.values()) {
-            const index = steps.findIndex((item) => item.id === step.id);
-            if (index >= 0) steps[index] = step; else steps.push(step);
+          if (reminder) {
+            this.remindWorker(worker, `${JOB_REMINDER_LEAD}${Math.floor(elapsed / 60_000)} 分钟，超过派活时预计的 ${job.expect.minutes} 分钟。已经做成、可以交的，现在整理好用 report 交结果；还没做完，就接着做。`);
+          } else {
+            const steps = [...this.workerSteps(jobId), ...worker.queued];
+            for (const step of worker.steps.values()) {
+              const index = steps.findIndex((item) => item.id === step.id);
+              if (index >= 0) steps[index] = step; else steps.push(step);
+            }
+            const lines = jobProcessLines(steps, this.runtime.settings.settings.general.timezone, new Date(now)).slice(0, 10);
+            const text = `${prefix}（${job.id}）已运行 ${Math.floor(elapsed / 60_000)} 分钟，超过预计的 ${job.expect.minutes} 分钟（${source}）。\n最近的过程（新的在前）：${lines.length ? `\n${lines.join("\n")}` : ""}`;
+            void this.notifyAssistant(job, text, { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "timeout" } }).catch((error) => console.error("任务超时通知失败：", error));
           }
-          const lines = jobProcessLines(steps, this.runtime.settings.settings.general.timezone, new Date(now)).slice(0, 10);
-          const text = `${prefix}（${job.id}）已运行 ${Math.floor(elapsed / 60_000)} 分钟，超过预计的 ${job.expect.minutes} 分钟（${source}）。\n最近的过程（新的在前）：${lines.length ? `\n${lines.join("\n")}` : ""}`;
-          void this.notifyAssistant(job, text).catch((error) => console.error("任务超时通知失败：", error));
         }
       }
       // 在等用户答提问不算没响应：等多久都是用户的事

@@ -452,6 +452,24 @@ describe("群", () => {
     }
   });
 
+  it("群里又发了话：成员在这个群里出的、还没答的问题卡过期，别的群和单聊的不动", async () => {
+    const { hob, group } = setup();
+    try {
+      const base = { assistantId: "hob", title: "现在发布吗", options: [{ key: "A" as const, label: "发布" }], status: "pending" as const, source: "router" as const, createdAt: new Date().toISOString() };
+      hob.runtime.store.saveApproval({ ...base, id: "q-here", groupId: group.id });
+      hob.runtime.store.saveApproval({ ...base, id: "q-elsewhere", groupId: "g-other" });
+      hob.runtime.store.saveApproval({ ...base, id: "q-single" });
+      hob.faux.setResponses([text("好")]);
+      await hob.runtime.groups.send(group.id, { text: "先不管那个，看看这个" });
+      await settled(hob, group.id, 1);
+      expect(hob.runtime.store.approval("q-here")?.status).toBe("expired");
+      expect(hob.runtime.store.approval("q-elsewhere")?.status).toBe("pending");
+      expect(hob.runtime.store.approval("q-single")?.status).toBe("pending");
+    } finally {
+      hob.close();
+    }
+  });
+
   it("群会话和单聊互不影响：群里说话不让单聊的提问过期，单聊里也看不到群消息", async () => {
     const { hob, group } = setup();
     try {

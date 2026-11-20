@@ -318,6 +318,7 @@ export interface GroupSummary extends Group {
   unread: number;
   busy: string[]; // 正在这个群（话题）里说话、或者有任务在跑的成员
   todos?: TodoItem[]; // 这个会话（综合、话题）的待办，按做的先后
+  activity?: Record<string, RouterActivity>; // 正在说话的成员现在在做什么：页面刚打开时用，之后跟 group-activity 事件
 }
 
 /**
@@ -437,8 +438,8 @@ export interface JobStep {
   id: string; // 工具调用用 toolCallId，文字用消息时间戳 + 序号
   kind: "text" | "thinking" | "tool";
   at: Iso;
-  /** 文字是谁说的：助手回复 / 你补的那句 */
-  from?: "assistant" | "user";
+  /** 文字是谁说的：助手回复 / 你补的那句 / Hob 送进去的提醒（如超过预计时间） */
+  from?: "assistant" | "user" | "hob";
   /** text / thinking 的正文 */
   text?: string;
   /** tool：工具名（bash / read / edit / write / grep / find / ls / report / ask_user） */

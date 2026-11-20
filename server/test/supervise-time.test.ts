@@ -48,6 +48,8 @@ describe("任务耗时督办", () => {
     let release = () => {};
     try {
       const event = vi.spyOn(hob.runtime.router, "event").mockResolvedValue(undefined);
+      const reminderSteps: { from?: string; text?: string; args?: Record<string, unknown> }[] = [];
+      hob.runtime.bus.subscribe((entry) => { if (entry.type === "job_step" && entry.step.kind === "text") reminderSteps.push(entry.step); });
       const gate = new Promise<void>((resolve) => { release = resolve; });
       hob.faux.setResponses([async () => { await gate; return call("report", { outcome: "done", result: "完成" }); }, text("好")]);
       const routine = source === "routine" ? hob.runtime.routines.create({ assistantId: "hob", name: "巡检", instruction: "做", schedules: ["0 9 * * *"] }) : undefined;
@@ -56,19 +58,24 @@ describe("任务耗时督办", () => {
       await waitFor(() => hob.faux.state.callCount >= 1);
       const start = Date.now();
       const minute = source === "default" ? 10 : 1;
-      const first = source === "routine" ? 1.5 : 1;
+      const first = 1;
       const check = (ms: number) => { vi.setSystemTime(start + ms); hob.runtime.jobs.checkStalls(); };
       check(minute * first * 60_000 - 1);
       expect(event).not.toHaveBeenCalled();
       check(minute * first * 60_000);
-      const expectedSource = source === "assistant" ? "分派任务时估计的" : source === "routine" ? "这个定时任务以前 1 次的中位数" : "默认 10 分钟";
-      expect(event.mock.calls[0][0]).toBe("hob");
-      expect(event.mock.calls[0][1]).toContain(`预计的 ${minute} 分钟（${expectedSource}）。\n最近的过程（新的在前）：`);
-      hob.runtime.jobs.checkStalls();
-      expect(event).toHaveBeenCalledTimes(1);
+      expect(event).not.toHaveBeenCalled();
+      expect(reminderSteps.at(-1)).toMatchObject({
+        kind: "text",
+        text: `已经运行 ${minute} 分钟，超过派活时预计的 ${minute} 分钟。已经做成、可以交的，现在整理好用 report 交结果；还没做完，就接着做。`,
+      });
+      // 过程里记成 Hob 的提醒，不当成用户接着说或助手回复
+      expect(reminderSteps.at(-1)).toMatchObject({ from: "hob", args: { minutes: minute, expect: minute } });
+      check(minute * first * 2 * 60_000 - 1);
+      expect(event).not.toHaveBeenCalled();
       check(minute * first * 2 * 60_000);
+      expect(event).toHaveBeenCalledTimes(1);
+      check(minute * first * 4 * 60_000);
       expect(event).toHaveBeenCalledTimes(2);
-      if (source !== "routine") { check(minute * first * 4 * 60_000); expect(event).toHaveBeenCalledTimes(3); }
     } finally { release(); hob.close(); vi.useRealTimers(); }
   });
 
@@ -95,6 +102,10 @@ describe("任务耗时督办", () => {
       vi.setSystemTime(start + 659_999); hob.runtime.jobs.checkStalls();
       expect(event).not.toHaveBeenCalled();
       vi.setSystemTime(start + 660_000); hob.runtime.jobs.checkStalls();
+      expect(event).not.toHaveBeenCalled();
+      vi.setSystemTime(start + 719_999); hob.runtime.jobs.checkStalls();
+      expect(event).not.toHaveBeenCalled();
+      vi.setSystemTime(start + 720_000); hob.runtime.jobs.checkStalls();
       expect(event).toHaveBeenCalledTimes(1);
     } finally { release(); hob.close(); vi.useRealTimers(); }
   });

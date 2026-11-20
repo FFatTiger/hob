@@ -124,6 +124,7 @@ describe("群里的卡片和结果回流", () => {
     try {
       hob.faux.setResponses([
         call("start_job", { title: "数文件", note: "查一下 /tmp/x 里有几个文件" }),
+        text("已安排。"),
         call("report", { outcome: "done", result: "/tmp/x 里有 3 个文件" }),
         text("好"),
         text("查完了：3 个文件。@Hob 你看要不要留"),
@@ -142,8 +143,9 @@ describe("群里的卡片和结果回流", () => {
 
       // 结果进了它的群会话，它说的话写在时间线上；回复里 @ 了 Hob，接着轮到 Hob
       expect(userTexts(hob.runtime.store.groupMemberFile(group.id, "ops")).at(-1)).toContain("[hob-event] 「服务器」的任务「数文件」");
-      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["ops", "hob"]);
-      expect(assistantItems(hob, group.id)[0]!.text).toContain("查完了：3 个文件。");
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["ops", "ops", "hob"]);
+      expect(assistantItems(hob, group.id)[0]!.text).toBe("已安排。");
+      expect(assistantItems(hob, group.id)[1]!.text).toContain("查完了：3 个文件。");
 
       // 单聊里没有这张卡，也没有这次的结果
       expect(hob.runtime.router.items("ops").items.some((item) => item.kind === "job")).toBe(false);
@@ -312,6 +314,20 @@ describe("群里的卡片和结果回流", () => {
       expect(names).not.toContain("show_page");
       expect(names).toContain("set_rule");
       expect(names).toContain("create_routine");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("正在说话的成员现在在做什么带在群摘要里，说完就没有", async () => {
+    const { hob, group } = setup();
+    try {
+      const owner = group.ownerId;
+      hob.faux.setResponses([call("bash", { command: "sleep 0.5" }), text("好了")]);
+      await hob.runtime.groups.send(group.id, { text: "跑一下" });
+      await waitFor(() => Boolean(hob.runtime.groups.summary(group.id).activity?.[owner]));
+      await hob.runtime.router.waitIdle(owner, 15_000, group.id);
+      await waitFor(() => hob.runtime.groups.summary(group.id).activity === undefined);
     } finally {
       hob.close();
     }

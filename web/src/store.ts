@@ -164,7 +164,8 @@ export interface State {
   steps: Record<string, JobStep[]>; // 打开了详情的任务才有过程
   worklog: WorklogState | null;
   collapsed: boolean;
-  nowWide: boolean; // 右栏「正在做」展开成宽栏：大屏桌面 + 完整日志
+  sideCollapsed: boolean;
+  nowWide: boolean; // 右栏「正在做」展开成宽栏
   theme: Theme;
   query: string;
   homeFilter: "all" | "assistants" | "jobs" | "routines";
@@ -193,6 +194,30 @@ const THEME_KEY = "hob.theme";
 const LOCALE_KEY = "hob.locale";
 const HOME_FILTER_KEY = "hob.home.filter";
 const HOME_ORDER_KEY = "hob.home.order";
+const UI_KEY = "hob.ui";
+
+function loadUi(): Record<string, unknown> {
+  try { const saved = JSON.parse(localStorage.getItem(UI_KEY) ?? "{}"); return saved && typeof saved === "object" && !Array.isArray(saved) ? saved : {}; }
+  catch { return {}; } // 损坏的偏好按默认处理
+}
+
+function saveUi(patch: Record<string, unknown>) {
+  localStorage.setItem(UI_KEY, JSON.stringify({ ...loadUi(), ...patch }));
+}
+
+function loadSideCollapsed(): boolean {
+  return loadUi().sideCollapsed === true;
+}
+
+/** 用户拖过的云桌面右栏宽度；没拖过就用样式里的默认值 */
+export function loadDesktopWidth(): number | undefined {
+  const width = loadUi().desktopWidth;
+  return typeof width === "number" && width > 0 ? width : undefined;
+}
+
+export function saveDesktopWidth(width: number) {
+  saveUi({ desktopWidth: Math.round(width) });
+}
 /** 这台页面客户端的标识：上报可见性；SSE 断了服务端就把这台当不可见。 */
 const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 let watchingVisibility = false;
@@ -302,6 +327,7 @@ function initial(): State {
     steps: {},
     worklog: null,
     collapsed: false,
+    sideCollapsed: loadSideCollapsed(),
     nowWide: false,
     theme: storedTheme() ?? "system",
     query: "",
@@ -1001,7 +1027,9 @@ let groupRetry: ReturnType<typeof setTimeout> | undefined;
 async function loadGroups() {
   clearTimeout(groupRetry);
   try {
-    set({ groups: await api.groups() });
+    const groups = await api.groups();
+    // 打开页面、断线重连时，正在说话的成员以服务端为准（之后跟 group-activity 事件）
+    set({ groups, groupActivity: Object.fromEntries(groups.flatMap((group) => group.activity ? [[group.id, group.activity]] : [])) });
   } catch (e) {
     set({ notice: t("无法加载群：{error}，稍后自动重试", { error: errText(e) }) });
     groupRetry = setTimeout(() => void loadGroups(), 5000);
@@ -1939,11 +1967,10 @@ export async function jumpToApproval(approvalId: string) {
 
 export function openAssistant(id: string) {
   const approval = Object.values(state.approvals)
-    .filter((item) => item.status === "pending" && item.assistantId === id)
+    .filter((item) => item.status === "pending" && item.assistantId === id && !item.groupId && item.source !== "job")
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-  const waitingJob = Object.values(state.jobs).filter((job) => job.status === "waiting" && job.assistantId === id).sort((a, b) => (a.startedAt ?? a.createdAt).localeCompare(b.startedAt ?? b.createdAt))[0];
+  // 点助手进的是它的对话：有等用户回答的问题卡就停在卡上。任务在等（多半是等助手回复）不算，任务从「任务」那一行进
   if (approval) void jumpToApproval(approval.id);
-  else if (waitingJob) void jumpToJob(waitingJob.id);
   else void select(id);
 }
 
@@ -1952,9 +1979,7 @@ export function openGroup(id: string) {
   const approval = Object.values(state.approvals)
     .filter((item) => item.status === "pending" && item.groupId && (item.groupId === id || topics.includes(item.groupId)) && item.source !== "job")
     .sort((a, b) => a.createdAt.localeCompare(b.createdAt))[0];
-  const waitingJob = Object.values(state.jobs).filter((job) => job.status === "waiting" && job.groupId && (job.groupId === id || topics.includes(job.groupId))).sort((a, b) => (a.startedAt ?? a.createdAt).localeCompare(b.startedAt ?? b.createdAt))[0];
   if (approval) void jumpToApproval(approval.id);
-  else if (waitingJob) void jumpToJob(waitingJob.id);
   else void selectGroup(id);
 }
 
@@ -2567,8 +2592,23 @@ export function toggleNowWide() {
   set((s) => ({ nowWide: !s.nowWide }));
 }
 
+export function toggleSideCollapsed() {
+  const sideCollapsed = !state.sideCollapsed;
+  saveUi({ sideCollapsed });
+  set({ sideCollapsed });
+}
+
+export function setNowWide(nowWide: boolean) {
+  set({ nowWide });
+}
+
+export function showNowWide() {
+  set({ collapsed: false, nowWide: true, sheet: false });
+}
+
 export function collapsePanel() {
-  set({ collapsed: true, sheet: false });
+  closePanelPages();
+  set({ collapsed: true, nowWide: false, sheet: false });
 }
 
 export function expandPanel() {

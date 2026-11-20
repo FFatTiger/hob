@@ -4,7 +4,7 @@ import type { JobStatus, JobStep } from "../../../shared/types.ts";
 
 const state = vi.hoisted(() => ({ status: "done" as string, sediment: undefined as undefined | { status: "running" }, steps: undefined as JobStep[] | undefined }));
 vi.mock("../store.ts", () => ({
-  backPanel: vi.fn(), closePanelPages: vi.fn(), closeSheet: vi.fn(), sedimentJob: vi.fn(), togglePreviewFull: vi.fn(), fetchFileMeta: vi.fn(), loadJobFiles: vi.fn(), loadModels: vi.fn(),
+  backPanel: vi.fn(), closePanelPages: vi.fn(), closeSheet: vi.fn(), collapsePanel: vi.fn(), sedimentJob: vi.fn(), togglePreviewFull: vi.fn(), fetchFileMeta: vi.fn(), loadJobFiles: vi.fn(), loadModels: vi.fn(),
   loadWorklog: vi.fn(), moreWorklog: vi.fn(), openFilePreview: vi.fn(), openJob: vi.fn(),
   replyJob: vi.fn(), select: vi.fn(), selectGroup: vi.fn(), stopJob: vi.fn(),
   useApp: () => ({

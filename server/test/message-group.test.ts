@@ -100,6 +100,17 @@ async function seedChat(hob: TestHob, lines: string[]): Promise<void> {
 }
 
 describe("message_group", () => {
+  it("非主助手交接时，综合提示使用交接方的名字", () => {
+    const { hob, group } = setup();
+    try {
+      const { topic } = hob.runtime.groups.handOver(group.id, "打印机连不上", "ops", { text: "请检查打印机", files: [] });
+      expect(topic.handover).toMatchObject({ by: "ops" });
+      expect(hob.runtime.store.groupItems(group.id).find((item) => item.kind === "note" && item.text === "服务器 已将「打印机连不上」交由这个群处理")).toMatchObject({ speaker: "ops" });
+    } finally {
+      hob.close();
+    }
+  });
+
   it("把原话和前面几句交给群：开话题、转来的条目、群主那一轮、话题卡、综合那一行", async () => {
     const { hob, group } = setup();
     try {

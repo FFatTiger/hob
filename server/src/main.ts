@@ -8,6 +8,7 @@ import { attachDesktopWebSocket } from "./desktop-control.ts";
 import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
 import { generalSkillsDir, syncGeneralIndex } from "./skills.ts";
+import { ensurePlaywrightCli } from "./playwright-cli.ts";
 import { readLegacyModels } from "./settings.ts";
 import { releaseIdleTodosAtStartup } from "./todos.ts";
 
@@ -28,6 +29,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   const home = options.home ?? resolveHome();
   // 从 boot.ts 进来时已经迁过（幂等）；直接从 main 起的路径也补上
   prepareHome(home);
+  ensurePlaywrightCli(engineDir(home));
   const env = process.env;
   const pi = options.pi ?? new PiHost({ engineDir: engineDir(home) });
   // config.json 里的旧模型字段在 loadConfig 里被清掉，所以先读出来搬进设置

@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
-import { buildRouterTools } from "../src/router-tools.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";
+import { writeSecret } from "../src/secrets.ts";
+
 
 const pick = (id: string) => ({ ref: `hob-faux/${id}`, thinking: "off" });
 const setup = (tokensPerSecond = 200_000) => {
@@ -86,22 +87,24 @@ describe("群成员模型回归", () => {
     } finally { hob.close(); }
   });
 
-  it("不同群共享桌面但截图按各自会话的模型判断", async () => {
+  it("不同群会话各有自己的 CLI session，并提供直接动手的工具", async () => {
     const { hob, group } = setup();
     try {
       const second = hob.runtime.groups.create({ name: "乙", purpose: "测试", ownerId: "hob", members: ["hob"] });
-      await hob.runtime.groups.updateMemberModels(group.id, "hob", { conversation: pick("eyes") });
-      await hob.runtime.groups.updateMemberModels(second.id, "hob", { conversation: pick("fast") });
-      const opened: { customTools: any[] }[] = [];
+      hob.runtime.settings.setDesktop(hob.runtime.settings.get().revision, { url: "http://127.0.0.1:1", enabled: true });
+      writeSecret(hob.home, "desktop:token", "token");
+      const opened: any[] = [];
       const open = hob.runtime.pi.open.bind(hob.runtime.pi);
-      vi.spyOn(hob.runtime.pi, "open").mockImplementation(async (options) => { opened.push(options as any); return open(options); });
+      vi.spyOn(hob.runtime.pi, "open").mockImplementation(async (options) => { opened.push(options); return open(options); });
       const a = await hob.runtime.router.ensure("hob", group.id);
       const b = await hob.runtime.router.ensure("hob", second.id);
-      expect(a.desktop).toBe(b.desktop);
-      vi.spyOn(a.desktop as any, "getPage").mockResolvedValue({ screenshot: async () => Buffer.from("image") });
-      const screenshot = (index: number) => opened[index]!.customTools.find((tool) => tool.name === "browser_screenshot")!.execute("test", {});
-      expect((await screenshot(0)).content.map((item: { type: string }) => item.type)).toEqual(["image", "text"]);
-      expect((await screenshot(1)).content.map((item: { type: string }) => item.type)).toEqual(["text"]);
+      expect(a.desktop).not.toBe(b.desktop);
+      expect(a.session!.getActiveToolNames()).toEqual(expect.arrayContaining(["bash", "read", "edit", "write"]));
+      expect(b.session!.getActiveToolNames()).toEqual(expect.arrayContaining(["bash", "read", "edit", "write"]));
+      const firstEnv = opened[0].bashSpawnHook({ command: "playwright-cli snapshot", cwd: ".", env: {} }).env;
+      const secondEnv = opened[1].bashSpawnHook({ command: "playwright-cli snapshot", cwd: ".", env: {} }).env;
+      expect(firstEnv.PLAYWRIGHT_CLI_SESSION).not.toBe(secondEnv.PLAYWRIGHT_CLI_SESSION);
+      expect(firstEnv.PLAYWRIGHT_MCP_CDP_HEADERS).not.toBe(secondEnv.PLAYWRIGHT_MCP_CDP_HEADERS);
     } finally { hob.close(); }
   });
 });

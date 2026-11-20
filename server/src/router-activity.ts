@@ -1,5 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import { basename } from "node:path";
+import { browserCommandLabel } from "./transcript.ts";
 
 /** 把 Router 工具和流式参数压成界面上的一句话。 */
 export function activityLabel(name: string, args: Record<string, unknown> = {}, assistantName?: (id: string) => string | undefined): string {
@@ -8,6 +9,9 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
   let labelText: string;
   switch (name) {
     case "read": labelText = withValue(t("正在读取"), basename(value("path"))); break;
+    case "bash": labelText = browserCommandLabel(value("command")) ?? withValue(t("正在运行"), value("command")); break;
+    case "edit": labelText = withValue(t("正在修改"), basename(value("path"))); break;
+    case "write": labelText = withValue(t("正在写入"), basename(value("path"))); break;
     case "start_job": labelText = withValue(t("分派任务"), value("title")); break;
     case "check_job": labelText = t("查看任务"); break;
     case "edit_skill": labelText = t("改技能"); break;

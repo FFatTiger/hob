@@ -15,6 +15,7 @@ vi.mock("./store.ts", () => ({
   reopenTopic: async () => null,
   goHome: () => undefined,
   leaveTopicList: () => undefined,
+  toggleSideCollapsed: () => undefined,
   openKnowledge: () => undefined,
   openSettings: () => undefined,
   openFilePreview: () => undefined,

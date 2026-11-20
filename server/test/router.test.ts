@@ -140,6 +140,83 @@ describe("Router", () => {
       expect(JSON.stringify(page)).not.toContain("【现在】");
     } finally { hob.close(); }
   });
+  it("任务结果事件等会话空闲后再按当前轮次投递", async () => {
+    const hob = makeHob();
+    let release = () => {};
+    try {
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const job: Job = {
+        id: "t-lazy-result",
+        assistantId: "hob",
+        title: "查资料",
+        instruction: "查资料",
+        status: "stuck",
+        summary: "第一轮受阻",
+        createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 },
+        activity: [],
+      };
+      hob.runtime.store.saveJob(job);
+      hob.faux.setResponses([
+        async () => { await gate; return text("先处理用户这句"); },
+        text("知道了最新结果"),
+      ]);
+      await hob.runtime.router.send("hob", { text: "先处理用户这句" });
+      await waitFor(() => hob.faux.state.callCount > 0);
+      await hob.runtime.router.event("hob", "任务「查资料」（t-lazy-result）第一轮受阻", { job: { id: job.id, round: 0, kind: "result" }, workDone: true });
+      hob.runtime.store.saveJob({ ...job, status: "running", summary: undefined, rounds: [{ status: "stuck", summary: "第一轮受阻" }] });
+      release();
+      await hob.runtime.router.waitIdle("hob");
+      const entries = (await hob.runtime.router.ensure("hob")).manager!.getEntries();
+      const event = entries.find((entry) => entry.type === "custom_message" && entry.customType === "hob.event" && (entry.details as { job?: { id?: string } } | undefined)?.job?.id === job.id);
+      expect(event?.content).toContain("第 1 轮的结果已经被第 2 轮取代，第 2 轮现在：进行中");
+      expect(event?.content).not.toContain("第一轮受阻");
+    } finally {
+      release();
+      hob.close();
+    }
+  });
+
+  it("同一任务排队多条结果事件只投递最新的一条", async () => {
+    const hob = makeHob();
+    let release = () => {};
+    try {
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      const job: Job = {
+        id: "t-coalesced-result",
+        assistantId: "hob",
+        title: "连续检查",
+        instruction: "连续检查",
+        status: "done",
+        summary: "第一轮结果",
+        createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 },
+        activity: [],
+      };
+      hob.runtime.store.saveJob(job);
+      hob.faux.setResponses([
+        async () => { await gate; return text("先处理用户这句"); },
+        text("收到第二轮结果"),
+      ]);
+      await hob.runtime.router.send("hob", { text: "先处理用户这句" });
+      await waitFor(() => hob.faux.state.callCount > 0);
+      await hob.runtime.router.event("hob", "第一轮结果", { job: { id: job.id, round: 0, kind: "result" }, workDone: true });
+      await waitFor(() => Boolean((hob.runtime.router as never as { routers: Map<string, { pendingEvents?: unknown[] }> }).routers.get("hob")?.pendingEvents?.length));
+      hob.runtime.store.saveJob({ ...job, status: "done", summary: "第二轮结果", rounds: [{ status: "done", summary: "第一轮结果" }] });
+      await hob.runtime.router.event("hob", "第二轮结果", { job: { id: job.id, round: 1, kind: "result" }, workDone: true });
+      release();
+      await hob.runtime.router.waitIdle("hob");
+      const entries = (await hob.runtime.router.ensure("hob")).manager!.getEntries();
+      const events = entries.filter((entry) => entry.type === "custom_message" && entry.customType === "hob.event" && (entry.details as { job?: { id?: string } } | undefined)?.job?.id === job.id);
+      expect(events).toHaveLength(1);
+      expect(events[0]?.content).toContain("第二轮结果");
+      expect(events[0]?.content).not.toContain("第一轮结果");
+    } finally {
+      release();
+      hob.close();
+    }
+  });
+
   it("记忆插件写成功不在对话里出提示行：记下了什么只给模型", async () => {
     const hob = makeHob();
     try {
@@ -457,6 +534,51 @@ describe("Router", () => {
     }
   });
 
+  it("叫停后请求还挂着停不下来：丢掉这份会话，下一条消息照样有回复", async () => {
+    const hob = makeHob();
+    hob.runtime.router.stallOverrideMs = 60;
+    hob.runtime.router.stallReleaseMs = 50;
+    try {
+      hob.faux.setResponses([text("在。")]);
+      await hob.runtime.router.send("hob", { text: "早" });
+      await hob.runtime.router.waitIdle("hob");
+      // 中断收不了尾：abort 一直不返回，模型那次请求也一直挂着
+      const session = (hob.runtime.router as unknown as { routers: Map<string, { session?: { abort: () => Promise<void> } }> }).routers.get("hob")!.session!;
+      vi.spyOn(session, "abort").mockImplementation(() => new Promise<void>(() => undefined));
+      hob.faux.setResponses([() => new Promise<never>(() => undefined)]);
+      void hob.runtime.router.send("hob", { text: "在吗" });
+      await waitFor(() => hob.runtime.router.items("hob").items.some((item) => item.kind === "note" && item.icon === "info"));
+      await waitFor(() => !hob.runtime.router.isBusy("hob"));
+      hob.faux.setResponses([text("在，刚才卡住了。")]);
+      void hob.runtime.router.send("hob", { text: "人呢" });
+      await waitFor(() => hob.runtime.router.items("hob").items.some((item) => item.kind === "assistant" && item.text === "在，刚才卡住了。"));
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("点停止时请求挂死停不下来：丢掉这份会话，下一条消息照样有回复", async () => {
+    const hob = makeHob();
+    hob.runtime.router.stallReleaseMs = 50;
+    try {
+      hob.faux.setResponses([text("在。")]);
+      await hob.runtime.router.send("hob", { text: "早" });
+      await hob.runtime.router.waitIdle("hob");
+      const session = (hob.runtime.router as unknown as { routers: Map<string, { session?: { abort: () => Promise<void> } }> }).routers.get("hob")!.session!;
+      vi.spyOn(session, "abort").mockImplementation(() => new Promise<void>(() => undefined));
+      hob.faux.setResponses([() => new Promise<never>(() => undefined)]);
+      void hob.runtime.router.send("hob", { text: "在吗" });
+      await waitFor(() => hob.runtime.router.isBusy("hob"));
+      await hob.runtime.router.stop("hob");
+      expect(hob.runtime.router.isBusy("hob")).toBe(false);
+      hob.faux.setResponses([text("在。")]);
+      void hob.runtime.router.send("hob", { text: "人呢" });
+      await waitFor(() => hob.runtime.router.items("hob").items.filter((item) => item.kind === "assistant" && item.text === "在。").length === 2);
+    } finally {
+      hob.close();
+    }
+  });
+
   it("新建助手：先写“由 Hob 创建”，再来一条它自己的开场白", async () => {
     const hob = makeHob();
     try {
@@ -492,20 +614,20 @@ describe("Router", () => {
     const hob = makeHob();
     try {
       const tools = buildRouterTools(hob.runtime, "hob");
-      const run = async (name: string, args: Record<string, unknown>): Promise<string> => {
+      const run = async (name: string, args: Record<string, unknown>, terminates = true): Promise<string> => {
         const tool = tools.find((item) => item.name === name)!;
         const result = (await tool.execute("tool-call", args)) as {
           content: { type: string; text: string }[];
           terminate?: boolean;
         };
-        // 三个卡片工具都带 terminate：出了卡就不再请求模型
-        expect(result.terminate).toBe(true);
+        // ask_user 等卡片工具带 terminate；start_job 不结束本轮
+        expect(result.terminate).toBe(terminates ? true : undefined);
         return result.content[0].text;
       };
       hob.faux.setResponses([call("report", { outcome: "done", result: "好了" }), text("好")]);
       hob.faux.appendResponses([text("好")]);
 
-      expect(await run("start_job", { title: "查磁盘", note: "看看磁盘" })).toMatch(/^任务「查磁盘」.*已开始，预计 10 分钟（默认）。$/);
+      expect(await run("start_job", { title: "查磁盘", note: "看看磁盘" }, false)).toMatch(/^任务「查磁盘」.*已开始，预计 10 分钟（默认）。$/);
       expect(await run("ask_user", { title: "发吗", options: [{ label: "发" }, { label: "别发" }] })).toContain(
         "问题卡已显示给用户。",
       );

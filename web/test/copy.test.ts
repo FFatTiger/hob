@@ -39,6 +39,7 @@ function hits(files: string[], words: string[]): string[] {
         if (file.endsWith("server/src/worker-tools.ts") && word === "拍板" && line.includes("done 做完 / stuck 做不下去（写明缺什么）/ need_approval 需要用户拍板")) continue;
         if (file.endsWith("server/src/jobs.ts") && word === "干活" && line.includes("不能在 Hob 的数据目录里干活；不填 cwd 就在任务自己的目录里做。")) continue;
         if (file.endsWith("server/src/jobs.ts") && word === "派活" && line.includes('"派活时估的"')) continue;
+        if (file.endsWith("server/src/jobs.ts") && word === "派活" && line.includes("超过派活时预计的")) continue;
         if (line.includes(word)) found.push(`${relative(ROOT, file)}: ${word} → ${line.trim().slice(0, 60)}`);
       }
     }

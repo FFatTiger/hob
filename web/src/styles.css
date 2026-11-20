@@ -1052,6 +1052,78 @@ svg.i {
     color: var(--text);
   }
 }
+/* 右上角：模型胶囊和「展开右栏」并排，靠右边那颗圆钮 */
+.chead-actions {
+  position: absolute;
+  top: 16px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+/* 收起右栏时那颗圆钮也在这一排里：跟着排，不再自己贴边 */
+.chead-actions .chead-btn.right {
+  position: static;
+  top: auto;
+  right: auto;
+}
+.model-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  max-width: 190px;
+  padding: 0 10px 0 12px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--field) 82%, transparent);
+  -webkit-backdrop-filter: blur(18px) saturate(1.5);
+  backdrop-filter: blur(18px) saturate(1.5);
+  box-shadow: 0 0 0 0.5px var(--line), 0 6px 22px var(--composer-shadow);
+  color: var(--text2);
+  font-size: 12.5px;
+  line-height: 1;
+  cursor: pointer;
+}
+.model-pill > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.model-pill > svg {
+  flex: none;
+  color: var(--text3);
+  transition: transform var(--t-fast) var(--ease-out);
+}
+.model-pill[aria-expanded="true"] > svg {
+  transform: rotate(180deg);
+}
+@media (hover: hover) {
+  .model-pill:hover {
+    color: var(--text);
+  }
+}
+/* 菜单里选中的那一项打勾，名字照样截断 */
+.model-menu {
+  max-width: min(260px, calc(100vw - 16px));
+  max-height: min(60vh, 420px);
+  overflow-y: auto;
+}
+.model-menu button {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+.model-menu button > span {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.model-menu button > svg {
+  flex: none;
+  color: var(--accent);
+}
 /* 手机：返回和「…」退到两边各一颗圆钮，胶囊居中；刘海下面让出安全区 */
 .mpane.chat {
   --head-h: calc(112px + env(safe-area-inset-top, 0px));
@@ -1071,7 +1143,18 @@ svg.i {
   right: calc(10px + env(safe-area-inset-right, 0px));
 }
 .chead.mobile .ccap {
-  max-width: min(13em, 100% - 112px);
+  max-width: min(13em, 100% - 168px);
+}
+/* 手机：模型胶囊挨着「…」那颗圆钮，也在刘海下面让出安全区 */
+.chead.mobile .chead-actions {
+  top: calc(26px + env(safe-area-inset-top, 0px));
+  right: calc(58px + env(safe-area-inset-right, 0px));
+}
+.chead.mobile .model-pill {
+  height: 28px;
+  max-width: 104px;
+  padding: 0 8px 0 10px;
+  font-size: 12px;
 }
 .msgs .col {
   margin-top: auto;

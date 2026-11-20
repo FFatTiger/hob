@@ -187,6 +187,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "对话模型": "Chat model",
   "默认任务模型": "Default job model",
   "跟随各成员": "Follow each member",
+  "切换模型": "Switch model",
   "成员在本群单独设过的，按成员的；都没设，跟随助手自己的。": "Use a member's setting when one exists for this group. Otherwise follow the assistant's setting.",
   "在「{name}」里": "In “{name}”",
   "只在本群生效": "Only applies in this group",

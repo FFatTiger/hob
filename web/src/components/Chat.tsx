@@ -44,6 +44,7 @@ import { GroupCluster, membersOf } from "./Groups.tsx";
 import { ClosedTopic } from "./Topics.tsx";
 import { TodoStrip, type RunningJob } from "./Todos.tsx";
 import { DelayedText } from "./Empty.tsx";
+import { ModelSwitch } from "./ModelSwitch.tsx";
 
 export function conversationState(s: ReturnType<typeof useApp>) {
   const g = groupById(s, s.gsel);
@@ -395,11 +396,14 @@ export function Chat() {
     <main className="chat">
       <div className="chead">
         <ChatHead g={g} a={a} parent={parent} />
-        {s.collapsed ? (
-          <button className="chead-btn right" title={t("展开右栏")} onClick={expandPanel}>
-            <Icon name="panel" size={18} />
-          </button>
-        ) : null}
+        <div className="chead-actions">
+          <ModelSwitch g={g} a={a} />
+          {s.collapsed ? (
+            <button className="chead-btn right" title={t("展开右栏")} onClick={expandPanel}>
+              <Icon name="panel" size={18} />
+            </button>
+          ) : null}
+        </div>
       </div>
       <ConversationBody className="msgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} />
       {g?.closedAt ? <ClosedTopic g={g} /> : <Composer todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} />}
@@ -638,6 +642,9 @@ export function ChatPage() {
           <Icon name="left" size={22} />
         </button>
         <ChatHead g={g} a={a} parent={parent} mobile />
+        <div className="chead-actions">
+          <ModelSwitch g={g} a={a} />
+        </div>
         <button className="chead-btn right" title={g ? t("群信息") : t("助手信息")} onClick={openSheet}>
           <Icon name="more" size={20} />
         </button>

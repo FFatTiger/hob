@@ -23,7 +23,7 @@ COPY package.json ./
 COPY --from=deps /app/node_modules ./node_modules
 COPY bin ./bin
 COPY server/src ./server/src
-COPY server/plugins ./server/plugins
+COPY server/mcp ./server/mcp
 COPY shared ./shared
 COPY vendor ./vendor
 COPY --from=web /app/dist/web ./dist/web

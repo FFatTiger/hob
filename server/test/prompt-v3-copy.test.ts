@@ -26,9 +26,9 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       store.saveJob({ id: "t", assistantId: "hob", title: "测试", instruction: "", status: "done", createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       const options = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const routerSource = section("## 一、助手的系统提示词\n\n```\n", "\n```\n");
-      const core = strip(`用户读回复时${routerSource.split("用户读回复时")[1]!.split("你能用的技能（括号里是它的文件")[0]}`).trim();
+      const core = strip(`用户读回复时${routerSource.split("用户读回复时")[1]!.split("## 技能")[0]}`).trim();
       const router = buildSystemPrompt(store, "hob", options);
-      expect(router.slice(router.indexOf("用户读回复时"), router.indexOf("## 系统送来的消息")).trim()).toBe(core);
+      expect(router.slice(router.indexOf("用户读回复时"), router.indexOf("## 技能")).trim()).toBe(core);
       const workerSource = section("## 二、任务的系统提示词\n\n```\n", "\n```\n");
       // 定稿写的是没指定 cwd 的那句；指定了 cwd 的说法见 prompt.test.ts
       const workerCore = workerSource.split("技能是做某一类事的做法。要做的事对得上哪份")[0]!.trim().replaceAll("{助手}", "Hob").replace("{目录}", homedir());
@@ -50,8 +50,9 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       const routerSource = section("## 三、助手的工具", "## 四、任务的工具");
       const workerSource = section("## 四、任务的工具", "## 五、沉淀时发给任务的话");
       const router = buildRouterTools(hob.runtime, "hob");
-      for (const name of ["check_job", "save_job_as_skill", "edit_skill", "delete_skill", "read", "start_job", "reply_job", "stop_job", "ask_user", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "send_file", "set_avatar", "generate_image", "overview", "create_assistant", "message_assistant", "search_knowledge", "find_knowledge", "web_search", "web_fetch"]) {
-        expect(router.find((tool) => tool.name === name)?.description, name).toBe(line(routerSource, name));
+      for (const name of ["check_job", "delete_skill", "read", "start_job", "reply_job", "stop_job", "ask_user", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "send_file", "set_avatar", "generate_image", "overview", "create_assistant", "message_assistant", "search_knowledge", "find_knowledge", "web_search", "web_fetch"]) {
+        const expected = name === "create_assistant" ? "创建一个专属助手，创建后对话里出一张助手卡。" : line(routerSource, name);
+        expect(router.find((tool) => tool.name === name)?.description, name).toBe(expected);
       }
       expect(router.find((tool) => tool.name === "show_page")?.description.startsWith(`${line(routerSource, "show_page")}\n`)).toBe(true);
       const secondary = buildRouterTools(hob.runtime, "other");
@@ -69,20 +70,17 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
   it("结果里的沉淀提醒与定稿逐字一致", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
-      const none = doc.split("\n").find((item) => item.startsWith("这个任务没用到技能。"))!;
-      const used = doc.split("\n").find((item) => item.startsWith("这个任务用了技能"))!;
-      const base = none.split("{上次")[0]!;
-      const withSkill = none.replace("。{上次", "。上次").replace(/}$/, "");
-      const usedBase = used.split("{上次")[0]!;
+      const base = "这个任务没用到技能。可以用 review_job 让它回顾一遍，把能复用的做法沉淀下来，有没有值得沉淀的由它判断。";
+      const usedBase = "这个任务用了技能「报告整理」。可以用 review_job 让它回顾一遍，有没有值得沉淀的由它判断：技能里没写到的做法、写错的地方，它会补进对应的那份；是另一类事的做法，它会新建一份。";
       const job = { id: "t-copy", assistantId: "hob", title: "整理报告", instruction: "", status: "done" as const, createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [], summary: "好了" };
       hob.runtime.store.saveJob(job);
       expect(assistantJobResultEvent(hob.home, job).split("\n")[2]).toBe(base);
       saveAssistantSkill(hob.home, "hob", { name: "report-guide", title: "报告整理", description: "整理报告", content: "步骤" }, job.id);
-      expect(assistantJobResultEvent(hob.home, job).split("\n")[2]).toBe(withSkill.replace("{标题}", "报告整理").replace("{name}", "report-guide"));
+      expect(assistantJobResultEvent(hob.home, job).split("\n")[2]).toBe(base);
       // 用到了技能：也提醒，并且写出标题
       const usedJob = { ...job, id: "t-copy-2", skillsUsed: ["report-guide"] };
       hob.runtime.store.saveJob(usedJob);
-      expect(assistantJobResultEvent(hob.home, usedJob).split("\n")[2]).toBe(usedBase.replace("「{标题}」「{标题}」", "「报告整理」"));
+      expect(assistantJobResultEvent(hob.home, usedJob).split("\n")[2]).toBe(usedBase);
     } finally { hob.close(); }
   });
 
@@ -90,8 +88,8 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
     // 票 154 把第五段起的写法换了，定稿还没替换，这里只对前四段
     const source = section("## 五、沉淀时发给任务的话\n\n```\n", "\n```\n");
     const head = source.split("\n\n").slice(0, 4).join("\n\n");
-    const sent = sedimentMessage({ skillsDir: "/skills", assistantName: "Hob" });
+    const sent = sedimentMessage({ assistantName: "Hob" });
     expect(sent.startsWith(`${head}\n\n`)).toBe(true);
-    expect(sent).toContain("写好以后调用 report");
+    expect(sent).toContain("存好以后调用 report");
   });
 });

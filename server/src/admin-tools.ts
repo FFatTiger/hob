@@ -134,6 +134,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
       `${target.name}（${target.id}）`,
       `职责：${target.duty || "没有"}`,
       `详细职责：${target.dutyLong?.trim() || "没有"}`,
+      ...(target.instructions ? [`补充提示词：\n${target.instructions}`] : []),
       `对话模型：${pick("conversation")}`,
       `任务模型：${pick("work")}`,
       `能力：${able.length ? able.join("、") : "无"}`,
@@ -298,11 +299,12 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
     {
       name: "create_assistant",
       label: "创建助手",
-      description: "创建一个专属助手，创建后对话里出一张助手卡。做事的方法由所有助手共用的模板和全局规则决定，这里写它负责的范围。",
+      description: "创建一个专属助手，创建后对话里出一张助手卡。",
       parameters: Type.Object({
         name: Type.String({ description: "助手名字，职责加一个亲切的昵称，四五个字，如「写稿搭子」「记账管家」。" }),
         duty: Type.String({ description: "左栏头像下面那行小字，最多 8 个字，如「周报和文章」「账单和预算」。" }),
         dutyLong: Type.String({ description: "助手卡里的职责说明，两三句话，写完整一些" }),
+        instructions: Type.Optional(Type.String({ description: "用户给这个助手写的补充提示词：性格、说话方式、工作方法、格式要求，什么都可以。用户给了原文就原样照抄，不缩写、不改写；用户没给就不填。" })),
         sprite: Type.String({
           description: `内置道具：${PROP_IDS.filter((id) => id !== "hob").map((id) => `${id} ${PROPS[id].label}`).join("，")}；或 custom（同时填 prop_art，自己画一件）`,
         }),
@@ -315,7 +317,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         ),
         askFirst: Type.Optional(Type.Array(Type.String(), { description: "这个领域特有、执行前需要确认的事，每项一条；全局规则已经列的不重复。" })),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         const checked = params.prop_art !== undefined ? validateCustomProp(params.prop_art) : undefined;
         if (checked && !checked.ok) return fail(`prop_art 画得不对：${checked.error}；照着原因改好，再调用一次。`);
         const given = parseSprite(String(params.sprite ?? ""));
@@ -340,6 +342,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           ...(prop ? { prop } : {}),
           duty: clampDuty(String(params.duty ?? "")),
           dutyLong: String(params.dutyLong),
+          ...(typeof params.instructions === "string" && params.instructions.trim() ? { instructions: params.instructions.trim() } : {}),
           routines: routinesInput,
           routinesText: routinesInput.map((item) => `${item.name} · ${cronToChinese(item.schedule)}`).join("、"),
           askFirst: (params.askFirst as string[]) ?? [],
@@ -348,6 +351,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         store.saveDraft(draft);
         await router.addItem(assistantId, { kind: "draft", draftId: draft.id });
         runtime.bus.emit({ type: "draft", draft });
+        signal?.throwIfAborted();
         // 落完草稿卡直接建好：卡片就是「已创建」的样子；没建成的话草稿还留着，用户可以在卡上点
         const created = await createFromDraft(runtime, draft.id);
         if (created.status !== 200) {
@@ -364,13 +368,14 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
       label: "修改助手",
       description: primary
         ? "修改一个助手的资料，只改填了的项，修改后立即生效。"
-        : "修改你自己的名字、职责（左栏头像下面那行小字，最多 8 个字）或详细职责，只改填了的项，修改后立即生效。",
+        : "修改你自己的名字、职责（左栏头像下面那行小字，最多 8 个字）、详细职责或补充提示词，只改填了的项，修改后立即生效。",
       parameters: primary
         ? Type.Object({
           assistantId: Type.String({ description: "助手 id" }),
           name: Type.Optional(Type.String({ description: "名字" })),
           duty: Type.Optional(Type.String({ description: "左栏头像下面那行小字，最多 8 个字" })),
           dutyLong: Type.Optional(Type.String({ description: "详细职责" })),
+          instructions: Type.Optional(Type.String({ description: "这个助手的补充提示词，整份替换。用户给了原文就原样照抄，不缩写、不改写。" })),
           conversationModel: Type.Optional(Type.String({ description: "对话模型，填模型 ref；填 default 跟随全局设置" })),
           workModel: Type.Optional(Type.String({ description: "任务模型，填模型 ref；填 default 跟随全局设置" })),
           knowledge: Type.Optional(Type.Array(Type.String(), { description: "绑定的知识库 id，整体替换" })),
@@ -382,6 +387,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           name: Type.Optional(Type.String({ description: "名字" })),
           duty: Type.Optional(Type.String({ description: "左栏头像下面那行小字，最多 8 个字" })),
           dutyLong: Type.Optional(Type.String({ description: "详细职责" })),
+          instructions: Type.Optional(Type.String({ description: "这个助手的补充提示词，整份替换。用户给了原文就原样照抄，不缩写、不改写。" })),
         }),
       execute: async (_id, params: any) => {
         const id = primary ? String(params.assistantId ?? "").trim() : assistantId;
@@ -396,6 +402,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           if (duty !== undefined && clampDuty(duty) !== target.duty) { patch.duty = clampDuty(duty); changes.push("职责"); }
           const dutyLong = filled(params.dutyLong);
           if (dutyLong !== undefined && dutyLong !== (target.dutyLong ?? "").trim()) { patch.dutyLong = dutyLong; changes.push("详细职责"); }
+          if (typeof params.instructions === "string" && params.instructions.trim() !== (target.instructions ?? "")) { patch.instructions = params.instructions; changes.push("补充提示词"); }
           if (!changes.length) return fail("没有要改的项：至少填一项和现在不一样的。");
           const result = await updateAssistant(runtime, id, patch);
           if (result.status !== 200) return fail((result.body as { error?: string }).error ?? "修改失败");
@@ -410,6 +417,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         if (duty !== undefined && clampDuty(duty) !== target.duty) { patch.duty = clampDuty(duty); changes.push("职责"); }
         const dutyLong = filled(params.dutyLong);
         if (dutyLong !== undefined && dutyLong !== (target.dutyLong ?? "").trim()) { patch.dutyLong = dutyLong; changes.push("详细职责"); }
+        if (typeof params.instructions === "string" && params.instructions.trim() !== (target.instructions ?? "")) { patch.instructions = params.instructions; changes.push("补充提示词"); }
         // 模型：填了 ref 沿用这个助手现在的思考档，没有就用全局的；default 是去掉这一项
         const modelSettings = runtime.settings.settings.models;
         const nextModels: NonNullable<Assistant["models"]> = { ...(target.models ?? {}) };

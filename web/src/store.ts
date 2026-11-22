@@ -80,6 +80,7 @@ export interface WorklogState {
   hasMore: boolean;
   loading: boolean;
 }
+export type PluginPage = "installed" | "market" | "new";
 export type MobilePage = "list" | "topics" | "chat";
 export type { SettingsSection } from "./route.ts";
 
@@ -92,13 +93,10 @@ export type SettingsSub =
   | { kind: "importProviders"; title: string }
   | { kind: "skill"; key: string; title: string }
   | { kind: "importSkills"; title: string }
-  | { kind: "mcpServer"; name: string; title: string }
-  | { kind: "addMcp"; title: string }
-  | { kind: "importMcp"; title: string }
   | { kind: "searchProvider"; name: SearchProviderName; title: string };
 
 const EMPTY_SETTINGS: Settings = {
-  general: { theme: "system", timezone: "UTC", aboutYou: { name: "", language: "", notes: "" } },
+  general: { theme: "system", timezone: "UTC", proxy: "", noProxy: "localhost,127.0.0.1,::1", aboutYou: { name: "", language: "", notes: "" } },
   providers: [],
   models: {
     roster: [],
@@ -142,7 +140,9 @@ export interface State {
   settings: SettingsFile;
   locale: Locale;
   globalRules: { rules: Rule[] | null; error: string | null; busy: boolean };
-  page: "main" | "settings" | "knowledge";
+  page: "main" | "settings" | "knowledge" | "plugins";
+  pluginId: string | null;
+  pluginPage: PluginPage;
   knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
@@ -187,7 +187,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["plugin-demo", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -307,6 +307,8 @@ function initial(): State {
     locale: initialLocale,
     globalRules: { rules: null, error: null, busy: false },
     page: "main",
+    pluginId: null,
+    pluginPage: "installed",
     knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], collectionsLoaded: false, hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
@@ -367,6 +369,11 @@ function initial(): State {
   }
   if (bootRoute.sel) state.sel = bootRoute.sel;
   if (bootRoute.panel) state.panelStack = [bootRoute.panel];
+  if (bootRoute.plugins) {
+    state.page = "plugins";
+    state.pluginId = bootRoute.pluginId ?? null;
+    state.pluginPage = bootRoute.pluginPage ?? "installed";
+  }
   if (bootRoute.knowledge) state.page = "knowledge";
   if (bootRoute.settings) {
     state.page = "settings";
@@ -740,13 +747,22 @@ export async function saveDesktop(body: { revision: number; url: string; enabled
   return view;
 }
 export const testDesktop = () => api.testDesktop();
-export const loadMcp = () => api.mcp();
-export const putMcpServer = (name: string, body: import("../../shared/mcp.ts").McpServerSave) => api.putMcp(name, body);
-export const patchMcpServer = (name: string, patch: import("../../shared/mcp.ts").McpServerPatch) => api.patchMcp(name, patch);
-export const deleteMcpServer = (name: string) => api.deleteMcp(name);
-export const testMcpServer = (name: string, refresh = true) => api.testMcp(name, refresh);
-export const loadMcpImports = () => api.mcpImports();
-export const importMcpServers = (ids: string[]) => api.importMcp(ids);
+export const loadPlugins = () => api.plugins();
+export const loadPluginCatalog = () => api.pluginCatalog();
+export const installPlugin = (id: string, source?: string) => api.installPlugin(id, source);
+export const addPluginSource = (url: string) => api.addPluginSource(url);
+export const deletePluginSource = (id: string) => api.deletePluginSource(id);
+export const updatePlugin = (id: string) => api.updatePlugin(id);
+export const savePluginConfig = (id: string, values: Record<string, unknown>) => api.savePluginConfig(id, values);
+export const addPluginProfile = (id: string, name: string) => api.addPluginProfile(id, name);
+export const updatePluginProfile = (id: string, profileId: string, name: string) => api.updatePluginProfile(id, profileId, name);
+export const deletePluginProfile = (id: string, profileId: string) => api.deletePluginProfile(id, profileId);
+export const savePluginProfileConfig = (id: string, profileId: string, values: Record<string, unknown>) => api.savePluginProfileConfig(id, profileId, values);
+export const startPluginOAuth = (id: string, service: string) => api.startPluginOAuth(id, service);
+export const disconnectPluginOAuth = (id: string, service: string) => api.disconnectPluginOAuth(id, service);
+export const addCustomPlugin = (id: string, server: Record<string, unknown>) => api.addCustomPlugin(id, server);
+export const patchPlugin = (id: string, patch: import("../../shared/types.ts").PluginPatch) => api.patchPlugin(id, patch);
+export const deletePlugin = (id: string) => api.deletePlugin(id);
 export const loadSearch = () => api.search();
 export const testSearch = (name: string, baseUrl?: string, apiKey?: string) => api.testSearch(name, baseUrl, apiKey);
 export async function saveSearch(providers: SearchSettings, keys?: Record<string, string>) {
@@ -2542,6 +2558,10 @@ export async function uploadKnowledge(collection: string, files: File[]) {
   try { await api.uploadKnowledge(collection, files); await loadKnowledge(false, true); }
   catch (e) { set({ notice: t("上传失败：{error}", { error: errText(e) }) }); }
 }
+export function openPlugins(pluginId: string | null = null, pluginPage: PluginPage = "installed") {
+  set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, search: false });
+}
+export function closePlugins() { goHome(); }
 export function openKnowledge() {
   set({ page: "knowledge", panelStack: [], sheet: false });
   void loadKnowledge();

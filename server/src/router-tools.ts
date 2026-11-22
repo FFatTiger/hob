@@ -30,15 +30,17 @@ import { overviewTool } from "./overview.ts";
 import { pageTool } from "./pages.ts";
 import { pushApproval } from "./push.ts";
 import { searchTools } from "./search.ts";
+import { searchPluginsTool } from "./search-plugins.ts";
 import type { HobRuntime } from "./runtime.ts";
-import { assistantSkillsDir, groupSkillsDir, listSkills, readAssistantSkillBody, saveSkill, moveSkill } from "./assistant-skills.ts";
-import { bundledPlaywrightSkillDir, generalSkillsDir, notEditable, skillDirOf, syncGeneralIndex, visibleSkills } from "./skills.ts";
-import { jobView } from "./job-view.ts";
+import { assistantSkillsDir, groupSkillsDir, listSkills } from "./assistant-skills.ts";
+import { bundledPlaywrightSkillDir, generalSkillsDir, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
+import { jobView, reviewedSkillsText } from "./job-view.ts";
 import { HANDOVER_EVENT } from "./groups.ts";
 import { sessionOrigin } from "./origin.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
 import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./todos.ts";
+import { saveSkillTool } from "./save-skill.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -49,21 +51,13 @@ const SCHEDULES_DESCRIPTION = "一个或多个；可以是 cron 表达式，也�
 const ONCE_DESCRIPTION = "可选。为 true 时设置为仅运行一次：没有检查脚本的，运行一次后停止；有检查脚本的，第一次有输出后停止。已停止的定时任务还在，可以重新启用。";
 
 /** 检查脚本参数：create_routine 和 update_routine 共用。 */
-const CHECK_DESCRIPTION = "可选。到执行时间先运行的 bash 脚本，填脚本全文：没有输出就这次什么都不做；有输出时，then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出启动任务。每次有输出都会这样处理一次，不看上一次的处理完没有：同一件事连着输出几次，就会处理几次；只该处理一次的，在状态文件里记下已经输出过的，下次跳过。脚本在这个定时任务自己的目录里运行，状态文件存在当前目录，记住上次看到哪里；第一次运行还没有状态时只记下现状，不输出。非零退出算检查失败。脚本用到的其他文件也放在这个目录，跟着定时任务走。";
+const CHECK_DESCRIPTION = "可选。到执行时间先运行的 bash 脚本，填脚本全文：没有输出就这次什么都不做；有输出时，then 为 notify 就把输出作为提醒发到对话，为 job 就把输出和任务内容一起交给你处理。每次有输出都会这样处理一次，不看上一次的处理完没有：同一件事连着输出几次，就会处理几次；只该处理一次的，在状态文件里记下已经输出过的，下次跳过。脚本里要调用你的工具（包括插件），用 node 运行 JS，全局对象 tools 就是你能用的工具。脚本在这个定时任务自己的目录里运行，状态文件存在当前目录，记住上次看到哪里；第一次运行还没有状态时只记下现状，不输出。非零退出算检查失败。脚本用到的其他文件也放在这个目录，跟着定时任务走。";
 
-const checkDescription = (group: boolean) => group ? CHECK_DESCRIPTION.replace("then 为 notify 就把输出作为提醒发到对话，为 job 就带着输出启动任务", "then 为 notify 就把输出作为提醒发到群里，为 job 就带着输出交给群主处理") : CHECK_DESCRIPTION;
+const checkDescription = (group: boolean) => group ? CHECK_DESCRIPTION.replace("then 为 notify 就把输出作为提醒发到对话，为 job 就把输出和任务内容一起交给你处理", "then 为 notify 就把输出作为提醒发到群里，为 job 就把输出和任务内容一起交给群主处理") : CHECK_DESCRIPTION;
 const checkParam = (group: boolean) => Type.Object({
   script: Type.String({ description: "bash 脚本全文" }),
-  then: Type.Union([Type.Literal("notify"), Type.Literal("job")], { description: group ? "有输出时：notify 把输出作为提醒发到群里，job 交给群主处理" : "有输出时：notify 把输出作为提醒发到对话，job 带着输出启动任务" }),
+  then: Type.Union([Type.Literal("notify"), Type.Literal("job")], { description: group ? "有输出时怎么办。notify：把输出原样发到群里提醒用户，不叫醒群主，任务内容不会执行；job：把输出和任务内容一起交给群主，由群主处理。要看了输出再判断、再动手的，填 job。" : "有输出时怎么办。notify：把输出原样发到对话提醒用户，不叫醒你，任务内容不会执行；job：把输出和任务内容一起交给你，由你处理。要看了输出再判断、再动手的，填 job。" }),
 }, { description: checkDescription(group) });
-
-/** edit_skill / save_job_as_skill 的 general 参数：换给谁用 / 新建在哪。 */
-const generalParam = (group: boolean) => Type.Optional(Type.Boolean({
-  description: group ? "可选，换这份技能给谁用：true 换成通用的，所有助手都能用；false 收回来，归本群。" : "可选，换这份技能给谁用：true 换成通用的，所有助手都能用；false 收回来，归你。",
-}));
-const intoGeneralParam = (group: boolean) => Type.Optional(Type.Boolean({
-  description: group ? "可选，填 true 新建成通用技能，所有助手都能用；不填，新建的归本群。填了 into 就是改那份，不看这一项。" : "可选，填 true 新建成通用技能，所有助手都能用；不填，新建的归你。填了 into 就是改那份，不看这一项。",
-}));
 
 /** ask_user 的 questions 参数说明：照抄 .scratch/v2/design-projects.md 第五节，一字不改。 */
 const QUESTIONS_DESCRIPTION =
@@ -121,12 +115,12 @@ function approvalFromParams(assistantId: string, groupId: string | undefined, pa
 }
 
 /** 工具返回里说的「每 10 分钟」这类：具体时间只说那一刻，有检查脚本的说明有新内容会怎样，开了 once 的说明会停。 */
-function routineFact(schedules: string[], check: RoutineCheck | undefined, once: boolean | undefined): string {
+function routineFact(schedules: string[], check: RoutineCheck | undefined, once: boolean | undefined, group = false): string {
   const points = schedules.map((schedule) => timePointText(schedule));
   const labels = schedules.map((schedule, index) => points[index] ?? cronToChinese(schedule));
   const facts: string[] = [];
   if (points.every(Boolean)) facts.push(`${labels.join("、")}运行一次`);
-  if (check) facts.push(`${labels.join("、")}检查一次${check.then === "notify" ? "，有新内容就提醒你" : "，有新内容就启动任务"}`);
+  if (check) facts.push(`${labels.join("、")}检查一次${check.then === "notify" ? `，有输出时原样发到${group ? "群里" : "对话"}，任务内容不会执行` : `，有输出时连同任务内容交给${group ? "群主" : "你"}处理`}`);
   if (once) facts.push(t("运行一次后停止"));
   return facts.length ? `，${facts.join("；")}` : "";
 }
@@ -177,6 +171,24 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
   };
   const note = (icon: "memory" | "rule" | "routine" | "split" | "info" | "skill", text: string) =>
     router.addItem(assistantId, { kind: "note", icon, text }, groupId);
+  const presentApproval = async (approval: Approval, signal?: AbortSignal) => {
+    const cancel = () => {
+      const current = store.approval(approval.id);
+      if (!current || current.status !== "pending") return;
+      const expired: Approval = { ...current, status: "expired" };
+      store.saveApproval(expired);
+      bus.emit({ type: "approval", approval: expired });
+      if (groupId) runtime.groups.publish(groupId);
+    };
+    if (signal?.aborted) cancel(); else signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      signal?.throwIfAborted();
+      await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
+      signal?.throwIfAborted();
+      bus.emit({ type: "approval", approval });
+      pushApproval({ push: runtime.push, store }, approval);
+    } finally { signal?.removeEventListener("abort", cancel); }
+  };
   const profileChanged = (target = assistantId) => bus.emit({ type: "profile", assistantId: target });
   /**
    * 主助手的规则、定时和技能工具多一个 assistantId：填了就操作那个助手的，
@@ -243,18 +255,6 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     return `${groupId ? "本群" : ownerId === assistantId ? "你" : `「${store.assistant(ownerId)?.name ?? ownerId}」`}现在${left.length ? `的定时任务：${left.map((routine) => `「${routine.name}」（${routine.id}）`).join("、")}` : "没有定时任务"}。`;
   };
 
-  /** 换范围后的提示行：和删技能的提示行同一种样子。 */
-  const moveNote = (name: string, title: string, to: "general" | "group" | "assistant", ownerId: string): string => {
-    const whose = whoseSkill(to === "general" ? generalSkillsDir(runtime.home) : to === "group" ? groupSkillsDir(runtime.home, groupIdId()) : assistantSkillsDir(runtime.home, ownerId), ownerId);
-    if (to === "general") return t("已把{whose}技能「{title}」改为通用技能", { whose, title });
-    if (to === "group") return t("已把{whose}技能「{title}」收回本群", { whose, title });
-    return ownerId !== assistantId ? t("已把{whose}技能「{title}」收回给「{name}」", { whose, title, name: nameOf(ownerId) }) : t("已把{whose}技能「{title}」收回来", { whose, title });
-  };
-  const groupIdId = () => {
-    const group = groupId ? store.group(groupId) : undefined;
-    return group ? group.parentId ?? group.id : "";
-  };
-
   // 能派的模型：写进 start_job 的参数说明，助手知道有哪些可选、哪个是默认
   const modelSettings = runtime.settings.settings.models;
   const modelAssistant = assistantInGroup(assistant(), groupId ? store.group(groupId) : undefined, runtime.models, modelSettings);
@@ -287,6 +287,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
   } }) as unknown as Tool;
   delete (read as { promptSnippet?: unknown }).promptSnippet; // 用了自定义系统提示词，引擎自带的这段不进提示词
   const tools: Tool[] = [
+    saveSkillTool(runtime, assistantId, groupId, cwd),
+    searchPluginsTool(runtime.plugins, assistantId),
     {
       name: "check_job",
       label: "查看任务",
@@ -301,53 +303,6 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             return ok("和你上次查看时一样，没有新的步骤。任务结束或提问时会通知你。");
           }
           return ok(jobView({ ...job, cwd: job.cwd ?? store.workDir(job.id) }, transcript, store.approvals(), visibleSkills(runtime, job.assistantId, job.groupId ? store.group(job.groupId) : undefined), runtime.settings.settings.general.timezone, undefined, jobOrigin(job)));
-        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
-      },
-    },
-    {
-      name: "edit_skill",
-      label: "修改技能",
-      description: `修改一个技能的正文（SKILL.md）：把一段原文换成新的文字，旧版会保留。脚本需要修改的，交给任务修改。也能换它给谁用。${groupId ? "在群里按名字先找本群的技能，再找你自己的。" : ""}`,
-      parameters: Type.Object({
-        name: Type.String({ description: "技能名" }),
-        edits: Type.Optional(Type.Array(Type.Object({ old: Type.String(), new: Type.String() }), { description: "一处或几处修改：old 是正文里的原文，要一字不差、只出现一次；new 是换成的文字；只换给谁用时不填" })),
-        general: generalParam(!!groupId),
-        ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
-      }),
-      execute: async (_id, params: { name: string; edits?: { old: string; new: string }[]; general?: boolean; assistantId?: string }) => {
-        const target = targetOf(params.assistantId);
-        if ("error" in target) return fail(target.error);
-        try {
-          const found = findSkill(target.id, params.name);
-          if (found.problem || !found.skill || !found.dir) return fail(found.problem!);
-          const edits = Array.isArray(params.edits) ? params.edits : [];
-          if (!edits.length && typeof params.general !== "boolean") return fail("edits 和 general 至少填一样：改正文填 edits，换给谁用填 general。");
-          let saved: { name: string; title?: string; version?: number } = found.skill;
-          if (edits.length) {
-            let body = readAssistantSkillBody(found.skill.path);
-            for (const edit of edits) {
-              if (!edit.old) return fail("原文不能为空");
-              const count = body.split(edit.old).length - 1;
-              if (!count) return fail(`正文里找不到这段原文：${[...edit.old].slice(0, 30).join("")}`);
-              if (count > 1) return fail(`这段原文出现了 ${count} 次，多带几个字`);
-              body = body.replace(edit.old, () => edit.new);
-            }
-            saved = saveSkill(found.dir, { name: found.skill.name, title: found.skill.title ?? found.skill.name, description: found.skill.description, content: body });
-          }
-          if (typeof params.general === "boolean") {
-            const group = groupId ? store.group(groupId) : undefined;
-            const to = params.general ? "general" : group ? "group" : "assistant";
-            const toDir = params.general ? generalSkillsDir(runtime.home) : group ? groupSkillsDir(runtime.home, group.parentId ?? group.id) : assistantSkillsDir(runtime.home, target.id);
-            if (toDir !== found.dir) {
-              // 通用目录里可能有还没登记的技能：先把索引补齐，换范围时不能把它们丢了
-              if (params.general) syncGeneralIndex(toDir);
-              const conflict = params.general ? t("已有名为 {name} 的通用技能", { name: found.skill.name }) : group ? t("本群已有名为 {name} 的技能", { name: found.skill.name }) : t("你已有名为 {name} 的技能", { name: found.skill.name });
-              moveSkill(found.dir, toDir, found.skill.name, conflict);
-            }
-            await note("skill", moveNote(params.name, saved.title ?? found.skill.name, to, target.id));
-          }
-          bus.emit({ type: "skills", assistantId: target.id });
-          return ok(edits.length ? `已更新技能「${saved.title ?? saved.name}」，第 ${saved.version} 版。` : "已换好。");
         } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
@@ -374,15 +329,14 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       },
     },
     {
-      name: "save_job_as_skill",
+      name: "review_job",
       label: "沉淀技能",
-      description: `让一个已经结束的任务（做完、受阻、失败或停下的都行）把它的做法写成技能。它在自己的会话里写，能把脚本和命令真跑一遍验证；进度和结果显示在任务卡片上。${groupId ? "群里的任务新沉淀的技能归这个群；into 填哪份就改哪份。" : ""}`,
-      parameters: Type.Object({ jobId: Type.String(), into: Type.Optional(Type.String({ description: "可选，在哪个已有技能的基础上改，填技能名；不填就新建。" })), general: intoGeneralParam(!!groupId), note: Type.Optional(Type.String({ description: "可选，要交代给任务的话，比如用户的反馈和纠正、要一起并进来的技能。" })) }),
-      execute: async (_id, params: { jobId: string; into?: string; general?: boolean; note?: string }) => {
+      description: "让一个已经结束的任务（做完、受阻、失败或停下的都行）回顾这次的做法，值得留的它自己存成技能。它在自己的会话里写，能把脚本和命令真跑一遍验证；进度和结果显示在任务卡片上。",
+      parameters: Type.Object({ jobId: Type.String({ description: "任务 id。" }), note: Type.Optional(Type.String({ description: "可选，要交代给任务的话，比如用户的反馈和纠正、要一起并进来的技能。" })) }),
+      execute: async (_id, params: { jobId: string; note?: string }) => {
         const job = store.job(params.jobId);
-        // 群里的任务大家可以接手：分派给其他成员执行的，结果回到分派任务的助手，沉淀也由它发起
         if (!job || (job.assistantId !== assistantId && !(groupId && canManageJob(params.jobId)))) return fail("任务不存在");
-        try { jobs.startSediment(job.id, { into: params.into || undefined, note: params.note || undefined, general: params.general === true }); return ok("已开始沉淀，进度显示在任务卡片上。"); }
+        try { jobs.startSediment(job.id, { note: params.note || undefined }); return ok("已开始回顾，进度显示在任务卡片上。"); }
         catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
@@ -443,7 +397,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           thinking: Type.Optional(Type.String({ description: "可选：思考档以可分派模型列表里每个模型标的为准。不填用模型的默认思考档。" })),
         }),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         try {
           if (params.expect_minutes != null && (!Number.isInteger(params.expect_minutes) || params.expect_minutes < 1 || params.expect_minutes > 10080)) return fail("expect_minutes 要在 1 到 10080 之间");
           const note = String(params.note ?? "").trim();
@@ -465,7 +419,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
             ...(router.currentDelegation(assistantId, groupId) ? { delegationId: router.currentDelegation(assistantId, groupId) } : {}),
             ...(router.currentRoutineId(assistantId, groupId) ? { routineId: router.currentRoutineId(assistantId, groupId) } : {}),
-          });
+          }, signal);
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
           if (assignee.id !== assistantId) return ok(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
           if (job.after?.length) {
@@ -493,11 +447,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           const jobId = String(params.jobId);
           if (!canManageJob(jobId)) return fail(`没有这个任务：${jobId}`);
           const job = store.job(jobId)!;
-          await jobs.reply(jobId, String(params.text), "router");
+          const interrupted = await jobs.reply(jobId, String(params.text), "router");
           const origin = jobOrigin(job);
-          return ok(origin
+          const text = origin
             ? `已交给任务「${job.title}」（${jobId}），它会接着做。这个任务是${origin}创建的，结果回到那边。`
-            : `已交给任务「${job.title}」（${jobId}），它会接着做，结果会回到这里。`);
+            : `已交给任务「${job.title}」（${jobId}），它会接着做，结果会回到这里。`;
+          return ok(`${text}${interrupted ? `它的回顾停了，${reviewedSkillsText(interrupted)}` : ""}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -530,7 +485,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         site: Type.String({ description: "哪个网站" }),
         reason: Type.String({ description: "为什么要登录，一句话" }),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         const site = String(params.site ?? "").trim();
         const reason = String(params.reason ?? "").trim();
         if (!site || !reason) return fail("site 和 reason 都要填写清楚。");
@@ -549,9 +504,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         };
         store.saveApproval(approval);
         if (groupId) runtime.groups.publish(groupId);
-        await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
-        bus.emit({ type: "approval", approval });
-        pushApproval({ push: runtime.push, store }, approval);
+        await presentApproval(approval, signal);
         return endTurn("已请用户登录，等用户完成后继续。");
       },
     },
@@ -582,7 +535,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         )),
         remember: Type.Optional(Type.String({ description: "这类事以后可以不再问时，填这类事的简称（如「清理临时文件」）；卡片上会多一个「以后直接执行」的选项。" })),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         const approval = approvalFromParams(assistantId, groupId, params);
         if ("error" in approval) return fail(approval.error);
         store.saveApproval(approval);
@@ -590,9 +543,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         if (groupId) runtime.groups.publish(groupId);
         const delegationId = router.currentDelegation(assistantId, groupId);
         if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
-        await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
-        bus.emit({ type: "approval", approval });
-        pushApproval({ push: runtime.push, store }, approval);
+        await presentApproval(approval, signal);
         return endTurn("问题卡已显示给用户。");
       },
     },
@@ -678,7 +629,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           });
           await note("routine", t("新增{whose}定时任务 · {name} · {schedules}", { whose: whoseRoutine(target.id), name: routine.name, schedules: routine.schedules.map((schedule) => cronToChinese(schedule)).join("、") }));
           profileChanged(target.id);
-          return ok(`定时任务「${routine.name}」已创建${routineFact(routine.schedules, routine.check, routine.once)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
+          return ok(`定时任务「${routine.name}」已创建${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -717,7 +668,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           });
           await note("routine", t("修改{whose}定时任务 · {name} · {schedules}", { whose: whoseRoutine(target.id), name: routine.name, schedules: routine.schedules.map((schedule) => cronToChinese(schedule)).join("、") }));
           profileChanged(target.id);
-          return ok(`已修改${routineFact(routine.schedules, routine.check, routine.once)}。目录是 ${routines.dir(routine)}。${params.check ? await trialFact(routine) : ""}`);
+          return ok(`已修改${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。目录是 ${routines.dir(routine)}。${params.check ? await trialFact(routine) : ""}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -836,13 +787,13 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         size: Type.Optional(Type.String({ description: "尺寸，如 1024x1024；不填用设置里的默认" })),
         refs: Type.Optional(Type.Array(Type.String(), { description: "参考图的绝对路径（改图、按图生成的时候给）" })),
       }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         const config = runtime.settings.settings.image;
         const prompt = String(params.prompt ?? "");
         const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
         const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() }, groupId);
         try {
-          const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "assistants", assistantId, "files", "images"), config }, {
+          const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "assistants", assistantId, "files", "images"), config, signal }, {
             prompt,
             ...(params.size ? { size: String(params.size) } : {}),
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
@@ -873,7 +824,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给对方的文件路径" }))),
         }),
-        execute: async (_id, params: any) => {
+        execute: async (_id, params: any, signal) => {
           const targetId = String(params.assistantId);
           const target = store.assistant(targetId);
           if (!target) return fail(`没有这个助手：${targetId}`);
@@ -894,7 +845,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             const carried = unfinished.length
               ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
               : note;
-            await runtime.delegations.start(assistantId, targetId, carried, files);
+            await runtime.delegations.start(assistantId, targetId, carried, files, signal);
+            signal?.throwIfAborted();
             if (!unfinished.length) return endTurn(`已转交给「${target.name}」。`);
             await handOffTodos(runtime, assistantId, groupId);
             return endTurn(`已转交给「${target.name}」。你手上那份待办（没做完 ${unfinished.length} 项）一起交过去了，已经清掉。`);
@@ -913,7 +865,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给群的文件路径" }))),
         }),
-        execute: async (_id, params: any) => {
+        execute: async (_id, params: any, signal) => {
           const id = String(params.groupId ?? "").trim();
           const group = store.group(id);
           if (!group) {
@@ -929,9 +881,22 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
           const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           try {
+            signal?.throwIfAborted();
             const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, { text: note, files });
-            // 这次说话所在的对话里落一张话题卡：进度、等你回答、结论都在卡上
-            await router.addItem(assistantId, { kind: "topic", topicId: topic.id }, groupId);
+            const cancel = () => {
+              const current = store.group(topic.id);
+              if (current && !current.closedAt && !runtime.groups.summary(topic.id).busy?.length) {
+                runtime.groups.closeByOwner(topic.id, t("交接调用已中止"));
+              }
+            };
+            signal?.addEventListener("abort", cancel, { once: true });
+            try {
+              // 这次说话所在的对话里落一张话题卡：进度、等你回答、结论都在卡上
+              await router.addItem(assistantId, { kind: "topic", topicId: topic.id }, groupId);
+              signal?.throwIfAborted();
+            } finally {
+              signal?.removeEventListener("abort", cancel);
+            }
             void runtime.groups.deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id).catch((error) => console.error("交给群的事件没送到：", error));
             return endTurn(`已交给群「${group.name}」：创建了话题「${topic.name}」（${topic.id}），群主「${nameOf(topic.ownerId)}」接手。有了结论会回到这里。`);
           } catch (error) {
@@ -947,7 +912,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       label: "交回",
       description: "把不归你管的事交回：别人转给你的，交回转来的那位；用户直接找你的，交回 Hob，由它转给合适的助手。",
       parameters: Type.Object({ text: Type.String({ description: "用户要什么" }), reason: Type.String({ description: "为什么不归你，一句话" }) }),
-      execute: async (_id, params: any) => {
+      execute: async (_id, params: any, signal) => {
         const text = String(params.text ?? "").trim();
         const reason = String(params.reason ?? "").trim();
         if (!text || !reason) return fail("请写清用户要求和交回原因。");
@@ -962,9 +927,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           const destination = store.assistant("hob");
           if (!destination) return fail("主助手不存在，暂时无法交回。");
           await router.ensure(destination.id);
+          signal?.throwIfAborted();
           const handbackId = newId("hb-");
           await router.addItem(assistantId, { kind: "note", icon: "info", text: `已交回「${destination.name}」：${reason}`, handbackId });
+          signal?.throwIfAborted();
           await router.addForwarded(destination.id, text, handbackId, assistantId);
+          signal?.throwIfAborted();
           await router.event(destination.id, `转自「${assistant().name}」：${text}\n交回原因：${reason}`);
           return endTurn(`已交回「${destination.name}」。`);
         } catch (error) {

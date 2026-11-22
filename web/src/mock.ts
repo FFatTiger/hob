@@ -44,21 +44,26 @@ import type {
   UsageView,
   WorklogEntry,
 } from "../../shared/types.ts";
+import githubIcon from "./mock-plugins/github.svg?url";
+import gmailIcon from "./mock-plugins/gmail.svg?url";
+import emailIcon from "./mock-plugins/email.svg?url";
+import emailManifest from "./mock-plugins/email.json";
 import { defaultSearch } from "../../shared/search.ts";
 import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry } from "../../shared/knowledge.ts";
-import type { McpView } from "../../shared/mcp.ts";
+import type { PluginView } from "../../shared/types.ts";
 import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "plugin-demo" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
   { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
 > = {
+  "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "readme-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-desktop": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -217,7 +222,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.10.0",
+  version: "1.11.0",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
@@ -1019,7 +1024,7 @@ cp now.txt "$seen"`,
       ];
     }
     if (scene === "readme-cards") {
-      Object.assign(draft, { status: "pending", createdAssistantId: undefined, name: "资料助手", dutyLong: "整理团队资料，维护共享目录", routinesText: "每周整理资料", askFirst: ["对外发送"],  carry: { conversations: 3 } });
+      Object.assign(draft, { status: "pending", createdAssistantId: undefined, name: "资料助手", dutyLong: "整理团队资料，维护共享目录", instructions: "先梳理资料来源。\n按主题整理目录。\n保留原有文件名。\n遇到不确定的归属时列出问题。", routinesText: "每周整理资料", askFirst: ["对外发送"],  carry: { conversations: 3 } });
       delegations["readme-delegation"] = { id: "readme-delegation", from: "hob", to: "page", text: "整理团队资料的使用方法。", createdAt: minsAgo(3), status: "running", jobIds: [] };
       items.hob = [
         { kind: "image", id: "readme-image", at: minsAgo(4), startedAt: minsAgo(4), status: "done", prompt: "团队资料封面", size: "1536x1024", path: "/mock/readme-cover.svg" },
@@ -1613,6 +1618,8 @@ cp now.txt "$seen"`,
         general: {
           theme: scene.endsWith("-dark") ? "dark" : "system",
           timezone: "Asia/Tokyo",
+          proxy: scene === "s1" || scene === "h-settings" ? "http://demo-user:demo-pass@proxy.example.test:8080" : "",
+          noProxy: "localhost,127.0.0.1,::1",
           aboutYou: { name: L("小林", "Sam"), language: L("中文", "English"), notes: "" },
         },
         providers: [
@@ -1832,15 +1839,65 @@ const MOCK_IMPORTED_PROVIDERS: Record<string, ProviderSettings> = {
 /** 假后端：和 realApi 同一套接口，操作真的改内存里的状态并发事件。 */
 const mockUploads = new Map<string, string>();
 
-const MCP_MOCK: McpView = {
-  servers: [
-    { name: "filesystem", valid: true, kind: "stdio", enabled: true, exposure: "direct", command: "npx", args: ["-y", "@modelcontextprotocol/server-filesystem", "."], description: "读写指定目录的文件" },
-    { name: "docs", valid: true, kind: "http", enabled: false, exposure: "deferred", url: "https://example.com/mcp", headers: { Authorization: { redacted: true } } },
-  ],
-};
-
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
+  if (scene === "plugin-demo") {
+    db.assistants = db.assistants.filter(a => ["hob", "page", "bird"].includes(a.id)).map(a => ({ ...a, name: a.id === "hob" ? "Hob" : a.id === "page" ? "写作" : "研究", duty: a.id === "hob" ? "主助手" : a.id === "page" ? "整理文章" : "收集资料", last: undefined, unread: 0, busy: false }));
+    db.groups = []; db.jobs = {}; db.approvals = {}; db.delegations = {}; db.routines = []; db.items = {};
+  }
+  const pluginViews: PluginView[] = [];
+  const pluginSources: import("../../shared/types.ts").PluginSourceView[] = [{ id: "official", name: "Hob 官方", url: "https://github.com/FFatTiger/hob-plugins" }];
+  const pluginCatalog = [
+    { id: "github", version: "1.0.0", manifest: { name: "GitHub", description: "查看和管理代码仓库、议题与拉取请求。", mockIcon: githubIcon, extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } } }, installed: false },
+    { id: "gmail", version: "1.0.0", manifest: { name: "Gmail", description: "查找邮件、创建草稿并管理邮件。", mockIcon: gmailIcon, extensions: { "com.hob.plugins": { publisher: "Google", categories: ["communication"] } } }, installed: false },
+    { id: "email", version: "1.0.0", manifest: { ...emailManifest, mockIcon: emailIcon }, installed: false },
+    { id: "calendar", version: "1.0.0", manifest: { name: "日历", description: "查看和安排日程。", extensions: { "com.hob.plugins": { categories: ["productivity"] } } }, installed: false },
+  ];
+  const mockPlugin = (id: string): PluginView => {
+    const found = pluginViews.find(p => p.plugin.id === id);
+    if (!found) throw new Error(`插件 ${id} 未安装`);
+    return found;
+  };
+  const makePlugin = (id: string, source: "official" | "custom"): PluginView => {
+    const config: PluginView["config"] = id === "email" ? Object.fromEntries(Object.entries(emailManifest.userConfig).map(([key, field]) => [key, { ...field, ...("sensitive" in field && field.sensitive ? { configured: false } : {}) }])) : id === "github" ? { GITHUB_PERSONAL_ACCESS_TOKEN: { type: "string", title: "个人访问令牌", description: "在 [GitHub](https://github.com/settings/personal-access-tokens) 创建个人访问令牌。", required: true, sensitive: true, configured: false } } : id === "gmail" ? { GOOGLE_CLIENT_ID: { type: "string", title: "OAuth 客户端 ID", required: true }, GOOGLE_CLIENT_SECRET: { type: "string", title: "OAuth 客户端密钥", required: true, sensitive: true, configured: false } } : {};
+    const missing = Object.keys(config);
+    return { plugin: { id, version: "1.0.0", source, enabled: true, tools: {}, config: {} }, manifest: { name: id }, config, missing, services: [{ pluginId: id, name: id, status: missing.length ? "pending_config" : "connected", missing, tools: [], ...(id === "gmail" ? { oauth: { declared: true, loggedIn: false } } : {}) }] };
+  };
+  const github = makePlugin("github", "official");
+  github.manifest = pluginCatalog[0]!.manifest;
+  github.config.GITHUB_PERSONAL_ACCESS_TOKEN!.configured = true;
+  github.missing = [];
+  github.services[0]!.status = "connected";
+  github.services[0]!.missing = [];
+  const githubTools: [string, string, boolean][] = [
+    ["search_repositories", "Search for repositories matching a query.", true], ["get_repository", "Get details for a repository.", true], ["list_issues", "List issues in a repository.", true], ["get_issue", "Get details for an issue.", true], ["search_issues", "Search issues across repositories.", true], ["create_issue", "Create an issue in a repository.", false], ["update_issue", "Update an existing issue.", false], ["add_issue_comment", "Add a comment to an issue.", false],
+    ["list_pull_requests", "List pull requests in a repository.", true], ["get_pull_request", "Get details for a pull request.", true], ["create_pull_request", "Create a pull request.", false], ["update_pull_request", "Update a pull request.", false], ["merge_pull_request", "Merge a pull request.", false], ["get_pull_request_files", "List files changed by a pull request.", true], ["get_pull_request_comments", "List comments on a pull request.", true], ["create_pull_request_review", "Create a review for a pull request.", false],
+    ["list_branches", "List branches in a repository.", true], ["create_branch", "Create a branch in a repository.", false], ["get_file_contents", "Get the contents of a file.", true], ["search_code", "Search for code across repositories.", true], ["create_or_update_file", "Create or update a repository file.", false], ["delete_file", "Delete a file from a repository.", false], ["list_commits", "List commits on a branch.", true], ["get_commit", "Get details for a commit.", true], ["list_releases", "List releases in a repository.", true], ["get_release", "Get details for a release.", true], ["list_tags", "List tags in a repository.", true], ["get_user", "Get details for a user.", true], ["list_workflows", "List workflows in a repository.", true], ["run_workflow", "Start a workflow run.", false],
+  ];
+  github.services[0]!.tools = githubTools.map(([name, description, readOnlyHint]) => ({ name, toolName: `github_${name}`, enabled: true, description, inputSchema: {}, annotations: { readOnlyHint } }));
+  const gmail = makePlugin("gmail", "official");
+  gmail.manifest = pluginCatalog[1]!.manifest;
+  gmail.services[0]!.tools = ([ ["search_messages", "Search messages matching a query."], ["get_message", "Get the contents of a message."], ["create_draft", "Create a draft message."], ["modify_message_labels", "Add or remove labels from a message."] ] as const).map(([name, description], index) => ({ name, toolName: `gmail_${name}`, enabled: true, description, inputSchema: {}, annotations: { readOnlyHint: index < 2 } }));
+  const custom = makePlugin("custom-service", "custom");
+  custom.manifest = { name: "团队笔记", description: "自定义 MCP" };
+  custom.services[0]!.status = "error";
+  custom.services[0]!.error = "Error: connect ECONNREFUSED 127.0.0.1:7071";
+  delete custom.services[0]!.oauth;
+  const email = makePlugin("email", "official");
+  email.manifest = pluginCatalog[2]!.manifest;
+  email.profiles = ["工作邮箱", "个人"].map((name, index) => ({ id: `email-profile-${index}`, name, config: Object.fromEntries(Object.entries(email.config).map(([key, field]) => [key, { ...field, ...(key === "EMAIL_ADDRESS" ? { value: index === 0 ? "work@corp.example" : "lin@qq.example" } : key === "EMAIL_PASSWORD" ? { configured: index === 0 } : {}) }])), missing: index === 0 ? [] : ["EMAIL_PASSWORD"] }));
+  email.plugin.profiles = email.profiles.map(profile => ({ id: profile.id, name: profile.name, config: {} }));
+  email.missing = ["EMAIL_PASSWORD"];
+  email.services[0]!.missing = ["EMAIL_PASSWORD"];
+  email.services[0]!.status = "pending_config";
+  email.services[0]!.tools = ([
+    ["list_folders", "列出邮箱里的文件夹和未读数。", true], ["search_messages", "按条件搜索邮件，最新的在前。", true], ["get_message", "读一封邮件的正文和附件列表。", true], ["create_draft", "写一封草稿存进草稿箱。", false], ["send_message", "发送一封邮件。", false], ["move_message", "移动邮件到另一个文件夹。", false], ["delete_message", "删除一封邮件。", false], ["mark_message", "标记邮件已读或未读。", false],
+  ] as [string, string, boolean][]).map(([name, description, readOnlyHint]) => ({ name, toolName: `email_${name}`, enabled: true, description, inputSchema: {}, annotations: { readOnlyHint } }));
+  for (const plugin of [github, gmail, email, custom]) plugin.plugin.assistants = ["hob", "page"];
+  pluginViews.push(github, gmail, email, custom);
+  const mockProfileFields = (p: PluginView, profile: NonNullable<PluginView["profiles"]>[number]) => profile.config;
+  const mockProfileMissing = (profile: NonNullable<PluginView["profiles"]>[number]) => profile.missing;
+
   const en = englishDemo(scene);
   const L: Say = (zh, english) => (en ? english : zh);
   const groupRules: Record<string, Rule[]> = {};
@@ -2229,13 +2286,22 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!desktop.url) return { ok: false, error: "请先填写云桌面地址。" };
       return { ok: true, health: clone(DESKTOP_HEALTH) };
     },
-    mcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
-    putMcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
-    patchMcp: async () => ({ servers: MCP_MOCK.servers.map((server) => ({ ...server })) }),
-    deleteMcp: async () => ({ servers: [] }),
-    testMcp: async () => ({ ok: true, tools: [{ name: "read_file", description: "读取一个文件" }, { name: "list_directory", description: "列出目录内容" }] }),
-    mcpImports: async () => ({ sources: ["pi（~/.pi/agent/mcp.json）"], items: [{ id: "pi:github", name: "github", source: "pi", kind: "http", exists: false, selectable: true }] }),
-    importMcp: async (ids) => ({ imported: ids, skipped: [] }),
+    plugins: async () => clone({ plugins: pluginViews, migrationErrors: [] }),
+    pluginCatalog: async () => clone({ sources: pluginSources, plugins: pluginCatalog.map(p => ({ ...p, source: "official", sourceName: "Hob 官方", installed: pluginViews.some(v => v.plugin.id === p.id) })) }),
+    addPluginSource: async url => { const source = { id: `source-${pluginSources.length}`, url, name: url }; pluginSources.push(source); return clone(source); },
+    deletePluginSource: async id => { const index = pluginSources.findIndex(source => source.id === id); if (index >= 0) pluginSources.splice(index, 1); return { ok: true as const }; },
+    installPlugin: async id => { const p = makePlugin(id, "official"); pluginViews.push(p); return clone(p); },
+    updatePlugin: async id => clone(mockPlugin(id)),
+    patchPlugin: async (id, patch) => { const p = mockPlugin(id); if (patch.enabled !== undefined) p.plugin.enabled = patch.enabled; if (patch.assistants !== undefined) p.plugin.assistants = patch.assistants ?? undefined; if (patch.tools) { p.plugin.tools = patch.tools; for (const service of p.services) for (const tool of service.tools) tool.enabled = p.plugin.tools[tool.name]?.enabled !== false; } return clone(p); },
+    savePluginConfig: async (id, values) => { const p = mockPlugin(id); for (const [key, value] of Object.entries(values)) { const field = p.config[key]; if (!field) throw new Error(`未声明的配置项 ${key}`); if (field.sensitive) field.configured = value !== null && value !== ""; else { field.value = value; if (value === null) delete p.plugin.config[key]; else p.plugin.config[key] = value; } } p.missing = Object.entries(p.config).filter(([, field]) => field.required && !(field.sensitive ? field.configured : field.value !== undefined && field.value !== null && field.value !== "")).map(([key]) => key); for (const service of p.services) { service.status = p.missing.length ? "pending_config" : service.oauth?.declared && !service.oauth.loggedIn ? "needs_login" : "connected"; service.missing = p.missing; } return clone(p); },
+    addPluginProfile: async (id, name) => { const p = mockPlugin(id); if (!name.trim()) throw new Error("名称不能为空"); if ((p.profiles ?? []).some(profile => profile.name === name.trim())) throw new Error(`已经有叫「${name.trim()}」的配置了`); const profile = { id: `email-profile-${Date.now()}`, name: name.trim(), config: Object.fromEntries(Object.entries(p.config).map(([key, field]) => [key, { ...field, ...(field.sensitive ? { configured: false } : {}) }])), missing: Object.entries(p.config).filter(([, field]) => field.required).map(([key]) => key) }; (p.profiles ??= []).push(profile); return clone(p); },
+    updatePluginProfile: async (id, profileId, name) => { const p = mockPlugin(id); const profile = p.profiles?.find(item => item.id === profileId); if (!profile) throw new Error("配置不存在"); if (!name.trim()) throw new Error("名称不能为空"); if ((p.profiles ?? []).some(item => item.id !== profileId && item.name === name.trim())) throw new Error(`已经有叫「${name.trim()}」的配置了`); profile.name = name.trim(); return clone(p); },
+    deletePluginProfile: async (id, profileId) => { const p = mockPlugin(id); p.profiles = (p.profiles ?? []).filter(profile => profile.id !== profileId); return clone(p); },
+    savePluginProfileConfig: async (id, profileId, values) => { const p = mockPlugin(id); const profile = p.profiles?.find(item => item.id === profileId); if (!profile) throw new Error("配置不存在"); for (const [key, value] of Object.entries(values)) { const field = mockProfileFields(p, profile)[key]; if (!field) throw new Error(`未声明的配置项 ${key}`); if (field.sensitive) field.configured = value !== null && value !== ""; else field.value = value; } profile.missing = Object.entries(profile.config).filter(([, field]) => field.required && !(field.sensitive ? field.configured : field.value !== undefined && field.value !== null && field.value !== "")).map(([key]) => key); return clone(p); },
+    deletePlugin: async id => { const index = pluginViews.findIndex(p => p.plugin.id === id); if (index >= 0) pluginViews.splice(index, 1); return { ok: true }; },
+    addCustomPlugin: async id => { const p = makePlugin(id, "custom"); pluginViews.push(p); return clone(p); },
+    startPluginOAuth: async (id, name) => { const service = mockPlugin(id).services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = true; service.status = "connected"; } return { authorized: true, callbackUrl: `${globalThis.location?.origin ?? "http://localhost"}/api/plugins/oauth/callback` }; },
+    disconnectPluginOAuth: async (id, name) => { const p = mockPlugin(id); const service = p.services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = false; service.status = "needs_login"; } return clone(p); },
     search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");

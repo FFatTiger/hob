@@ -1,4 +1,4 @@
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxProvider, fauxToolCall, type ThinkingLevelMap } from "@earendil-works/pi-ai";
@@ -10,6 +10,15 @@ import { PiHost } from "../src/pi.ts";
 import { hashPassword } from "../src/password.ts";
 import { createRuntime, type HobRuntime } from "../src/runtime.ts";
 import { defaultSettings } from "../src/settings.ts";
+
+export function seedPluginSource(home: string): void {
+  const destination = join(home, "cache/plugin-sources/official");
+  mkdirSync(destination, { recursive: true });
+  const source = new URL("./fixtures/hob-plugins/", import.meta.url);
+  for (const path of ["index.json", "github", "gmail", "email"]) cpSync(new URL(path, source), join(destination, path), { recursive: true });
+  mkdirSync(join(home, "system"), { recursive: true });
+  writeFileSync(join(home, "system/plugin-sources.json"), JSON.stringify([{ id: "official", url: "https://github.com/FFatTiger/hob-plugins", name: "Hob 官方", updatedAt: new Date().toISOString() }]));
+}
 
 export interface TestHob {
   runtime: HobRuntime;
@@ -132,7 +141,9 @@ export function text(value: string) {
 }
 
 export function call(name: string, args: Record<string, unknown>) {
-  const handoff = ["start_job", "message_assistant", "message_group", "open_topic"].includes(name) && !("note" in args) ? { ...args, note: "测试交接说明" } : args;
+  // 老用例写的 instruction 就是现在的交接说明 note（工具现在拒绝没声明的参数）
+  const { instruction, ...rest } = args;
+  const handoff = ["start_job", "message_assistant", "message_group", "open_topic"].includes(name) && !("note" in args) ? { ...rest, note: instruction ?? "测试交接说明" } : args;
   return fauxAssistantMessage([fauxToolCall(name, handoff)], { stopReason: "toolUse" });
 }
 

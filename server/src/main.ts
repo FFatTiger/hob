@@ -50,6 +50,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.groups.recoverHandovers();
   // 重启后没有在跑的一轮，任务按中断、转交按中断处理过了：手上没活的待办这时候收起
   releaseIdleTodosAtStartup(runtime);
+  void runtime.plugins.start().catch(error => console.error("插件连接启动失败：", error));
   runtime.routines.start();
   runtime.jobs.startWatchdog();
   runtime.desktopEvents.restart();
@@ -69,8 +70,10 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
       runtime.desktopEvents.stop();
       runtime.desktopControl.dispose();
       runtime.routines.stop();
+      runtime.scriptTools.close();
       runtime.jobs.disposeAll();
       runtime.router.disposeAll();
+      await runtime.plugins.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

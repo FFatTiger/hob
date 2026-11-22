@@ -3,7 +3,7 @@ import { memo } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { openKnowledge, openSettings, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
+import { openKnowledge, openPlugins, openSettings, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -42,6 +42,7 @@ export const MobileList = memo(function MobileList() {
           </div>
         ) : (
           <>
+            <button className="hob-icon-btn" title={t("插件")} onClick={() => openPlugins()}><Icon name="plugin" size={19} /></button>
             <button className="hob-icon-btn" title={t("知识库")} onClick={openKnowledge}>
               <Icon name="archive" size={19} />
             </button>

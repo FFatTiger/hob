@@ -26,7 +26,7 @@
 - **哪些事要先问你，由规则决定。** 全局规则和每个助手自己的规则，决定哪些操作要先等你确认、哪些直接照做。确认时可以顺手存成规则，下次同类的事不再问。
 - **事情交给对的助手。** 助手会把归别的助手管的事转交过去，转交卡跟着进度走，结果回到发起的那位；同类的事反复出现时，它会提议给你建一个专门的助手。
 - **定时任务有变化才叫醒助手。** 定时可以带一段检查脚本：到点先跑脚本，有新情况才让助手接手，没变化就不打扰你。
-- **做过的活能变成技能。** 任务做完、做法值得留下时，助手可以让它把步骤写成技能，以后派活直接带上；每次修改都留一个版本。
+- **做过的活能变成技能。** 做法值得留下时，谁做的谁来写成技能：助手自己做的它自己写，任务做的由助手让任务回顾后写。下次助手和任务都照着做，每次修改都留一个版本。
 
 ## 助手团队
 
@@ -47,7 +47,7 @@
 - **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅。
 - **知识库**：整理和预览文件，绑定给助手，引用能跳回原文；配了向量模型可以混合检索，PDF 也能建索引。
 - **联网搜索**：SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama。
-- **MCP**：任务可以调用配置好的 MCP 服务，也能从 Claude Code、Cursor、pi 导入已有配置。
+- **插件**：从市场安装插件，助手和任务就多了一批工具，目前有 GitHub、Gmail 和支持 IMAP/SMTP 的邮箱。每个插件有自己的配置页，需要登录的服务可以直接登录，工具可以逐个开关，也能选给哪些助手用。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
 - **记忆**：存在本地，或者接入 [Lore](https://github.com/FFatTiger/lore)。
 - **页面和图片**：助手可以把对比、调研做成网页在侧栏打开；配上 OpenAI 兼容的图像接口就能画图和改图。
 - **云桌面**（可选）：每个助手一个浏览器，在一个里登录的网站，其他助手的浏览器里也是登录的；你可以在旁边看，也可以接管。
@@ -83,7 +83,7 @@ docker compose up -d
 Hob 是单个 Node 进程，数据全在 `HOB_HOME`（默认 `~/.hob`）。
 
 - **长期运行**：用任意进程管理器跑，比如 `pm2 start hob --name hob`（源码目录里先 `npm run build`，再 `pm2 start deploy/pm2.config.cjs`）。前面加一层带 TLS 的反向代理；推送通知和添加到主屏幕都需要 HTTPS。
-- **Docker**：镜像是 `ghcr.io/ffattiger/hob`（amd64、arm64），数据在 `hob-data` 卷里；源码目录里加 `--build` 就用本地源码构建镜像。端口默认只绑本机，要局域网直连，把 `compose.yaml` 里的端口改成 `"30148:30148"`。任务和本地命令类的 MCP 服务都在容器里运行，镜像里有 git、curl、python3、ripgrep、fd、node 和 npx。要让任务处理宿主机上的项目，先建好 `workspace/` 目录（容器以 uid 1000 运行），再打开 `compose.yaml` 里 `./workspace:/workspace` 那行挂载。
+- **Docker**：镜像是 `ghcr.io/ffattiger/hob`（amd64、arm64），数据在 `hob-data` 卷里；源码目录里加 `--build` 就用本地源码构建镜像。端口默认只绑本机，要局域网直连，把 `compose.yaml` 里的端口改成 `"30148:30148"`。任务和本地命令类的插件服务都在容器里运行，镜像里有 git、curl、python3、ripgrep、fd、node 和 npx。要让任务处理宿主机上的项目，先建好 `workspace/` 目录（容器以 uid 1000 运行），再打开 `compose.yaml` 里 `./workspace:/workspace` 那行挂载。
 - **云桌面**：`docker compose --profile desktop up -d` 同时启动 Hob 和云桌面，令牌自动对上。单独部署、反向代理和资源占用见[云桌面说明](desktop/README.md)。
 - **Claude 订阅**：npm 或源码安装时，先在本机装好 Claude Code 并执行 `claude auth login`，再到 **设置 → 服务商** 启用 Claude 订阅。用量算在你的订阅额度里；Hob 不读取、不保存 Claude 凭证，Claude Code 自己的会话记录会写在 `~/.claude/projects/`。Docker 镜像不支持。
 - **备份和升级**：备份 `HOB_HOME` 就保留了全部数据。从 1.5 之前的版本升级，会自动迁移数据目录并留一份完整备份，细节和回退方法见 [1.5.0 发版说明](https://github.com/FFatTiger/hob/releases/tag/v1.5.0)；Docker 里回退用 `docker compose run --rm hob node bin/hob.mjs layout --restore`（先停掉 Hob）。

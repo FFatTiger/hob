@@ -15,7 +15,7 @@ export function resolveTheme(theme: Theme, systemDark: boolean) {
 
 interface StatusPage {
   phase: "loading" | "login" | "ready" | "error";
-  page: "main" | "settings" | "knowledge";
+  page: "main" | "settings" | "knowledge" | "plugins";
   sheet: boolean;
   panelStack: Array<{ kind: string; full?: boolean }>;
 }
@@ -25,6 +25,7 @@ export function statusSurface(page: StatusPage, narrow: boolean): "bg" | "side" 
   if (page.phase !== "ready") return narrow ? "bg" : "side";
   const top = page.panelStack.at(-1);
   if (top?.kind === "file" && (narrow || top.full)) return "bg";
+  if (page.page === "plugins") return "bg";
   if (narrow) return top?.kind === "job" || top?.kind === "jobs" || page.page === "settings" || page.page === "knowledge" ? "bg" : top || page.sheet ? "panel" : "bg";
   return page.page === "settings" || page.page === "knowledge" ? "bg" : "side";
 }

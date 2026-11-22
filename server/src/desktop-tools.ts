@@ -265,13 +265,15 @@ export class DesktopToolSession {
 
   /** 非网页设备操作仍由任务使用桌面工具。 */
   tools(canSeeImages = this.canSeeImages): ToolDefinition<any, any>[] {
-    const make = (name: string, label: string, description: string, parameters: any, run: (params: any) => Promise<string | Buffer>): ToolDefinition<any, any> => ({
+    const make = (name: string, label: string, description: string, parameters: any, run: (params: any, signal?: AbortSignal) => Promise<string | Buffer>): ToolDefinition<any, any> => ({
       name, label, description, parameters,
-      execute: async (_id, params) => {
+      execute: async (_id, params, signal) => {
         const operation = (async () => {
           try {
             this.check();
-            const value = await run(params ?? {});
+            signal?.throwIfAborted();
+            const value = await run(params ?? {}, signal);
+            signal?.throwIfAborted();
             if (!Buffer.isBuffer(value)) return { content: [{ type: "text" as const, text: value }], details: undefined };
             const dir = resolve(this.screenshotDir);
             mkdirSync(dir, { recursive: true });
@@ -298,19 +300,26 @@ export class DesktopToolSession {
         try { return await operation; } finally { this.active.delete(operation); }
       },
     });
+    const bounded = (signal?: AbortSignal, ms = 10_000) => {
+      const timeout = AbortSignal.timeout(ms);
+      return signal ? AbortSignal.any([signal, timeout]) : timeout;
+    };
     return [
-      make("desktop_screenshot", "桌面截图", "截取整个云桌面。", Type.Object({}), async () => {
-        await this.runtime.desktop.request(`/api/screens/${this.screen}/start`, { method: "POST" });
+      make("desktop_screenshot", "桌面截图", "截取整个云桌面。", Type.Object({}), async (_params, signal) => {
+        await this.runtime.desktop.request(`/api/screens/${this.screen}/start`, { method: "POST", signal: bounded(signal) });
         this.check();
-        return Buffer.from(await (await this.runtime.desktop.request(`/api/screens/${this.screen}/screenshot`)).arrayBuffer());
+        signal?.throwIfAborted();
+        return Buffer.from(await (await this.runtime.desktop.request(`/api/screens/${this.screen}/screenshot`, { signal: bounded(signal) })).arrayBuffer());
       }),
-      make("desktop_action", "操作桌面", "按顺序执行桌面动作：click、move、drag、type、key、scroll、wait。", Type.Object({ actions: Type.Array(action, { minItems: 1, maxItems: 100 }) }), async ({ actions }) => {
-        await this.runtime.desktop.request(`/api/screens/${this.screen}/start`, { method: "POST" });
-        const health = await (await this.runtime.desktop.request("/api/health")).json() as { screens: { id: string; browserRunning: boolean }[] };
+      make("desktop_action", "操作桌面", "按顺序执行桌面动作：click、move、drag、type、key、scroll、wait。", Type.Object({ actions: Type.Array(action, { minItems: 1, maxItems: 100 }) }), async ({ actions }, signal) => {
+        await this.runtime.desktop.request(`/api/screens/${this.screen}/start`, { method: "POST", signal: bounded(signal) });
+        const health = await (await this.runtime.desktop.request("/api/health", { signal: bounded(signal) })).json() as { screens: { id: string; browserRunning: boolean }[] };
         this.check();
-        if (health.screens.some((item) => item.id === this.screen && item.browserRunning)) await this.runtime.desktop.request(`/api/screens/${this.screen}/browser/focus`, { method: "POST" });
+        signal?.throwIfAborted();
+        if (health.screens.some((item) => item.id === this.screen && item.browserRunning)) await this.runtime.desktop.request(`/api/screens/${this.screen}/browser/focus`, { method: "POST", signal: bounded(signal) });
         this.check();
-        await this.runtime.desktop.request(`/api/screens/${this.screen}/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actions }), signal: AbortSignal.timeout(60_000) });
+        signal?.throwIfAborted();
+        await this.runtime.desktop.request(`/api/screens/${this.screen}/input`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ actions }), signal: bounded(signal, 60_000) });
         return "桌面操作已完成。";
       }),
     ];

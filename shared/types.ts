@@ -2,6 +2,42 @@
 import type { SearchSettings } from "./search.ts";
 import type { Locale } from "./i18n.ts";
 
+export type PluginServiceStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
+export interface PluginToolView {
+  name: string;
+  toolName: string;
+  enabled: boolean;
+  title?: string;
+  description?: string;
+  inputSchema: Record<string, unknown>;
+  annotations?: { title?: string; readOnlyHint?: boolean; destructiveHint?: boolean; idempotentHint?: boolean; openWorldHint?: boolean };
+}
+export interface PluginServiceView { pluginId: string; name: string; status: PluginServiceStatus; missing?: string[]; error?: string; toolErrors?: { name: string; reason: string }[]; tools: PluginToolView[]; oauth?: { declared: boolean; loggedIn: boolean } }
+export interface PluginProfilesDeclaration {
+  title?: string;
+}
+
+export interface PluginProfileView {
+  id: string;
+  name: string;
+  config: Record<string, Record<string, unknown>>;
+  missing: string[];
+}
+
+export interface PluginView {
+  plugin: { id: string; version: string; source: string; sourceName?: string; enabled: boolean; assistants?: string[]; tools: Record<string, { enabled?: boolean }>; config: Record<string, unknown>; profiles?: { id: string; name: string; config: Record<string, unknown> }[] };
+  manifest: Record<string, unknown>;
+  config: Record<string, Record<string, unknown>>;
+  profiles?: PluginProfileView[];
+  missing: string[];
+  skills?: string[];
+  services: PluginServiceView[];
+}
+export interface PluginsView { plugins: PluginView[]; migrationErrors: string[] }
+export interface PluginSourceView { id: string; name: string; url: string; updatedAt?: string; error?: string; refreshing?: boolean }
+export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
+export interface PluginPatch { enabled?: boolean; assistants?: string[] | null; tools?: Record<string, { enabled?: boolean }> }
+
 export type Iso = string; // ISO 8601 时间
 
 /** 思考档，和 pi 的 ThinkingLevel 一致。 */
@@ -221,6 +257,7 @@ export interface Assistant {
   name: string; // 显示名，如 "写作"
   duty: string; // 一句话职责，左栏大头像下的小字，如 "周报和文章"；主助手为 "主助手"
   dutyLong?: string; // 详细职责
+  instructions?: string; // 用户写的说明
   sprite: SpriteId;
   /** sprite 是 custom / custom:* 时的画法；换成内置道具后保留，随时能换回来 */
   prop?: CustomProp;
@@ -364,6 +401,7 @@ export interface RoutineChecks {
   hits: number; // 触发了几次
   failing?: string; // 最近一次失败的原因，下次成功就清掉
   lastAt?: Iso; // 上次检查的时间
+  history?: { at: Iso; outcome: "quiet" | "hit" | "failed"; tools: string[] }[]; // 每次检查的工具调用
 }
 
 /** 定时到点（或点「立即运行」）这一次的结果。 */
@@ -472,8 +510,10 @@ export interface JobsPage {
   hasMore: boolean;
 }
 
+export interface SavedSkill { name: string; title: string; version: number; updated: boolean }
+
 export type SedimentStatus =
-  | { status: "running" }
+  | { status: "running"; saved?: SavedSkill[] }
   | { status: "saved"; name: string; title: string; version: number; updated: boolean }
   | { status: "empty"; reason: string }
   | { status: "failed"; reason: string };
@@ -582,6 +622,7 @@ export interface Draft {
   prop?: CustomProp;
   duty: string; // 一句话职责
   dutyLong: string; // 草稿卡 "职责" 行
+  instructions?: string; // 用户写的说明
   routines: { name: string; instruction: string; schedule: string }[]; // 草稿卡 "定时任务" 行
   routinesText: string; // 草稿卡 "定时任务" 行的展示文字
   askFirst: string[]; // 执行前确认的事项
@@ -672,6 +713,10 @@ export interface GeneralSettings {
   theme: Theme;
   locale?: Locale;
   timezone: string; // IANA 时区名，默认系统时区
+  /** 出站 HTTP(S) 连接使用的代理；空字符串 = 不使用 Hob 设置的代理。 */
+  proxy: string;
+  /** 逗号分隔的 NO_PROXY 主机列表。 */
+  noProxy: string;
   aboutYou: { name: string; language: string; notes: string }; // 空字符串 = 没填，提示词里就不出这一节
 }
 

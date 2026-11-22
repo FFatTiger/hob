@@ -1,3 +1,4 @@
+import { pluginToolsForAssistant } from "./plugin-host.ts";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -28,6 +29,8 @@ import type {
 import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
 import { conversationPick, assistantInGroup, defaultWorkRef, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
+import { scriptToolList } from "./script-tools.ts";
+import { proxyEnvironment } from "./network-proxy.ts";
 import { buildRouterTools } from "./router-tools.ts";
 import { isInPagesDir } from "./files.ts";
 import { boundKnowledge, formatKnowledge, KNOWLEDGE_INTRO } from "./knowledge-tools.ts";
@@ -87,7 +90,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "bash", "edit", "write", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_job_as_skill", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "edit_skill", "delete_skill", "update_todos",
+  "read", "bash", "edit", "write", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -166,6 +169,7 @@ interface RouterState {
   terminatingTools?: Set<string>;
   /** 本轮已经查看过的任务快照，用于无变化时压缩 check_job 返回。 */
   checkJobSnapshots?: Map<string, string>;
+  scriptRevokes?: Set<() => void>;
   desktop?: DesktopToolSession;
   /** 这个会话装的工具在界面上叫什么名字（只盯 Hob 自己装的那批） */
   toolLabels?: Map<string, string>;
@@ -207,7 +211,7 @@ function messageText(content: unknown): string {
  * 只读的工具失败了不留提示行：模型看得见，接着说就行，用户不需要知道这次没读到。
  * 其余工具都算有副作用，以后新加的也照样算。
  */
-const READ_ONLY_TOOLS = new Set(["read", "check_job", "overview", "show_assistant", "show_group", "find_knowledge", "search_knowledge", "web_search", "web_fetch", "tool_search"]);
+const READ_ONLY_TOOLS = new Set(["read", "search_plugins", "check_job", "overview", "show_assistant", "show_group", "find_knowledge", "search_knowledge", "web_search", "web_fetch", "tool_search"]);
 
 /**
  * 有副作用的调用按「工具 + 对象」分开算：转交看助手，交给群看群，其余看工具本身。
@@ -500,15 +504,22 @@ export class RouterManager {
     const workDir = assistantWorkDir(this.runtime.home, assistant.id);
     mkdirSync(workDir, { recursive: true });
     const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, workDir);
+    const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
+    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames);
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
     const allowedTools = state.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
-    const tools = customTools.filter((tool) => allowedTools.includes(tool.name));
+    const tools = [...customTools.filter((tool) => allowedTools.includes(tool.name)), ...pluginTools];
+    allowedTools.push(...pluginTools.map(tool => tool.name));
+    const toolSearch = pluginTools.some(tool => tool.exposure === "deferred");
+    if (toolSearch) allowedTools.push("tool_search");
+    await this.runtime.scriptTools.start();
     const file = this.sessionFile(state);
     const groupId = state.groupId;
     const opened = await this.runtime.pi.open({
       file,
       spillDir: state.groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
       cwd: workDir,
+      writeGuard: { home: this.runtime.home, roots: () => [workDir, ...this.store.jobs().filter((job) => job.assistantId === assistant.id).map((job) => job.cwd ?? this.store.workDir(job.id))] },
       model: pick.ref,
       thinking: thinkingForPick(pick, this.runtime.models),
       memory: this.runtime.settings.memory().provider,
@@ -536,7 +547,16 @@ export class RouterManager {
       },
       tools: allowedTools,
       customTools: tools,
-      bashSpawnHook: ({ command, cwd, env }) => ({ command, cwd, env: browserShellEnv(env, cliEnvironment) }),
+      toolSearch,
+      stall: { milliseconds: () => this.stallMs(), onRetry: () => this.setActivity(state, { state: "thinking", label: t("模型没有响应，正在重试") }) },
+      bashSpawnHook: ({ command, cwd, env }) => {
+        const credential = this.runtime.scriptTools.issue({
+          tools: async () => scriptToolList(tools, !!(await boundKnowledge(this.runtime, assistant.id)).length, pluginTools),
+          onCall: (tool) => this.setActivity(state, { state: "tool", label: tool.label }),
+        });
+        (state.scriptRevokes ??= new Set()).add(credential.revoke);
+        return { command, cwd, env: this.runtime.scriptTools.environment(proxyEnvironment(browserShellEnv(env, cliEnvironment), this.runtime.settings.settings.general), credential.token) };
+      },
     });
     state.toolLabels = new Map(tools.map((tool) => [tool.name, tool.label]));
     state.session = opened.session;
@@ -552,7 +572,7 @@ export class RouterManager {
   private async refreshTools(state: RouterState): Promise<void> {
     state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
     const primary = this.store.assistant(state.assistantId)?.primary === true;
-    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.groupId || groupTool(name, primary)));
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.groupId || name === "tool_search" || state.toolLabels?.has(name) || groupTool(name, primary)));
     if (state.knowledgeNames.length) names.push("search_knowledge");
     refreshSystemPrompt(state.session!, names);
   }
@@ -622,6 +642,11 @@ export class RouterManager {
     if (event.type === "message_end" && event.message.role === "assistant") {
       // 这一次调模型没成（重试成功的话下一条会把这个清掉）
       const message = event.message;
+      if (message.stopReason === "error" && message.errorMessage === "模型没有响应") {
+        state.stalled = true;
+        const assistant = this.store.assistant(state.assistantId);
+        void this.note(state, "info", t("{assistant} 无响应，已停止，可重新发送", { assistant: assistant?.name ?? state.assistantId }));
+      }
       state.turnError = message.stopReason === "error" || (message.stopReason === "aborted" && !!message.errorMessage)
         ? message.errorMessage ?? "模型服务出错"
         : undefined;
@@ -698,6 +723,7 @@ export class RouterManager {
       return;
     }
     if (event.type === "tool_execution_end") {
+      if (event.toolName === "bash") { state.scriptRevokes?.forEach((revoke) => revoke()); state.scriptRevokes?.clear(); }
       // 有副作用的调用：失败了先记着，后面同一个对象成功了就划掉
       const subject = state.callSubjects?.get(event.toolCallId);
       if (subject) {
@@ -878,6 +904,9 @@ export class RouterManager {
   private progress(state: RouterState): void {
     state.lastEventAt = Date.now();
     if (state.stallTimer) clearTimeout(state.stallTimer);
+    state.stallTimer = undefined;
+    // 模型请求和工具调用各自有时限；这里只照看尚未进入会话的准备过程。
+    if (state.session?.isStreaming) return;
     state.stallTimer = setTimeout(() => void this.onStall(state), this.stallMs());
     state.stallTimer.unref?.();
   }
@@ -921,6 +950,8 @@ export class RouterManager {
   private close(state: RouterState): void {
     if (state.idleTimer) clearTimeout(state.idleTimer);
     state.idleTimer = undefined;
+    state.scriptRevokes?.forEach((revoke) => revoke());
+    state.scriptRevokes?.clear();
     state.session?.dispose();
     void state.desktop?.dispose();
     state.desktop = undefined;

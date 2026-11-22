@@ -52,6 +52,7 @@ import { jobReason, jobRoundView } from "../steps.ts";
 import { actionsFor, menuPosition, moveSwipe, swipeReply, type SwipeState } from "../message-menu.ts";
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon, jobStatusMeta, sedimentText } from "./status-meta.tsx";
 import { membersOf } from "./Groups.tsx";
+import { Disclosure } from "./Disclosure.tsx";
 
 /* ---------------- markdown ---------------- */
 
@@ -65,6 +66,23 @@ const NOTE_ICON: Record<NoteIcon, IconName> = {
   split: "split",
   info: "info",
 };
+
+function NoteWithDetail({ icon, text, detail, fresh }: { icon: NoteIcon; text: string; detail: string; fresh: boolean }) {
+  const long = detail.split("\n").length > 2 || detail.length > 180;
+  const [open, setOpen] = useState(false);
+  return (
+    <div className={`sys sys-why${fresh ? " enter-fade" : ""}`}>
+      {icon !== "split" ? <Icon name={NOTE_ICON[icon]} size={14} /> : null}
+      {long ? (
+        <Disclosure className="sys-why-disclosure" label={text} open={open} onToggle={() => setOpen(value => !value)}>
+          <div className="why">{detail}</div>
+        </Disclosure>
+      ) : (
+        <div className="sys-why-body"><div>{text}</div><div className="why">{detail}</div></div>
+      )}
+    </div>
+  );
+}
 
 
 /** 触屏没有悬停：用长按菜单代替悬停工具行。 */
@@ -319,6 +337,7 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
 
 function DraftCard({ draft }: { draft: Draft }) {
   const s = useApp();
+  const [showInstructions, setShowInstructions] = useState(false);
   const created = draft.status === "created" && draft.createdAssistantId;
   // 建好以后：头像跟着新助手走（可能是自画的道具），细节收起来，留职责和「查看」
   const made = created ? s.assistants.find((a) => a.id === draft.createdAssistantId) : undefined;
@@ -338,6 +357,7 @@ function DraftCard({ draft }: { draft: Draft }) {
           <span className="k">{t("职责")}</span>
           <span>{draft.dutyLong}</span>
         </div>
+        {draft.instructions ? <Disclosure className="draft-instructions-disclosure" label={t("补充提示词")} count={draft.instructions.split("\n").length} open={showInstructions} onToggle={() => setShowInstructions(value => !value)}><div className="draft-instructions">{draft.instructions}</div></Disclosure> : null}
         <div className={`expand${created ? "" : " open"}`} inert={Boolean(created)}>
           <div>
             <div className="kv">
@@ -819,12 +839,10 @@ function ItemView({
         {forwarded ? <div className="forwarded-line">{forwarded && "assistantId" in forwarded ? (() => { const sender = s.assistants.find((a) => a.id === forwarded.assistantId); return t("从和「{name}」的对话转来", { name: sender?.name ?? forwarded.assistantId }); })() : t("从综合转来")}</div> : null}
         {album ? (
           <div className={`u-album${albumOpen ? " open" : ""}`} ref={hasBubble ? undefined : bubble} style={hasBubble ? undefined : swipeStyle}>
-            <button className="album-pill" onClick={() => setAlbumOpen(!albumOpen)}>{albumOpen ? t("收起") : t("展开 {n}", { n: photos.length })}</button>
-            {albumOpen ? (
+            {!albumOpen ? <PhotoStack photos={photos} onOpen={open} /> : null}
+            <Disclosure className="album-disclosure" label={t("照片")} count={photos.length} open={albumOpen} onToggle={() => setAlbumOpen(value => !value)}>
               <div className="album-list">{photos.map((f) => photo(f, "u-photo album-item"))}</div>
-            ) : (
-              <PhotoStack photos={photos} onOpen={open} />
-            )}
+            </Disclosure>
           </div>
         ) : null}
         {single ? (
@@ -893,18 +911,8 @@ function ItemView({
     if (item.icon === "routine" && isRoutineDueNote(item.text, item.routineId)) {
       return <div className={`sys routine-note${fresh ? " enter-fade" : ""}`}><Icon name="clock" size={14} /><span>{item.text.replace(/，检查到：[\s\S]*$/u, "")}</span></div>;
     }
-    // 带原因的（工具没办成）：点开看工具报错的原文
-    if (item.detail) {
-      return (
-        <div className={`sys sys-why${fresh ? " enter-fade" : ""}`}>
-          {item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}
-          <details>
-            <summary>{item.text}</summary>
-            <div className="why">{item.detail}</div>
-          </details>
-        </div>
-      );
-    }
+    // 长原因用统一展开行；一两行能看完的原文直接显示
+    if (item.detail) return <NoteWithDetail icon={item.icon} text={item.text} detail={item.detail} fresh={fresh} />;
     return (
       <div className={`sys${fresh ? " enter-fade" : ""}`} id={item.handbackId ? `handback-${item.handbackId}` : undefined}>
         {item.targetGroupId && !item.handbackId && !(item.icon === "skill" && item.path) ? <button className="sys-group" onClick={() => void openNoteGroup(item.targetGroupId!)}>{item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}{item.text}</button> : <>

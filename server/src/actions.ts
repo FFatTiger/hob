@@ -145,6 +145,7 @@ export interface AssistantPatch {
   name?: unknown;
   duty?: unknown;
   dutyLong?: unknown;
+  instructions?: unknown;
   sprite?: unknown;
   pinned?: unknown;
   pinOrder?: unknown;
@@ -164,6 +165,7 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
   const { store, bus, router } = runtime;
   const assistant = store.assistant(id);
   if (!assistant) return { status: 404, body: { error: "助手不存在" } };
+  if (body.instructions !== undefined && typeof body.instructions !== "string") return { status: 400, body: { error: "说明必须是文字。" } };
   if (body.knowledge !== undefined) {
     if (!Array.isArray(body.knowledge) || body.knowledge.some((item) => typeof item !== "string")) return { status: 400, body: { error: "知识库绑定无效。" } };
     const collections = (await runtime.knowledge.list()).collections;
@@ -191,6 +193,7 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
     ...(typeof body.name === "string" ? { name: body.name } : {}),
     ...(typeof body.duty === "string" ? { duty: clampDuty(body.duty) } : {}),
     ...(typeof body.dutyLong === "string" ? { dutyLong: body.dutyLong } : {}),
+    ...(typeof body.instructions === "string" ? { instructions: body.instructions.trim() || undefined } : {}),
     ...(typeof body.sprite === "string" ? { sprite: body.sprite } : {}),
     ...(typeof body.pinned === "boolean" ? { pinned: body.pinned } : {}),
     // 置顶区里的位置：拖动头像换位置后按 0、1、2… 存，取整且不为负
@@ -234,6 +237,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
     name: draft.name,
     duty: draft.duty,
     dutyLong: draft.dutyLong,
+    ...(typeof draft.instructions === "string" && draft.instructions.trim() ? { instructions: draft.instructions.trim() } : {}),
     // 和已有助手撞了头像就换个颜色（自画的图案各不相同，不算撞）
     sprite: distinctSprite(draft.sprite, store.assistants().map((a) => a.sprite)),
     ...(draft.prop ? { prop: draft.prop } : {}),

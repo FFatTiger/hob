@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { buildSystemPrompt, buildWorkerPrompt, GROUP_OWNER_LINE } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
-import { sedimentMessage } from "../src/jobs.ts";
+import { saveSkillTool } from "../src/save-skill.ts";
 import { nowText, checkTimezone, monthDayText, monthDayTimeText } from "../src/time.ts";
 import { createFromDraft } from "../src/actions.ts";
 import type { Draft } from "../../shared/types.ts";
@@ -394,7 +394,8 @@ describe("界面语言", () => {
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
       const prompt = buildWorkerPrompt(hob.runtime.store, "t-en", { timezone, aboutYou, locale: "en", memory: "off" });
       expect(prompt).toContain("交给你的消息是「Hob」写的交接说明和附带的文件，里面引用的用户原话代表用户本人。\n用户读英文：result 里的结论，以及要给用户看的文件、页面和技能的标题与正文，都用英文写。\n\n完成后调用 report");
-      const template = sedimentMessage({ skillsDir: "/skills", assistantName: "Hob", english: true });
+      hob.runtime.settings.patch(hob.runtime.settings.get().revision, { general: { locale: "en" } });
+      const template = saveSkillTool(hob.runtime, "hob", undefined, hob.home).parameters.properties.from.description;
       expect(template).toContain("title: <英文名，如「Weekly report」>");
       expect(template).not.toContain("中文名");
     } finally {
@@ -412,7 +413,7 @@ describe("界面语言", () => {
       expect(prompt).toContain("所以先给结论，用规范的书面中文。");
       expect(prompt).not.toContain("用户用的是英文界面");
       expect(buildWorkerPrompt(hob.runtime.store, "t-zh", settings)).not.toContain("用户读英文");
-      expect(sedimentMessage({ skillsDir: "/skills", assistantName: "Hob" })).toContain("title: <中文名，如「每周周报」>");
+      expect(saveSkillTool(hob.runtime, "hob", undefined, hob.home).parameters.properties.from.description).toContain("title: <中文名，如「每周周报」>");
     } finally {
       hob.close();
     }
@@ -465,9 +466,9 @@ describe("技能按谁能用分档（票 197）", () => {
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", base);
       expect(prompt).toContain("技能按谁能用分两种：你的，只有你能用；通用的，所有助手都能用。任务会带上它能用的全部技能，看着手上的事，挑对得上的那份照着做。");
       expect(prompt).toContain("做法一般跟着做成它的助手走，存成你的；对所有助手都用得上、和你管的事无关的，存成通用的。");
-      expect(prompt).toContain("已经有的技能要换成通用的或者收回来，用 edit_skill 的 general。");
-      expect(prompt).toContain("任务做完时，结果里会提醒你让它沉淀一次，并写明它用了哪些技能。");
-      expect(prompt).toContain("新建的要给所有助手用，general 填 true；");
+      expect(prompt).toContain("已经有的技能要换成通用的或者收回来，用 save_skill 的 general。");
+      expect(prompt).toContain("任务做完时，结果里会提醒你可以让它回顾，并写明它用了哪些技能");
+      expect(prompt).toContain("用 review_job 叫它");
       expect(prompt).toContain("学到的东西只进了其中一份，任务还可能挑中旧的那份。");
       expect(prompt).not.toContain("派活时给哪些");
       expect(prompt).not.toContain("start_job 的 skills");

@@ -1,3 +1,7 @@
+import { buildRouterTools } from "./router-tools.ts";
+import { boundKnowledge } from "./knowledge-tools.ts";
+import { scriptToolList } from "./script-tools.ts";
+import { pluginToolsForAssistant } from "./plugin-host.ts";
 import { t } from "../../shared/i18n.ts";
 import { exec } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -8,6 +12,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
 import { assistantDir, groupDir } from "./config.ts";
+import { proxyEnvironment } from "./network-proxy.ts";
 
 /** 检查脚本最多跑这么久。 */
 const CHECK_TIMEOUT_MS = 60_000;
@@ -32,6 +37,7 @@ interface CheckResult {
   outcome: "quiet" | "hit" | "failed";
   output?: string;
   reason?: string;
+  tools?: string[];
 }
 
 function validateCheck(value: unknown): RoutineCheck {
@@ -264,18 +270,30 @@ export class RoutineScheduler {
   }
 
   /** 跑一次检查脚本：退出码 0 且没输出算没变化。 */
-  private runScript(routine: Routine, script: string): Promise<CheckResult> {
+  private async runScript(routine: Routine, script: string): Promise<CheckResult> {
+    await this.runtime.scriptTools.start();
+    const dir = this.dir(routine);
+    const calls: string[] = [];
+    const credential = this.runtime.scriptTools.issue({
+      tools: async () => {
+        const builtin = buildRouterTools(this.runtime, routine.assistantId, routine.groupId, dir);
+        const plugins = pluginToolsForAssistant(this.runtime.plugins, routine.assistantId, new Set(builtin.map((tool) => tool.name)));
+        return scriptToolList(builtin, !!(await boundKnowledge(this.runtime, routine.assistantId)).length, plugins);
+      },
+      onCall: (tool) => calls.push(tool.label),
+    });
     return new Promise((resolve) => {
-      exec(script, { cwd: this.dir(routine), shell: "/bin/bash", timeout: this.checkTimeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      exec(script, { cwd: dir, shell: "/bin/bash", env: this.runtime.scriptTools.environment(proxyEnvironment(process.env, this.runtime.settings.settings.general), credential.token), timeout: this.checkTimeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+        credential.revoke();
         if (error) {
           const reason = error.killed
             ? `检查脚本超时（${Math.round(this.checkTimeoutMs / 1000)} 秒）`
             : `退出码 ${typeof error.code === "number" ? error.code : "未知"}${stderr.trim() ? `：${stderr.trim().slice(0, CHECK_ERROR_MAX)}` : ""}`;
-          resolve({ outcome: "failed", reason });
+          resolve({ outcome: "failed", reason, ...(calls.length ? { tools: calls } : {}) });
           return;
         }
         const output = stdout.trim();
-        resolve(output ? { outcome: "hit", output: output.slice(0, CHECK_OUTPUT_MAX) } : { outcome: "quiet" });
+        resolve(output ? { outcome: "hit", output: output.slice(0, CHECK_OUTPUT_MAX), ...(calls.length ? { tools: calls } : {}) } : { outcome: "quiet", ...(calls.length ? { tools: calls } : {}) });
       });
     });
   }
@@ -294,6 +312,7 @@ export class RoutineScheduler {
       total: (current.checks?.total ?? 0) + 1,
       hits: (current.checks?.hits ?? 0) + (result.outcome === "hit" ? 1 : 0),
       lastAt: new Date().toISOString(),
+      history: [{ at: new Date().toISOString(), outcome: result.outcome, tools: result.tools ?? [] }, ...(current.checks?.history ?? [])].slice(0, 20),
       ...(result.outcome === "failed" && result.reason ? { failing: result.reason } : {}),
     };
     const next: Routine = { ...current, checks };

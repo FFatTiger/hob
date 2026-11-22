@@ -53,7 +53,7 @@ export const EN: Record<string, TranslationEntry> = {
   "通知": "Notifications",
   "关于": "About",
   "返回": "Back",
-  "主题、时区、个人信息、登录密码。": "Theme, time zone, personal information and sign-in password.",
+  "主题、时区、网络代理、个人信息、登录密码。": "Theme, time zone, network proxy, personal information and sign-in password.",
   "如「王先生」": "For example, “Mr. Wang”",
   "如「中文」": "For example, “English”",
   "如「不要看融资新闻」": "For example, “Don't show financing news”",

@@ -1,3 +1,5 @@
+import { PluginHost } from "./plugin-host.ts";
+import { ScriptToolCredentials } from "./script-tools.ts";
 import { setLocale, type Locale } from "../../shared/i18n.ts";
 import "./i18n/en/index.ts";
 import type { Bus } from "./bus.ts";
@@ -32,18 +34,21 @@ import { SettingsStore as SettingsStoreImpl } from "./settings.ts";
 import { Store as StoreImpl } from "./store.ts";
 import { UsagePrices as UsagePricesImpl } from "./usage-prices.ts";
 import { UsageService as UsageServiceImpl } from "./usage.ts";
+import { applyNetworkProxy } from "./network-proxy.ts";
 
 /**
  * 进程内的全部服务。构造时先建 store/bus/pi，再把 router / jobs / routines 挂上去
  * （它们互相需要：任务结束要推 Router 事件，Router 工具要开任务，定时要开任务）。
  */
 export interface HobRuntime {
+  scriptTools: ScriptToolCredentials;
   home: string;
   config: HobConfig;
   store: Store;
   bus: Bus;
   knowledge: KnowledgeStore;
   pi: PiHost;
+  plugins: PluginHost;
   /** 界面可改的设置（settings.json），每次现读所以改完立即生效 */
   settings: SettingsStore;
   desktop: DesktopService;
@@ -94,6 +99,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   const settings = new SettingsStoreImpl(options.home, {
     ...(options.legacyModels ? { legacyModels: options.legacyModels } : {}),
   });
+  applyNetworkProxy(settings.settings.general.proxy, settings.settings.general.noProxy);
   // 思考档只看 Hob 自己的设置（默认规则 + 每个模型的自定义档位），不看引擎注册表里自带的映射
   const models = new ModelCatalog(options.pi, () => settings.settings.models);
   const providers = new ProviderServiceImpl({
@@ -105,13 +111,21 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   });
   // 引擎建好、拿到之前把服务商套进去（内置的设 Key、兼容接口注册成 provider）
   options.pi.configure = (runtime) => providers.applyTo(runtime);
+  const plugins = new PluginHost(options.home, () => {
+    const { proxy, noProxy } = settings.settings.general;
+    return { proxy, noProxy };
+  });
+  try { plugins.migrationErrors = plugins.store.migrateLegacy(); plugins.store.migrateEmailService(); plugins.migrationErrors.push(...plugins.store.migrateProfiles()); }
+  catch (error) { plugins.migrationErrors = [error instanceof Error ? error.message : String(error)]; }
   const runtime = {
+    scriptTools: new ScriptToolCredentials(),
     home: options.home,
     config: options.config,
     store,
     bus,
     knowledge: new KnowledgeStore(options.home, bus, store, undefined, () => settings.settings.knowledge?.embedding ?? { source: "off" }),
     pi: options.pi,
+    plugins,
     settings,
     desktop: new DesktopService(options.home, settings),
     providers,
@@ -120,6 +134,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   runtime.desktopControl = new DesktopControl(runtime);
   runtime.desktopEvents = new DesktopEvents(runtime);
   runtime.router = new RouterManagerImpl(runtime);
+  plugins.onToolsChanged = () => runtime.router.releaseSessions();
   runtime.groups = new GroupManagerImpl(runtime);
   runtime.initializeLocale = (locale) => {
     runtime.store.initializeDefaults(locale);

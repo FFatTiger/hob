@@ -8,11 +8,13 @@ import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useMenu } from "./use-menu.ts";
 import { skillUsage } from "../skill-usage.ts";
+import { skillOriginText } from "../skill-origin.ts";
 import { commandSummary } from "../../../shared/command.ts";
-import type { ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
+import type { PluginView, ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
 import { PanelRootDetails } from "./PanelRootDetails.tsx";
+import { PluginIcon } from "./Plugins.tsx";
 import { fitThinking, rosterOptions } from "../model-list.ts";
 import { COLOR_IDS, COLORS, customSprite, parseSprite, PROP_IDS, PROPS, spriteId } from "../../../shared/sprites.ts";
 import { Avatar } from "../sprites.tsx";
@@ -28,6 +30,8 @@ import {
   deleteRoutine,
   jumpToJob,
   jumpToDelegation,
+  loadPlugins,
+  patchPlugin,
   loadModels,
   loadKnowledge,
   loadAssistantSkills,
@@ -57,6 +61,7 @@ import {
 } from "../store.ts";
 import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, timePointText, WEEK, type Schedule } from "../util.ts";
 import { CollapsePanelButton, PanelHead } from "./PanelHead.tsx";
+import { Disclosure } from "./Disclosure.tsx";
 import { panelAssistant } from "../panel-stack.ts";
 import { DesktopWakeTracker } from "../desktop-wake.ts";
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
@@ -567,6 +572,7 @@ function RoutineEditor({ id }: { id: string }) {
   const r = s.routines.find((x) => x.id === id);
   const place = s.groups.find((group) => group.id === r?.groupId);
   const group = s.groups.find((item) => item.id === (place?.parentId ?? place?.id));
+  const [scriptOpen, setScriptOpen] = useState(false);
   if (!r) return <Empty>{t("这个定时任务已不存在。")}</Empty>;
 
   return (
@@ -591,6 +597,11 @@ function RoutineEditor({ id }: { id: string }) {
           }}
         />
       </label>
+
+      <div className="lbl">{t("类型")}</div>
+      {r.check ? <Select aria-label={t("类型")} value={r.check.then} onChange={(then) => void saveRoutine(r.id, { check: { ...r.check!, then: then === "notify" ? "notify" : "job" } })} options={[{ value: "job", label: r.groupId ? t("先检查，有输出交给群主处理") : t("先检查，有输出交给助手处理") }, { value: "notify", label: t("先检查，有输出只提醒") }]} />
+        : <div className="field ro">{r.groupId ? t("到点交给群主处理") : t("到点交给助手处理")}</div>}
+      {r.check?.then === "notify" ? <div className="rt-when-note">{t("有输出时原样发到对话，下面的任务内容不会执行。")}</div> : null}
 
       <div className="lbl">{t("任务内容")}</div>
       <label className="field">
@@ -641,11 +652,11 @@ function RoutineEditor({ id }: { id: string }) {
               {t("检查 {total} 次 · 触发 {hits} 次", { total: r.checks?.total ?? 0, hits: r.checks?.hits ?? 0 })}{r.checks?.lastAt ? ` · ${t("上次")} ${fmtWhen(r.checks.lastAt)}` : ""}
             </div>
             {r.checks?.failing ? <div className="rt-check-line badline">{t("失败原因：{error}", { error: r.checks.failing })}</div> : null}
+            {r.checks?.history?.filter(check => check.outcome !== "quiet").map((check, index) => <div className={`rt-check-line${check.outcome === "failed" ? " badline" : ""}`} key={`${check.at}-${index}`}>{fmtWhen(check.at)} · {check.outcome === "failed" ? t("检查失败") : r.check?.then === "notify" ? t("有输出，已发到对话") : r.groupId ? t("有输出，已交给群主") : t("有输出，已交给助手")}</div>)}
           </div>
-          <details className="rt-script">
-            <summary>{t("检查脚本")}</summary>
+          <Disclosure className="rt-script" label={t("检查脚本")} count={t("{n} 行", { n: r.check.script.split("\n").length })} open={scriptOpen} onToggle={() => setScriptOpen(value => !value)}>
             <pre className="mono">{r.check.script}</pre>
-          </details>
+          </Disclosure>
         </>
       ) : null}
 
@@ -707,11 +718,11 @@ function PanelSaveStatus({ message }: { message: string | null }) {
   return <SaveMessage message={message} />;
 }
 
-function PanelText({ value, multiline, placeholder, save }: { value: string; multiline?: boolean; placeholder?: string; save: (text: string) => Promise<boolean> }) {
+function PanelText({ value, multiline, placeholder, long, save }: { value: string; multiline?: boolean; placeholder?: string; long?: boolean; save: (text: string) => Promise<boolean> }) {
   const [text, setText] = useState(value);
   useEffect(() => setText(value), [value]);
-  const props = { value: text, placeholder, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setText(e.target.value), onBlur: () => { if (text !== value) void save(text).then((ok) => { if (!ok) setText(value); }); }, onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); e.currentTarget.blur(); } } };
-  return <label className="field">{multiline ? <textarea rows={2} {...props} /> : <input {...props} />}</label>;
+  const props = { value: text, placeholder, onChange: (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => setText(e.target.value), onBlur: () => { if (text !== value) void save(text).then((ok) => { if (!ok) setText(value); }); }, onKeyDown: (e: React.KeyboardEvent<HTMLInputElement | HTMLTextAreaElement>) => { if (e.key === "Enter" && !e.shiftKey && !long) { e.preventDefault(); e.currentTarget.blur(); } } };
+  return <label className={`field${long ? " instructions-field" : ""}`}>{multiline ? <textarea aria-label={long ? t("补充提示词") : undefined} rows={long ? 8 : 2} {...props} /> : <input {...props} />}</label>;
 }
 
 function AssistantModels({ aid }: { aid: string }) {
@@ -866,13 +877,14 @@ function AssistantKnowledge({ aid }: { aid: string }) {
 }
 
 function AssistantSkills({ aid }: { aid: string }) {
-  const state = useApp().assistantSkills[aid];
+  const app = useApp();
+  const state = app.assistantSkills[aid];
   const menu = useMenu();
   useEffect(() => { if (!state?.loading) void loadAssistantSkills(aid); }, [aid]);
   const selected = state?.skills.find((skill) => skill.name === menu.menu?.id);
   return <>{state?.error ? <div className="badline">{t("加载失败：{error}", { error: state.error })} <button onClick={() => void loadAssistantSkills(aid)}>{t("重试")}</button></div> : null}
     {!state?.loaded ? state?.error ? null : <SidebarLoading /> : state.skills.length ? <div className="group-card sidebar-card-group card-rows">{state.skills.map((skill) => <div className="list-row assistant-skill" key={skill.name}>
-      <button className="assistant-skill-info" onClick={() => openFilePreview(skill.path)} title={`${skill.description} · ${skillUsage(skill)}`}><strong>{skill.title}</strong><span>{skill.description} · {skillUsage(skill)}</span></button>
+      <button className="assistant-skill-info" onClick={() => openFilePreview(skill.path)} title={`${skill.description} · ${skillUsage(skill)}`}><strong>{skill.title}</strong><span>{skill.description} · {skillUsage(skill)}{skillOriginText(skill, app) ? ` · ${skillOriginText(skill, app)}` : ""}</span></button>
       <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={skill.title} aria-pressed={skill.enabled} onClick={() => void changeAssistantSkill(aid, skill.name, skill.enabled ? "disable" : "enable")} />
       <button className="knowledge-dots" aria-label={t("{name}的操作", { name: skill.title })} onClick={(e) => menu.toggle(skill.name, e.currentTarget)}><Icon name="more" size={18} /></button>
     </div>)}</div> : <Empty>{t("还没有技能。助手会把完成的任务沉淀成技能，你也可以在任务详情中点击「沉淀成技能」。")}</Empty>}
@@ -1008,6 +1020,18 @@ function RuleCreator({ aid }: { aid: string }) {
   </div>;
 }
 
+function AssistantPlugins({ aid }: { aid: string }) {
+  const { assistants } = useApp();
+  const [items, setItems] = useState<PluginView[]>([]);
+  const [error, setError] = useState("");
+  useEffect(() => { void loadPlugins().then(view => setItems(view.plugins)).catch(e => setError(e instanceof Error ? e.message : String(e))); }, [aid]);
+  return <div className="group-card sidebar-card-group">{error && <div className="badline">{error}</div>}{items.map(item => {
+    const selected = item.plugin.assistants ?? assistants.map(a => a.id);
+    const enabled = selected.includes(aid);
+    return <div className="ctl sidebar-plugin-row" key={item.plugin.id}><PluginIcon name={String(item.manifest.name ?? item.plugin.id)} id={item.plugin.id} manifest={item.manifest} /><span>{String(item.manifest.name ?? item.plugin.id)}</span><span className="sp" /><button className={`tog${enabled ? "" : " off"}`} role="switch" aria-label={String(item.manifest.name ?? item.plugin.id)} aria-checked={enabled} onClick={() => { const next = enabled ? selected.filter(id => id !== aid) : [...selected, aid]; void patchPlugin(item.plugin.id, { assistants: next }).then(updated => setItems(current => current.map(p => p.plugin.id === updated.plugin.id ? updated : p))).catch(e => setError(e instanceof Error ? e.message : String(e))); }} /></div>;
+  })}</div>;
+}
+
 function AssistantSettings() {
   const s = useApp();
   const aid = panelAssistant(s.panelStack, s.sel);
@@ -1041,7 +1065,10 @@ function AssistantSettings() {
         <PanelText value={a.duty} save={(duty) => feedback.save({ duty })} />
 
         <div className="lbl">{t("详细职责")}</div>
-        <PanelText multiline value={a.dutyLong ?? ""} save={(dutyLong) => feedback.save({ dutyLong })} />
+        <PanelText multiline value={a.dutyLong ?? ""} placeholder={t("具体管哪些事，什么情况下找它。")} save={(dutyLong) => feedback.save({ dutyLong })} />
+
+        <div className="lbl">{t("补充提示词")}</div>
+        <PanelText multiline long value={a.instructions ?? ""} placeholder={t("写给这个助手的话：性格、说话方式、工作方法、格式要求……都可以。会原样接进它的提示词。")} save={(instructions) => feedback.save({ instructions })} />
 
         </div>
       </div>
@@ -1053,6 +1080,8 @@ function AssistantSettings() {
         <div className="group-card sidebar-card-group"><AssistantModels aid={aid} /></div>
         <div className="sech"><span>{t("能力")}</span></div>
         <div className="group-card sidebar-card-group"><AssistantAbilities aid={aid} /></div>
+        <div className="sech"><span>{t("插件")}</span></div>
+        <AssistantPlugins aid={aid} />
       </div>
 
       <div className="pgroup">

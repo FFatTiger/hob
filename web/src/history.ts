@@ -6,6 +6,8 @@ import {
   backPanel,
   closeImageViewer,
   closeKnowledge,
+  closePlugins,
+  openPlugins,
   closeSettings,
   closeSheet,
   closeSub,
@@ -20,13 +22,16 @@ import {
 import { routeHash } from "./route.ts";
 import { isNarrow } from "./theme.ts";
 
-type Layer = "chat" | "topics" | "sheet" | "knowledge" | "settings" | "section" | "sub" | "panelPage" | "viewer";
+type Layer = "plugins" | "pluginDetail" | "chat" | "topics" | "sheet" | "knowledge" | "settings" | "section" | "sub" | "panelPage" | "viewer";
 
 /** 当前从底到顶叠着哪几层。 */
 export function layers(s: State, narrow: boolean): Layer[] {
   if (!narrow) return [];
   const out: Layer[] = [];
-  if (s.page === "knowledge") {
+  if (s.page === "plugins") {
+    out.push("plugins");
+    if (s.pluginId) out.push("pluginDetail");
+  } else if (s.page === "knowledge") {
     out.push("knowledge");
   } else if (s.page === "settings") {
     out.push("settings");
@@ -43,6 +48,8 @@ export function layers(s: State, narrow: boolean): Layer[] {
 }
 
 const CLOSE: Record<Layer, () => void> = {
+  plugins: closePlugins,
+  pluginDetail: () => openPlugins(),
   panelPage: backPanel,
   viewer: closeImageViewer,
   sheet: closeSheet,

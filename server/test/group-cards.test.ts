@@ -309,7 +309,7 @@ describe("群里的卡片和结果回流", () => {
       const names = state.session!.getActiveToolNames();
       expect(names).toContain("start_job");
       expect(names).toContain("ask_user");
-      expect(names).toContain("save_job_as_skill");
+      expect(names).toContain("review_job");
       expect(names).toContain("update_todos");
       expect(names).not.toContain("show_page");
       expect(names).toContain("set_rule");

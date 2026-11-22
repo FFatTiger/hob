@@ -14,7 +14,7 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "write": labelText = withValue(t("正在写入"), basename(value("path"))); break;
     case "start_job": labelText = withValue(t("分派任务"), value("title")); break;
     case "check_job": labelText = t("查看任务"); break;
-    case "edit_skill": labelText = t("改技能"); break;
+    case "save_skill": labelText = t("改技能"); break;
     case "reply_job": labelText = t("补充任务要求"); break;
     case "stop_job": labelText = t("停止任务"); break;
     case "ask_user": labelText = t("准备提问"); break;
@@ -41,7 +41,7 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "generate_image": labelText = t("生成图片"); break;
     case "overview": labelText = t("查看工作概况"); break;
     case "read_skill": labelText = withValue(t("查看技能"), value("name")); break;
-    case "save_job_as_skill": labelText = t("沉淀技能"); break;
+    case "review_job": labelText = t("沉淀技能"); break;
     default:
       labelText = /^(memory_write|memory_forget|memory_restore|lore_create_node|lore_update_node|lore_delete_node|lore_move_node)$/.test(name) ? t("保存记忆")
         : /^(memory_|lore_|scratchpad)/.test(name) ? t("搜索记忆") : t("调用工具");

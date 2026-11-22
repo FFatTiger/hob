@@ -36,8 +36,9 @@ import { desktopProfile, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
 import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
-import { importMcpServers, listMcpImports, mcpView, patchMcpServer, removeMcpServer, saveMcpServer, testMcpServer } from "./mcp.ts";
-import type { McpServerPatch, McpServerSave } from "../../shared/mcp.ts";
+import { pluginToolName } from "./plugin-host.ts";
+import { completePluginOAuth, disconnectPluginOAuth, pendingPluginOAuthId, startPluginOAuth } from "./plugin-oauth.ts";
+import type { PluginPatch } from "../../shared/types.ts";
 import { checkImageSettings, generateImage, imageConfigured, imageKey, IMAGE_KEY_SECRET } from "./image.ts";
 import { checkEmbeddingSettings, embed, embeddingKey, embeddingModel, EMBEDDING_KEY_SECRET } from "./embedding.ts";
 import { groupModelPick, checkModelsPatch } from "./models.ts";
@@ -51,6 +52,7 @@ import { archiveSkill, groupSkillsDir, listAssistantSkills, listSkills, rollback
 import { generalSkillsDir, importSkills, listImportSkills, skillViews, visibleSkills } from "./skills.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
+import { applyNetworkProxy } from "./network-proxy.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -169,6 +171,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (!next) return c.json({ error: "设置已在别处修改，已刷新" }, 409);
     if (next.settings.general.locale) setLocale(next.settings.general.locale);
     if (!hadLocale && next.settings.general.locale) runtime.initializeLocale(next.settings.general.locale);
+    if (patch.general?.proxy !== undefined || patch.general?.noProxy !== undefined) {
+      applyNetworkProxy(next.settings.general.proxy, next.settings.general.noProxy);
+      await Promise.all(runtime.plugins.store.list().map((plugin) => runtime.plugins.reload(plugin.id)));
+    }
     // 改了设置立即生效：并发、无响应判定、定时时区都不需要重启
     if (patch.models || patch.general?.showPage !== undefined) router.releaseSessions();
     runtime.jobs.pump();
@@ -290,65 +296,148 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
 
-  // 设置 → MCP：列表（密钥不回传）。文件坏了返回错误，不当成空列表
-  app.get("/api/mcp", (c) => {
+  const pluginView = (id: string) => {
+    let view: ReturnType<typeof runtime.plugins.store.view>;
+    try { view = runtime.plugins.store.view(id); }
+    catch { view = { plugin: { ...runtime.plugins.store.get(id), config: {} }, manifest: {}, config: {}, missing: [] }; }
+    const services = runtime.plugins.states(id);
+    return { ...view, skills: runtime.plugins.store.skills(id), services: services.map(service => ({ ...service, tools: service.tools.map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
+  };
+  const pluginError = (error: unknown) => error instanceof Error ? error.message : String(error);
+  app.get("/api/plugins", (c) => {
+    try { return c.json({ plugins: runtime.plugins.store.list().map(p => pluginView(p.id)), migrationErrors: runtime.plugins.migrationErrors }); }
+    catch (error) { return c.json({ error: pluginError(error) }, 500); }
+  });
+  app.get("/api/plugins/:id/icon", c => {
     try {
-      return c.json(mcpView(options.home));
+      const icon = runtime.plugins.store.icon(c.req.param("id"), c.req.query("source"));
+      if (!icon) return c.notFound();
+      return new Response(new Uint8Array(icon.content), { headers: { "Content-Type": icon.type, "X-Content-Type-Options": "nosniff" } });
+    } catch { return c.notFound(); }
+  });
+  app.get("/api/plugins/catalog", async (c) => {
+    try {
+      const store = runtime.plugins.store;
+      await store.sources.open();
+      const installed = store.list();
+      return c.json({ sources: store.sources.list().map(source => ({ ...source, ...(source.error ? { error: userError(source.error) } : {}), refreshing: store.sources.isRefreshing(source.id) })), plugins: store.catalog().map(({ path: _path, ...p }) => ({ ...p, ...(p.error ? { error: userError(p.error) } : {}), installed: installed.some(item => item.id === p.id && item.source === p.source) })) });
+    } catch (error) { return c.json({ error: pluginError(error) }, 500); }
+  });
+  app.post("/api/plugins/sources", async c => {
+    const body = await c.req.json().catch(() => null) as { url?: unknown } | null;
+    try {
+      if (typeof body?.url !== "string") throw new Error("插件源地址无效");
+      return c.json(await runtime.plugins.store.sources.add(body.url));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/sources/:id", c => {
+    try { runtime.plugins.store.sources.remove(c.req.param("id")); return c.json({ ok: true }); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/oauth/callback", async c => {
+    const state = c.req.query("state"); const code = c.req.query("code");
+    if (!state || !code) {
+      const message = c.req.query("error_description") ?? c.req.query("error") ?? "OAuth 回调缺少 state 或 code";
+      console.error(`插件 OAuth 回调失败：${message}`);
+      return c.text(message, 400);
+    }
+    const pluginId = pendingPluginOAuthId(state, options.home);
+    try {
+      const result = await completePluginOAuth(state, code, options.home, c.req.query("iss"));
+      await runtime.plugins.reload(result.id);
+      return c.html('<!doctype html><html><head><meta charset="utf-8"></head><body>授权完成，可以关闭此窗口。<script>window.close()</script></body></html>');
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 500);
+      const message = pluginId ? runtime.plugins.redact(pluginId, pluginError(error)) : pluginError(error);
+      console.error(`插件 OAuth 回调失败${pluginId ? `（${pluginId}）` : ""}：${message}`);
+      return c.text(message, 400);
     }
   });
-
-  // 新建或改一个服务（名称在地址里；env / headers 逐键保留、替换、删除）
-  app.put("/api/mcp/:name", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as McpServerSave;
+  app.post("/api/plugins/custom", async c => {
+    const body = await c.req.json().catch(() => ({})) as { id?: unknown; server?: unknown };
     try {
-      return c.json(await saveMcpServer(options.home, c.req.param("name"), body));
+      if (typeof body.id !== "string") throw new Error("缺少插件 id");
+      runtime.plugins.store.addCustom(body.id, body.server);
+      await runtime.plugins.reload(body.id);
+      return c.json(pluginView(body.id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/install", async c => {
+    try { const id = c.req.param("id"); const body = await c.req.json().catch(() => ({})) as { source?: string }; runtime.plugins.store.install(id, false, false, body.source); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/update", async c => {
+    try { const id = c.req.param("id"); runtime.plugins.store.install(id, true); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.patch("/api/plugins/:id", async c => {
+    const body = await c.req.json().catch(() => ({})) as PluginPatch;
+    try { const id = c.req.param("id"); const enabled = runtime.plugins.store.get(id).enabled; runtime.plugins.store.patch(id, body); if (runtime.plugins.store.get(id).enabled !== enabled) await runtime.plugins.reload(id); router.releaseSessions(); return c.json(pluginView(id)); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.put("/api/plugins/:id/config", async c => {
+    const body = await c.req.json().catch(() => null) as { values?: unknown } | null;
+    try {
+      if (!body?.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new Error("values 必须是对象");
+      const id = c.req.param("id"); if (runtime.plugins.store.saveConfig(id, body.values as Record<string, unknown>)) await runtime.plugins.reload(id); return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/profiles", async c => {
+    const body = await c.req.json().catch(() => null) as { name?: unknown } | null;
+    try {
+      if (typeof body?.name !== "string") throw new Error("名称不能为空");
+      const id = c.req.param("id"); runtime.plugins.store.addProfile(id, body.name); await runtime.plugins.reload(id); router.releaseSessions(); return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.patch("/api/plugins/:id/profiles/:profileId", async c => {
+    const body = await c.req.json().catch(() => null) as { name?: unknown } | null;
+    try {
+      if (typeof body?.name !== "string") throw new Error("名称不能为空");
+      const id = c.req.param("id"); runtime.plugins.store.renameProfile(id, c.req.param("profileId"), body.name); await runtime.plugins.reload(id); router.releaseSessions(); return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/:id/profiles/:profileId", async c => {
+    try { const id = c.req.param("id"); runtime.plugins.store.deleteProfile(id, c.req.param("profileId")); await runtime.plugins.reload(id); router.releaseSessions(); return c.json(pluginView(id)); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.put("/api/plugins/:id/profiles/:profileId/config", async c => {
+    const body = await c.req.json().catch(() => null) as { values?: unknown } | null;
+    try {
+      if (!body?.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new Error("values 必须是对象");
+      const id = c.req.param("id"); if (runtime.plugins.store.saveProfileConfig(id, c.req.param("profileId"), body.values as Record<string, unknown>)) await runtime.plugins.reload(id); return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/:id", async c => {
+    try { const id = c.req.param("id"); await runtime.plugins.stopPlugin(id); runtime.plugins.store.remove(id); router.releaseSessions(); return c.json({ ok: true }); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/:id/services/:service/oauth", c => {
+    try {
+      const target = runtime.plugins.oauthTarget(c.req.param("id"), c.req.param("service"));
+      const browser = c.req.header("origin") ?? c.req.header("referer") ?? c.req.url;
+      const parsed = new URL(browser);
+      if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("浏览器地址无效");
+      return c.json({ callbackUrl: `${parsed.origin}/api/plugins/oauth/callback`, declared: Object.keys(target.config).length > 0 });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/services/:service/oauth", async c => {
+    try {
+      const target = runtime.plugins.oauthTarget(c.req.param("id"), c.req.param("service"));
+      const origin = c.req.header("origin");
+      if (!origin) throw new Error("缺少浏览器 Origin，无法确定回调地址");
+      const parsed = new URL(origin);
+      if ((parsed.protocol !== "http:" && parsed.protocol !== "https:") || parsed.origin !== origin) throw new Error("浏览器 Origin 无效");
+      const callbackUrl = `${parsed.origin}/api/plugins/oauth/callback`;
+      return c.json({ ...(await startPluginOAuth(target, callbackUrl)), callbackUrl });
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+      const id = c.req.param("id");
+      let reason = pluginError(error);
+      try { reason = runtime.plugins.redact(id, reason); } catch { /* invalid or missing plugin */ }
+      return c.json({ error: reason }, 400);
     }
   });
-
-  // 启用开关、提供方式、单独关掉的工具
-  app.patch("/api/mcp/:name", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as McpServerPatch;
-    try {
-      return c.json(await patchMcpServer(options.home, c.req.param("name"), body));
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
-    }
-  });
-
-  app.delete("/api/mcp/:name", async (c) => {
-    try {
-      return c.json(await removeMcpServer(options.home, c.req.param("name")));
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
-    }
-  });
-
-  // 测试连接：连接 → 列工具 → 关闭；失败也是 200，原因在返回值里
-  app.post("/api/mcp/:name/test", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { refresh?: boolean };
-    try {
-      return c.json(await testMcpServer(options.home, c.req.param("name"), body.refresh !== false));
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
-    }
-  });
-
-  // 从本机导入：只读 pi / Claude Code / Cursor 的配置，同名跳过
-  app.get("/api/mcp/import", (c) => c.json(listMcpImports(options.home)));
-
-  app.post("/api/mcp/import", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { ids?: unknown };
-    const ids = Array.isArray(body.ids) ? body.ids.filter((id): id is string => typeof id === "string") : [];
-    if (!ids.length) return c.json({ error: "请选择要导入的服务。" }, 400);
-    try {
-      return c.json(await importMcpServers(options.home, ids));
-    } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
-    }
+  app.delete("/api/plugins/:id/services/:service/oauth", async c => {
+    try { const id = c.req.param("id"); disconnectPluginOAuth(runtime.plugins.oauthTarget(id, c.req.param("service"))); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
+    catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
 
   // 设置 → 模型：引擎注册表里现在能用的聊天模型 + 名单里哪些已经不可用
@@ -1177,7 +1266,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/jobs/:id/sediment", (c) => {
     const id = c.req.param("id");
     if (!store.job(id)) return c.json({ error: "任务不存在" }, 404);
-    try { jobs.startSediment(id, { manual: true }); return c.json({ ok: true }); }
+    try { jobs.startSediment(id); return c.json({ ok: true }); }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 409); }
   });
 

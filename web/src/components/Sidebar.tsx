@@ -4,7 +4,7 @@ import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
-import { goHome, openKnowledge, openSettings, setQuery, toggleSideCollapsed, useApp } from "../store.ts";
+import { goHome, openKnowledge, openPlugins, openSettings, setQuery, toggleSideCollapsed, useApp } from "../store.ts";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -51,6 +51,7 @@ export function Sidebar() {
         <HomeSections size={42} markSel />
       </div>
       <div className="side-foot">
+        <button className="frow" onClick={() => openPlugins()}><Icon name="plugin" size={18} /><span className="sp">{t("插件")}</span></button>
         <button className="frow" onClick={openKnowledge}>
           <Icon name="archive" size={18} />
           <span className="sp">{t("知识库")}</span>

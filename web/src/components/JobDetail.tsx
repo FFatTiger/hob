@@ -31,6 +31,7 @@ import { fmtBytes, fmtDuration, fmtElapsed, fmtTokens, fmtWhen } from "../util.t
 import { Markdown } from "./Markdown.tsx";
 import { PanelHead } from "./PanelHead.tsx";
 import { Brief } from "./Brief.tsx";
+import { Disclosure } from "./Disclosure.tsx";
 import { useDesktopScreens } from "../desktop-screens.ts";
 import { JOB_STATUS, StatusTag, jobStatusIcon, jobStatusMeta, sedimentText } from "./status-meta.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })));
@@ -269,8 +270,18 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
       <div className="lbl">{t("执行过程")}</div>
       <div className="jd-timeline">
         {timeline === undefined ? <Empty><DelayedText text={t("正在读取执行过程…")} /></Empty> : timeline.rows.length || timeline.thinking ? <>
-          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => expanded && !initiallyVisible.has(step.id) ? <div className="jd-unfold" key={step.id}><div><Step step={step} cwd={part.job.cwd} /></div></div> : <Step key={step.id} step={step} cwd={part.job.cwd} />)}
-          {visibleSteps(timeline.rows, ended, expanded).remaining ? <div className="jd-tool"><button className="jd-tool-head" onClick={() => setExpanded(true)}><span className="ico"><Icon name="more" size={14} /></span><span className="tt">{t("还有 {n} 步", { n: visibleSteps(timeline.rows, ended, expanded).remaining })}</span></button></div> : null}
+          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => expanded && !initiallyVisible.has(step.id) ? null : <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+          {visibleSteps(timeline.rows, ended, expanded).remaining ? (
+            <Disclosure
+              className="jd-more-steps"
+              label={t("其余步骤")}
+              count={visibleSteps(timeline.rows, ended, expanded).remaining}
+              open={expanded}
+              onToggle={() => setExpanded((value) => !value)}
+            >
+              {timeline.rows.filter((step) => !initiallyVisible.has(step.id)).map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+            </Disclosure>
+          ) : null}
           {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}
         </> : <Empty>{t("还没有执行步骤。")}</Empty>}
       </div>
@@ -320,7 +331,6 @@ function ReplyBox({ job }: { job: Job }) {
 
 function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
   const [open, setOpen] = useState(false);
-  const content = useLeave(open, 180);
 
   if (step.kind === "text") {
     if (step.from === "hob") {
@@ -349,34 +359,40 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
 
   const title = step.title ?? step.name ?? "";
   const parts = titleParts(title);
-  return (
-    <div className={`jd-tool${step.isError ? " bad" : ""}${open ? " open" : ""}`} data-job-approval={step.name === "ask_user" ? "true" : undefined}>
-      <button className="jd-tool-head" onClick={() => setOpen((value) => !value)}>
-        <span className="ico">
-          {step.running ? (
-            <Icon name="spin" size={14} className="spin" />
-          ) : (
-            <Icon name={TOOL_ICON[step.name ?? ""] ?? (/^(lore|memory)_/.test(step.name ?? "") ? "mem" : "more")} size={14} />
-          )}
-        </span>
-        <span className="tt">
-          {parts.map((part, index) => (
-            <span key={index} className={part.mono ? "mono" : undefined}>
-              {part.text}
-            </span>
-          ))}
-        </span>
-        {step.thinking ? (
-          <span className="blb" title={t("有思考过程")}>
-            <Icon name="bulb" size={13} />
+  const head = (
+    <>
+      <span className="ico">
+        {step.running ? (
+          <Icon name="spin" size={14} className="spin" />
+        ) : (
+          <Icon name={TOOL_ICON[step.name ?? ""] ?? (/^(lore|memory)_/.test(step.name ?? "") ? "mem" : "more")} size={14} />
+        )}
+      </span>
+      <span className="tt">
+        {parts.map((part, index) => (
+          <span key={index} className={part.mono ? "mono" : undefined}>
+            {part.text}
           </span>
-        ) : null}
-        <span className="tm">{step.isError ? t("出错") : step.durationMs && step.durationMs >= 1000 ? fmtDuration(step.durationMs) : ""}</span>
-        <Icon name={open ? "down" : "chev"} size={13} />
-      </button>
-      <div className={`expand${open ? " open" : ""}`} inert={!open}>
-        <div>{content.mounted ? <StepBody step={step} cwd={cwd} /> : null}</div>
-      </div>
+        ))}
+      </span>
+      {step.thinking ? (
+        <span className="blb" title={t("有思考过程")}>
+          <Icon name="bulb" size={13} />
+        </span>
+      ) : null}
+      <span className="tm">{step.isError ? t("出错") : step.durationMs && step.durationMs >= 1000 ? fmtDuration(step.durationMs) : ""}</span>
+    </>
+  );
+  return (
+    <div data-job-approval={step.name === "ask_user" ? "true" : undefined}>
+      <Disclosure
+        className={`jd-tool${step.isError ? " bad" : ""}`}
+        label={head}
+        open={open}
+        onToggle={() => setOpen((value) => !value)}
+      >
+        <StepBody step={step} cwd={cwd} />
+      </Disclosure>
     </div>
   );
 }
@@ -388,20 +404,14 @@ function Step({ step, cwd }: { step: StepRow; cwd?: string }) {
 function ThinkingBlock({ text, open: startOpen }: { text: string; open: boolean }) {
   const [open, setOpen] = useState(startOpen);
   return (
-    <div className="jd-think-in">
-      <button
-        className="jd-think-head"
-        title={open ? t("收起思考过程") : t("展开思考过程")}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <span className="ico">
-          <Icon name="bulb" size={13} />
-        </span>
-        <span className="tt">{t("思考过程")}</span>
-        <Icon name={open ? "down" : "chev"} size={12} />
-      </button>
-      {open ? <div className="jd-think-body">{text}</div> : null}
-    </div>
+    <Disclosure
+      className="jd-think-in"
+      label={<><span className="ico"><Icon name="bulb" size={13} /></span><span className="tt">{t("思考过程")}</span></>}
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+    >
+      <div className="jd-think-body">{text}</div>
+    </Disclosure>
   );
 }
 
@@ -409,16 +419,14 @@ function ThinkingBlock({ text, open: startOpen }: { text: string; open: boolean 
 function ThinkingLive({ text }: { text: string }) {
   const [open, setOpen] = useState(false);
   return (
-    <div className="jd-think">
-      <button onClick={() => setOpen((value) => !value)}>
-        <span className="ico">
-          <Icon name="bulb" size={14} />
-        </span>
-        <span className="tt">{t("思考中")}</span>
-        <Icon name={open ? "down" : "chev"} size={13} />
-      </button>
-      {open ? <div className="jd-think-body">{text}</div> : null}
-    </div>
+    <Disclosure
+      className="jd-think"
+      label={<><span className="ico"><Icon name="bulb" size={14} /></span><span className="tt">{t("思考中")}</span></>}
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+    >
+      <div className="jd-think-body">{text}</div>
+    </Disclosure>
   );
 }
 
@@ -491,37 +499,31 @@ function Args({ step, args, cwd }: { step: JobStep; args: Record<string, unknown
 function Diff({ before, after }: { before: string; after: string }) {
   const [all, setAll] = useState(false);
   const lines = diffLines(before, after);
-  const shown = all ? lines : lines.slice(0, 24);
+  const preview = lines.slice(0, 24);
+  const rest = lines.slice(24);
+  const renderLine = (line: (typeof lines)[number], index: number) => (
+    <div className={`dl ${line.sign === "-" ? "del" : line.sign === "+" ? "add" : ""}`} key={index}>
+      <span className="sg">{line.sign}</span>
+      <span className="mono">{line.text || " "}</span>
+    </div>
+  );
   return (
     <div className="jd-diff">
-      {shown.map((line, index) => (
-        <div className={`dl ${line.sign === "-" ? "del" : line.sign === "+" ? "add" : ""}`} key={index}>
-          <span className="sg">{line.sign}</span>
-          <span className="mono">{line.text || " "}</span>
-        </div>
-      ))}
-      {lines.length > shown.length ? (
-        <button className="jd-more" onClick={() => setAll(true)}>
-          {t("展开全部 {n} 行", { n: lines.length })}
-        </button>
-      ) : null}
+      {preview.map(renderLine)}
+      {rest.length ? <Disclosure className="jd-more-disclosure" label={t("其余差异")} count={rest.length} open={all} onToggle={() => setAll(value => !value)}>{rest.map((line, index) => renderLine(line, index + preview.length))}</Disclosure> : null}
     </div>
   );
 }
 
 function LongText({ text, className, lines = 12 }: { text: string; className: string; lines?: number }) {
   const [all, setAll] = useState(false);
-  const count = text.split("\n").length;
+  const rows = text.split("\n");
+  const preview = rows.slice(0, lines).join("\n");
+  const rest = rows.slice(lines);
   return (
     <>
-      <pre className={`${className}${all ? " all" : ""}`} style={all ? undefined : { maxHeight: `${lines * 1.6}em` }}>
-        {text}
-      </pre>
-      {count > lines ? (
-        <button className="jd-more" onClick={() => setAll(!all)}>
-          {all ? t("收起") : t("展开全部 {n} 行", { n: count })}
-        </button>
-      ) : null}
+      <pre className={className}>{preview}</pre>
+      {rest.length ? <Disclosure className="jd-more-disclosure" label={t("其余行")} count={rest.length} open={all} onToggle={() => setAll(value => !value)}><pre className={className}>{rest.join("\n")}</pre></Disclosure> : null}
     </>
   );
 }
@@ -568,9 +570,10 @@ function Directory({ jobId }: { jobId: string }) {
   // 还没建出来或是空的：整行不出现
   if (view && !view.total && !error) return null;
   return <div className="jd-directory">
-    <button className="jd-directory-head" onClick={() => setOpen(!open)}><Icon name={open ? "down" : "chev"} size={15} />{t("工作目录")}{view ? ` · ${view.fileCount} ${t("个文件")}、${view.directoryCount} ${t("个文件夹")}` : ""}</button>
+    <Disclosure label={t("工作目录")} count={view ? `${view.fileCount} ${t("个文件")}、${view.directoryCount} ${t("个文件夹")}` : undefined} open={open} onToggle={() => setOpen(value => !value)}>
+      {view ? <DirectoryRows jobId={jobId} view={view} /> : null}
+    </Disclosure>
     {error ? <div className="jd-dir-error">{error} <button className="jd-more" onClick={() => setAttempt(attempt + 1)}>{t("重试")}</button></div> : null}
-    {open && view ? <DirectoryRows jobId={jobId} view={view} /> : null}
   </div>;
 }
 
@@ -594,8 +597,10 @@ function DirectoryFolder({ jobId, entry }: { jobId: string; entry: Extract<JobFi
     void loadJobFiles(jobId, entry.rel).then((result) => { if (live) setView(result); }).catch((e: unknown) => { if (live) setError(e instanceof Error ? e.message : String(e)); });
     return () => { live = false; };
   }, [open, view, jobId, entry.rel, attempt]);
-  return <div><button className="jd-file-row" onClick={() => setOpen(!open)}><Icon name={open ? "down" : "chev"} size={14} /><Icon name="folder" size={18} /><span>{entry.name}</span><small>{entry.count} {t("项")}</small></button>
-    {open ? <div className="jd-dir-child">{error ? <div className="jd-dir-error">{error} <button className="jd-more" onClick={() => setAttempt(attempt + 1)}>{t("重试")}</button></div> : view ? <DirectoryRows jobId={jobId} view={view} /> : <div className="jd-dir-more">{t("正在读取…")}</div>}</div> : null}
+  return <div>
+    <Disclosure className="jd-folder-disclosure" label={<><Icon name="folder" size={18} /><span>{entry.name}</span></>} count={`${entry.count} ${t("项")}`} open={open} onToggle={() => setOpen(value => !value)}>
+      {error ? <div className="jd-dir-error">{error} <button className="jd-more" onClick={() => setAttempt(attempt + 1)}>{t("重试")}</button></div> : view ? <DirectoryRows jobId={jobId} view={view} /> : <div className="jd-dir-more">{t("正在读取…")}</div>}
+    </Disclosure>
   </div>;
 }
 

@@ -60,7 +60,7 @@ import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrig
 
 import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
-import type { McpImportResult, McpImportView, McpSecretMutation, McpServerPatch, McpServerSave, McpServerView, McpTestResult, McpView } from "../../shared/mcp.ts";
+import type { PluginCatalogView, PluginPatch, PluginView, PluginsView } from "../../shared/types.ts";
 
 export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; q?: string; before?: string; limit?: number };
 
@@ -156,13 +156,22 @@ export interface HobApi {
 
   saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }): Promise<DesktopView>;
   testDesktop(): Promise<DesktopTestResult>;
-  mcp(): Promise<McpView>;
-  putMcp(name: string, body: McpServerSave): Promise<McpView>;
-  patchMcp(name: string, patch: McpServerPatch): Promise<McpView>;
-  deleteMcp(name: string): Promise<McpView>;
-  testMcp(name: string, refresh: boolean): Promise<McpTestResult>;
-  mcpImports(): Promise<McpImportView>;
-  importMcp(ids: string[]): Promise<McpImportResult>;
+  plugins(): Promise<PluginsView>;
+  pluginCatalog(): Promise<PluginCatalogView>;
+  installPlugin(id: string, source?: string): Promise<PluginView>;
+  addPluginSource(url: string): Promise<import("../../shared/types.ts").PluginSourceView>;
+  deletePluginSource(id: string): Promise<{ ok: true }>;
+  updatePlugin(id: string): Promise<PluginView>;
+  patchPlugin(id: string, patch: PluginPatch): Promise<PluginView>;
+  savePluginConfig(id: string, values: Record<string, unknown>): Promise<PluginView>;
+  addPluginProfile(id: string, name: string): Promise<PluginView>;
+  updatePluginProfile(id: string, profileId: string, name: string): Promise<PluginView>;
+  deletePluginProfile(id: string, profileId: string): Promise<PluginView>;
+  savePluginProfileConfig(id: string, profileId: string, values: Record<string, unknown>): Promise<PluginView>;
+  deletePlugin(id: string): Promise<{ ok: true }>;
+  addCustomPlugin(id: string, server: Record<string, unknown>): Promise<PluginView>;
+  startPluginOAuth(id: string, service: string): Promise<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>;
+  disconnectPluginOAuth(id: string, service: string): Promise<PluginView>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
   testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
@@ -309,18 +318,22 @@ export const realApi: HobApi = {
   desktopScreens: () => req<{ screens: DesktopScreen[]; profiles: Record<string, string> }>("/api/desktop/screens"),
   saveDesktop: (body) => req<DesktopView>("/api/desktop", json(body, "PUT")),
   testDesktop: () => req<DesktopTestResult>("/api/desktop/test", json({})),
-  mcp: () => req<McpView>("/api/mcp"),
-  putMcp: (name, body) => req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, json(body, "PUT")),
-  patchMcp: (name, patch) =>
-    req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, {
-      method: "PATCH",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(patch),
-    }),
-  deleteMcp: (name) => req<McpView>(`/api/mcp/${encodeURIComponent(name)}`, { method: "DELETE" }),
-  testMcp: (name, refresh) => req<McpTestResult>(`/api/mcp/${encodeURIComponent(name)}/test`, json({ refresh })),
-  mcpImports: () => req<McpImportView>("/api/mcp/import"),
-  importMcp: (ids) => req<McpImportResult>("/api/mcp/import", json({ ids })),
+  plugins: () => req<PluginsView>("/api/plugins"),
+  pluginCatalog: () => req<PluginCatalogView>("/api/plugins/catalog"),
+  installPlugin: (id, source) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/install`, json({ source })),
+  addPluginSource: (url) => req<import("../../shared/types.ts").PluginSourceView>("/api/plugins/sources", json({ url })),
+  deletePluginSource: (id) => req<{ ok: true }>(`/api/plugins/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  updatePlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/update`, json({})),
+  patchPlugin: (id, patch) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}`, json(patch, "PATCH")),
+  savePluginConfig: (id, values) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/config`, json({ values }, "PUT")),
+  addPluginProfile: (id, name) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles`, json({ name }, "POST")),
+  updatePluginProfile: (id, profileId, name) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles/${encodeURIComponent(profileId)}`, json({ name }, "PATCH")),
+  deletePluginProfile: (id, profileId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles/${encodeURIComponent(profileId)}`, { method: "DELETE" }),
+  savePluginProfileConfig: (id, profileId, values) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles/${encodeURIComponent(profileId)}/config`, json({ values }, "PUT")),
+  deletePlugin: (id) => req<{ ok: true }>(`/api/plugins/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  addCustomPlugin: (id, server) => req<PluginView>("/api/plugins/custom", json({ id, server })),
+  startPluginOAuth: (id, service) => req<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, json({})),
+  disconnectPluginOAuth: (id, service) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, { method: "DELETE" }),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
   testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),

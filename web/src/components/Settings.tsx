@@ -33,9 +33,9 @@ import type {
   ThinkingLevelMapSetting,
 } from "../../../shared/types.ts";
 import type { SearchProviderName, SearchProviderSetting, SearchView } from "../../../shared/search.ts";
-import type { McpImportView, McpSecretMutation, McpServerView, McpTestResult, McpView } from "../../../shared/mcp.ts";
 import type { SkillImportSource, SkillImportView, SkillsView, SkillView } from "../../../shared/skills.ts";
 import { Markdown } from "./Markdown.tsx";
+import { Disclosure } from "./Disclosure.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
 import { t } from "../../../shared/i18n.ts";
@@ -44,6 +44,7 @@ import { Icon, type IconName } from "../icons.tsx";
 import { filterModels, fitThinking, groupByProvider, THINKING_ORDER, thinkingLevels } from "../model-list.ts";
 import { currentSubscription, pushSupported } from "../push.ts";
 import { fmtWhen } from "../util.ts";
+import { skillOriginText } from "../skill-origin.ts";
 import {
   changePassword,
   closeSettings,
@@ -67,16 +68,9 @@ import {
   importSelectedSkills,
   deleteSkill,
   rollbackGeneralSkill,
-  loadMcp,
   loadDesktop,
   saveDesktop,
   testDesktop,
-  putMcpServer,
-  patchMcpServer,
-  deleteMcpServer,
-  testMcpServer,
-  loadMcpImports,
-  importMcpServers,
   saveSearch,
   testSearch,
   loadModels,
@@ -168,7 +162,7 @@ function AutoField({ value, placeholder, multiline, onSave }: { value: string; p
   return <div className="field">{multiline ? <textarea {...props} rows={3} /> : <input {...props} />}</div>;
 }
 
-const SECTION_IDS: SettingsSection[] = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "mcp", "desktop", "work", "usage", "push", "about"];
+const SECTION_IDS: SettingsSection[] = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "desktop", "work", "usage", "push", "about"];
 
 function sectionLabel(id: SettingsSection): string {
   switch (id) {
@@ -181,7 +175,6 @@ function sectionLabel(id: SettingsSection): string {
     case "knowledge": return t("知识库");
     case "search": return t("联网搜索");
     case "skills": return t("技能");
-    case "mcp": return "MCP";
     case "desktop": return t("云桌面");
     case "work": return t("任务");
     case "usage": return t("消耗");
@@ -205,6 +198,19 @@ function themeItems(): { key: Theme; label: string }[] {
 function timezones(): string[] {
   const list = (Intl as unknown as { supportedValuesOf?: (key: string) => string[] }).supportedValuesOf?.("timeZone");
   return list ?? [];
+}
+
+function maskProxy(value: string): string {
+  if (!value) return "";
+  try {
+    const parsed = new URL(value);
+    if (!parsed.username && !parsed.password) return value;
+    parsed.username = parsed.username ? "***" : "";
+    parsed.password = parsed.password ? "***" : "";
+    return parsed.toString();
+  } catch {
+    return value;
+  }
 }
 
 export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: boolean }) {
@@ -282,8 +288,6 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
           <SearchSection />
         ) : current === "skills" ? (
           <SkillsSection />
-        ) : current === "mcp" ? (
-          <McpSection />
         ) : current === "desktop" ? (
           <DesktopSection />
         ) : current === "work" ? (
@@ -475,7 +479,17 @@ function GeneralSection() {
   const about = s.settings.settings.general.aboutYou;
   const feedback = useSaveFeedback();
   const timezoneFeedback = useSaveFeedback();
+  const proxyFeedback = useSaveFeedback();
   const aboutFeedback = useSaveFeedback();
+  const proxyValue = s.settings.settings.general.proxy;
+  const noProxyValue = s.settings.settings.general.noProxy;
+  const [proxyInput, setProxyInput] = useState(proxyValue);
+  const [proxyFocused, setProxyFocused] = useState(false);
+  useEffect(() => setProxyInput(proxyValue), [proxyValue]);
+  const saveProxy = async () => {
+    if (proxyInput === proxyValue) return true;
+    return proxyFeedback.save({ general: { proxy: proxyInput } });
+  };
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
@@ -486,7 +500,7 @@ function GeneralSection() {
 
   return (
     <>
-      <PageHead title={t("通用设置")} desc={t("主题、时区、个人信息、登录密码。")} />
+      <PageHead title={t("通用设置")} desc={t("主题、时区、网络代理、个人信息、登录密码。")} />
       <Group>
         <div className="lbl">{t("主题")}</div>
         <Seg items={themes} value={s.theme} disabled={feedback.busy} onChange={(theme) => void feedback.save({ general: { theme } })} />
@@ -504,6 +518,24 @@ function GeneralSection() {
         <TimezoneField value={s.settings.settings.general.timezone} onSave={(timezone) => timezoneFeedback.save({ general: { timezone } })} />
         <SaveFeedback message={timezoneFeedback.message} />
         <div className="note">{t("助手的「现在时间」和定时任务都按这个时区算。")}</div>
+      </Group>
+
+      <Group>
+        <div className="lbl">{t("网络代理")}</div>
+        <div className="field">
+          <input
+            value={proxyFocused ? proxyInput : maskProxy(proxyInput)}
+            placeholder={t("如 http://用户名:密码@127.0.0.1:7890")}
+            disabled={proxyFeedback.busy}
+            onFocus={() => setProxyFocused(true)}
+            onChange={(e) => setProxyInput(e.target.value)}
+            onBlur={() => { setProxyFocused(false); void saveProxy().then((ok) => { if (!ok) setProxyInput(proxyValue); }); }}
+          />
+        </div>
+        <SaveFeedback message={proxyFeedback.message} />
+        <div className="lbl sub">{t("不走代理的地址")}</div>
+        <AutoField value={noProxyValue} placeholder={t("如 localhost,127.0.0.1,::1")} onSave={(noProxy) => feedback.save({ general: { noProxy } })} />
+        <div className="note">{t("填了以后，Hob 连接模型、插件、网页搜索，以及助手运行的命令，都通过这个代理。")}</div>
       </Group>
 
       <Group>
@@ -755,17 +787,15 @@ function ThinkingLevels({
   };
 
   return (
-    <div className="think-levels">
-      <button className="thinkhead" onClick={() => setOpen((value) => !value)} disabled={busy}>
-        <span className="lbl sub">{t("思考档")}</span>
-        <span className="note">
-          {t("{n} 档{custom}", { n: rows.length, custom: info.custom ? t(" · 有自定义") : t(" · 默认") })}
-        </span>
-        <Icon name={open ? "down" : "chev"} size={14} />
-      </button>
-      <div className={`expand${open ? " open" : ""}`} inert={!open}>
-        <div>
-          <div className="thinkrows">
+    <Disclosure
+      className="think-levels"
+      label={t("思考档")}
+      count={t("{n} 档{custom}", { n: rows.length, custom: info.custom ? t(" · 有自定义") : t(" · 默认") })}
+      open={open}
+      onToggle={() => setOpen((value) => !value)}
+      disabled={busy}
+    >
+      <div className="thinkrows">
             {rows.map((row) => (
               <div className="thinkrow" key={row.level}>
                 <span className="tname">{thinkingText(row.level)}</span>
@@ -822,10 +852,8 @@ function ThinkingLevels({
             {t("留空则按服务商协议的默认值发送；填写后按所填的值发送（例如 DeepSeek 的「中」填 high）。「关闭」这一档不能删除，其余档删除后不再出现在思考强度中。")}
           </div>
           {error ? <div className="badline">{error}</div> : null}
-          {saved ? <div className="okline">{t("已保存思考档")}</div> : null}
-        </div>
-      </div>
-    </div>
+      {saved ? <div className="okline">{t("已保存思考档")}</div> : null}
+    </Disclosure>
   );
 }
 
@@ -1872,9 +1900,9 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
     const next = latest.current;
     if (!saved || entry.scoresConfirmed !== true || saved.smart !== next.smart || saved.cost !== next.cost || saved.speed !== next.speed) save(next);
   };
-  if (!expanded) return <div className="ctl"><span className="note">{scoreSummary(entry.scores ?? scores)}</span><button className="hob-btn" onClick={() => setExpanded(true)}>{t("修改")}</button></div>;
+  if (collapsible && !expanded) return <Disclosure className="model-use-disclosure" label={t("用途说明")} count={scoreSummary(entry.scores ?? scores)} open={false} onToggle={() => setExpanded(true)} />;
   const names = { smart: t("智能程度"), cost: t("成本"), speed: t("速度") } as const;
-  return (
+  const content = (
     <div className="group">
       <div className="note">{t("Hob 按用途选择分派任务的模型。")} {initial.unconfirmed ? t("数值按模型名称推测，请确认。") : ""}</div>
       {(Object.keys(names) as (keyof typeof names)[]).map((kind) => (
@@ -1896,9 +1924,9 @@ function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: R
         </div>
       ))}
       <div className="field"><input value={note} onChange={(e) => setNote(e.target.value)} onBlur={() => { if (note !== entry.note) update({ note }); }} onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }} placeholder={t("补充说明（选填），如「中文写作特别好」")} /></div>
-      {collapsible ? <div className="ctl"><button className="hob-btn" onClick={() => setExpanded(false)}>{t("收起")}</button></div> : null}
     </div>
   );
+  return collapsible ? <Disclosure className="model-use-disclosure" label={t("用途说明")} count={scoreSummary(entry.scores ?? scores)} open onToggle={() => setExpanded(false)}>{content}</Disclosure> : content;
 }
 
 /** 模型设置的读写：名单（可用模型）和两个默认角色。 */
@@ -2152,35 +2180,35 @@ function AddModels({ view }: { view: ModelsView }) {
               const open = searching || openGroups.includes(group.provider);
               const picked = group.models.filter((model) => chosen.has(model.ref)).length;
               return (
-                <Fragment key={group.provider}>
-                  <button className="mgroup" aria-expanded={open} onClick={() => toggleGroup(group.provider)}>
-                    <span className="n">{group.provider}</span>
-                    <span className="c">{picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : group.models.length}</span>
-                    <Icon name={open ? "down" : "chev"} size={14} />
-                  </button>
-                  {open
-                    ? group.models.map((model) => {
-                        const on = chosen.has(model.ref);
-                        const locked = roles(model.ref).length > 0;
-                        const entry = models.roster.find((item) => item.ref === model.ref);
-                        return (
-                          <div key={model.ref}>
-                            <button
-                              className={`madd${on ? " on" : ""}`}
-                              disabled={locked}
-                              title={locked ? t("默认模型不能在这里移除") : on ? t("从可用模型中移除") : t("加入可用模型")}
-                              onClick={() => toggle(model)}
-                            >
-                              <span className="mname">{model.name}</span>
-                              <CapIcons info={model} />
-                              <Icon name={on ? "check" : "plus"} size={16} className="mtog" />
-                            </button>
-                            {entry ? <div className="model-use-inline"><ModelUseEditor entry={entry} info={model} collapsible update={(patch) => update(model.ref, patch)} /></div> : null}
-                          </div>
-                        );
-                      })
-                    : null}
-                </Fragment>
+                <Disclosure
+                  key={group.provider}
+                  className="mgroup-disclosure"
+                  label={<span className="n">{group.provider}</span>}
+                  count={picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : group.models.length}
+                  open={open}
+                  onToggle={() => toggleGroup(group.provider)}
+                >
+                  {group.models.map((model) => {
+                    const on = chosen.has(model.ref);
+                    const locked = roles(model.ref).length > 0;
+                    const entry = models.roster.find((item) => item.ref === model.ref);
+                    return (
+                      <div key={model.ref}>
+                        <button
+                          className={`madd${on ? " on" : ""}`}
+                          disabled={locked}
+                          title={locked ? t("默认模型不能在这里移除") : on ? t("从可用模型中移除") : t("加入可用模型")}
+                          onClick={() => toggle(model)}
+                        >
+                          <span className="mname">{model.name}</span>
+                          <CapIcons info={model} />
+                          <Icon name={on ? "check" : "plus"} size={16} className="mtog" />
+                        </button>
+                        {entry ? <div className="model-use-inline"><ModelUseEditor entry={entry} info={model} collapsible update={(patch) => update(model.ref, patch)} /></div> : null}
+                      </div>
+                    );
+                  })}
+                </Disclosure>
               );
             })
           )}
@@ -2972,7 +3000,7 @@ function SkillsSection() {
           <div className="rprov rclamp">
             {skill.updatedAt ? `${fmtWhen(skill.updatedAt)} · ` : ""}
             {skill.name !== (skill.title || skill.name) ? `${skill.name} · ` : ""}
-            {skill.description}
+            {skill.description}{skillOriginText(skill, state) ? ` · ${skillOriginText(skill, state)}` : ""}
           </div>
         </button>
         <button className={`tog${skill.enabled ? "" : " off"}`} aria-label={t("{name}启用", { name: skill.name })} aria-pressed={skill.enabled} onClick={() => void toggle(skill)} />
@@ -3100,499 +3128,7 @@ function ImportSkills({ onDone }: { onDone: (message: string) => void }) {
 
 /* ---------------- MCP ---------------- */
 
-function mcpSourceLabel(source: "pi" | "claude" | "cursor"): string {
-  if (source === "claude") return "Claude Code";
-  if (source === "cursor") return "Cursor";
-  return "pi";
-}
-
-/** 每个服务一行连接状态（页面加载时测一次；详情里可以重测）。 */
-interface McpProbe {
-  state: "probing" | "connected" | "failed" | "needs_auth";
-  tools?: { name: string; description: string }[];
-  error?: string;
-  stderrTail?: string[];
-}
-
-function mcpStatusText(server: McpServerView, probe: McpProbe | undefined): string {
-  if (!server.valid) return t("配置无效");
-  if (!server.enabled) return t("已停用");
-  if (!probe) return t("未测试");
-  if (probe.state === "probing") return t("检测中…");
-  if (probe.state === "connected") return probe.tools?.length ? t("已连接 · {n} 个工具", { n: probe.tools.length }) : t("已连接 · 没有工具");
-  if (probe.state === "needs_auth") return t("需要登录，暂不支持");
-  return t("连接失败");
-}
-
 /** MCP 页：列表 → 详情 / 添加 / 从本机导入（照服务商页的三层结构）。 */
-function McpSection() {
-  const sub = useApp().sub;
-  const [view, setView] = useState<McpView | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
-  const [noticeOk, setNoticeOk] = useState(true);
-  const [probes, setProbes] = useState<Record<string, McpProbe>>({});
-  const probed = useRef(new Set<string>());
-
-  useEffect(() => {
-    void loadMcp().then(setView).catch((e) => setLoadError(errText(e)));
-  }, []);
-  useEffect(() => {
-    if (sub) setNotice(null);
-  }, [sub]);
-
-  const probe = async (server: McpServerView, refresh = false) => {
-    if (!server.valid) return;
-    setProbes((current) => ({ ...current, [server.name]: { state: "probing" } }));
-    try {
-      const result = await testMcpServer(server.name, refresh);
-      setProbes((current) => ({
-        ...current,
-        [server.name]: result.ok ? { state: "connected", tools: result.tools } : { state: result.state, error: result.error, stderrTail: result.stderrTail },
-      }));
-    } catch {
-      setProbes((current) => ({ ...current, [server.name]: { state: "failed", error: t("无法测试连接") } }));
-    }
-  };
-
-  // 首次加载：启用中的服务逐个测一次（服务端限并发，30 秒内有缓存的直接同）
-  useEffect(() => {
-    if (!view) return;
-    for (const server of view.servers) {
-      if (!server.valid || !server.enabled || probed.current.has(server.name)) continue;
-      probed.current.add(server.name);
-      void probe(server);
-    }
-  }, [view]);
-
-  const done = (message: string) => {
-    void loadMcp().then(setView).catch(() => undefined);
-    setNotice(message);
-    setNoticeOk(true);
-    closeSub();
-  };
-
-  if (loadError) return <><PageHead title="MCP" desc={t("任务可以调用 MCP 服务提供的工具。")} /><div className="badline" role="alert">{loadError}</div><div className="note">{t("请修复数据目录 engine/mcp.json 后重试；修复前任务不会加载 MCP 服务。")}</div></>;
-  if (!view) return <Empty>{t("正在读取 MCP 服务…")}</Empty>;
-
-  if (sub?.kind === "mcpServer") {
-    return <McpDetail server={view.servers.find((item) => item.name === sub.name)} setView={setView} probe={probes[sub.name]} onProbe={probe} onDone={done} />;
-  }
-  if (sub?.kind === "addMcp") return <McpAdd onDone={done} />;
-  if (sub?.kind === "importMcp") return <McpImport onDone={done} />;
-
-  const kindLabel = (server: McpServerView) => server.kind === "http" ? t("远程地址") : t("本地命令");
-  const toggle = async (server: McpServerView) => {
-    try {
-      const next = await patchMcpServer(server.name, { enabled: !server.enabled });
-      setView(next);
-      if (!server.enabled) for (const item of next.servers) if (item.name === server.name && item.valid) void probe(item, true);
-    } catch (e) {
-      setNoticeOk(false);
-      setNotice(errText(e));
-    }
-  };
-
-  return (
-    <>
-      <PageHead
-        title={t("MCP")}
-        desc={t("任务可以调用 MCP 服务提供的工具，所有助手派出的任务共用这份配置；对话不直接使用。配置改动对之后新开的任务生效，进行中的任务不受影响。")}
-      />
-      <Group>
-        <div className="ctl">
-          <button className="hob-btn hob-btn-primary" onClick={() => openSub({ kind: "addMcp", title: t("添加 MCP 服务") })}>{t("添加服务")}</button>
-          <span className="sp" />
-          <button className="hob-btn" onClick={() => openSub({ kind: "importMcp", title: t("从本机导入 MCP 服务") })}>{t("从本机导入")}</button>
-        </div>
-        <div className="lbl">{t("已配置的服务")}</div>
-        <div className="group-card settings-card">
-          {view.servers.map((server) => (
-            <div className={`list-row setting-row${server.enabled && server.valid ? "" : " gone"}`} key={server.name}>
-              <button className="rmain rbtn" onClick={() => openSub({ kind: "mcpServer", name: server.name, title: server.name })}>
-                <div className="rname">{server.name}{server.valid ? null : <span className="rtag">{t("配置无效")}</span>}</div>
-                <div className="rprov rclamp">{server.valid ? (server.kind === "http" ? server.url : [server.command, ...(server.args ?? [])].join(" ")) : server.invalidReason}</div>
-              </button>
-              <span className="note" style={{ flex: "none" }}>{`${kindLabel(server)} · ${mcpStatusText(server, probes[server.name])}`}</span>
-              {server.valid ? (
-                <button className={`tog${server.enabled ? "" : " off"}`} aria-label={t("{name}启用", { name: server.name })} aria-pressed={server.enabled} onClick={() => void toggle(server)} />
-              ) : null}
-            </div>
-          ))}
-          {!view.servers.length ? <Empty>{t("还没有配置 MCP 服务")}</Empty> : null}
-        </div>
-        {notice ? <div className={noticeOk ? "okline" : "badline"} role="status">{notice}</div> : null}
-        <div className="note">{t("环境变量和请求头的值只保存在本机，保存后不再显示。远程服务需要 OAuth 登录时这版暂不支持。")}</div>
-      </Group>
-    </>
-  );
-}
-
-/** 键值对编辑（环境变量 / 请求头）：已保存的值不回显，留空表示沿用。 */
-interface PairDraft {
-  key: string;
-  value: string;
-  /** 已保存的是密钥：留空 = 沿用已存的值 */
-  secret: boolean;
-}
-
-function pairDrafts(secrets: Record<string, { redacted: boolean; value?: string }> | undefined): PairDraft[] {
-  return Object.entries(secrets ?? {}).map(([key, item]) => ({ key, value: item.redacted ? "" : (item.value ?? ""), secret: item.redacted }));
-}
-
-function pairMutations(existing: Record<string, { redacted: boolean; value?: string }> | undefined, rows: PairDraft[]): Record<string, McpSecretMutation> | undefined {
-  const mutations: Record<string, McpSecretMutation> = {};
-  const present = new Set(rows.filter((row) => row.key.trim()).map((row) => row.key.trim()));
-  for (const key of Object.keys(existing ?? {})) {
-    if (!present.has(key)) mutations[key] = { mode: "remove" };
-  }
-  for (const row of rows) {
-    const key = row.key.trim();
-    if (!key) continue;
-    if (row.value === "" && row.secret) mutations[key] = { mode: "preserve" };
-    else if (row.value !== "") mutations[key] = { mode: "replace", value: row.value };
-  }
-  return Object.keys(mutations).length ? mutations : undefined;
-}
-
-function SecretPairs({ rows, onChange, keyLabel, valueLabel }: { rows: PairDraft[]; onChange: (rows: PairDraft[]) => void; keyLabel: string; valueLabel: string }) {
-  const update = (index: number, patch: Partial<PairDraft>) => onChange(rows.map((row, i) => (i === index ? { ...row, ...patch } : row)));
-  return (
-    <div className="pairlist">
-      {rows.map((row, index) => (
-        <div className="pairrow" key={index}>
-          <label className="field"><input className="mono" value={row.key} placeholder={keyLabel} onChange={(e) => update(index, { key: e.target.value })} /></label>
-          <label className="field"><input className="mono" type="password" value={row.value} placeholder={row.secret && row.value === "" ? t("已保存，留空不变") : valueLabel} onChange={(e) => update(index, { value: e.target.value })} /></label>
-          <button className="hob-icon-btn" title={t("删除这一项")} onClick={() => onChange(rows.filter((_, i) => i !== index))}><Icon name="close" size={15} /></button>
-        </div>
-      ))}
-      <div>
-        <button className="hob-btn" onClick={() => onChange([...rows, { key: "", value: "", secret: false }])}>{t("添加一项")}</button>
-      </div>
-    </div>
-  );
-}
-
-interface McpFormDraft {
-  kind: "stdio" | "http";
-  command: string;
-  args: string;
-  env: PairDraft[];
-  cwd: string;
-  url: string;
-  headers: PairDraft[];
-  description: string;
-}
-
-const EMPTY_MCP_DRAFT: McpFormDraft = { kind: "stdio", command: "", args: "", env: [], cwd: "", url: "", headers: [], description: "" };
-
-function mcpDraftFrom(server: McpServerView): McpFormDraft {
-  return {
-    kind: server.kind ?? "stdio",
-    command: server.command ?? "",
-    args: (server.args ?? []).join("\n"),
-    env: pairDrafts(server.env),
-    cwd: server.cwd ?? "",
-    url: server.url ?? "",
-    headers: pairDrafts(server.headers),
-    description: server.description ?? "",
-  };
-}
-
-/** 添加 / 编辑表单。保存走 PUT；密钥按「保留 / 替换 / 删除」逐键提交，未动的不回传。 */
-function McpForm({ initial, name, onName, fixedName, onSaved, saveLabel }: { initial: McpFormDraft; name: string; onName?: (name: string) => void; fixedName: boolean; onSaved: (message: string) => void; saveLabel: string }) {
-  const [draft, setDraft] = useState(initial);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const patch = (part: Partial<McpFormDraft>) => setDraft((current) => ({ ...current, ...part }));
-
-  const submit = async () => {
-    setError(null);
-    const trimmed = name.trim();
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(trimmed)) {
-      setError(t("名称只能用字母、数字、_ 和 -，最长 64 字符。"));
-      return;
-    }
-    // 已存的是密钥的键只报 redacted；未打码的（${VAR} 引用）带着原值回来，编辑后原样提交
-    const storedEnv = Object.fromEntries(initial.env.map((row) => [row.key, row.secret ? { redacted: true } : { redacted: false, value: row.value }]));
-    const storedHeaders = Object.fromEntries(initial.headers.map((row) => [row.key, row.secret ? { redacted: true } : { redacted: false, value: row.value }]));
-    const envMutations = pairMutations(initial.env.length ? storedEnv : undefined, draft.env);
-    const headerMutations = pairMutations(initial.headers.length ? storedHeaders : undefined, draft.headers);
-    setBusy(true);
-    try {
-      await putMcpServer(trimmed, {
-        kind: draft.kind,
-        ...(draft.kind === "stdio"
-          ? {
-              command: draft.command.trim(),
-              ...(draft.args.trim() ? { args: draft.args.split(/\r?\n/).map((line) => line.trim()).filter(Boolean) } : {}),
-              ...(draft.cwd.trim() ? { cwd: draft.cwd.trim() } : {}),
-              ...(envMutations ? { env: envMutations } : {}),
-            }
-          : {
-              url: draft.url.trim(),
-              ...(headerMutations ? { headers: headerMutations } : {}),
-            }),
-        ...(draft.description.trim() ? { description: draft.description.trim() } : {}),
-      });
-      onSaved(fixedName ? t("已保存「{name}」", { name: trimmed }) : t("已添加「{name}」", { name: trimmed }));
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  return (
-    <div className="formcard">
-      <div className="lbl">{t("名称")}</div>
-      <div className="field"><input className="mono" value={name} readOnly={fixedName} placeholder={t("如 filesystem")} onChange={(e) => onName?.(e.target.value)} /></div>
-      {fixedName ? null : <div className="note">{t("字母、数字、_ 和 -；- 和 _ 视为同名。改名请删除后重新添加。")}</div>}
-      <div className="lbl">{t("类型")}</div>
-      <Seg items={[{ key: "stdio", label: t("本地命令") }, { key: "http", label: t("远程地址") }]} value={draft.kind} onChange={(kind) => patch({ kind })} disabled={busy} />
-      <div className={`expand settings-motion${draft.kind === "stdio" ? " open" : ""}`} inert={draft.kind !== "stdio"}>
-        <div>
-          <div className="lbl">{t("命令")}</div>
-          <div className="field"><input className="mono" value={draft.command} placeholder={t("如 npx 或 uvx（一个可执行文件，不是整条命令行）")} onChange={(e) => patch({ command: e.target.value })} /></div>
-          <div className="lbl">{t("参数")}</div>
-          <div className="field"><textarea className="mono" rows={3} value={draft.args} placeholder={"-y\n@modelcontextprotocol/server-filesystem\n."} onChange={(e) => patch({ args: e.target.value })} /></div>
-          <div className="note">{t("一行一个参数。")}</div>
-          <div className="lbl">{t("环境变量")}</div>
-          <SecretPairs rows={draft.env} onChange={(env) => patch({ env })} keyLabel={t("变量名")} valueLabel={t("值")} />
-          <div className="lbl">{t("工作目录")}</div>
-          <div className="field"><input className="mono" value={draft.cwd} placeholder={t("可空；相对路径按任务的工作目录解析")} onChange={(e) => patch({ cwd: e.target.value })} /></div>
-        </div>
-      </div>
-      <div className={`expand settings-motion${draft.kind === "http" ? " open" : ""}`} inert={draft.kind !== "http"}>
-        <div>
-          <div className="lbl">{t("地址")}</div>
-          <div className="field"><input className="mono" value={draft.url} placeholder={t("https://example.com/mcp（streamable HTTP，不支持 /sse 结尾）")} onChange={(e) => patch({ url: e.target.value })} /></div>
-          <div className="lbl">{t("请求头")}</div>
-          <SecretPairs rows={draft.headers} onChange={(headers) => patch({ headers })} keyLabel={t("名称")} valueLabel={t("值")} />
-        </div>
-      </div>
-      <div className="lbl">{t("说明")}</div>
-      <div className="field"><input value={draft.description} placeholder={t("这个服务提供什么，一句话（可空）")} onChange={(e) => patch({ description: e.target.value })} /></div>
-      {error ? <div className="badline" role="alert">{error}</div> : null}
-      <SaveRow saved={false} error={null}>
-        <button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void submit()}>{busy ? t("正在保存…") : saveLabel}</button>
-      </SaveRow>
-    </div>
-  );
-}
-
-function McpAdd({ onDone }: { onDone: (message: string) => void }) {
-  const [name, setName] = useState("");
-  return (
-    <>
-      <SubBack label="MCP" />
-      <PageHead title={t("添加 MCP 服务")} desc={t("本地命令（stdio）或远程地址（streamable HTTP）。保存后可以在详情里测试连接并开关单个工具。")} />
-      <Group>
-        <McpForm initial={EMPTY_MCP_DRAFT} name={name} onName={setName} fixedName={false} onSaved={onDone} saveLabel={t("添加")} />
-      </Group>
-    </>
-  );
-}
-
-/** 详情：状态与提供方式、测试连接、工具开关、编辑、删除。 */
-function McpDetail({
-  server,
-  setView,
-  probe,
-  onProbe,
-  onDone,
-}: {
-  server: McpServerView | undefined;
-  setView: (view: McpView) => void;
-  probe: McpProbe | undefined;
-  onProbe: (server: McpServerView, refresh?: boolean) => Promise<void>;
-  onDone: (message: string) => void;
-}) {
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const [testing, setTesting] = useState(false);
-  useEffect(() => {
-    if (!server) closeSub();
-  }, [server]);
-  if (!server) return null;
-
-  const hiddenTools = server.hiddenTools ?? [];
-  const tools = probe?.state === "connected" ? (probe.tools ?? []) : undefined;
-
-  const patchServer = async (patch: { enabled?: boolean; exposure?: "direct" | "deferred"; hiddenTools?: string[] }) => {
-    setBusy(true);
-    setError(null);
-    try {
-      const next = await patchMcpServer(server.name, patch);
-      setView(next);
-      return next;
-    } catch (e) {
-      setError(errText(e));
-      return null;
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const runTest = async () => {
-    setTesting(true);
-    try {
-      await onProbe(server, true);
-    } finally {
-      setTesting(false);
-    }
-  };
-
-  const remove = async () => {
-    if (!window.confirm(t("删除 MCP 服务「{name}」？此操作不能撤销。", { name: server.name }))) return;
-    try {
-      setView(await deleteMcpServer(server.name));
-      onDone(t("已删除「{name}」", { name: server.name }));
-    } catch (e) {
-      setError(errText(e));
-    }
-  };
-
-  const kindText = server.kind === "http" ? t("远程地址") : t("本地命令");
-  return (
-    <>
-      <SubBack label="MCP" />
-      <PageHead title={server.name} desc={server.description ?? (server.valid ? t("{kind}的 MCP 服务", { kind: kindText }) : server.invalidReason ?? "")} />
-      {!server.valid ? (
-        <Group>
-          <div className="badline" role="alert">{t("配置无效：{reason}", { reason: server.invalidReason ?? "" })}</div>
-          <div className="note">{t("删除后重新添加，或在下方按表单保存一次即可修复。")}</div>
-        </Group>
-      ) : (
-        <Group>
-          <div className="ctl">
-            <span style={{ fontSize: 14 }}>{t("启用")}</span>
-            <span className="sp" />
-            <button className={`tog${server.enabled ? "" : " off"}`} aria-label={t("{name}启用", { name: server.name })} aria-pressed={server.enabled} disabled={busy}
-              onClick={() => void patchServer({ enabled: !server.enabled })} />
-          </div>
-          <div className="lbl">{t("提供方式")}</div>
-          <Seg
-            items={[{ key: "direct", label: t("直接提供") }, { key: "deferred", label: t("按需搜索") }]}
-            value={server.exposure}
-            disabled={busy}
-            onChange={(exposure) => void patchServer({ exposure })}
-          />
-          <div className="note">{t("直接提供：工具和内置工具一样声明给模型，适合工具少的服务。按需搜索：模型先搜索再调用，适合工具多的服务。")}</div>
-        </Group>
-      )}
-      {server.valid ? (
-        <Group>
-          <div className="testrow">
-            <button className="hob-btn" onClick={() => void runTest()} disabled={testing}>{testing ? t("正在测试…") : t("测试连接")}</button>
-            {probe ? (
-              <span className={probe.state === "connected" ? "okline" : "badline"}>
-                {probe.state === "connected" ? t("已连接 · {n} 个工具", { n: probe.tools?.length ?? 0 }) : probe.state === "needs_auth" ? t("需要登录，暂不支持") : probe.error ?? t("连接失败")}
-              </span>
-            ) : (
-              <span className="note">{t("连接后列出服务提供的工具")}</span>
-            )}
-          </div>
-          {probe && probe.state !== "connected" && probe.stderrTail?.length ? (
-            <div className="note mono">{probe.stderrTail.join("\n")}</div>
-          ) : null}
-          {tools ? (
-            tools.length ? (
-              <>
-                <div className="lbl">{t("工具（{n}）", { n: tools.length })}</div>
-                <div className="group-card settings-card">
-                  {tools.map((tool) => {
-                    const off = hiddenTools.includes(tool.name);
-                    return (
-                      <div className={`list-row setting-row${off ? " gone" : ""}`} key={tool.name}>
-                        <div className="rmain">
-                          <div className="rname mono">{tool.name}</div>
-                          <div className="rprov rclamp">{tool.description || t("（没有说明）")}</div>
-                        </div>
-                        <button className={`tog${off ? " off" : ""}`} aria-label={t("{name}启用", { name: tool.name })} aria-pressed={!off} disabled={busy}
-                          onClick={() => {
-                            const next = off ? hiddenTools.filter((item) => item !== tool.name) : [...hiddenTools, tool.name];
-                            void patchServer({ hiddenTools: next });
-                          }} />
-                      </div>
-                    );
-                  })}
-                </div>
-                <div className="note">{t("已关闭的工具不声明给模型；改动对新创建的任务生效。")}</div>
-              </>
-            ) : (
-              <div className="note">{t("服务已连接，但没有提供工具。")}</div>
-            )
-          ) : (
-            <div className="note">{t("先测试连接，取得服务的工具列表后可以单独开关每个工具。")}</div>
-          )}
-        </Group>
-      ) : null}
-      <Group>
-        <div className="lbl">{server.valid ? t("编辑") : t("重新保存")}</div>
-        <McpForm initial={mcpDraftFrom(server)} name={server.name} fixedName onSaved={onDone} saveLabel={t("保存")} />
-      </Group>
-      <Group>
-        <button className="hob-btn hob-btn-danger" disabled={busy} onClick={() => void remove()}>{t("删除服务")}</button>
-        {error ? <div className="badline" role="alert">{error}</div> : null}
-      </Group>
-      <div className="note">{t("环境变量和请求头的值不回显；留空表示沿用已保存的值。删除整行表示移除该值。")}</div>
-    </>
-  );
-}
-
-/** 从本机导入：只读 pi / Claude Code / Cursor 的配置，同名跳过。 */
-function McpImport({ onDone }: { onDone: (message: string) => void }) {
-  const [view, setView] = useState<McpImportView | null>(null);
-  const [chosen, setChosen] = useState<string[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let live = true;
-    void loadMcpImports().then((next) => { if (live) setView(next); }).catch((e) => { if (live) setError(errText(e)); });
-    return () => { live = false; };
-  }, []);
-  const commit = async () => {
-    setBusy(true);
-    setError(null);
-    try {
-      const result = await importMcpServers(chosen);
-      const skipped = result.skipped.length ? t("，跳过 {n} 个（同名）", { n: result.skipped.length }) : "";
-      onDone(t("已导入 {n} 个服务{skipped}", { n: result.imported.length, skipped }));
-    } catch (e) {
-      setError(errText(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-  const items = view?.items ?? [];
-  return (
-    <>
-      <SubBack label="MCP" />
-      <PageHead title={t("从本机导入 MCP 服务")} desc={t("读取本机 pi、Claude Code、Cursor 里已配置的 MCP 服务，复制到 Hob；来源只读，同名跳过。")} />
-      <Group>
-        {view?.sources.length ? <div className="note">{t("读取位置：{sources}", { sources: view.sources.join(t("；")) })}</div> : null}
-        <div className="group-card settings-card">
-          {items.length ? items.map((item) => (
-            <label className="list-row setting-row" key={item.id}>
-              <input type="checkbox" className="rcheck" checked={chosen.includes(item.id)} disabled={busy || !item.selectable}
-                onChange={(e) => setChosen(e.target.checked ? [...chosen, item.id] : chosen.filter((id) => id !== item.id))} />
-              <div className="rmain">
-                <div className="rname">{item.name}<span className="rtag">{mcpSourceLabel(item.source)}</span>{item.exists ? <span className="rtag">{t("同名跳过")}</span> : null}</div>
-                <div className="rprov rclamp">{item.kind === "http" ? t("远程地址") : t("本地命令")}{item.note ? ` · ${item.note}` : ""}</div>
-              </div>
-            </label>
-          )) : <Empty>{t("没有找到可导入的 MCP 服务")}</Empty>}
-        </div>
-        <SaveRow saved={false} error={error}>
-          <button className="hob-btn" onClick={closeSub} disabled={busy}>{t("取消")}</button>
-          <button className="hob-btn hob-btn-primary" disabled={busy || !chosen.length} onClick={() => void commit()}>{busy ? t("正在导入…") : chosen.length ? t("导入 {n} 个", { n: chosen.length }) : t("导入所选")}</button>
-        </SaveRow>
-      </Group>
-    </>
-  );
-}
-
 const SEARCH_INFO: Record<SearchProviderName, { label: string; url?: boolean; keyOptional?: boolean }> = {
   searxng: { label: "SearXNG", url: true, keyOptional: true },
   exa: { label: "Exa" },

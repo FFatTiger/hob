@@ -339,7 +339,7 @@ describe("提示词的「记忆」一节", () => {
 });
 
 describe("补充说明迁移", () => {
-  it("启动时把非空助手和群说明写进档案并从资料移除，空说明不建档案", async () => {
+  it("启动时保留助手和草稿说明，旧群说明仍写进档案", async () => {
     const { createRuntime } = await import("../src/runtime.ts");
     const home = mkdtempSync(join(tmpdir(), "hob-migrate-"));
     const assistantDir = join(home, "assistants", "hob");
@@ -360,11 +360,9 @@ describe("补充说明迁移", () => {
       pi,
     });
     try {
-      expect(runtime.store.assistant("hob")).not.toHaveProperty("instructions");
-      expect(runtime.store.assistant("ops")).not.toHaveProperty("instructions");
-      expect(JSON.parse(readFileSync(join(assistantDir, "profile.json"), "utf8"))).not.toHaveProperty("instructions");
-      expect(readFileSync(join(assistantDir, "instructions.archived.md"), "utf8")).toBe("标题不超过 20 字\n少用感叹号");
-      expect(JSON.parse(readFileSync(join(emptyAssistantDir, "profile.json"), "utf8"))).not.toHaveProperty("instructions");
+      expect(runtime.store.assistant("hob")?.instructions).toBe("标题不超过 20 字\n少用感叹号");
+      expect(runtime.store.assistant("ops")?.instructions).toBe("   ");
+      expect(() => statSync(join(assistantDir, "instructions.archived.md"))).toThrow();
       expect(() => statSync(join(emptyAssistantDir, "instructions.archived.md"))).toThrow();
       expect(runtime.store.group("g-test")).not.toHaveProperty("instructions");
       expect(readFileSync(join(groupDir, "instructions.archived.md"), "utf8")).toBe("群里的约定");

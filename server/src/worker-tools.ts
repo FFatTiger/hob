@@ -30,7 +30,7 @@ export function registerReportTool(runtime: HobRuntime, jobId: string, sediment 
           isError: true,
         };
       }
-      // 沉淀这一轮：不收尾任务，拿技能目录和底稿对账；校验不过就退回，这一轮接着做
+      // 回顾这一轮：只记录回顾结果，不改变任务状态。
       if (sediment) {
         const outcome = await runtime.jobs.reportSediment(jobId, String(params.result ?? ""));
         if (outcome.ok) return ok(outcome.text);
@@ -91,7 +91,7 @@ export function registerAskTool(runtime: HobRuntime, jobId: string, sediment = f
         { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
       ),
     }),
-    execute: async (_id, params: any) => {
+    execute: async (_id, params: any, signal) => {
       // 沉淀这一轮问不了：答案要现等，先把做法里的判断点写进技能
       if (sediment) return ok("沉淀时无需询问：拿不准的地方，在技能里写成执行前要确认的一步。");
       const labels: { label: string }[] = Array.isArray(params.options) ? params.options : [];
@@ -104,7 +104,7 @@ export function registerAskTool(runtime: HobRuntime, jobId: string, sediment = f
         ...(params.detail ? { detail: String(params.detail) } : {}),
         options,
         ...(recommended ? { recommended } : {}),
-      });
+      }, ...(signal ? [signal] as const : []));
       // 用户可能没选给出的选项，而是自己写了一段：answer 已经是回给模型的整句
       return ok(answer);
     },
@@ -121,7 +121,7 @@ export function registerAskLoginTool(runtime: HobRuntime, jobId: string, sedimen
       site: Type.String({ description: "哪个网站" }),
       reason: Type.String({ description: "为什么要登录，一句话" }),
     }),
-    execute: async (_id, params: any) => {
+    execute: async (_id, params: any, signal) => {
       if (sediment) return ok("沉淀时无需询问：把登录这一步写进技能，交给助手处理。");
       const site = String(params.site ?? "").trim();
       const reason = String(params.reason ?? "").trim();
@@ -132,7 +132,7 @@ export function registerAskLoginTool(runtime: HobRuntime, jobId: string, sedimen
         options: [{ key: "A", label: "已登录" }],
         recommended: "A",
         login: { site, reason },
-      });
+      }, ...(signal ? [signal] as const : []));
       return ok(answer);
     },
   };
@@ -154,7 +154,7 @@ export function registerImageTool(runtime: HobRuntime, jobId: string): ToolDefin
         Type.Array(Type.String(), { description: "参考图的绝对路径（改图、按图生成的时候给）" }),
       ),
     }),
-    execute: async (_id, params: any) => {
+    execute: async (_id, params: any, signal) => {
       const job = runtime.store.job(jobId);
       if (!job) return { content: [{ type: "text" as const, text: "任务不存在。" }], details: undefined, isError: true };
       try {
@@ -163,6 +163,7 @@ export function registerImageTool(runtime: HobRuntime, jobId: string): ToolDefin
             home: runtime.home,
             dir: job.cwd ?? runtime.store.workDir(jobId),
             config: runtime.settings.settings.image,
+            signal,
           },
           {
             prompt: String(params.prompt ?? ""),

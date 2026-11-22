@@ -7,6 +7,7 @@ import { FilePreviewOverlay } from "./components/FilePreview.tsx";
 import { JobOverlay } from "./components/JobDetail.tsx";
 import { Login } from "./components/Login.tsx";
 import { Knowledge } from "./components/Knowledge.tsx";
+import { Plugins } from "./components/Plugins.tsx";
 import { MobileList, Sheet } from "./components/Mobile.tsx";
 import { Panel } from "./components/Panel.tsx";
 import { PushPrompt } from "./components/PushPrompt.tsx";
@@ -54,6 +55,7 @@ export function App() {
   const chat = useLeave(s.mobile === "chat" && Boolean(s.sel ?? s.gsel), 240);
   const settings = useLeave(s.page === "settings", 180);
   const knowledge = useLeave(s.page === "knowledge", 180);
+  const plugins = useLeave(s.page === "plugins", 180);
   const sheet = useLeave(s.sheet, 180);
   // 左栏的群二级页（桌面）和手机的话题列表：退场时还要画着刚才那个群，id 先记下来
   const sideGroup = groupSidebarFor(s.gsel, s.sideHome, s.groups);
@@ -204,6 +206,8 @@ export function App() {
       </>
     );
   }
+
+  if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} />{toast}{pushPrompt}{loginOverlay}</>;
 
   if (knowledge.mounted) {
     return (

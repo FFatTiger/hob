@@ -142,7 +142,8 @@ describe("对话卡片出处", () => {
       const at = "2026-01-01T00:00:00Z";
       const failed: Item = { kind: "note", id: "n4", at, icon: "info", text: "「创建任务」执行失败", detail: "备注 401 字，最多 400 字。" };
       const html = renderToStaticMarkup(<ItemList items={[failed]} />);
-      expect(html).toMatch(/<details><summary>「创建任务」执行失败<\/summary><div class="why">备注 401 字，最多 400 字。<\/div><\/details>/);
+      expect(html).toContain('<div class="why">备注 401 字，最多 400 字。</div>');
+      expect(html).not.toContain('<details>');
     } finally { vi.unstubAllGlobals(); }
   });
 

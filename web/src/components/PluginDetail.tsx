@@ -1,0 +1,239 @@
+import { Children, useEffect, useState } from "react";
+import { t } from "../../../shared/i18n.ts";
+import { newerPluginVersion } from "../../../shared/plugin-version.ts";
+import type { PluginCatalogView, PluginServiceStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
+import { Avatar } from "../sprites.tsx";
+import { Icon } from "../icons.tsx";
+import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPlugins, openPlugins, patchPlugin, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
+import { Disclosure } from "./Disclosure.tsx";
+import { PluginIcon, pluginName, PluginStatus } from "./Plugins.tsx";
+
+function Description({ text }: { text: string }) {
+  return <div className="plugin-sub">{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
+    const match = /^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/.exec(part);
+    return match ? <a key={index} href={match[2]} target="_blank" rel="noreferrer">{match[1]}</a> : part;
+  })}</div>;
+}
+
+export function MoreSettings({ initialOpen, children }: { initialOpen: boolean; children: React.ReactNode }) {
+  const [open, setOpen] = useState(initialOpen);
+  return <Disclosure className="plugin-more" label={t("更多设置")} count={t("{n} 项", { n: Children.count(children) })} open={open} onToggle={() => setOpen(value => !value)}>{children}</Disclosure>;
+}
+
+export function configGroups(config: PluginView["config"], values: Record<string, unknown>) {
+  const fields = Object.entries(config);
+  const required = fields.filter(([, field]) => field.required);
+  const optional = fields.filter(([, field]) => !field.required);
+  const optionalHasValue = optional.some(([key, field]) => {
+    if (field.sensitive && !(key in values)) return Boolean(field.configured);
+    const value = values[key] ?? field.value;
+    return value !== undefined && value !== null && value !== "" && (!Array.isArray(value) || value.length > 0);
+  });
+  return { fields, required, optional, initialOpen: !required.length || optionalHasValue };
+}
+
+function fieldMissing(config: PluginView["config"], keys: string[]): string[] {
+  return keys.map(key => String(config[key]?.title ?? key));
+}
+
+function accountValue(config: Record<string, Record<string, unknown>>): string {
+  const entry = Object.values(config).find(field => typeof field.value === "string" && field.value);
+  return entry && typeof entry.value === "string" ? entry.value : "";
+}
+
+function countTools(item: PluginView) {
+  const tools = item.services.flatMap(service => service.tools);
+  return { tools, total: tools.length, changed: tools.filter(tool => tool.annotations?.readOnlyHint !== true).length, disabled: tools.filter(tool => !tool.enabled).length };
+}
+
+function statusTone(status: PluginServiceStatus): "warn" | "bad" | "ok" {
+  if (status === "connected") return "ok";
+  if (status === "error") return "bad";
+  return "warn";
+}
+
+export function PluginDetail({ id }: { id: string }) {
+  const { assistants } = useApp();
+  const [item, setItem] = useState<PluginView | null>(null);
+  const [catalog, setCatalog] = useState<PluginCatalogView | null>(null);
+  const [values, setValues] = useState<Record<string, unknown>>({});
+  const [profileId, setProfileId] = useState<string>();
+  const [profileName, setProfileName] = useState("");
+  const [newProfileName, setNewProfileName] = useState("");
+  const [profileError, setProfileError] = useState("");
+  const [adding, setAdding] = useState(false);
+  const [configOpen, setConfigOpen] = useState(false);
+  const [toolFilter, setToolFilter] = useState<"all" | "readOnly" | "mutating">("all");
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  const refresh = async () => {
+    const [view, entries] = await Promise.all([loadPlugins(), loadPluginCatalog()]);
+    const found = view.plugins.find(p => p.plugin.id === id);
+    if (!found) throw new Error(t("没有这个插件"));
+    setItem(found);
+    setCatalog(entries);
+    setProfileId(current => found.profiles?.some(profile => profile.id === current) ? current : found.profiles?.find(profile => profile.missing.length)?.id ?? found.profiles?.[0]?.id);
+    setConfigOpen(current => current || (found.missing.length > 0 && !found.profiles));
+  };
+  useEffect(() => {
+    setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false);
+    void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)));
+  }, [id]);
+  useEffect(() => {
+    const profile = item?.profiles?.find(candidate => candidate.id === profileId);
+    if (profile) setProfileName(profile.name);
+  }, [item, profileId]);
+  const run = async (action: () => Promise<unknown>) => {
+    setBusy(true);
+    try { setError(""); setProfileError(""); await action(); await refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : String(e)); }
+    finally { setBusy(false); }
+  };
+  if (!item) return <div className="plugin-content"><div className="badline">{error}</div></div>;
+
+  const extensions = item.manifest.extensions as Record<string, unknown> | undefined;
+  const hob = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
+  const profileSpec = hob?.profiles as Record<string, unknown> | undefined;
+  const profile = item.profiles?.find(candidate => candidate.id === profileId);
+  const profileMode = Array.isArray(item.profiles);
+  const showAdd = profileMode && (adding || !item.profiles?.length);
+  const profileTitle = typeof profileSpec?.title === "string" && profileSpec.title ? profileSpec.title : t("配置");
+  const activeConfig = profile?.config ?? item.config;
+  const { fields, required, optional, initialOpen } = configGroups(activeConfig, values);
+  const missingKeys = fields.filter(([key, field]) => {
+    const value = values[key] ?? (field.sensitive ? (field.configured ? true : "") : field.value);
+    return field.required && (value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length));
+  }).map(([key]) => key);
+  const missing = fieldMissing(activeConfig, missingKeys);
+  const profileMissing = profileMode ? [...new Set(item.profiles?.flatMap(candidate => candidate.missing) ?? [])] : [];
+  const service = item.services[0];
+  const serviceStatus = profileMissing.length && profileMode ? "pending_config" : service?.status ?? "connected";
+  const tools = countTools(item);
+  const visibleTools = tools.tools.filter(tool => toolFilter === "all" || (toolFilter === "readOnly" ? tool.annotations?.readOnlyHint === true : tool.annotations?.readOnlyHint !== true));
+  const firstTools = visibleTools.slice(0, 6);
+  const restTools = visibleTools.slice(6);
+  const hasAnnotations = tools.tools.some(tool => tool.annotations !== undefined);
+  const toolErrors = item.services.flatMap(serviceItem => serviceItem.toolErrors ?? []);
+  const latest = catalog?.plugins.find(p => p.id === id && p.source === item.plugin.source && !p.error);
+  const source = catalog?.sources?.find(source => source.id === item.plugin.source);
+  const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
+  const name = pluginName(item.manifest, id);
+  const publisher = typeof hob?.publisher === "string" ? hob.publisher : "";
+  const configFields = fields.length > 0 && !profileMode;
+  const missingProfile = item.profiles?.find(candidate => candidate.missing.length);
+  const missingProfileLabels = missingProfile ? fieldMissing(item.config, missingProfile.missing) : [];
+  const missingText = missingProfile
+    ? t("「{name}」还差：{fields}。填好保存后自动连接。", { name: missingProfile.name, fields: missingProfileLabels.join("、") })
+    : missing.length ? t("还差：{fields}。填好保存后自动连接。", { fields: missing.join("、") }) : "";
+
+  const save = async () => {
+    const next = Object.fromEntries(Object.entries(values).filter(([key, value]) => !(activeConfig[key]?.sensitive && value === "")));
+    if (profile) {
+      if (Object.keys(next).length) await savePluginProfileConfig(id, profile.id, next);
+      if (profileName.trim() !== profile.name) await updatePluginProfile(id, profile.id, profileName);
+    } else if (Object.keys(next).length) await savePluginConfig(id, next);
+    setValues({});
+  };
+  const connect = (serviceName: string) => {
+    const popup = window.open("", "_blank");
+    if (!popup) { setError(t("浏览器阻止了登录窗口")); return; }
+    void run(async () => {
+      try {
+        await save();
+        const result = await startPluginOAuth(id, serviceName);
+        if (result.authorizationUrl) {
+          popup.location.href = result.authorizationUrl;
+          const timer = window.setInterval(() => { if (popup.closed) { window.clearInterval(timer); void refresh().catch(e => setError(e instanceof Error ? e.message : String(e))); } }, 500);
+        } else popup.close();
+      } catch (e) { popup.close(); throw e; }
+    });
+  };
+  const selected = item.plugin.assistants ?? assistants.map(a => a.id);
+  const addProfile = () => {
+    const next = newProfileName.trim();
+    if (!next) { setProfileError(t("名称不能为空")); return; }
+    void run(async () => {
+      const view = await addPluginProfile(id, next);
+      setNewProfileName(""); setAdding(false); setValues({});
+      setProfileId(view.profiles?.find(candidate => candidate.name === next)?.id);
+    });
+  };
+  const removeProfile = (candidate: NonNullable<PluginView["profiles"]>[number]) => {
+    if (window.confirm(t("删除这个{title}？会删掉它的配置和密码。", { title: profileTitle }))) void run(() => deletePluginProfile(id, candidate.id));
+  };
+  const renderField = ([key, field]: typeof fields[number]) => {
+    const value = values[key] ?? (field.sensitive ? "" : field.value ?? "");
+    const label = String(field.title ?? key);
+    return <label className="lbl" key={key}>{label}{field.required ? " *" : ""}
+      {field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
+      {typeof field.description === "string" && <Description text={field.description} />}</label>;
+  };
+  const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
+  const statusBlock = serviceStatus === "connected" ? <div className="plugin-connection-top"><PluginStatus status="connected" /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
+    : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{serviceStatus === "error" ? <button className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void refresh()}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
+
+  return <div className="plugin-content">
+    <div className="plugin-identity">
+      <PluginIcon name={name} id={id} manifest={item.manifest} />
+      <div><div className="plugin-title">{name}</div><div className="plugin-sub">{publisher && <>{publisher} · </>}{origin} · {t("版本 {version}", { version: item.plugin.version })}</div></div>
+      <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu"><button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button>{latest && newerPluginVersion(latest.version, item.plugin.version) ? <button onClick={() => void run(() => updatePlugin(id))}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
+    </div>
+    <Description text={String(item.manifest.description ?? "")} />
+    {error && <div className="badline" role="alert">{error}</div>}
+
+    <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
+      {statusBlock}
+      {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
+      {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}
+      {serviceStatus === "error" ? <><div className="plugin-connection-detail">{t("服务返回的原话：")}</div><div className="plugin-connection-error">{service?.error ?? t("没有返回具体原因")}</div></> : null}
+      {configFields && configOpen ? <div className="plugin-config-form">
+        {required.map(renderField)}
+        {optional.length > 0 && <MoreSettings key={`${id}:single`} initialOpen={initialOpen}>{optional.map(renderField)}</MoreSettings>}
+        <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
+      </div> : null}
+    </section>
+
+    {profileMode ? <section className="plugin-section"><h2>{profileTitle} <span className="plugin-state">{t("{n} 个", { n: item.profiles?.length ?? 0 })}</span></h2>
+      <div className="plugin-profile-list">
+        {item.profiles?.map(candidate => <div key={candidate.id}>
+          <Disclosure className="plugin-profile-disclosure" label={<span className="profile-info"><span className="profile-name">{candidate.name}</span><span className="profile-account">{accountValue(candidate.config)}</span></span>} count={candidate.missing.length ? <span className="profile-status plugin-state pending_config"><span className="plugin-state-dot" />{t("待配置")}</span> : undefined} open={!showAdd && candidate.id === profileId} onToggle={() => { setProfileId(candidate.id); setValues({}); setAdding(false); setProfileError(""); }}>
+            <div className="plugin-profile-form">
+              <label className="lbl">{t("名称")}<input className="field" value={profileName} onChange={event => setProfileName(event.target.value)} /></label>
+              {required.map(renderField)}
+              {optional.length > 0 && <MoreSettings key={`${id}:${candidate.id}`} initialOpen={initialOpen}>{optional.map(renderField)}</MoreSettings>}
+              <div className="plugin-actions"><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button><button className="hob-btn" disabled={busy} onClick={() => removeProfile(candidate)}>{t("删除{title}", { title: profileTitle })}</button></div>
+            </div>
+          </Disclosure>
+        </div>)}
+        {showAdd ? <form className="plugin-profile-form" onSubmit={event => { event.preventDefault(); addProfile(); }}><label className="lbl">{t("名称")}<input className="field" autoFocus value={newProfileName} onChange={event => { setNewProfileName(event.target.value); setProfileError(""); }} placeholder={t("给这个{title}起个名字", { title: profileTitle })} /></label><div className="plugin-actions"><button className="hob-btn hob-btn-primary" disabled={busy}>{t("添加")}</button>{item.profiles?.length ? <button type="button" className="hob-btn" onClick={() => setAdding(false)}>{t("取消")}</button> : null}</div></form> : <button className="plugin-profile-add" type="button" onClick={() => { setAdding(true); setProfileError(""); }}><Icon name="plus" size={14} />{t("添加{title}", { title: profileTitle })}</button>}
+      </div>
+      {profileError && <div className="badline" role="alert">{profileError}</div>}
+    </section> : null}
+
+    {tools.total > 0 ? <section className="plugin-section"><div className="plugin-tools-head"><h2>{t("工具")} <span className="plugin-state">{t("{n} 个 · {changed} 个会改动", { n: tools.total, changed: tools.changed })}</span></h2>
+      {hasAnnotations ? <div className="plugin-filter" role="tablist">{([ ["all", t("全部")], ["readOnly", t("只读")], ["mutating", t("会改动")] ] as const).map(([key, label]) => <button key={key} className={toolFilter === key ? "on" : ""} role="tab" aria-selected={toolFilter === key} onClick={() => { setToolFilter(key); setToolsOpen(false); }}>{label}</button>)}</div> : null}
+    </div>
+      <div className="plugin-list">
+        {firstTools.map(tool => <ToolRow key={tool.toolName} tool={tool} annotated={hasAnnotations} item={item} run={run} />)}
+        {restTools.length ? <Disclosure className="plugin-tool-more" label={t("其余工具")} count={restTools.length} open={toolsOpen} onToggle={() => setToolsOpen(value => !value)}>{restTools.map(tool => <ToolRow key={tool.toolName} tool={tool} annotated={hasAnnotations} item={item} run={run} />)}</Disclosure> : null}
+      </div>
+      {toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}
+    </section> : toolErrors.length ? <div className="plugin-tool-errors">{toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}</div> : null}
+
+    <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>
+    {!!item.skills?.length && <section className="plugin-section"><h2>{t("技能")}</h2><div className="plugin-list">{item.skills.map(skill => <div className="plugin-tool" key={skill}>{skill}</div>)}</div></section>}
+  </div>;
+}
+
+/** 选了几个助手：全选写「全部助手」，三个以内写名字，再多写个数。 */
+function chosenSummary(names: string[], total: number): string {
+  if (total > 0 && names.length === total) return t("全部助手");
+  return names.length <= 3 ? names.join("、") : t("{n} 个助手", { n: names.length });
+}
+
+function ToolRow({ tool, annotated, item, run }: { tool: PluginToolView; annotated: boolean; item: PluginView; run: (action: () => Promise<unknown>) => Promise<void> }) {
+  return <div className="plugin-tool"><div className="tool-info"><div className="tool-name"><code>{tool.name}</code></div><div className="tool-desc">{tool.description}</div></div>{annotated && tool.annotations?.readOnlyHint !== true ? <span className="kind">{t("会改动")}</span> : null}<button type="button" role="switch" className={`tog${tool.enabled ? "" : " off"}`} aria-label={tool.name} aria-checked={tool.enabled} onClick={() => void run(() => patchPlugin(item.plugin.id, { tools: { ...item.plugin.tools, [tool.name]: { ...item.plugin.tools[tool.name], enabled: !tool.enabled } } }))} /></div>;
+}

@@ -125,7 +125,7 @@ export class Store {
     for (const file of ["config.json", "settings.json", "secrets.json", "push.json", "seeded.json", "moves.json"]) {
       readJson(join(this.home, "system", file), null);
     }
-    for (const path of ["knowledge/entries.json", "knowledge/collections.json", "system/lore/config.json", "system/engine/mcp.json"]) readJson(join(this.home, path), null);
+    for (const path of ["knowledge/entries.json", "knowledge/collections.json", "system/lore/config.json"]) readJson(join(this.home, path), null);
     for (const root of [join(this.home, "assistants"), archiveAssistantsDir(this.home)]) {
       if (existsSync(root)) for (const id of readdirSync(root)) {
         for (const name of ["profile.json", "rules.json", "state.json", "approvals.json", "routines.json", "drafts.json", "delegations.json"]) {
@@ -625,10 +625,7 @@ export class Store {
     return path;
   }
 
-  /**
-   * 一次性迁移：从助手和群资料中移除旧的补充说明，并把非空原文留在同目录的
-   * instructions.archived.md 里；草稿中的补充说明直接丢弃。重复启动不会覆盖档案。
-   */
+  /** 旧群补充说明归档；助手和草稿的说明保留。 */
   migrateInstructions(): void {
     const archive = (path: string): void => {
       const record = readJson<Record<string, unknown> | null>(path, null);
@@ -641,11 +638,6 @@ export class Store {
       }
       writeJsonAtomic(path, rest);
     };
-    const assistantRoots = [join(this.home, "assistants"), archiveAssistantsDir(this.home)];
-    for (const root of assistantRoots) {
-      if (!existsSync(root)) continue;
-      for (const folder of readdirSync(root)) archive(join(root, folder, "profile.json"));
-    }
     const groupRoots = [groupsDir(this.home), archiveGroupsDir(this.home)];
     for (const root of groupRoots) {
       if (!existsSync(root)) continue;
@@ -659,8 +651,12 @@ export class Store {
     }
     const draftPath = this.hobFile("drafts.json");
     const drafts = readJson<Record<string, unknown>[]>(draftPath, []);
-    if (drafts.some((draft) => Object.prototype.hasOwnProperty.call(draft, "instructions"))) {
-      writeJsonAtomic(draftPath, drafts.map(({ instructions: _instructions, ...draft }) => draft));
+    if (drafts.some((draft) => draft.instructions !== undefined && typeof draft.instructions !== "string")) {
+      writeJsonAtomic(draftPath, drafts.map((draft) => {
+        if (draft.instructions === undefined || typeof draft.instructions === "string") return draft;
+        const { instructions: _instructions, ...rest } = draft;
+        return rest;
+      }));
     }
   }
 

@@ -23,7 +23,7 @@ import type { Store } from "./store.ts";
 import type { PushSender, PushService } from "./push.ts";
 import type { UsageService } from "./usage.ts";
 import { Bus as BusImpl } from "./bus.ts";
-import { seedDevTeam, migrateProductOwnerDuty } from "./dev-team.ts";
+import { seedDevTeam, seedHacker, migrateProductOwnerDuty } from "./dev-team.ts";
 import { GroupManager as GroupManagerImpl } from "./groups.ts";
 import { JobManager as JobManagerImpl } from "./jobs.ts";
 import { PushService as PushServiceImpl } from "./push.ts";
@@ -139,6 +139,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   runtime.initializeLocale = (locale) => {
     runtime.store.initializeDefaults(locale);
     seedDevTeam(runtime.store, (input) => runtime.groups.create(input), locale);
+    seedHacker(runtime.store, locale);
   };
   // 单用户：服务端给用户看的文字（接口错误、对话里的提示行、推送）跟着设置里的界面语言
   setLocale(settings.settings.general.locale ?? "zh-CN");

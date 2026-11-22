@@ -191,6 +191,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "基本信息": "Basic information",
   "群名": "Group name",
   "对话模型": "Chat model",
+  "任务模型": "Job model",
   "默认任务模型": "Default job model",
   "跟随各成员": "Follow each member",
   "成员在本群单独设过的，按成员的；都没设，跟随助手自己的。": "Use a member's setting when one exists for this group. Otherwise follow the assistant's setting.",

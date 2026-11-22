@@ -12,6 +12,7 @@ import { skillOriginText } from "../skill-origin.ts";
 import { commandSummary } from "../../../shared/command.ts";
 import type { PluginView, ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
+import { BrandIcon, brandForRef } from "../brand-icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
 import { PanelRootDetails } from "./PanelRootDetails.tsx";
 import { PluginIcon } from "./Plugins.tsx";
@@ -355,7 +356,7 @@ function GroupSettings({ id }: { id: string }) {
       {([ ["name", t("群名")], ["purpose", t("职责")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
       </div></div>
     <div className="pgroup"><div className="sech"><span>{t("模型")}</span></div>
-    <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...rosterOptions(settings.roster, group.models?.[key]?.ref, (ref) => view?.models.find((item) => item.ref === ref)?.name ?? ref)]} /></div>)}
+    <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...rosterOptions(settings.roster, group.models?.[key]?.ref, (ref) => view?.models.find((item) => item.ref === ref)?.name ?? ref).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} /></div>)}
     <div className="note">{t("成员在本群单独设过的，按成员的；都没设，跟随助手自己的。")}</div></div></div>
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
   </>;
@@ -381,11 +382,11 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
       const follow = inherited ? followingModel(inherited.source, name(inherited.pick.ref)) : undefined;
       const pick = effective?.source === "member" ? effective.pick : undefined;
       return <label className="group-member-model-row" key={key}>
-        <span>{label}</span><span className={pick ? "" : "following"}>{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span><Icon name="updown" size={14} />
+        <span>{label}</span><span className={pick ? "" : "following"}><BrandIcon size={20} brand={brandForRef(pick?.ref ?? inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} />{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span><Icon name="updown" size={14} />
         <Select aria-label={label} value={pick?.ref ?? ""} onChange={(ref) => {
           const thinking = fitThinking(view?.models.find((model) => model.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings[key].thinking);
           void patchGroupMemberModels(group.id, aid, { [key]: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(group.id); });
-        }} options={[{ value: "", label: follow?.option ?? t("跟随") }, ...rosterOptions(settings.roster, pick?.ref, name)]} />
+        }} options={[{ value: "", label: follow?.option ?? t("跟随"), icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> }, ...rosterOptions(settings.roster, pick?.ref, name).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} />
       </label>;
     })}
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
@@ -764,7 +765,7 @@ function AssistantModels({ aid }: { aid: string }) {
     <>
       <div className="lbl">{label}</div>
       <div className="ctl">
-        <Select className="grow" aria-label={label} value={models[key]?.ref ?? ""} onChange={pick(key)} options={[{ value: "", label: t("跟随全局（{name}）", { name: nameOf(key === "conversation" ? globals.conversation.ref : globals.work.ref) }) }, ...rosterOptions(roster, models[key]?.ref, nameOf)]} />
+        <Select className="grow" aria-label={label} value={models[key]?.ref ?? ""} onChange={pick(key)} options={[{ value: "", label: t("跟随全局（{name}）", { name: nameOf(key === "conversation" ? globals.conversation.ref : globals.work.ref) }), icon: <BrandIcon size={20} brand={brandForRef(globals[key].ref, view?.models, s.settings.settings.providers)} /> }, ...rosterOptions(roster, models[key]?.ref, nameOf).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} />
       </div>
     </>
   );
@@ -802,7 +803,7 @@ function AssistantModels({ aid }: { aid: string }) {
                   restrict(on ? allowed.filter((ref) => ref !== entry.ref) : [...allowed, entry.ref])
                 }
               >
-                {nameOf(entry.ref)}
+                <BrandIcon size={20} brand={brandForRef(entry.ref, view?.models, s.settings.settings.providers)} />{nameOf(entry.ref)}
               </button>
             );
           })}

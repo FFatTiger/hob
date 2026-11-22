@@ -3,6 +3,8 @@ import { Select } from "./Select.tsx";
 import { DelayedText, Empty } from "./Empty.tsx";
 import { SaveMessage, useSaveMessage } from "./SaveMessage.tsx";
 import { Fragment, Suspense, lazy, useEffect, useRef, useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
+import { useMenu } from "./use-menu.ts";
 import type {
   AboutInfo,
   ClaudeCodeSettings,
@@ -41,6 +43,7 @@ import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary }
 import { t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
+import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
 import { filterModels, fitThinking, groupByProvider, THINKING_ORDER, thinkingLevels } from "../model-list.ts";
 import { currentSubscription, pushSupported } from "../push.ts";
 import { fmtWhen } from "../util.ts";
@@ -688,7 +691,7 @@ function ValuePick<V extends string>({
   onChange,
 }: {
   value: V;
-  options: { value: V; text: string }[];
+  options: { value: V; text: string; icon?: ReactNode }[];
   label: string;
   icon?: IconName;
   onChange: (next: V) => void;
@@ -696,7 +699,7 @@ function ValuePick<V extends string>({
   return (
     <span className="ctl">
       {icon ? <Icon name={icon} size={14} /> : null}
-      <Select aria-label={label} value={value} onChange={(next) => onChange(next as V)} options={options.map((item) => ({ value: item.value, label: item.text }))} />
+      <Select aria-label={label} value={value} onChange={(next) => onChange(next as V)} options={options.map((item) => ({ value: item.value, label: item.text, icon: item.icon }))} />
     </span>
   );
 }
@@ -976,7 +979,7 @@ function ProvidersSection() {
 
   if (sub?.kind === "provider")
     return (
-      <ProviderDetail id={sub.id} view={view} onView={setView} onSaved={done} onThinking={thinkingSaved} onConnection={connectionSaved} />
+      <ProviderDetail id={sub.id} view={view} onView={setView} onSaved={done} onThinking={thinkingSaved} onConnection={connectionSaved} connectionStatus={connectionStatus[sub.id]} />
     );
   if (sub?.kind === "addProvider") return <AddProvider view={view} onSaved={done} onConnection={connectionSaved} />;
   if (sub?.kind === "importProviders") return <ImportProviders onSaved={done} />;
@@ -997,29 +1000,29 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
 
       <ClaudeProviderCard />
       <Group>
-        <div className="ctl">
-          <button className="hob-btn hob-btn-primary" onClick={() => openSub({ kind: "addProvider", title: t("添加服务商") })}>
-{t("添加服务商")}
-          </button>
-        </div>
         <div className="lbl">{t("已配置的服务商")}</div>
-        <div className="group-card settings-card">
+        <div className="group-card settings-card providers-list">
           {view.providers.map((provider) => (
             <button
               className="list-row setting-row"
               key={provider.id}
               onClick={() => openSub({ kind: "provider", id: provider.id, title: label(provider) })}
             >
+              <BrandIcon brand={providerBrand(provider.id, label(provider), view.models[provider.id])} />
               <div className="rmain">
                 <div className="rname">{label(provider)}</div>
-                <div className="rprov">{provider.kind === "builtin" ? t("内置服务商") : t("兼容接口")}</div>
+                <div className="rprov">{provider.kind === "builtin" ? t("内置服务商") : t("兼容接口")} · {t("{n} 个模型", { n: view.models[provider.id]?.length ?? 0 })}</div>
               </div>
               <span className={provider.keyConfigured && connectionStatus[provider.id] !== "failed" ? "note" : "badline"}>
-                {provider.keyConfigured ? t("{status} · {n} 个模型", { status: connectionStatus[provider.id] === "connected" ? t("已连接") : connectionStatus[provider.id] === "failed" ? t("连接失败") : t("未验证"), n: view.models[provider.id]?.length ?? 0 }) : t("未填 Key")}
+                {provider.keyConfigured ? (connectionStatus[provider.id] === "connected" ? t("已连接") : connectionStatus[provider.id] === "failed" ? t("连接失败") : t("未验证")) : t("未填 Key")}
               </span>
               <Icon name="chev" size={15} className="rgo" />
             </button>
           ))}
+          <button className="maddrow" onClick={() => openSub({ kind: "addProvider", title: t("添加服务商") })}>
+            <Icon name="plus" size={16} />
+            {t("添加服务商")}
+          </button>
           <button className="maddrow" onClick={() => openSub({ kind: "importProviders", title: t("从本机导入") })}>
             <Icon name="doc" size={16} />
             {t("从本机导入")}
@@ -1105,6 +1108,7 @@ function ProviderDetail({
   onSaved,
   onThinking,
   onConnection,
+  connectionStatus,
 }: {
   id: string;
   view: ProvidersView;
@@ -1112,6 +1116,7 @@ function ProviderDetail({
   onSaved: (view: ProvidersView, message: string) => void;
   onThinking: (providerId: string, thinking: ModelThinkingView, settings: SettingsFile) => void;
   onConnection: (id: string, status: "connected" | "failed") => void;
+  connectionStatus?: "connected" | "failed";
 }) {
   const provider = view.providers.find((item) => item.id === id);
   useEffect(() => {
@@ -1140,6 +1145,7 @@ function ProviderDetail({
       onSaved={onSaved}
       onView={onView}
       onConnection={onConnection}
+      connectionStatus={connectionStatus}
       onThinking={(thinking, settings) => onThinking(id, thinking, settings)}
       extra={
         <DeleteProvider
@@ -1201,7 +1207,7 @@ function AddProvider({
   if (kind === "builtin" && builtinId === null) {
     return <><button className="subback" onClick={() => setKind(null)}><Icon name="left" size={15} />{t("添加服务商")}</button>
       <PageHead title={t("选择内置服务商")} desc={t("选择服务商后填写 API Key。")} />
-      <Group><div className="group-card settings-card">{available.length ? available.map((item) => <button className="list-row model-row" key={item.id} onClick={() => setBuiltinId(item.id)}><span className="mtop"><span className="mname">{item.name}</span><span className="sp" /><Icon name="chev" size={14} /></span><span className="mprev">{t("内置服务商")}</span></button>) : <Empty>{t("所有内置服务商均已添加。")}</Empty>}</div></Group>
+      <Group><div className="group-card settings-card">{available.length ? available.map((item) => <button className="list-row setting-row" key={item.id} onClick={() => setBuiltinId(item.id)}><BrandIcon brand={providerBrand(item.id, item.name)} /><span className="rmain"><span className="rname">{item.name}</span><span className="rprov">{t("内置服务商")}</span></span><Icon name="chev" size={14} /></button>) : <Empty>{t("所有内置服务商均已添加。")}</Empty>}</div></Group>
     </>;
   }
 
@@ -1332,6 +1338,7 @@ function DeleteProvider({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirming, setConfirming] = useState(false);
+  const menu = useMenu();
   const affected = (["conversation", "work"] as const).filter((role) =>
     view.settings.settings.models[role].ref.startsWith(`${provider.id}/`),
   );
@@ -1353,23 +1360,15 @@ function DeleteProvider({
     onDeleted(result.view);
   };
 
-  return (
-    <Group>
-      <div className="lbl">{t("危险操作")}</div>
-      <div className="group-card settings-card">
-        {confirming ? (
-          <div className="ctl" style={{ padding: 12, gap: 8, flexWrap: "wrap" }}>
-            <span>{t("删除「{name}」后，该服务商的模型将不可用。{affected}", { name: label, affected: affected.length ? t("受影响的默认模型：{roles}。", { roles: affected.map((role) => role === "conversation" ? t("对话") : t("任务执行")).join(t("、")) }) : t("当前默认模型不受影响。") })}</span>
-            <button className="hob-btn" onClick={() => setConfirming(false)} disabled={busy}>{t("取消")}</button>
-            <button className="hob-btn hob-btn-danger" onClick={() => void drop()} disabled={busy}>{t("确认删除")}</button>
-          </div>
-        ) : (
-          <button className="mline danger" onClick={() => setConfirming(true)} disabled={busy}>{t("删除服务商")}</button>
-        )}
-      </div>
-      {error ? <div className="badline">{error}</div> : null}
-    </Group>
-  );
+  return <>
+    <button className="hob-icon-btn" aria-label={t("更多")} onClick={(event) => menu.toggle("provider", event.currentTarget)}><Icon name="more" size={18} /></button>
+    {menu.menu ? createPortal(<div className="amenu" ref={menu.box}><button className="danger" onClick={() => { menu.close(); setConfirming(true); }}>{t("删除服务商")}</button></div>, document.body) : null}
+    {confirming ? <div className="group-card sidebar-card-group">
+      <div>{t("删除「{name}」后，该服务商的模型将不可用。{affected}", { name: label, affected: affected.length ? t("受影响的默认模型：{roles}。", { roles: affected.map((role) => role === "conversation" ? t("对话") : t("任务执行")).join(t("、")) }) : t("当前默认模型不受影响。") })}</div>
+      <div className="ctl"><button className="hob-btn" onClick={() => setConfirming(false)} disabled={busy}>{t("取消")}</button><button className="hob-btn hob-btn-danger" onClick={() => void drop()} disabled={busy}>{t("确认删除")}</button></div>
+    </div> : null}
+    {error ? <div className="badline">{error}</div> : null}
+  </>;
 }
 
 /** 服务商表单：内置服务商只填 Key；兼容接口还要名称、协议、服务地址与模型。 */
@@ -1381,6 +1380,7 @@ function ProviderForm({
   onConnection,
   onThinking,
   extra,
+  connectionStatus,
 }: {
   view: ProvidersView;
   initial: ProviderDraft;
@@ -1389,8 +1389,12 @@ function ProviderForm({
   onConnection: (id: string, status: "connected" | "failed") => void;
   onThinking: (thinking: ModelThinkingView, settings: SettingsFile) => void;
   extra?: ReactNode;
+  connectionStatus?: "connected" | "failed";
 }) {
   const s = useApp();
+  const [expandedModel, setExpandedModel] = useState<string | null>(null);
+  const [confirmModel, setConfirmModel] = useState<string | null>(null);
+  const [manualModel, setManualModel] = useState(false);
   const [draft, setDraft] = useState<ProviderDraft>(initial);
   const [rosterBusy, setRosterBusy] = useState(false);
   const [rosterNotice, setRosterNotice] = useState<string | null>(null);
@@ -1434,13 +1438,17 @@ function ProviderForm({
     const settings = s.settings.settings.models;
     const selected = settings.roster.some((entry) => entry.ref === ref);
     const isDefault = settings.conversation.ref === ref || settings.work.ref === ref;
+    if (isDefault) return <span className="note" title={t("这是默认模型。要移除，请先在「默认模型」中更换。")}>{t("默认模型")}</span>;
     return (
-      <label className="ctl">
-        <input
-          type="checkbox"
-          checked={selected}
-          disabled={draft.isNew || !thinkingOf(model.id) || rosterBusy || busy || isDefault}
-          onChange={() => {
+      <span className="ctl">
+        <button
+          type="button"
+          className={`tog${selected ? "" : " off"}`}
+          title={t("加入可用模型")}
+          aria-label={t("加入可用模型")}
+          aria-pressed={selected}
+          disabled={draft.isNew || !thinkingOf(model.id) || rosterBusy || busy}
+          onClick={() => {
             const roster = selected
               ? settings.roster.filter((entry) => entry.ref !== ref)
               : [...settings.roster, { ref, note: "", scores: guessModelScores({ id: model.id, name: model.name ?? model.id, reasoning: Boolean(model.reasoning) }), scoresConfirmed: false }];
@@ -1452,8 +1460,7 @@ function ProviderForm({
             });
           }}
         />
-        <span>{isDefault ? t("默认模型已加入") : t("加入可用模型")}</span>
-      </label>
+      </span>
     );
   };
 
@@ -1512,41 +1519,38 @@ function ProviderForm({
     void saveModels(draft.models.map((item) => (item.id === id ? { ...item, ...next } : item)) );
   };
 
-  /** 内置服务商的模型列表：模型由服务商提供，会推理的可以改思考档。 */
+  /** 模型行和思考档在内置及兼容接口中共用；只有兼容接口允许编辑能力。 */
+  const modelRow = (model: ProviderModelSetting | ModelThinkingView, editable: boolean) => {
+    const info = thinkingOf(model.id);
+    const open = expandedModel === model.id;
+    const summary = [model.contextWindow ? t("上下文 {size}", { size: contextText(model.contextWindow) }) : "", model.input?.includes("image") ? t("能看图") : "", model.reasoning ? t("会推理") : "", model.reasoning && info ? t("{n} 档思考", { n: info.levels.length }) : ""].filter(Boolean).join(" · ");
+    const ref = `${draft.id}/${model.id}`;
+    const isDefault = s.settings.settings.models.conversation.ref === ref || s.settings.settings.models.work.ref === ref;
+    return <div className={`provider-model${open ? " open" : ""}`} key={model.id}>
+      {/* 一整行：点名字那块就地展开；右边是加不加入可用模型的开关（默认模型写「默认模型」） */}
+      <div className="provider-model-head">
+        <button type="button" className="provider-model-label" aria-expanded={open} onClick={() => setExpandedModel(open ? null : model.id)}>
+          <BrandIcon size={28} brand={modelBrand(model.id, model.name, draft.id, draft.kind === "custom" ? draft.name : builtinName(draft.id))} />
+          <span className="rmain"><span className="rname">{model.name || model.id}</span><span className="rprov">{summary}</span></span>
+        </button>
+        {rosterControl(model)}
+      </div>
+      {open ? <div className="provider-model-content">
+        {editable ? <>
+          <div className="mline"><span>{t("能看图")}</span><button className={`tog${model.input?.includes("image") ? "" : " off"}`} aria-label={t("能看图")} aria-pressed={Boolean(model.input?.includes("image"))} disabled={busy} onClick={() => editModel(model.id, { input: model.input?.includes("image") ? ["text"] : ["text", "image"] })} /></div>
+          <div className="mline"><span>{t("会推理")}</span><button className={`tog${model.reasoning ? "" : " off"}`} aria-label={t("会推理")} aria-pressed={Boolean(model.reasoning)} disabled={busy} onClick={() => editModel(model.id, { reasoning: !model.reasoning })} /></div>
+          <div className="mline"><span>{t("上下文窗口（token）")}</span><span className="field provider-model-ctx"><input type="number" min={1} defaultValue={model.contextWindow ?? DEFAULT_CONTEXT} key={`${model.id}:${model.contextWindow ?? DEFAULT_CONTEXT}`} aria-label={t("上下文窗口（token）")} onBlur={(event) => { const next = Number(event.target.value) || DEFAULT_CONTEXT; if (next !== (model.contextWindow ?? DEFAULT_CONTEXT)) editModel(model.id, { contextWindow: next }); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} disabled={busy} /></span></div>
+        </> : <div className="note">{summary || t("暂无能力信息")}</div>}
+        {model.reasoning ? info ? <ThinkingLevels modelRef={ref} info={info} disabled={busy} onSaved={onThinking} /> : <div className="note">{t("保存服务商后可以设置思考档。")}</div> : null}
+        {isDefault ? <div className="note">{t("这是默认模型。要移除，请先在「默认模型」中更换。")}</div> : editable && draft.kind === "custom" ? confirmModel === model.id ? <div className="mline"><span>{t("确定从这个服务商移除这个模型？")}</span><span className="ctl"><button className="hob-btn" disabled={busy} onClick={() => setConfirmModel(null)}>{t("取消")}</button><button className="hob-btn hob-btn-danger" disabled={busy} onClick={() => { void saveModels(draft.models.filter((item) => item.id !== model.id)); setConfirmModel(null); }}>{t("确认移除")}</button></span></div> : <button className="provider-model-remove" disabled={busy} onClick={() => setConfirmModel(model.id)}>{t("从这个服务商移除这个模型")}</button> : null}
+      </div> : null}
+    </div>;
+  };
+
   const builtinModelList = (id: string) => {
     const models = view.models[id] ?? [];
     if (!models.length) return null;
-    return (
-      <>
-        <div className="lbl">{t("模型")}</div>
-        <div className="group-card settings-card">
-          {models.map((info) => (
-            <div className="list-row setting-row" key={info.id}>
-              <div className="rmain">
-                <div className="rname">
-                  {info.name}
-                  <span className="rtags">
-                    <span className="rtag mono">{info.id}</span>
-                  </span>
-                </div>
-                <div className="caps">
-                  {info.input?.includes("image") ? <span title={t("支持图片输入")} aria-label={t("支持图片输入")}><Icon name="image" size={14} /></span> : null}
-                  {info.reasoning ? <span title={t("支持推理")} aria-label={t("支持推理")}><Icon name="bulb" size={14} /></span> : null}
-                  {info.contextWindow ? <span className="ctx">{contextText(info.contextWindow)}</span> : null}
-                </div>
-                {rosterControl(info)}
-                {info.reasoning ? (
-                  <ThinkingLevels modelRef={info.ref} info={info} disabled={busy} onSaved={onThinking} />
-                ) : (
-                  <div className="note">{t("不推理，没有思考档。")}</div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-        <div className="note">{t("模型由服务商提供。会推理的模型可以改每个思考档发给服务商的字符。")}</div>
-      </>
-    );
+    return <><div className="lbl">{t("模型")}</div><div className="group-card provider-models">{models.map((model) => modelRow(model, false))}</div><div className="note">{t("模型由服务商提供。会推理的模型可以改每个思考档发给服务商的字符。")}</div></>;
   };
 
   const commit = async () => {
@@ -1607,7 +1611,12 @@ function ProviderForm({
   return (
     <>
       <SubBack label={t("服务商")} />
-      <PageHead title={title} desc={idText ? <span className="mono">{idText}</span> : null} />
+      <div className="provider-heading">
+        <BrandIcon size={48} brand={providerBrand(draft.id, title, view.models[draft.id])} />
+        <div className="rmain"><div className="rname">{title}</div><div className="rprov">{draft.kind === "builtin" ? t("内置服务商") : <>{t("兼容接口")} · {providerApiLabel(draft.api)}{idText ? ` · ${t("标识 {id}", { id: idText })}` : ""}</>}</div></div>
+        {!draft.isNew ? <span className={connectionStatus === "failed" || !view.providers.find((provider) => provider.id === draft.id)?.keyConfigured ? "badline" : "note"}>{connectionStatus === "connected" ? t("已连接") : connectionStatus === "failed" ? t("连接失败") : view.providers.find((provider) => provider.id === draft.id)?.keyConfigured ? t("未验证") : t("未填 Key")}</span> : null}
+        {extra}
+      </div>
 
       {draft.kind === "builtin" ? (
         <Group>
@@ -1630,7 +1639,7 @@ function ProviderForm({
               disabled={busy}
             />
           </div>}
-          <div className="ctl"><button className="hob-btn" disabled={busy} onClick={() => void runConnectionTest()}>{t("测试连接")}</button><span className="note">{t("测试会请求模型，可能产生费用。")}</span>{testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}</div>
+          <div className="ctl"><button className="hob-btn" disabled={busy} onClick={() => void runConnectionTest()}>{t("测试连接")}</button><span className="note">{t("测试会请求模型，可能产生费用。")}</span>{testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}{error ? <span className="badline" role="status">{error}</span> : null}</div>
           <ProviderFoot busy={busy} error={error} dirty={dirty} onCancel={closeSub} onSave={() => void commit()} />
           </div>
         </Group>
@@ -1660,9 +1669,7 @@ function ProviderForm({
                 </div>
                 <div className="note">{t("模型引用使用该标识，例如 my-proxy/gpt-x。留空则按名称自动生成。")}</div>
               </>
-            ) : (
-              <div className="note mono">{t("标识：{id}", { id: draft.id })}</div>
-            )}
+            ) : null}
             <div className="lbl sub">{t("协议")}</div>
             <div className="ctl">
               <Select className="grow" value={draft.api} onChange={(value) => patch({ api: value as ProviderApi })} disabled={busy} options={PROVIDER_APIS.map((item) => ({ value: item.key, label: providerApiLabel(item.key) }))} />
@@ -1693,12 +1700,7 @@ function ProviderForm({
             <div className="ctl" style={{ gap: 8, flexWrap: "wrap" }}>
               <button className="hob-btn" disabled={busy || !draft.baseUrl.trim()} onClick={() => void runConnectionTest()}>{t("测试连接")}</button>
               {testStatus && tested === fingerprint ? <span className="okline">{testStatus}</span> : null}
-              <button className="hob-btn" onClick={() => void runDiscover()} disabled={busy || !draft.baseUrl.trim()}>
-                {busy ? t("正在获取…") : t("获取模型列表")}
-              </button>
-              <span className="note">
-                {t("从接口获取模型列表，选择需要使用的模型。") }
-              </span>
+              {error ? <span className="badline" role="status">{error}</span> : null}
             </div>
             <ProviderFoot busy={busy} error={error} dirty={dirty} onCancel={closeSub} onSave={() => void commit()} />
             </div>
@@ -1707,101 +1709,25 @@ function ProviderForm({
           {found.length ? (
             <Group>
               <div className="lbl">{t("接口上的模型")}</div>
-              <div className="chips">
+              <div className="group-card providers-list settings-card">
                 {found.map((model) => {
                   const on = draft.models.some((item) => item.id === model.id);
-                  return (
-                    <button
-                      key={model.id}
-                      className={`chip${on ? " on" : ""}`}
-                      onClick={() => toggleFound(model)}
-                      disabled={busy}
-                    >
-                      {model.name ?? model.id}
-                    </button>
-                  );
+                  return <div className="list-row setting-row" key={model.id}><BrandIcon size={28} brand={modelBrand(model.id, model.name, draft.id, draft.name)} /><span className="rmain">{model.name ?? model.id}</span><button className="hob-btn" onClick={() => toggleFound(model)} disabled={busy || on}>{on ? t("已添加") : t("添加")}</button></div>;
                 })}
               </div>
-              <div className="note">{t("点击添加或移除，添加后可在下方修改模型能力。")}</div>
             </Group>
           ) : null}
 
           <Group>
-            <div className="lbl">{t("模型")}</div>
-            {draft.models.length ? (
-              <div className="group-card settings-card">
-                {draft.models.map((model) => (
-                  <div className="list-row setting-row" key={model.id}>
-                    <div className="rmain">
-                      <div className="rname mono">{model.id}</div>
-                      <div className="rfoot">
-                        <button
-                          className={`chip${model.input?.includes("image") ? " on" : ""}`}
-                          onClick={() =>
-                            editModel(model.id, {
-                              input: model.input?.includes("image") ? ["text"] : ["text", "image"],
-                            })
-                          }
-                          disabled={busy}
-                        >
-                          {t("支持图片输入")}
-                        </button>
-                        <button
-                          className={`chip${model.reasoning ? " on" : ""}`}
-                          onClick={() => editModel(model.id, { reasoning: !model.reasoning })}
-                          disabled={busy}
-                        >
-                          {t("支持推理")}
-                        </button>
-                        <span className="rtag">{t("上下文")}</span>
-                        <input
-                          className="pmctx"
-                          type="number"
-                          min={1}
-                          defaultValue={model.contextWindow ?? DEFAULT_CONTEXT}
-                          key={`${model.id}:${model.contextWindow ?? DEFAULT_CONTEXT}`}
-                          title={t("上下文窗口（token）")}
-                          onBlur={(e) => { const next = Number(e.target.value) || DEFAULT_CONTEXT; if (next !== (model.contextWindow ?? DEFAULT_CONTEXT)) editModel(model.id, { contextWindow: next }); }}
-                          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                          disabled={busy}
-                        />
-                      </div>
-                      {rosterControl(model)}
-                      {model.reasoning ? (
-                        thinkingOf(model.id) ? (
-                          <ThinkingLevels
-                            modelRef={`${draft.id}/${model.id}`}
-                            info={thinkingOf(model.id)!}
-                            disabled={busy}
-                            onSaved={onThinking}
-                          />
-                        ) : (
-                          <div className="note">{t("保存服务商后可以设置思考档。")}</div>
-                        )
-                      ) : null}
-                    </div>
-                    <button
-                      className="rremove"
-                      title={t("移除该模型")}
-                      disabled={busy}
-                      onClick={() => void saveModels(draft.models.filter((item) => item.id !== model.id))}
-                    >
-                      <Icon name="close" size={13} />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <Empty>{t("尚未添加模型。可获取模型列表后勾选，或手动填写模型 ID。")}</Empty>
-            )}
-            <ManualModel disabled={busy} onAdd={addModel} />
+            <div className="provider-model-title"><div className="lbl">{t("模型")}</div><span className="sp" /><button className="hob-btn" onClick={() => void runDiscover()} disabled={busy || !draft.baseUrl.trim()}>{busy ? t("正在获取…") : t("获取模型列表")}</button><button className="hob-btn" onClick={() => setManualModel(!manualModel)}>{t("手动添加")}</button></div>
+            {draft.models.length ? <><div className="group-card provider-models">{draft.models.map((model) => modelRow(model, true))}</div><div className="note">{t("开关打开的模型加入可用模型，助手和输入框里都能选。")}</div></> : <Empty>{t("尚未添加模型。可获取模型列表后勾选，或手动填写模型 ID。")}</Empty>}
+            {manualModel ? <ManualModel disabled={busy} onAdd={addModel} /> : null}
           </Group>
 
         </>
       )}
       {draft.kind === "builtin" && !draft.isNew ? <Group>{builtinModelList(draft.id)}</Group> : null}
       {rosterNotice ? <div className={rosterNotice === t("已保存") ? "okline" : "badline"} role="status">{rosterNotice}</div> : null}
-      {extra}
     </>
   );
 }
@@ -1847,8 +1773,9 @@ function ProviderFoot({
   onCancel: () => void;
   onSave: () => void;
 }) {
+  if (!dirty) return null;
   return (
-    <SaveRow saved={false} error={error}>
+    <SaveRow saved={false} error={null}>
       {!error && dirty ? <span className="note">{t("未保存的修改")}</span> : null}
       <button className="hob-btn" onClick={onCancel} disabled={busy}>
         {t("取消")}
@@ -1961,13 +1888,14 @@ function SubBack({ label }: { label?: string }) {
 }
 
 function ModelsHome({ view }: { view: ModelsView }) {
+  const providers = useApp().settings.settings.providers;
   const { models, save, roles, feedback } = useModelSettings();
   const byRef = new Map(view.models.map((model) => [model.ref, model]));
   const pickOptions = (current: string) => [
     ...(models.roster.length ? [] : [{ value: "", text: t("未设置") }]),
     ...models.roster
       .filter((entry) => byRef.has(entry.ref) || entry.ref === current)
-      .map((entry) => ({ value: entry.ref, text: byRef.get(entry.ref)?.name ?? entry.ref })),
+      .map((entry) => ({ value: entry.ref, text: byRef.get(entry.ref)?.name ?? entry.ref, icon: <BrandIcon size={20} brand={brandForRef(entry.ref, view.models, providers)} /> })),
   ];
   const role = (key: "conversation" | "work", label: string, pickLabel: string) => (
     <div className="mline">
@@ -2019,6 +1947,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
                 onClick={() => openSub({ kind: "model", ref: entry.ref, title: name })}
               >
                 <span className="mtop">
+                  <BrandIcon size={28} brand={brandForRef(entry.ref, view.models, providers)} />
                   <span className="mname">{name}</span>
                   <span className="sp" />
                   {info ? <CapIcons info={info} /> : <span className="mbad">{t("不可用")}</span>}
@@ -2132,6 +2061,11 @@ function ModelDetail({ view, modelRef }: { view: ModelsView; modelRef: string })
 }
 
 function AddModels({ view }: { view: ModelsView }) {
+  const providers = useApp().settings.settings.providers;
+  const providerName = (id: string) => {
+    const provider = providers.find((item) => item.id === id);
+    return provider?.kind === "custom" ? provider.name : undefined;
+  };
   const { models, setRoster, roles, update, feedback } = useModelSettings();
   const [query, setQuery] = useState("");
   const chosen = new Set(models.roster.map((entry) => entry.ref));
@@ -2183,7 +2117,7 @@ function AddModels({ view }: { view: ModelsView }) {
                 <Disclosure
                   key={group.provider}
                   className="mgroup-disclosure"
-                  label={<span className="n">{group.provider}</span>}
+                  label={<span className="provider-model-label"><BrandIcon size={28} brand={providerBrand(group.provider, providerName(group.provider), group.models)} /><span className="n">{group.provider}</span></span>}
                   count={picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : group.models.length}
                   open={open}
                   onToggle={() => toggleGroup(group.provider)}
@@ -2200,6 +2134,7 @@ function AddModels({ view }: { view: ModelsView }) {
                           title={locked ? t("默认模型不能在这里移除") : on ? t("从可用模型中移除") : t("加入可用模型")}
                           onClick={() => toggle(model)}
                         >
+                          <BrandIcon size={28} brand={modelBrand(model.id, model.name, model.provider, providerName(model.provider))} />
                           <span className="mname">{model.name}</span>
                           <CapIcons info={model} />
                           <Icon name={on ? "check" : "plus"} size={16} className="mtog" />

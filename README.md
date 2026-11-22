@@ -32,7 +32,7 @@ hands longer work to background jobs, and checks with you when your rules say a 
 
 Put several assistants in a group and they work as a team: the group owner takes messages that don't name anyone, `@` calls a specific member, and each member can use different models in that group. The owner handles the group's schedules and decides what to do when one fires.
 
-For a larger piece of work, the group owner opens a topic and the team works through it there. When something takes several steps, the assistant keeps a to-do list: each item is just what to do and where it stands, and the assistant updates it as it starts and finishes items, so you can see the progress above the input box and on the job card. Whether to keep a list, and how to split it, is the assistant's judgement. New installations come with an agile team group with product, architecture, development, testing and release members.
+For a larger piece of work, the group owner opens a topic and the team works through it there. When something takes several steps, the assistant keeps a to-do list: each item is just what to do and where it stands, and the assistant updates it as it starts and finishes items, so you can see the progress above the input box and on the job card. Whether to keep a list, and how to split it, is the assistant's judgement. New installations come with an agile team group with product, architecture, development, testing and release members, and a Hacker assistant for security research and reverse engineering, pinned next to Hob.
 
 ![A group topic: to-do progress and the members' job cards](docs/screenshots/en/chat.png)
 

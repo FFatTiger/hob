@@ -45,6 +45,7 @@ import { GroupCluster, membersOf } from "./Groups.tsx";
 import { ClosedTopic } from "./Topics.tsx";
 import { TodoStrip, type RunningJob } from "./Todos.tsx";
 import { DelayedText } from "./Empty.tsx";
+import { ComposerPlus } from "./ComposerPlus.tsx";
 
 export function conversationState(s: ReturnType<typeof useApp>) {
   const g = groupById(s, s.gsel);
@@ -544,19 +545,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
         document.body,
       ) : null}
       <div className="comp-main">
-        <label className="pl" title={t("加文件（也可粘贴截图）")}>
-          <Icon name="plus" size={19} />
-          <input
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              const files = Array.from(e.target.files ?? []);
-              e.target.value = "";
-              if (files.length) attach(files);
-            }}
-          />
-        </label>
+        <ComposerPlus g={g} a={a} onFiles={attach} />
         <textarea
           ref={ta}
           className="ta"

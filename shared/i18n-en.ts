@@ -134,6 +134,8 @@ export const EN: Record<string, TranslationEntry> = {
   "写代码": "Coding",
   "测试和验证": "Testing and verification",
   "发布和上线": "Release and deployment",
+  "安全与逆向": "Security and reverse engineering",
+  "安全研究、逆向分析、抓包和调试：分析程序、协议和数据格式，读二进制和内存，写验证用的脚本。": "Security research, reverse engineering, traffic capture and debugging: analyze programs, protocols and data formats, read binaries and memory, and write scripts to verify findings.",
   "把用户的想法问清楚，写成需求说明和验收标准，拆成子任务分给合适的成员；做完以后对照验收标准验收。拿不准用户要什么时先问用户。": "Clarify the user's idea, turn it into a spec and acceptance criteria, split it into subtasks for the right members, and review the result against the criteria. Ask the user when their intent is unclear.",
   "接住用户和定时任务带来的事，按分量安排：一个任务能完成的，自己分派任务或者请合适的成员执行，结果回来核对后再告诉用户；要几个人接力的，创建一个话题，在里面安排，完成后给用户一个结论。": "Take on what the user and the schedules bring and size it up: if one job can finish it, assign that job yourself or ask the right member to execute it, then check the result before telling the user; if it needs several people handing off, create a topic, coordinate it there, and give the user a conclusion when it is complete.",
   "定技术方案和模块边界，评估改动的影响和风险，审查关键代码。": "Set the technical design and module boundaries, assess the impact and risks of changes, and review critical code.",

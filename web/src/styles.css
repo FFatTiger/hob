@@ -1,6 +1,7 @@
 /* 视觉真相源：docs/design/v2/index.html。变量、尺寸、组件样式都从这里搬。 */
 
 :root { --sidebar-inset: 14px; }
+.brand-icon { display: inline-grid; place-items: center; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
 /* 列表行：前置图标、可收缩正文、尾部操作。 */
 .list-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 10px var(--sidebar-inset); text-align: left; }
 .list-row :is(.main, .rmain, .history-content) { flex: 1; min-width: 0; }
@@ -12,7 +13,7 @@
 .group-member-models-head small, .group-member-model-row .following { color: var(--text3); }
 .group-member-model-row { position: relative; cursor: pointer; }
 .group-member-model-row > span:first-child { flex: none; white-space: nowrap; }
-.group-member-model-row > span:nth-child(2) { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.group-member-model-row > span:nth-child(2) { display: flex; align-items: center; gap: 6px; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-identity, .sidebar-head-identity { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .sidebar-identity > span { display: flex; flex-direction: column; flex: 1; min-width: 0; gap: 3px; }
 .sidebar-identity strong, .sidebar-identity small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -4009,6 +4010,8 @@ button:not(:disabled):active {
 /* 下拉：按钮上是选中项和一个向下的箭头；列表里选项的字和按钮上的字左对齐，选中的打勾 */
 .select-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: 8px; min-width: 0; max-width: 100%; text-align: left; cursor: pointer; transition: background-color var(--t-fast) linear; }
 .select-trigger > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.select-value { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
+.select-value > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .select-trigger > svg { flex: none; color: var(--text3); transition: transform var(--t-fast) var(--ease-out); }
 .select-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
 .select-trigger:disabled { cursor: default; opacity: .55; }
@@ -4153,6 +4156,38 @@ button:not(:disabled):active {
 .rules-card .rule-add-form { display: flex; align-items: center; gap: 8px; padding: 8px 0; }
 .rules-card .rule-add-form .rule-input { width: 0; }
 .setting-row { padding-left: 0; padding-right: 0; }
+.providers-list > * + *::before { display: none; }
+.providers-list .note { margin-top: 0; }
+.provider-heading { display: flex; align-items: center; gap: 12px; margin: 20px auto; }
+.provider-heading > .note { margin: 0; white-space: nowrap; }
+.provider-heading .rname { font-size: 18px; }
+.provider-model-title { display: flex; align-items: center; gap: 6px; }
+.provider-model-title .lbl { margin: 0; }
+.provider-model-title .sp, .provider-model-content .mline .sp { flex: 1; }
+/* 服务商里的模型：一整行（图标、名称、能力摘要，右边开关）；展开时整项深一层，内容是平铺的行，不再套框 */
+.provider-models { padding: 4px; }
+.provider-model { border-radius: 10px; }
+.provider-model-head { display: flex; align-items: center; gap: 10px; padding: 0 12px 0 0; border-radius: 10px; }
+.provider-model-head > .note, .provider-model-head > .ctl { flex: none; margin: 0; white-space: nowrap; }
+.provider-model-label { flex: 1; min-width: 0; display: flex; align-items: center; gap: 10px; padding: 9px 10px; background: transparent; color: var(--text); text-align: left; cursor: pointer; }
+.provider-model-label .rmain { min-width: 0; }
+.provider-model-label .rname { display: block; }
+.provider-model-label .rprov { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+@media (hover: hover) { .provider-model:not(.open) .provider-model-head:hover { background: color-mix(in srgb, var(--text) 5%, transparent); } }
+.provider-model.open { background: color-mix(in srgb, var(--text) 6%, var(--field)); }
+.provider-model-content { padding: 0 12px 10px 48px; }
+.provider-model-content .mline { min-height: 42px; }
+.provider-model-content .field { background: var(--bg); }
+.provider-model-ctx { width: 140px; flex: none; }
+.provider-model-ctx input { text-align: right; }
+.provider-model-content .think-levels { background: transparent; padding: 0; }
+.provider-model-content .disclosure-row { background: transparent; padding-left: 0; padding-right: 0; }
+.provider-model-content .thinkrow .ttext { background: var(--bg); }
+.provider-model-content > .note { margin: 8px 0 2px; }
+.provider-model-remove { display: block; margin-top: 6px; padding: 8px 0; background: transparent; color: var(--accent); font-size: 13.5px; text-align: left; }
+.provider-model-remove:disabled { opacity: .4; cursor: default; }
+@media (max-width: 767px) { .provider-model-content { padding-left: 12px; } .provider-heading { flex-wrap: wrap; } }
+@media (hover: hover) { .providers-list > button:hover { background: color-mix(in srgb, var(--text) 5%, transparent); border-radius: 10px; } }
 /* 服务商列表：整行可点，行尾箭头；底部是「添加服务商」「从本机导入」两行 */
 /* 列表行里点进详情的那块（技能、搜索服务商）；描述最多两行；行尾开关、上下移按钮居中 */
 .rbtn {
@@ -7369,3 +7404,16 @@ button.screen,
 .home-in h1 { margin-top: 18px; font-size: 28px; font-weight: 600; line-height: 1.3; }
 .home-sum { margin-top: 6px; font-size: 14px; color: var(--text2); }
 .home-ask { width: 100%; margin-top: 32px; padding-left: 18px; text-align: left; }
+/* 输入框加号的菜单：和输入框同一种磨砂底，大圆角；每行左边一个圆形图标底，模型一行右边写当前模型，点进去是模型列表 */
+.plus-menu { position: fixed; z-index: 50; width: min(300px, calc(100vw - 24px)); display: flex; flex-direction: column; max-height: min(70vh, 520px); padding: 10px; border-radius: 26px; background: color-mix(in srgb, var(--card) 86%, transparent); -webkit-backdrop-filter: blur(40px) saturate(1.6); backdrop-filter: blur(40px) saturate(1.6); box-shadow: 0 0 0 0.5px var(--line), 0 16px 48px var(--composer-shadow), 0 2px 8px var(--composer-shadow); transform-origin: bottom left; animation: popup-in var(--t-mid) var(--ease-in); }
+.plus-menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 48px; padding: 6px 12px 6px 6px; border-radius: 18px; background: transparent; color: var(--text); font-size: 15px; text-align: left; }
+.plus-menu button[role="menuitemradio"] { padding-left: 14px; }
+.plus-menu button > span:not(.pm-ic) { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+.plus-menu button > small { flex: none; display: flex; align-items: center; gap: 5px; max-width: 45%; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; color: var(--text3); font-size: 13px; }
+.plus-menu button > .brand-icon { flex: none !important; }
+.plus-menu button > svg { flex: none; color: var(--text3); }
+.plus-menu button[aria-checked="true"] > svg { color: var(--text); }
+.plus-menu .pm-ic { flex: none; width: 36px; height: 36px; display: grid; place-items: center; border-radius: 50%; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.plus-menu .pm-back { flex: none; color: var(--text2); font-size: 13px; }
+.plus-menu .pm-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }
+@media (hover: hover) { .plus-menu button:hover { background: color-mix(in srgb, var(--text) 6%, transparent); } }

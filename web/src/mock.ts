@@ -222,7 +222,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.11.0",
+  version: "1.12.0",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
@@ -1629,8 +1629,12 @@ cp now.txt "$seen"`,
             id: "my-proxy",
             name: "我的代理",
             api: "openai-completions",
-            baseUrl: "http://127.0.0.1:8080/v1",
-            models: [{ id: "gpt-x", name: "GPT X", input: ["text", "image"], reasoning: true, contextWindow: 200_000 }],
+            baseUrl: "https://models.example.invalid/v1",
+            models: [
+              { id: "gpt-x", name: "GPT X", input: ["text", "image"], reasoning: true, contextWindow: 200_000 },
+              { id: "claude-sample", name: "Claude Sample", input: ["text", "image"], reasoning: true, contextWindow: 100_000 },
+              { id: "gemini-sample", name: "Gemini Sample", input: ["text"], reasoning: false, contextWindow: 1_000_000 },
+            ],
           },
         ],
         models: scene.startsWith("readme-") ? {

@@ -75,6 +75,39 @@ export function migrateProductOwnerDuty(store: Store): void {
   }
 }
 
+/** 自带的 Hacker：和 Hob 一起置顶，安全和逆向的事找它。补充提示词随包带在 hacker-instructions.md，建的时候原样写进去。 */
+export const HACKER = {
+  id: "hacker",
+  name: "Hacker",
+  sprite: "shield",
+  duty: "安全与逆向",
+  dutyLong: "安全研究、逆向分析、抓包和调试：分析程序、协议和数据格式，读二进制和内存，写验证用的脚本。",
+};
+
+/**
+ * 建一次 Hacker（老用户升级后也补上）。已经有 id 为 hacker 的助手（包括归档了的）就不再建，只记下标记；
+ * 用户删了也不补回来。
+ */
+export function seedHacker(store: Store, locale: Locale): void {
+  if (readSeeded(store.home).hacker) return;
+  if (!takenIds(store).has(HACKER.id)) {
+    store.saveAssistant({
+      id: HACKER.id,
+      name: HACKER.name,
+      duty: t(HACKER.duty, {}, locale),
+      dutyLong: t(HACKER.dutyLong, {}, locale),
+      sprite: HACKER.sprite,
+      instructions: readFileSync(new URL("./hacker-instructions.md", import.meta.url), "utf8").trim(),
+      primary: false,
+      pinned: true,
+      hidden: false,
+      notify: true,
+      createdAt: new Date().toISOString(),
+    });
+  }
+  writeSeeded(store.home, { hacker: true });
+}
+
 /** 默认建的那个群：自带的敏捷团队走「软件开发」这一套。 */
 export const DEV_TEAM_GROUP = {
   name: "敏捷团队",
@@ -101,6 +134,7 @@ export function devTeamGroup(locale: Locale) {
 
 interface SeededFile {
   devTeam?: boolean;
+  hacker?: boolean;
 }
 
 function seededPath(home: string): string {

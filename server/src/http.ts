@@ -52,6 +52,7 @@ import { archiveSkill, groupSkillsDir, listAssistantSkills, listSkills, rollback
 import { generalSkillsDir, importSkills, listImportSkills, skillViews, visibleSkills } from "./skills.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
+import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 
 const COOKIE = "hob";
@@ -124,6 +125,41 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.get("/api/me", (c) => c.json({ ok: true }));
 
   app.get("/api/bootstrap", (c) => c.json(router.bootstrap()));
+
+  app.get("/api/history/search", async (c) => {
+    const query = c.req.query("query")?.trim() ?? "";
+    if (!query) return c.json({ error: "搜索文字不能为空" }, 400);
+    try { return c.json(await searchHistory(store, { query })); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 500); }
+  });
+
+  app.get("/api/stars", (c) => c.json({ stars: store.stars().sort((a, b) => b.starredAt.localeCompare(a.starredAt)) }));
+  app.post("/api/stars", async (c) => {
+    const body = await c.req.json().catch(() => null) as import("../../shared/types.ts").StarRequest | null;
+    const ref = body?.conversation;
+    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group") || typeof ref.id !== "string" || !ref.id || typeof body?.itemId !== "string" || !body.itemId) return c.json({ error: "对话或消息无效" }, 400);
+    if (ref.kind === "assistant" ? !store.assistant(ref.id) : !store.group(ref.id)) return c.json({ error: "对话不存在" }, 404);
+    let before: string | undefined;
+    let item: import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem | undefined;
+    do {
+      const page = ref.kind === "assistant" ? router.items(ref.id, { before, limit: 200 }) : runtime.groups.items(ref.id, { before, limit: 200 });
+      item = page.items.find((entry) => entry.id === body.itemId);
+      before = page.hasMore ? page.items[0]?.id : undefined;
+    } while (!item && before);
+    if (!item || (item.kind !== "user" && item.kind !== "assistant") || !item.text.trim() || (item.kind === "assistant" && item.streaming)) return c.json({ error: "原消息已不在，或不能收藏" }, 404);
+    const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : ref.id;
+    const star = store.saveStar({ conversation: ref, itemId: item.id, speaker, at: item.at, starredAt: new Date().toISOString(), text: item.text });
+    bus.emit({ type: "stars" });
+    return c.json({ star });
+  });
+  app.delete("/api/stars", async (c) => {
+    const body = await c.req.json().catch(() => null) as import("../../shared/types.ts").StarRequest | null;
+    const ref = body?.conversation;
+    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group") || typeof ref.id !== "string" || typeof body?.itemId !== "string") return c.json({ error: "对话或消息无效" }, 400);
+    store.deleteStar(ref, body.itemId);
+    bus.emit({ type: "stars" });
+    return c.json({ ok: true });
+  });
 
   app.get("/api/rules", (c) => c.json({ rules: store.globalRules() }));
   app.put("/api/rules", async (c) => {

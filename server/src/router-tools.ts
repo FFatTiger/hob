@@ -40,6 +40,7 @@ import { sessionOrigin } from "./origin.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
 import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./todos.ts";
+import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 
 type Tool = ToolDefinition<any, any>;
@@ -287,6 +288,26 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
   } }) as unknown as Tool;
   delete (read as { promptSnippet?: unknown }).promptSnippet; // 用了自定义系统提示词，引擎自带的这段不进提示词
   const tools: Tool[] = [
+    {
+      name: "search_history",
+      label: "搜索聊天记录",
+      description: "在所有单聊、群和话题的聊天记录里按文字找消息，也能只看用户收藏过的消息。按时间从新到旧返回，每条带对话名、说话人、时间和命中处前后的一段原文。",
+      parameters: Type.Object({
+        query: Type.Optional(Type.String({ description: "要找的文字，空格隔开的几个词都要出现，不分大小写；只看收藏时可以不填。" })),
+        starred: Type.Optional(Type.Boolean({ description: "填 true 只找用户收藏过的消息。" })),
+      }),
+      execute: async (_id, params: { query?: string; starred?: boolean }) => {
+        const query = params.query?.trim() ?? "";
+        if (!query && !params.starred) return fail("query 和 starred 至少填一个");
+        try {
+          const { results, total } = await searchHistory(store, { query, starred: params.starred, limit: 20, context: 80 });
+          if (!total) return ok(params.starred && !store.stars().length ? "用户还没有收藏过消息" : `没找到包含「${query}」的消息`);
+          const lines = results.map((item) => `${item.starred ? "★" : ""}[${item.at}] ${item.conversationName} · ${item.speakerName}：${item.snippet}`);
+          if (total > results.length) lines.push(`还有 ${total - results.length} 条没列出，换更具体的词再找`);
+          return ok(lines.join("\n"));
+        } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
+      },
+    },
     saveSkillTool(runtime, assistantId, groupId, cwd),
     searchPluginsTool(runtime.plugins, assistantId),
     {

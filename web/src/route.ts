@@ -4,7 +4,7 @@ import type { PanelPage } from "./panel-stack.ts";
 export const SETTINGS_SECTIONS = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "desktop", "work", "usage", "push", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-type RouteState = { page: "main" | "settings" | "knowledge" | "plugins"; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; section: SettingsSection | null; sel: string | null; gsel?: string | null; mobile: "list" | "topics" | "chat"; panelStack?: PanelPage[] };
+type RouteState = { page: "main" | "settings" | "knowledge" | "plugins" | "stars"; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; section: SettingsSection | null; sel: string | null; gsel?: string | null; mobile: "list" | "topics" | "chat"; panelStack?: PanelPage[] };
 
 function decode(arg: string | undefined): string | null {
   try {
@@ -28,13 +28,14 @@ function panelHash(page: PanelPage): string {
 }
 
 /** 地址里的 hash：刷新时据此回到原来那页。 */
-export function parseRoute(hash: string): { sel: string | null; group?: string; settings: boolean; section: SettingsSection | null; knowledge?: boolean; plugins?: boolean; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; panel?: PanelPage } {
+export function parseRoute(hash: string): { sel: string | null; group?: string; settings: boolean; section: SettingsSection | null; knowledge?: boolean; stars?: boolean; plugins?: boolean; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; panel?: PanelPage } {
   const [kind, arg, panel, panelArg] = hash.replace(/^#\/?/, "").split("/");
   const value = decode(arg);
   if (kind === "plugins") {
     if (value === "market" || value === "new") return { sel: null, settings: false, section: null, plugins: true, pluginId: null, pluginPage: value };
     return { sel: null, settings: false, section: null, plugins: true, pluginId: value, pluginPage: "installed" };
   }
+  if (kind === "stars") return { sel: null, settings: false, section: null, stars: true };
   if (kind === "knowledge") return { sel: null, settings: false, section: null, knowledge: true };
   if (kind === "group" && value) return { sel: null, group: value, settings: false, section: null, panel: parsePanel(panel, decode(panelArg)) };
   if (kind === "chat" && value) return { sel: value, settings: false, section: null, panel: parsePanel(panel, decode(panelArg)) };
@@ -52,6 +53,7 @@ export function routeHash(s: RouteState, narrow: boolean): string {
     if (s.pluginId) return `#/plugins/${encodeURIComponent(s.pluginId)}`;
     return s.pluginPage === "market" || s.pluginPage === "new" ? `#/plugins/${s.pluginPage}` : "#/plugins";
   }
+  if (s.page === "stars") return "#/stars";
   if (s.page === "knowledge") return "#/knowledge";
   if (s.page === "settings") return s.section ? `#/settings/${s.section}` : "#/settings";
   const conv = s.gsel ?? s.sel;

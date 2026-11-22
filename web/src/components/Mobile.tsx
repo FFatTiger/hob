@@ -3,7 +3,8 @@ import { memo } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { openKnowledge, openPlugins, openSettings, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
+import { openKnowledge, openPlugins, openSettings, openStars, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
+import { HistoryResults } from "./HistoryResults.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -35,18 +36,19 @@ export const MobileList = memo(function MobileList() {
         {s.search ? (
           <div className="msearch">
             <Icon name="search" size={15} />
-            <input autoFocus value={s.query} placeholder={t("搜索助手")} onChange={(e) => setQuery(e.target.value)} />
+            <input autoFocus value={s.query} placeholder={t("搜索对话和消息")} onChange={(e) => setQuery(e.target.value)} />
             <button onClick={() => setSearch(false)} title={t("关闭搜索")}>
               <Icon name="close" size={14} />
             </button>
           </div>
         ) : (
           <>
+            <button className="hob-icon-btn" title={t("收藏")} onClick={openStars}><Icon name="star" size={19} /></button>
             <button className="hob-icon-btn" title={t("插件")} onClick={() => openPlugins()}><Icon name="plugin" size={19} /></button>
             <button className="hob-icon-btn" title={t("知识库")} onClick={openKnowledge}>
               <Icon name="archive" size={19} />
             </button>
-            <button className="hob-icon-btn" title={t("搜索助手")} onClick={() => setSearch(true)}>
+            <button className="hob-icon-btn" title={t("搜索对话和消息")} onClick={() => setSearch(true)}>
               <Icon name="search" size={19} />
             </button>
             <PlusButton size={21} />
@@ -66,6 +68,7 @@ export const MobileList = memo(function MobileList() {
       </div>
       <div className="mlist">
         <HomeSections size={36} />
+        <HistoryResults />
       </div>
     </>
   );

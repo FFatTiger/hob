@@ -44,6 +44,7 @@ import {
   setNotice,
   setQuote,
   setText,
+  toggleStar,
   stopJob,
   useApp,
 } from "../store.ts";
@@ -109,6 +110,9 @@ function Tools({
   menu?: boolean;
   close?: () => void;
 }) {
+  const s = useApp();
+  const conversation = s.gsel ? { kind: "group" as const, id: s.gsel } : { kind: "assistant" as const, id: s.sel ?? "" };
+  const starred = s.stars.some((star) => star.conversation.kind === conversation.kind && star.conversation.id === conversation.id && star.itemId === itemId);
   const [copied, setCopied] = useState(false);
   const timer = useRef(0);
   useEffect(() => () => window.clearTimeout(timer.current), []);
@@ -125,6 +129,8 @@ function Tools({
   };
 
   return (
+    <>
+    {starred ? <span className="message-star"><Icon name="starFilled" size={12} /></span> : null}
     <div className={`tools${menu ? " menu" : ""}`}>
       <button
         title={t("回复")}
@@ -137,6 +143,7 @@ function Tools({
       >
         <Icon name="reply" size={16} />{menu ? t("回复") : null}
       </button>
+      <button title={starred ? t("取消收藏") : t("收藏")} aria-label={starred ? t("取消收藏") : t("收藏")} onClick={() => void toggleStar(conversation, itemId)}><Icon name={starred ? "starFilled" : "star"} size={16} /></button>
       <button
         className={copied ? "copied" : ""}
         title={copied ? t("已复制") : t("复制")}
@@ -146,12 +153,16 @@ function Tools({
         <Icon name={copied ? "check" : "copy"} size={16} />{menu ? t("复制") : null}
       </button>
     </div>
+    </>
   );
 }
 
 type Popup = { anchor: HTMLElement; item: Item; text: string; right: boolean };
 
 function MessagePopup({ popup, close, selectText, closing }: { popup: Popup; close: () => void; selectText: () => void; closing: boolean }) {
+  const s = useApp();
+  const conversation = s.gsel ? { kind: "group" as const, id: s.gsel } : { kind: "assistant" as const, id: s.sel ?? "" };
+  const starred = s.stars.some((star) => star.conversation.kind === conversation.kind && star.conversation.id === conversation.id && star.itemId === popup.item.id);
   const menu = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; above: boolean } | null>(null);
   useLayoutEffect(() => {
@@ -196,6 +207,7 @@ function MessagePopup({ popup, close, selectText, closing }: { popup: Popup; clo
   const run = (action: string) => {
     if (action === "reply") { setQuote({ itemId: popup.item.id, text: plain(popup.text).slice(0, 60) }); focusComposer(); close(); }
     if (action === "copy") void copyText(popup.text).then((ok) => { if (!ok) setNotice(t("复制失败：浏览器不允许写入剪贴板")); close(); });
+    if (action === "star") { void toggleStar(conversation, popup.item.id); close(); }
     if (action === "select") selectText();
     if (action === "job" && popup.item.kind === "job") { openJob(popup.item.jobId); close(); }
   };
@@ -205,8 +217,8 @@ function MessagePopup({ popup, close, selectText, closing }: { popup: Popup; clo
     if (event.clientX < r.left || event.clientX > r.right || event.clientY < r.top || event.clientY > r.bottom) close();
   }}>
     {actionsFor(popup.item.kind).map((action) => <button key={action} onClick={() => run(action)}>
-      <span>{action === "reply" ? t("回复") : action === "copy" ? t("复制") : action === "select" ? t("选择文字") : t("查看任务详情")}</span>
-      <Icon name={action === "reply" ? "reply" : action === "copy" ? "copy" : action === "select" ? "textSelect" : "chev"} size={17} />
+      <span>{action === "reply" ? t("回复") : action === "copy" ? t("复制") : action === "select" ? t("选择文字") : action === "star" ? (starred ? t("取消收藏") : t("收藏")) : t("查看任务详情")}</span>
+      <Icon name={action === "reply" ? "reply" : action === "copy" ? "copy" : action === "select" ? "textSelect" : action === "star" ? (starred ? "starFilled" : "star") : "chev"} size={17} />
     </button>)}
   </div>, document.body);
 }
@@ -803,7 +815,8 @@ function ItemView({
   const [albumOpen, setAlbumOpen] = useState(false);
   // 带附件的不收：照片是定宽的，按文字收会把照片裁掉
   const bubble = useFit<HTMLDivElement>(item.kind === "user" && !item.files?.length ? item.text : undefined);
-  const preventMenu = tools.touch ? (event: React.MouseEvent) => event.preventDefault() : undefined;
+  // 手机上长按不弹系统菜单；浮起来或在选字的那条放行，系统才能选文字
+  const preventMenu = tools.touch ? (event: React.MouseEvent) => { if (!(event.target as Element).closest(".message-lifted, .message-selecting")) event.preventDefault(); } : undefined;
   const swipeStyle = tools.distance ? { transform: `translateX(-${Math.min(64, tools.distance * 0.8)}px)`, transition: "none" } : undefined;
   const progress = Math.min(1, tools.distance / 48);
   const swipeIcon = tools.distance > 0 ? <span className={`swipe-reply${tools.ready ? " ready" : ""}`} style={{ opacity: progress, transform: `scale(${progress})` }}><span className="swipe-reply-inner"><Icon name="reply" size={18} /></span></span> : null;
@@ -1081,7 +1094,8 @@ function useItemGestures() {
         if (interactive && !cardRoot) return;
         const row = event.currentTarget as HTMLElement;
         const anchor = target.closest<HTMLElement>(".u,.b,.tablecard,.igen,.filecard,.imgcard,.media-audio,.media-video") ?? row.querySelector<HTMLElement>(".u,.b,.tablecard,.igen,.filecard,.imgcard,.media-audio,.media-video");
-        if (!anchor || selected === anchor) return;
+        // 已经浮起来的那条再长按：交给系统选文字，不再弹我们的菜单
+        if (!anchor || selected === anchor || popupRef.current?.anchor === anchor) return;
         if (press.current) { window.clearTimeout(press.current.timer); press.current.anchor.classList.remove("message-press"); }
         anchor.classList.add("message-press");
         const { clientX: x, clientY: y, pointerId } = event;

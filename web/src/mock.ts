@@ -222,7 +222,7 @@ export function desktopMockScene(): DesktopScene {
 }
 
 const DESKTOP_HEALTH = {
-  version: "1.12.0",
+  version: "1.13.0",
   display: { width: 1280, height: 800 },
   screens: [{ id: "hob", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
 };
@@ -2081,7 +2081,41 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   };
   let usageData: { timezone: string; rows: UsageRow[]; assistants: UsageAssistant[] } | undefined;
 
+  const starsDemo = new URLSearchParams(globalThis.location?.search ?? "").has("starsDemo");
+  if (starsDemo) {
+    db.items.hob = [
+      { kind: "user", id: "star-demo-user", at: minsAgo(40), text: "整理温室的浇水计划。" },
+      { kind: "assistant", id: "star-demo-answer", at: minsAgo(39), text: "温室的浇水计划：\n\n- 春季每三天检查土壤湿度。\n- 夏季清晨浇水，保持通风。\n\n记录模板在 [种植手册](https://example.org/garden)。" },
+      { kind: "assistant", id: "star-demo-code", at: minsAgo(20), text: "可以用这条命令查看温室记录：\n\n```sh\ngarden report --weekly\n```" },
+    ];
+  }
+  let stars: import("../../shared/types.ts").StarredMessage[] = starsDemo ? ["star-demo-answer", "star-demo-code"].map((id, i) => {
+    const item = db.items.hob.find((row) => row.id === id)! as Extract<Item, { kind: "assistant" }>;
+    return { conversation: { kind: "assistant" as const, id: "hob" }, itemId: id, speaker: "hob", at: item.at, starredAt: minsAgo(i), text: item.text };
+  }) : [];
   return {
+    stars: async () => ({ stars: clone(stars) }),
+    addStar: async ({ conversation, itemId }) => {
+      const item = (conversation.kind === "assistant" ? db.items[conversation.id] : db.groupItems[conversation.id])?.find((entry) => entry.id === itemId);
+      if (!item || (item.kind !== "user" && item.kind !== "assistant")) throw new ApiError(404, "原消息已不在");
+      const starItem = item as { id: string; at: string; text: string; speaker?: string };
+      const speaker = starItem.speaker ?? (item.kind === "user" ? "user" : conversation.id);
+      const star: import("../../shared/types.ts").StarredMessage = { conversation, itemId, speaker, at: starItem.at, starredAt: new Date().toISOString(), text: starItem.text };
+      stars = [star, ...stars.filter((old) => old.conversation.kind !== conversation.kind || old.conversation.id !== conversation.id || old.itemId !== itemId)];
+      emit({ type: "stars" });
+      return { star: clone(star) };
+    },
+    deleteStar: async ({ conversation, itemId }) => { stars = stars.filter((star) => star.conversation.kind !== conversation.kind || star.conversation.id !== conversation.id || star.itemId !== itemId); emit({ type: "stars" }); return { ok: true }; },
+    searchHistory: async (query) => {
+      const words = query.toLowerCase().trim().split(/\s+/);
+      const rows = [...Object.entries(db.items).flatMap(([id, items]) => items.map((item) => ({ ref: { kind: "assistant" as const, id }, item }))), ...Object.entries(db.groupItems).flatMap(([id, items]) => items.map((item) => ({ ref: { kind: "group" as const, id }, item })))];
+      const results = rows.flatMap(({ ref, item }) => {
+        if ((item.kind !== "user" && item.kind !== "assistant") || !words.every((word) => item.text.toLowerCase().includes(word))) return [];
+        const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : ref.id;
+        return [{ conversation: ref, conversationName: (ref.kind === "assistant" ? db.assistants.find((a) => a.id === ref.id)?.name : db.groups.find((g) => g.id === ref.id)?.name) ?? ref.id, itemId: item.id, speaker, speakerName: speaker === "user" ? "用户" : db.assistants.find((a) => a.id === speaker)?.name ?? speaker, at: item.at, snippet: item.text.slice(0, 150), starred: stars.some((star) => star.conversation.kind === ref.kind && star.conversation.id === ref.id && star.itemId === item.id) }];
+      }).sort((a, b) => b.at.localeCompare(a.at));
+      return { results: results.slice(0, 50), total: results.length };
+    },
     usage: async (): Promise<UsageView> => {
       const timezone = db.settings.settings.general.timezone;
       if (usageData?.timezone !== timezone) usageData = { timezone, ...mockUsageRows(timezone) };

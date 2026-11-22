@@ -15,6 +15,8 @@ import type {
   Routine,
   Rule,
   WorklogEntry,
+  StarredMessage,
+  ConversationRef,
 } from "../../shared/types.ts";
 
 function writeJsonAtomic(path: string, value: unknown): void {
@@ -122,7 +124,7 @@ export class Store {
   /** 启动时先检查系统数据；单条任务和日志记录在各自列表中跳过并记录。 */
   validate(): void {
     this.globalRules();
-    for (const file of ["config.json", "settings.json", "secrets.json", "push.json", "seeded.json", "moves.json"]) {
+    for (const file of ["config.json", "settings.json", "secrets.json", "push.json", "seeded.json", "moves.json", "stars.json"]) {
       readJson(join(this.home, "system", file), null);
     }
     for (const path of ["knowledge/entries.json", "knowledge/collections.json", "system/lore/config.json"]) readJson(join(this.home, path), null);
@@ -145,6 +147,26 @@ export class Store {
     for (const id of this.groupIds()) {
       for (const name of ["group.json", "rules.json", "state.json", "routines.json"]) readJson(join(groupDir(this.home, id), name), null);
     }
+  }
+
+  stars(): StarredMessage[] {
+    const stars = readJson<unknown>(join(this.home, "system", "stars.json"), []);
+    if (!Array.isArray(stars)) throw new Error("收藏文件格式无效");
+    return stars as StarredMessage[];
+  }
+
+  saveStar(star: StarredMessage): StarredMessage {
+    const all = this.stars();
+    const existing = all.find((item) => item.conversation.kind === star.conversation.kind && item.conversation.id === star.conversation.id && item.itemId === star.itemId);
+    if (existing) return existing;
+    writeJsonAtomic(join(this.home, "system", "stars.json"), [...all, star]);
+    return star;
+  }
+
+  deleteStar(conversation: ConversationRef, itemId: string): void {
+    const all = this.stars();
+    const next = all.filter((item) => item.conversation.kind !== conversation.kind || item.conversation.id !== conversation.id || item.itemId !== itemId);
+    if (next.length !== all.length) writeJsonAtomic(join(this.home, "system", "stars.json"), next);
   }
 
   globalRules(): Rule[] {

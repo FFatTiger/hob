@@ -1,6 +1,18 @@
 import type { TranslationEntry } from "../../../../shared/i18n-en.ts";
 /** English translations for conversations and right panels. */
 export const conversationEn: Record<string, TranslationEntry> = {
+  "收藏": "Favorite", "来自": "From",
+  "取消收藏": "Remove favorite",
+  "收藏操作失败：{error}": "Couldn't update favorite: {error}",
+  "搜索收藏消息": "Search favorite messages",
+  "跳到原文": "Go to message",
+  "原消息已不在": "The original message is no longer available",
+  "还没有收藏的消息。在消息上点收藏，常用的结论、地址就能在这里找到。": "No favorite messages yet. Favorite a message to keep useful answers and addresses here.",
+  "没有找到匹配的收藏消息": "No matching favorite messages",
+  "没有找到包含「{query}」的消息": "No messages contain “{query}”",
+  "搜索失败：{error}": "Search failed: {error}",
+  "消息": "Messages",
+  "展开": "Expand",
   "来自任务 {name}": "From job {name}",
   "来自和 {name} 的对话": "From a conversation with {name}",
   "拖动调整云桌面宽度": "Drag to resize the cloud desktop",

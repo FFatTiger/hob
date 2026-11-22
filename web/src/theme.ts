@@ -15,7 +15,7 @@ export function resolveTheme(theme: Theme, systemDark: boolean) {
 
 interface StatusPage {
   phase: "loading" | "login" | "ready" | "error";
-  page: "main" | "settings" | "knowledge" | "plugins";
+  page: "main" | "settings" | "knowledge" | "plugins" | "stars";
   sheet: boolean;
   panelStack: Array<{ kind: string; full?: boolean }>;
 }

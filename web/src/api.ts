@@ -1,6 +1,9 @@
 // 真实客户端：REST 路由见 docs/architecture.md，事件契约见 shared/types.ts。
 import { t } from "../../shared/i18n.ts";
 import type {
+  StarRequest,
+  StarredMessage,
+  HistorySearchResult,
   AboutInfo,
   AnswerApprovalBody,
   Assistant,
@@ -105,6 +108,10 @@ export interface EventHandlers {
 }
 
 export interface HobApi {
+  stars(): Promise<{ stars: StarredMessage[] }>;
+  addStar(body: StarRequest): Promise<{ star: StarredMessage }>;
+  deleteStar(body: StarRequest): Promise<{ ok: true }>;
+  searchHistory(query: string): Promise<HistorySearchResult>;
   knowledge(query?: KnowledgeQuery): Promise<KnowledgePage>;
   knowledgeEntry(id: string, chunk?: number): Promise<KnowledgeEntryView>;
   reindexKnowledge(id: string): Promise<{ ok: true }>;
@@ -297,6 +304,10 @@ export const realApi: HobApi = {
   providers: () => req<ProvidersView>("/api/providers"),
   claude: () => req<ClaudeCodeView>("/api/claude"),
   saveClaude: (revision, claude) => req<ClaudeCodeView>("/api/claude", json({ revision, claude }, "PUT")),
+  stars: () => req<{ stars: StarredMessage[] }>("/api/stars"),
+  addStar: (body) => req<{ star: StarredMessage }>("/api/stars", json(body)),
+  deleteStar: (body) => req<{ ok: true }>("/api/stars", json(body, "DELETE")),
+  searchHistory: (query) => req<HistorySearchResult>(`/api/history/search?query=${encodeURIComponent(query)}`),
   putProvider: (id, body) => req<ProvidersView>(`/api/providers/${encodeURIComponent(id)}`, json(body, "PUT")),
   putThinking: (body) => req<ModelThinkingSaved>("/api/models/thinking", json(body, "PUT")),
   deleteProvider: (id) => req<ProvidersView>(`/api/providers/${encodeURIComponent(id)}`, { method: "DELETE" }),

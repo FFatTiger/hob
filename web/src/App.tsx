@@ -12,6 +12,7 @@ import { MobileList, Sheet } from "./components/Mobile.tsx";
 import { Panel } from "./components/Panel.tsx";
 import { PushPrompt } from "./components/PushPrompt.tsx";
 import { SettingsPage } from "./components/Settings.tsx";
+import { Stars } from "./components/Stars.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
 import { GroupSidebar, MobileTopics } from "./components/Topics.tsx";
 import { Home } from "./components/Home.tsx";
@@ -207,6 +208,7 @@ export function App() {
     );
   }
 
+  if (s.page === "stars") return <><Stars narrow={narrow} />{toast}{pushPrompt}{loginOverlay}</>;
   if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} />{toast}{pushPrompt}{loginOverlay}</>;
 
   if (knowledge.mounted) {

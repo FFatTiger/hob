@@ -1687,6 +1687,33 @@ svg.i {
 }
 /* 回复 / 复制挂在气泡外侧、贴着底边（助手在右边，用户在左边），不占竖向空间：
    气泡和卡片之间统一 8px，悬停出现也不会把对话顶动。触屏不显示，用长按菜单 */
+.history-results { padding: 12px 8px; }
+.history-heading { color: var(--text3); font-size: 12px; padding: 4px 8px 8px; }
+.history-results p { color: var(--text3); font-size: 12px; padding: 0 8px; }
+.history-row { width: 100%; display: flex; gap: 9px; text-align: left; padding: 9px 8px; border-radius: 10px; }
+.history-row:hover { background: var(--field); }
+.history-content { min-width: 0; flex: 1; display: grid; gap: 4px; }
+.history-title { display: flex; justify-content: space-between; gap: 8px; }
+.history-title span, .history-snippet { color: var(--text3); font-size: 12px; }
+.history-snippet { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+/* 收藏消息 */
+.stars-page .sethead { display: flex; }
+.stars-main { flex: 1; min-width: 0; overflow-y: auto; padding: 30px 24px 48px; }
+.stars-main > * { max-width: 760px; }
+.stars-page.narrow .stars-main { padding: 16px 16px 40px; }
+.stars-main .knowledge-search { width: 100%; }
+.stars-list { margin-top: 20px; border-radius: 14px; background: var(--field); }
+.star-row { position: relative; padding: 18px; }
+.star-row:hover { background: var(--hover); border-radius: 14px; }
+.star-meta { display: flex; align-items: center; gap: 8px; color: var(--text3); font-size: 12px; padding-right: 100px; }
+.star-meta strong { color: var(--text2); }
+.star-body { margin-top: 10px; max-height: 144px; overflow: hidden; }
+.star-body.open { max-height: none; }
+.star-actions { position: absolute; right: 12px; top: 14px; display: flex; }
+.stars-empty { color: var(--text3); margin-top: 36px; }
+.message-star { position: absolute; left: 100%; bottom: 3px; padding-left: 5px; color: var(--text3); }
+.hov.right .message-star { left: auto; right: 100%; padding: 0 5px 0 0; }
+@media (hover: hover) { .hov.msg:hover .message-star { opacity: 0; } }
 .tools {
   position: absolute;
   left: 100%;
@@ -3461,6 +3488,8 @@ html:lang(en) .screen .v {
   .message-lifted.message-closing::backdrop { animation: message-fade-out 180ms ease forwards; }
   .message-lifted.message-clipped { mask-image: linear-gradient(to bottom, black calc(100% - 36px), transparent); }
   .hov.msg > .message-selecting, .message-selecting, .message-selecting * { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
+  /* 浮起来的消息可以直接长按选文字（系统的选择手柄），菜单留着 */
+  .hov.msg > .message-lifted, .message-lifted, .message-lifted * { user-select: text; -webkit-user-select: text; -webkit-touch-callout: default; }
   .message-popup-menu:popover-open {
     position: fixed; inset: auto; margin: 0; width: min(240px, calc(100vw - 16px)); padding: 0; overflow: hidden;
     border: 1px solid var(--line); border-radius: 14px; background: var(--card); color: var(--text);

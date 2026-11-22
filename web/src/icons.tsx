@@ -2,6 +2,8 @@
 import type { CSSProperties } from "react";
 
 const I = {
+  star: '<path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
+  starFilled: '<path fill="currentColor" d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1-5.4-2.9-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z"/>',
   search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
   hash: '<path d="M9.5 4 7.5 20M16.5 4l-2 16M4 9.5h16M3 15h16"/>',
   plus: '<path d="M12 5v14M5 12h14"/>',

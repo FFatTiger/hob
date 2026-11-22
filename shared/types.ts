@@ -661,6 +661,32 @@ export interface PageLive {
   error?: string;
 }
 
+export type ConversationRef = { kind: "assistant" | "group"; id: string };
+
+/** 收藏保存消息快照，原消息消失后仍可查看。 */
+export interface StarredMessage {
+  conversation: ConversationRef;
+  itemId: string;
+  speaker: string;
+  at: Iso;
+  starredAt: Iso;
+  text: string;
+}
+
+export interface HistoryMatch {
+  conversation: ConversationRef;
+  conversationName: string;
+  itemId: string;
+  speaker: string;
+  speakerName: string;
+  at: Iso;
+  snippet: string;
+  starred: boolean;
+}
+export interface HistorySearchResult { results: HistoryMatch[]; total: number }
+
+export interface StarRequest { conversation: ConversationRef; itemId: string }
+
 export interface ItemsPage {
   pageLive?: PageLive[];
   items: Item[]; // 旧 → 新
@@ -946,6 +972,7 @@ export interface Bootstrap {
 }
 
 export type HobEvent =
+  | { type: "stars" }
   | { type: "rules" }
   | { type: "desktop-control"; screen: string; taken: boolean }
   | { type: "desktop-screens"; screens: DesktopScreen[] }

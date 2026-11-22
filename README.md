@@ -51,6 +51,7 @@ Hob works in a mobile browser and can be added to the home screen as an app. Pus
 - **Memory**: stored locally or in [Lore](https://github.com/FFatTiger/lore).
 - **Pages and images**: assistants can present comparisons and research as pages in the side panel, and generate or edit images through an OpenAI-compatible image API.
 - **Cloud desktop** (optional): a browser for each assistant; a site you sign in to in one is signed in for all of them. You can watch or take over.
+- **Favorites and chat search**: favorite a message to keep a result or an address at hand, search every conversation from the sidebar, and let assistants look up past chats themselves.
 - **Usage**: requests, tokens and estimated cost by model and by assistant.
 
 ## Quick start

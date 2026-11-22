@@ -37,7 +37,7 @@ export const EN: Record<string, TranslationEntry> = {
   "分派的任务会显示在这里": "Assigned jobs will appear here",
   "定时任务会显示在这里": "Schedules will appear here",
   "知识库": "Knowledge base",
-  "搜索助手": "Search assistants",
+  "搜索对话和消息": "Search chats and messages",
   "关闭搜索": "Close search",
   "首页": "Home",
   "规则": "Rules",

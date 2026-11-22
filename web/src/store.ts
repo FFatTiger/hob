@@ -4,6 +4,8 @@ import { parseRoute, type SettingsSection } from "./route.ts";
 import { useRef, useSyncExternalStore } from "react";
 import { currentLocale, localeFromBrowser, setLocale as setSharedLocale, t, type Locale } from "../../shared/i18n.ts";
 import type {
+  StarredMessage,
+  ConversationRef,
   AnswerApprovalBody,
   Approval,
   Assistant,
@@ -121,6 +123,8 @@ export interface GroupPrefs {
 }
 
 export interface State {
+  stars: StarredMessage[];
+  starsError: string | null;
   phase: "loading" | "login" | "ready" | "error";
   error: string | null; // 致命错误（无法连接后端）
   notice: string | null; // 一次性的操作失败提示
@@ -140,7 +144,7 @@ export interface State {
   settings: SettingsFile;
   locale: Locale;
   globalRules: { rules: Rule[] | null; error: string | null; busy: boolean };
-  page: "main" | "settings" | "knowledge" | "plugins";
+  page: "main" | "settings" | "knowledge" | "plugins" | "stars";
   pluginId: string | null;
   pluginPage: PluginPage;
   knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
@@ -306,6 +310,8 @@ function initial(): State {
     settings: { revision: 0, settings: EMPTY_SETTINGS },
     locale: initialLocale,
     globalRules: { rules: null, error: null, busy: false },
+    stars: [],
+    starsError: null,
     page: "main",
     pluginId: null,
     pluginPage: "installed",
@@ -374,6 +380,7 @@ function initial(): State {
     state.pluginId = bootRoute.pluginId ?? null;
     state.pluginPage = bootRoute.pluginPage ?? "installed";
   }
+  if (bootRoute.stars) state.page = "stars";
   if (bootRoute.knowledge) state.page = "knowledge";
   if (bootRoute.settings) {
     state.page = "settings";
@@ -1090,6 +1097,7 @@ async function loadBootstrap(reconnect = false) {
       );
       watchVisibility();
     }
+    void loadStars();
     const sel =
       state.sel && boot.assistants.some((a) => a.id === state.sel)
         ? state.sel
@@ -1103,7 +1111,7 @@ async function loadBootstrap(reconnect = false) {
     // 群地址代表综合时间线；手机刷新也应直接回到综合。
     else if (state.gsel && state.groups.some((g) => g.id === state.gsel)) await selectGroup(state.gsel, true, false, Boolean(bootRoute.group));
     // 没指定对话就停在首页
-    else if (sel && state.sel) await select(sel, mobileWantsChat());
+    else if (state.page === "main" && sel && state.sel) await select(sel, mobileWantsChat());
     if (state.page === "knowledge") void loadKnowledge();
     // 刷新前开着的任务页：内容要自己拉
     const top = state.panelStack.at(-1);
@@ -1119,6 +1127,9 @@ export function applyEvent(ev: HobEvent) {
   if (ev.type === "item" || ev.type === "delta") itemEvents.get(ev.assistantId)?.push(ev);
   if (ev.type === "group-item" || ev.type === "group-delta") groupEvents.get(ev.groupId)?.push(ev);
   switch (ev.type) {
+    case "stars":
+      void loadStars();
+      break;
     case "rules":
       if (state.page === "settings" && state.section === "rules") void loadRules();
       break;
@@ -2558,6 +2569,40 @@ export async function uploadKnowledge(collection: string, files: File[]) {
   try { await api.uploadKnowledge(collection, files); await loadKnowledge(false, true); }
   catch (e) { set({ notice: t("上传失败：{error}", { error: errText(e) }) }); }
 }
+export async function loadStars() {
+  try { const { stars } = await api.stars(); set({ stars, starsError: null }); }
+  catch (error) { set({ starsError: errText(error) }); }
+}
+
+export async function toggleStar(conversation: ConversationRef, itemId: string) {
+  try {
+    const exists = state.stars.some((star) => star.conversation.kind === conversation.kind && star.conversation.id === conversation.id && star.itemId === itemId);
+    if (exists) await api.deleteStar({ conversation, itemId }); else await api.addStar({ conversation, itemId });
+    await loadStars();
+  } catch (error) { set({ notice: t("收藏操作失败：{error}", { error: errText(error) }) }); }
+}
+
+export function searchHistory(query: string) { return api.searchHistory(query); }
+
+export function openStars() { set({ page: "stars", panelStack: [], sheet: false }); void loadStars(); }
+
+export async function jumpToHistory(conversation: ConversationRef, itemId: string) {
+  if (conversation.kind === "assistant" && !state.assistants.some((a) => a.id === conversation.id) || conversation.kind === "group" && !state.groups.some((g) => g.id === conversation.id)) { set({ notice: t("原消息已不在") }); return; }
+  set({ page: "main", panelStack: [] });
+  try {
+    if (conversation.kind === "group") await selectGroup(conversation.id, true, false, true); else await select(conversation.id);
+    const found = conversation.kind === "group" ? await findGroupItem(conversation.id, (item) => item.id === itemId) : await findConversationItem(conversation.id, (item) => item.id === itemId);
+    if (!found) { set({ notice: t("原消息已不在") }); return; }
+    const deadline = performance.now() + 1500;
+    const locate = () => {
+      if (state.page !== "main" || (conversation.kind === "group" ? state.gsel : state.sel) !== conversation.id) return;
+      const row = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
+      if (row) flashItem(row); else if (performance.now() < deadline) requestAnimationFrame(locate); else set({ notice: t("未能定位到这条消息") });
+    };
+    requestAnimationFrame(locate);
+  } catch (error) { set({ notice: t("无法定位对话消息：{error}", { error: errText(error) }) }); }
+}
+
 export function openPlugins(pluginId: string | null = null, pluginPage: PluginPage = "installed") {
   set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, search: false });
 }

@@ -90,7 +90,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "bash", "edit", "write", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
+  "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -211,7 +211,7 @@ function messageText(content: unknown): string {
  * 只读的工具失败了不留提示行：模型看得见，接着说就行，用户不需要知道这次没读到。
  * 其余工具都算有副作用，以后新加的也照样算。
  */
-const READ_ONLY_TOOLS = new Set(["read", "search_plugins", "check_job", "overview", "show_assistant", "show_group", "find_knowledge", "search_knowledge", "web_search", "web_fetch", "tool_search"]);
+const READ_ONLY_TOOLS = new Set(["read", "search_history", "search_plugins", "check_job", "overview", "show_assistant", "show_group", "find_knowledge", "search_knowledge", "web_search", "web_fetch", "tool_search"]);
 
 /**
  * 有副作用的调用按「工具 + 对象」分开算：转交看助手，交给群看群，其余看工具本身。

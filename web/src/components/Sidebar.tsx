@@ -4,7 +4,8 @@ import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
-import { goHome, openKnowledge, openPlugins, openSettings, setQuery, toggleSideCollapsed, useApp } from "../store.ts";
+import { goHome, openKnowledge, openPlugins, openSettings, openStars, setQuery, toggleSideCollapsed, useApp } from "../store.ts";
+import { HistoryResults } from "./HistoryResults.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -22,7 +23,7 @@ export function Sidebar() {
       <div className="side-top">
         <div className="search">
           <Icon name="search" size={15} />
-          <input value={s.query} placeholder={t("搜索助手")} onChange={(e) => setQuery(e.target.value)} />
+          <input value={s.query} placeholder={t("搜索对话和消息")} onChange={(e) => setQuery(e.target.value)} />
         </div>
         {s.sel || s.gsel ? <button className="hob-icon-btn" title={t("收起左栏")} aria-label={t("收起左栏")} onClick={toggleSideCollapsed}><Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} /></button> : null}
         <button className={`hob-icon-btn side-home${!s.sel && !s.gsel ? " on" : ""}`} title={t("首页")} onClick={goHome}>
@@ -49,8 +50,10 @@ export function Sidebar() {
           ))}
         </div>
         <HomeSections size={42} markSel />
+        <HistoryResults />
       </div>
       <div className="side-foot">
+        <button className="frow" onClick={openStars}><Icon name="star" size={18} /><span className="sp">{t("收藏")}</span></button>
         <button className="frow" onClick={() => openPlugins()}><Icon name="plugin" size={18} /><span className="sp">{t("插件")}</span></button>
         <button className="frow" onClick={openKnowledge}>
           <Icon name="archive" size={18} />

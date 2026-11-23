@@ -69,15 +69,12 @@ function fieldDefinitions(card: CardRecord["card"]): Map<string, { signature: st
   visit(card.body.elements);
   return result;
 }
-function sourceIcon(pluginId: string | undefined) {
-  if (pluginId === "github") return <Icon name="github" size={15} />;
-  if (pluginId === "cloudflare") return <Icon name="globe" size={15} />;
-  if (pluginId === "email") return <Icon name="mail" size={15} />;
-  if (pluginId === "nas") return <Icon name="server" size={15} />;
-  if (pluginId === "bitwarden") return <Icon name="lock" size={15} />;
-  return <Icon name="plugin" size={15} />;
+/** 来源行的插件图标：用插件自己声明的图标（plugin.json 的 extensions.com.hob.plugins.icon），取不到就退回通用的插件图标。 */
+function PluginIcon({ pluginId }: { pluginId: string }) {
+  const [failed, setFailed] = useState(false);
+  if (failed) return <Icon name="plugin" size={16} />;
+  return <img src={`/api/plugins/${encodeURIComponent(pluginId)}/icon`} alt="" width={16} height={16} onError={() => setFailed(true)} />;
 }
-
 
 function validateElements(elements: any[], values: Record<string, unknown>): Record<string, string> {
   const errors: Record<string, string> = {};
@@ -178,7 +175,7 @@ function CardInputControl({ element, value, onChange, disabled, onCommit }: { el
   if (element.tag === "checker") return <label className="hc-checker"><span>{cardLabel(element)}</span><input type="checkbox" checked={Boolean(value ?? element.checked)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /></label>;
   if (element.tag === "select_static" || element.tag === "multi_select_static") {
     const options = element.options ?? [];
-    const compact = options.length <= (element.tag === "select_static" ? 5 : 8) && options.every((option: any) => cardText(option.text).length <= 8);
+    const compact = element.display === "chips" || (element.display !== "dropdown" && options.length <= (element.tag === "select_static" ? 5 : 8) && options.every((option: any) => cardText(option.text).length <= 8));
     if (compact) {
       const selected = element.tag === "multi_select_static" ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "");
       return <div className="hc-options">{options.map((option: any) => { const active = Array.isArray(selected) ? selected.includes(option.value) : selected === option.value; return <button type="button" className={`hc-option${active ? " active" : ""}`} disabled={disabled} aria-pressed={active} onClick={() => {
@@ -194,7 +191,10 @@ function CardInputControl({ element, value, onChange, disabled, onCommit }: { el
   if (element.input_type === "multiline_text") return <textarea className="hc-input hc-area" disabled={disabled} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "input" && element.name === "to" && text.includes("<") && text.endsWith(">")) return <div className="hc-input hc-recipient"><span>{text}</span><Icon name="close" size={13} /></div>;
   const password = element.input_type === "password";
-  return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit?.(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
+  const field = <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit?.(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}</span>;
+  // 「生成」是输入框旁边独立的按钮（效果图 1），不在输入框里面
+  if (password && element.generate) return <span className="hc-input-row">{field}<button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}><Icon name="dice" size={15} />{t("生成")}</button></span>;
+  return field;
 }
 
 /** 白底的行：连着的几行并成一组（列表、结果行） */
@@ -242,14 +242,20 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   const interactive = ["input", "select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow"].includes(element.tag);
   const inForm = Boolean(formElements);
   if (element.tag === "markdown") return <Markdown text={cardText(element.content)} />;
-  if (element.tag === "div") return element.icon ? <div className="hc-file-row"><Icon name={element.icon === "file" ? "file" : "doc"} size={15} /><span>{cardText(element.text)}</span></div> : <div className="hc-div">{cardText(element.text)}</div>;
+  if (element.tag === "div") {
+    // icon 是 Hob 的扩展：check 画成结果行（勾 + 灰字），file / doc 画成文件行
+    if (element.icon === "check") return <div className="hc-result"><Icon name="check" size={15} /><span>{cardText(element.text)}</span></div>;
+    if (element.icon) return <div className="hc-file-row"><Icon name={element.icon === "file" ? "file" : "doc"} size={15} /><span>{cardText(element.text)}</span></div>;
+    return <div className="hc-div">{cardText(element.text)}</div>;
+  }
   if (element.tag === "hr") return <hr className="hc-hr" />;
   if (element.tag === "img") return <img className="hc-img" src={element.src} alt={cardText(element.alt)} />;
   if (element.tag === "table") return <div className="hc-table-wrap"><table className="hc-table"><thead><tr>{(element.columns ?? []).map((column: any) => <th key={column.name}>{cardText(column.display_name)}</th>)}</tr></thead><tbody>{(element.rows ?? []).map((row: any, index: number) => <tr key={index}>{(element.columns ?? []).map((column: any) => <td key={column.name}><CardTableValue value={row[column.name]} /></td>)}</tr>)}</tbody></table></div>;
   if (element.tag === "form") return <form className="hc-form" onSubmit={(event) => { event.preventDefault(); submit(undefined, element.elements ?? []); }}><CardElementList elements={element.elements ?? []} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={element.elements ?? []} /></form>;
-  if (element.tag === "column_set") return <div className="hc-columns">{(element.columns ?? []).map((column: any, index: number) => <div className="hc-column" key={index}>{(column.elements ?? []).map((child: any, childIndex: number) => <CardElementView key={child.element_id ?? childIndex} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>)}</div>;
+  if (element.tag === "column_set") return <div className="hc-columns">{(element.columns ?? []).map((column: any, index: number) => <div className="hc-column" key={index} style={typeof column.weight === "number" && column.weight > 0 ? { flex: column.weight } : undefined}>{(column.elements ?? []).map((child: any, childIndex: number) => <CardElementView key={child.element_id ?? childIndex} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>)}</div>;
   if (element.tag === "collapsible_panel") return <CardCollapse title={cardText(element.header?.title)} expanded={Boolean(element.expanded)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</CardCollapse>;
-  if (element.tag === "interactive_container") return <div className="hc-interactive" onClick={() => element.behaviors?.find((behavior: any) => behavior.type === "open_url") && openUrl(element.behaviors.find((behavior: any) => behavior.type === "open_url").default_url)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>;
+  // 整块可点的容器才有手型光标；只是拿它拼一行的（两行字 + 右侧小字）没有 behaviors，不像能点
+  if (element.tag === "interactive_container") return <div className={`hc-interactive${element.behaviors?.length ? " hc-clickable" : ""}`} onClick={() => element.behaviors?.find((behavior: any) => behavior.type === "open_url") && openUrl(element.behaviors.find((behavior: any) => behavior.type === "open_url").default_url)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>;
   if (element.tag === "button") return <button type="button" className={`hob-btn${element.type === "primary_filled" ? " hob-btn-primary" : element.type === "danger" ? " hob-btn-danger" : ""}`} disabled={disabled} onClick={(event) => { event.preventDefault(); const url = element.behaviors?.find((behavior: any) => behavior.type === "open_url")?.default_url; if (url) openUrl(url); else submit(element, formElements); }}>{cardText(element.text)}</button>;
   if (interactive && field) {
     const change = (value: unknown) => { setValue(field, value); if (!inForm && element.tag !== "input") submit({ ...element, value: undefined }, undefined, value); };
@@ -300,7 +306,7 @@ export function CardView({ record, fresh, itemId }: { record: CardRecord; fresh:
   };
   const elements = record.card.body.elements;
   return <div className={`hov${fresh ? " enter" : ""}`} data-item-id={itemId}><div className={`b q hc${plugin ? " hc-plugin" : ""}${disabled ? " hc-disabled" : ""}`}>
-    {plugin ? <div className="hc-source">{sourceIcon(record.owner.type === "plugin" ? record.owner.pluginId : undefined)}{record.plugin?.pluginName ?? (record.owner.type === "plugin" ? record.owner.pluginId : t("插件"))}{hasPassword(record.card) ? <span className="hc-lock"><Icon name="lock" size={13} />{t("填写的内容只交给 {plugin}", { plugin: record.plugin?.pluginName ?? t("插件") })}</span> : null}</div> : null}
+    {plugin ? <div className="hc-source"><PluginIcon pluginId={record.owner.type === "plugin" ? record.owner.pluginId : ""} />{record.plugin?.pluginName ?? (record.owner.type === "plugin" ? record.owner.pluginId : t("插件"))}{hasPassword(record.card) ? <span className="hc-lock"><Icon name="lock" size={16} />{t("填写的内容只交给 {plugin}", { plugin: record.plugin?.pluginName ?? t("插件") })}</span> : null}</div> : null}
     <div className="qt">{title}</div>
     {record.card.header?.subtitle ? <div className="qs">{cardText(record.card.header.subtitle)}</div> : null}
     {record.feedback?.unavailable ? <div className="hc-unavailable">{record.feedback.unavailable}</div> : null}

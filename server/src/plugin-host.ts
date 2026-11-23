@@ -7,6 +7,7 @@ import { pluginOAuthLoggedIn, pluginOAuthNeedsRelogin, pluginOAuthProvider, type
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { McpAuthRequiredError, McpClient, McpHttpError, StdioTransport, StreamableHttpTransport, limitMcpContent, normalizeMcpInputSchema, toLlmContent, validateMcpServerConfig, type Tool } from "@earendil-works/pi-mcp";
 import type { Card } from "../../shared/cards.ts";
+import type { PluginCredentialRole } from "../../shared/types.ts";
 import { t } from "../../shared/i18n.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { cardTitle, validateCard } from "./cards.ts";
@@ -17,6 +18,7 @@ import { proxyEnvironment, type ProxyEnvironmentSettings } from "./network-proxy
 
 export type PluginConnectionStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
 export interface PluginServiceState { pluginId: string; name: string; status: PluginConnectionStatus; missing?: string[]; error?: string; tools: Tool[]; toolErrors?: { name: string; reason: string }[]; oauth?: { declared: boolean; loggedIn: boolean } }
+export interface CredentialProvider { pluginId: string; providerName: string; service: string; tool: string; role: PluginCredentialRole }
 type Connection = { state: PluginServiceState; client?: McpClient; retry?: NodeJS.Timeout; retryCount?: number; activeCalls?: number; onIdle?: Set<() => void>; stopped: boolean; hadCredentials?: boolean };
 const execSecret = promisify(execCallback);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -37,6 +39,53 @@ export class PluginHost {
   private key(id: string, name: string): string { return JSON.stringify([id, name]); }
   states(id?: string): PluginServiceState[] {
     return [...this.connections.values()].filter(c => !id || c.state.pluginId === id).map(c => structuredClone(c.state));
+  }
+  credentialProviders(assistantId: string, role?: PluginCredentialRole): CredentialProvider[] {
+    const providers: CredentialProvider[] = [];
+    for (const plugin of this.store.list()) {
+      if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
+      providers.push(...this.providersForPlugin(plugin.id, role));
+    }
+    return providers;
+  }
+  credentialProvidersForPlugin(pluginId: string, role?: PluginCredentialRole): CredentialProvider[] {
+    return this.providersForPlugin(pluginId, role);
+  }
+  credentialRolesForPlugin(pluginId: string): PluginCredentialRole[] {
+    return [...new Set(this.providersForPlugin(pluginId).map(provider => provider.role))];
+  }
+  private providersForPlugin(pluginId: string, role?: PluginCredentialRole): CredentialProvider[] {
+    const plugin = this.store.list().find(item => item.id === pluginId);
+    if (!plugin?.enabled) return [];
+    const providers: CredentialProvider[] = [];
+    for (const state of this.connections.values()) {
+      if (state.state.pluginId !== plugin.id || state.state.status !== "connected") continue;
+      for (const tool of state.state.tools) {
+        const meta = isObject(tool._meta) ? tool._meta : undefined;
+        const value = meta?.["hob/credentials"];
+        if (!["list", "secret", "generate", "save", "delete"].includes(String(value)) || (role && value !== role)) continue;
+        if (plugin.tools[tool.name]?.enabled === false) continue;
+        providers.push({ pluginId: plugin.id, providerName: this.displayName(plugin.id), service: state.state.name, tool: tool.name, role: value as PluginCredentialRole });
+      }
+    }
+    return providers;
+  }
+  hasCredentialProvider(assistantId: string): boolean {
+    return this.credentialProviders(assistantId, "list").length > 0 && this.credentialProviders(assistantId, "secret").length > 0;
+  }
+  hasPasswordGenerator(assistantId: string): boolean {
+    return this.hasCredentialProvider(assistantId)
+      && this.credentialProviders(assistantId, "generate").length > 0
+      && this.credentialProviders(assistantId, "save").length > 0;
+  }
+  async callCredential(provider: CredentialProvider, args: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
+    const response = await this.call(provider.pluginId, provider.service, provider.tool, args, signal);
+    if (response.isError) {
+      const message = (response.content ?? []).filter((block) => block.type === "text").map((block) => block.text ?? "").join(" ").trim() || "凭据工具调用失败";
+      throw new Error(this.redact(provider.pluginId, message));
+    }
+    if (!isObject(response.structuredContent)) throw new Error("凭据工具没有返回结构化结果");
+    return response.structuredContent;
   }
   setToolErrors(id: string, service: string, errors: { name: string; reason: string }[]): void {
     const state = this.connections.get(this.key(id, service))?.state;

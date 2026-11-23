@@ -6,6 +6,7 @@ import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
+import { chromium, type Page } from "playwright-core";
 import type { HobRuntime } from "./runtime.ts";
 import { closePlaywrightSessions } from "./playwright-cli.ts";
 
@@ -261,6 +262,23 @@ export class DesktopToolSession {
       PLAYWRIGHT_CLI_SESSION: this.sessionName,
       HOB_PLAYWRIGHT_CACHE_HOME: this.cacheDir,
     };
+  }
+
+  async withCurrentPage<T>(run: (page: Page) => Promise<T>): Promise<T> {
+    if (this.disposed) throw new Error("任务已结束。");
+    this.check();
+    this.relay ??= new BrowserRelay(this.runtime, this.screen, () => this.check(), () => this.claim());
+    const relay = await this.relay.start();
+    const browser = await chromium.connectOverCDP(relay.endpoint, { headers: { Authorization: `Bearer ${relay.token}` } });
+    try {
+      this.check();
+      const pages = browser.contexts().flatMap((context) => context.pages());
+      const page = pages.at(-1);
+      if (!page) throw new Error("云桌面里没有打开的页面。");
+      return await run(page);
+    } finally {
+      await browser.close().catch(() => {});
+    }
   }
 
   /** 非网页设备操作仍由任务使用桌面工具。 */

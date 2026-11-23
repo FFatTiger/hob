@@ -63,7 +63,7 @@ import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrig
 
 import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
-import type { PluginCatalogView, PluginPatch, PluginView, PluginsView } from "../../shared/types.ts";
+import type { PluginCatalogView, PluginLoginsView, PluginPatch, PluginView, PluginsView } from "../../shared/types.ts";
 
 export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; q?: string; before?: string; limit?: number };
 
@@ -179,6 +179,11 @@ export interface HobApi {
   addCustomPlugin(id: string, server: Record<string, unknown>): Promise<PluginView>;
   startPluginOAuth(id: string, service: string): Promise<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>;
   disconnectPluginOAuth(id: string, service: string): Promise<PluginView>;
+  removePluginLoginAuto(id: string, host: string, username: string): Promise<PluginView>;
+  pluginLogins(id: string, service?: string): Promise<PluginLoginsView>;
+  pluginLoginSecret(id: string, loginId: string, service?: string): Promise<{ username: string; password: string; totp?: string }>;
+  savePluginLogin(id: string, body: { id?: string; service?: string; name: string; uris: string[]; username: string; password: string; folder?: string }): Promise<{ id: string; folder?: string }>;
+  deletePluginLogin(id: string, loginId: string, service?: string): Promise<{ ok: true }>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
   testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
@@ -347,6 +352,11 @@ export const realApi: HobApi = {
   addCustomPlugin: (id, server) => req<PluginView>("/api/plugins/custom", json({ id, server })),
   startPluginOAuth: (id, service) => req<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, json({})),
   disconnectPluginOAuth: (id, service) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, { method: "DELETE" }),
+  removePluginLoginAuto: (id, host, username) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/login-auto`, json({ host, username }, "DELETE")),
+  pluginLogins: (id, service) => req<PluginLoginsView>(`/api/plugins/${encodeURIComponent(id)}/logins${service ? `?service=${encodeURIComponent(service)}` : ""}`),
+  pluginLoginSecret: (id, loginId, service) => req<{ username: string; password: string; totp?: string }>(`/api/plugins/${encodeURIComponent(id)}/logins/secret`, json({ id: loginId, ...(service ? { service } : {}) })),
+  savePluginLogin: (id, body) => req<{ id: string; folder?: string }>(`/api/plugins/${encodeURIComponent(id)}/logins`, json(body)),
+  deletePluginLogin: (id, loginId, service) => req<{ ok: true }>(`/api/plugins/${encodeURIComponent(id)}/logins/${encodeURIComponent(loginId)}${service ? `?service=${encodeURIComponent(service)}` : ""}`, { method: "DELETE" }),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
   testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),

@@ -1,6 +1,7 @@
 import { validateMcpEntry, mcpConfigPath } from "./mcp.ts";
 import { newerPluginVersion } from "../../shared/plugin-version.ts";
 import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PluginSources, OFFICIAL_SOURCE } from "./plugin-sources.ts";
@@ -31,6 +32,7 @@ export interface InstalledPlugin {
 type Document = { plugins: InstalledPlugin[] };
 type Obj = Record<string, unknown>;
 const validId = /^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/;
+export const BUILTIN_SOURCE = "builtin";
 const secretPrefix = (id: string) => `plugin:${id}:config:`;
 const profileSecretPrefix = (id: string, profileId: string) => `plugin:${id}:profile:${profileId}:config:`;
 const readJson = (path: string): unknown => JSON.parse(readFileSync(path, "utf8"));
@@ -45,6 +47,18 @@ export class PluginStore {
     if (!validId.test(id)) throw new Error(`插件 id 无效：${id}`);
     return join(this.home, "plugins", id);
   }
+  private builtinRoot(): string { return fileURLToPath(new URL("../mcp/vault", import.meta.url)); }
+  private builtinCatalog(): { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; error?: string }[] {
+    const path = this.builtinRoot();
+    try {
+      const manifest = readJson(join(path, "plugin.json"));
+      const mcp = readJson(join(path, "mcp.json"));
+      if (!object(manifest) || typeof manifest.version !== "string") return [];
+      pluginConfig(manifest, mcp);
+      return [{ id: "vault", version: manifest.version, manifest, source: BUILTIN_SOURCE, sourceName: "Hob 自带", path }];
+    } catch { return []; }
+  }
+  private builtinEntry(id: string) { return this.builtinCatalog().find(entry => entry.id === id); }
   private read(): Document {
     if (!existsSync(this.path)) return { plugins: [] };
     const value = readJson(this.path);
@@ -104,13 +118,13 @@ export class PluginStore {
     const type = lower.endsWith(".svg") ? "image/svg+xml" : lower.endsWith(".png") ? "image/png" : lower.endsWith(".webp") ? "image/webp" : "image/jpeg";
     return { content: readFileSync(actual), type };
   }
-  catalog() { return this.sources.catalog(); }
+  catalog() { return [...this.builtinCatalog(), ...this.sources.catalog()]; }
   install(id: string, update = false, force = false, sourceId?: string): InstalledPlugin {
     const doc = this.read();
     const old = doc.plugins.find(p => p.id === id);
-    const wanted = update ? old?.source : (sourceId ?? OFFICIAL_SOURCE);
+    const wanted = update ? old?.source : (sourceId ?? (id === "vault" ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
     if (old && update && old.source === "custom") throw new Error("自定义插件不能从插件源更新");
-    const entry = this.catalog().find(item => item.id === id && item.source === wanted);
+    const entry = wanted === BUILTIN_SOURCE ? this.builtinEntry(id) : this.catalog().find(item => item.id === id && item.source === wanted);
     if (!entry) throw new Error(`插件源没有插件 ${id}`);
     if (entry.error) throw new Error(entry.error);
     const source = entry.path;

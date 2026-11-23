@@ -456,7 +456,74 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
 }
 
 function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  if (approval.login?.fillNewPassword) return <FillNewPasswordCard approval={approval} fresh={fresh} />;
+  if (approval.login?.fillLogin) return <FillLoginCard approval={approval} fresh={fresh} />;
   return approval.login ? <LoginCard approval={approval} fresh={fresh} /> : approval.questions?.length ? <MultiQuestionCard approval={approval} fresh={fresh} /> : <SingleQuestionCard approval={approval} fresh={fresh} />;
+}
+
+function passwordCharacterText(characters: string[]): string {
+  const set = new Set(characters);
+  if (set.has("lowercase") && set.has("uppercase") && set.has("numbers") && set.has("symbols")) return t("含符号");
+  if (set.has("lowercase") && set.has("uppercase") && set.has("numbers") && set.size === 3) return t("字母和数字");
+  return characters.map((character) => ({ lowercase: t("小写字母"), uppercase: t("大写字母"), numbers: t("数字"), symbols: t("符号") }[character] ?? character)).join(t("、"));
+}
+
+function FillNewPasswordCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  const fill = approval.login!.fillNewPassword!;
+  const [folder, setFolder] = useState(fill.folder ?? "");
+  const pending = approval.status === "pending" && fill.state === "pending";
+  const done = fill.state === "filled";
+  const websiteMatch = fill.mode === "register" ? t("和注册页一致") : t("和保存的网址一致");
+  const submit = (key: ApprovalOption["key"]) => void answer(approval.id, { key, ...(fill.mode === "register" ? { folder } : {}) });
+  return (
+    <div className={`b q qfill${fresh ? " enter" : ""}`}>
+      <div className="qfill-source"><Icon name="key" size={15} />{fill.mode === "register" ? t("Hob · 注册新账号") : t("Hob · 修改密码")}</div>
+      <div className="qt">{approval.title}</div>
+      {pending ? <div className="qs">{approval.detail}</div> : null}
+      <div className="qfill-group">
+        <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span><span className="qfill-ok"><Icon name="check" size={13} />{websiteMatch}</span></div>
+        <div className="qfill-row"><span className="qfill-label">{t("用户名")}</span><span className="qfill-value">{fill.username}</span></div>
+        <div className="qfill-row"><span className="qfill-label">{t("密码")}</span><span className="qfill-value">{t("{provider} 生成", { provider: fill.providerName })}</span><span className="qfill-provider">{t("{length} 位 · {characters}", { length: fill.length, characters: passwordCharacterText(fill.characters) })}</span></div>
+        {fill.mode === "register" ? <div className="qfill-row"><span className="qfill-label">{t("存到")}</span><select className="qfill-select" value={folder} disabled={!pending} onChange={(event) => setFolder(event.target.value)}><option value="">{t("不放进文件夹")}</option>{fill.folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></div> : null}
+      </div>
+      {fill.state === "failed" ? <div className="qfill-result bad">{fill.result}</div> : done ? <div className="qfill-result"><Icon name="check" size={15} />{fill.result}</div> : fill.state === "rejected" ? <div className="qfill-result">{t("已拒绝")}</div> : null}
+      {pending ? <div className="qfoot qacts"><button className="hob-btn" onClick={() => submit("A")}>{t("不允许")}</button><button className="hob-btn hob-btn-primary" onClick={() => submit("B")}>{t("生成并填写")}</button></div> : null}
+    </div>
+  );
+}
+
+function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  const fill = approval.login!.fillLogin!;
+  const [selected, setSelected] = useState(fill.chosenId ?? (fill.candidates.length === 1 ? `${fill.candidates[0]!.provider}:${fill.candidates[0]!.id}` : ""));
+  const chosen = fill.candidates.find((candidate) => `${candidate.provider}:${candidate.id}` === (fill.chosenId ?? selected)) ?? fill.candidates[0];
+  const pending = approval.status === "pending" && fill.state !== "mismatch";
+  const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.result ? `✓ ${fill.result}` : undefined;
+  return (
+    <div className={`b q qfill${fresh ? " enter" : ""}`}>
+      <div className="qfill-source"><Icon name="key" size={15} />{t("Hob · 填写登录")}</div>
+      <div className="qt">{approval.title}</div>
+      {pending ? <div className="qs">{approval.detail}</div> : null}
+      {fill.state === "mismatch" ? (
+        <>
+          <div className="qfill-group">
+            <div className="qfill-row"><span className="qfill-label">{t("当前页面")}</span><span className="qfill-value">{fill.currentHost ?? fill.host}</span><span className="qfill-bad">{t("对不上")}</span></div>
+            <div className="qfill-row"><span className="qfill-label">{t("保存的网址")}</span><span className="qfill-value">{[...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((uri) => { try { return new URL(uri).hostname; } catch { return uri; } })))].join("、")}</span></div>
+          </div>
+          <div className="qfill-hint">{t("登录页的网址和密码管理器里保存的网址不一致，可能是仿冒的页面。")}</div>
+        </>
+      ) : (
+        <>
+          <div className="qfill-group">
+            <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span><span className="qfill-ok"><Icon name="check" size={13} />{t("和保存的网址一致")}</span></div>
+            {chosen ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
+          </div>
+          {pending && fill.candidates.length > 1 ? <div className="opts qfill-options">{fill.candidates.map((candidate) => { const id = `${candidate.provider}:${candidate.id}`; return <button className={`opt${selected === id ? " chosen" : ""}`} key={id} onClick={() => setSelected(id)}><span className="key">{candidate.username.slice(0, 1).toUpperCase()}</span><span className="olabel">{candidate.username}{candidate.folder ? ` · ${candidate.folder}` : ""}</span>{selected === id ? <span className="ck"><Icon name="check" size={16} /></span> : null}</button>; })}</div> : null}
+          {status ? <div className={`qfill-result${fill.state === "failed" ? " bad" : ""}`}>{fill.state === "failed" ? null : <Icon name="check" size={15} />}{status}</div> : null}
+          {pending ? <div className="qfoot qacts"><button className="hob-btn" onClick={() => void answer(approval.id, { key: "A", ...(selected ? { candidateId: selected } : {}) })}>{t("不允许")}</button><button className="hob-btn" disabled={!selected} onClick={() => void answer(approval.id, { key: "B", candidateId: selected })}>{t("这次允许")}</button><button className="hob-btn hob-btn-primary" disabled={!selected} onClick={() => void answer(approval.id, { key: "C", candidateId: selected })}>{t("这个网站以后都允许")}</button></div> : null}
+        </>
+      )}
+    </div>
+  );
 }
 
 function LoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {

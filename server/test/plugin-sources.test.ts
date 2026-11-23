@@ -39,7 +39,7 @@ describe("plugin sources", () => {
     const repo = repository(), home = temp();
     const store = new PluginStore(home, undefined, pathToFileURL(repo).href);
     await store.sources.open();
-    expect(store.catalog().map(entry => entry.id)).toEqual(["github", "gmail", "email"]);
+    expect(store.catalog().map(entry => entry.id)).toEqual(["vault", "github", "gmail", "email"]);
     store.install("github");
     const docPath = join(home, "system/plugins.json");
     const doc = JSON.parse(readFileSync(docPath, "utf8"));

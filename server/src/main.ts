@@ -11,6 +11,7 @@ import { generalSkillsDir, syncGeneralIndex } from "./skills.ts";
 import { ensurePlaywrightCli } from "./playwright-cli.ts";
 import { readLegacyModels } from "./settings.ts";
 import { releaseIdleTodosAtStartup } from "./todos.ts";
+import { seedBuiltinVault } from "./dev-team.ts";
 
 export interface StartOptions {
   home?: string;
@@ -42,6 +43,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
     ...(legacyModels ? { legacyModels } : {}),
   });
 
+  seedBuiltinVault(runtime.plugins.store);
   runtime.delegations.recovering = true;
   // 通用技能目录里可能放着从别处来的技能：启动时给没登记的补上索引，之后改、删、回退都按索引走
   syncGeneralIndex(generalSkillsDir(home));

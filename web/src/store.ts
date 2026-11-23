@@ -193,7 +193,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["cards-demo", "plugin-demo", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["cards-demo", "plugin-demo", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -771,6 +771,11 @@ export const deletePluginProfile = (id: string, profileId: string) => api.delete
 export const savePluginProfileConfig = (id: string, profileId: string, values: Record<string, unknown>) => api.savePluginProfileConfig(id, profileId, values);
 export const startPluginOAuth = (id: string, service: string) => api.startPluginOAuth(id, service);
 export const disconnectPluginOAuth = (id: string, service: string) => api.disconnectPluginOAuth(id, service);
+export const removePluginLoginAuto = (id: string, host: string, username: string) => api.removePluginLoginAuto(id, host, username);
+export const loadPluginLogins = (id: string, service?: string) => api.pluginLogins(id, service);
+export const loadPluginLoginSecret = (id: string, loginId: string, service?: string) => api.pluginLoginSecret(id, loginId, service);
+export const savePluginLogin = (id: string, body: Parameters<typeof api.savePluginLogin>[1]) => api.savePluginLogin(id, body);
+export const deletePluginLogin = (id: string, loginId: string, service?: string) => api.deletePluginLogin(id, loginId, service);
 export const addCustomPlugin = (id: string, server: Record<string, unknown>) => api.addCustomPlugin(id, server);
 export const patchPlugin = (id: string, patch: import("../../shared/types.ts").PluginPatch) => api.patchPlugin(id, patch);
 export const deletePlugin = (id: string) => api.deletePlugin(id);

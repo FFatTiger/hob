@@ -34,7 +34,7 @@ describe("plugin storage", () => {
 
   it("installs bundled plugins, keeps secrets private, validates values and removes secrets", () => {
     const plugins = store();
-    expect(plugins.catalog().map(p => p.id)).toEqual(["github", "gmail", "email"]);
+    expect(plugins.catalog().map(p => p.id)).toEqual(["vault", "github", "gmail", "email"]);
     plugins.install("github");
     expect(plugins.view("github").missing).toEqual(["GITHUB_PERSONAL_ACCESS_TOKEN"]);
     plugins.saveConfig("github", { GITHUB_PERSONAL_ACCESS_TOKEN: "private-value" });

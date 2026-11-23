@@ -164,3 +164,40 @@
   .plugin-card { gap: 8px; padding: 14px; }
   .plugin-card-desc { min-height: 0; }
 }
+.plugin-logins { position: relative; }
+.plugin-login-status { display: flex; align-items: center; gap: 12px; min-height: 22px; padding: 13px 16px; border-radius: 14px; background: var(--field); color: var(--text2); font-size: 13px; }
+.plugin-login-status-text { display: inline-flex; align-items: center; gap: 5px; }
+.plugin-login-status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok); }
+.plugin-login-count { color: var(--text2); }
+.plugin-login-status .plugin-login-import { margin-left: auto; background: var(--card); }
+.plugin-file-input { display: none; }
+.plugin-login-heading { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
+.plugin-login-heading h2 { margin: 0; }
+.plugin-login-search { display: flex; align-items: center; gap: 6px; min-width: 150px; margin-left: auto; padding: 6px 9px; border: 1px solid var(--line); border-radius: 8px; color: var(--text3); }
+.plugin-login-search input { width: 150px !important; margin: 0 !important; padding: 0; border: 0; outline: 0; background: transparent; color: var(--text); font-size: 12px; }
+.plugin-login-list { display: flex; flex-direction: column; gap: 2px; margin-top: 12px; padding: 6px; border-radius: 14px; background: var(--field); }
+.plugin-login-wrap { border-radius: 10px; }
+.plugin-login-row { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 50px; padding: 8px 10px; }
+.plugin-login-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); }
+.plugin-login-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--text) 8%, var(--field)); color: var(--text3); font-size: 13px; font-weight: 600; }
+.plugin-login-info { flex: 1; min-width: 0; }
+.plugin-login-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
+.plugin-login-meta { margin-top: 3px; overflow: hidden; color: var(--text2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-login-meta.secret { color: var(--text); font-family: "JetBrains Mono", monospace; }
+.plugin-login-folder { display: block; flex: none; max-width: 130px; overflow: hidden; color: var(--text3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-login-edit { padding: 0 12px 12px 52px; }
+.plugin-login-edit .lbl { display: block; margin-top: 10px; }
+.plugin-login-edit .field { display: block; width: 100%; box-sizing: border-box; margin-top: 5px; background: var(--bg); }
+.plugin-login-menu { position: fixed; z-index: 10; width: 150px; }
+.plugin-login-menu button.danger { color: var(--danger); }
+.plugin-import-preview { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--field); color: var(--text2); font-size: 13px; }
+.plugin-empty-login { margin-top: 12px; padding: 16px; color: var(--text3); font-size: 13px; text-align: center; }
+.plugin-login-notice { position: fixed; z-index: 12; right: 20px; bottom: 20px; max-width: min(360px, calc(100vw - 40px)); padding: 9px 12px; border-radius: 9px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 8px 24px var(--jump-shadow); }
+.plugin-login-loading { display: block; margin-top: 8px; color: var(--text3); font-size: 12px; }
+@media (max-width: 767px) {
+  .plugin-login-heading { align-items: flex-start; flex-direction: column; gap: 8px; }
+  .plugin-login-search { width: 100%; box-sizing: border-box; margin-left: 0; }
+  .plugin-login-search input { width: 100% !important; }
+  .plugin-login-folder { display: none; }
+  .plugin-login-edit { padding-left: 10px; }
+}

@@ -45,6 +45,7 @@ export type {
 } from "./cards.ts";
 
 export type PluginServiceStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
+export type PluginCredentialRole = "list" | "secret" | "generate" | "save" | "delete";
 export interface PluginToolView {
   name: string;
   toolName: string;
@@ -72,13 +73,34 @@ export interface PluginView {
   config: Record<string, Record<string, unknown>>;
   profiles?: PluginProfileView[];
   missing: string[];
+  credentialRoles?: PluginCredentialRole[];
   skills?: string[];
   services: PluginServiceView[];
+  autoLogins?: LoginAutoEntry[];
 }
 export interface PluginsView { plugins: PluginView[]; migrationErrors: string[] }
 export interface PluginSourceView { id: string; name: string; url: string; updatedAt?: string; error?: string; refreshing?: boolean }
 export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
+export interface PluginLoginView {
+  id: string;
+  name: string;
+  username: string;
+  uris: string[];
+  folder?: string;
+  hasPassword: boolean;
+  hasTotp: boolean;
+}
+export interface PluginLoginsView { service: string; logins: PluginLoginView[]; folders: string[] }
+
 export interface PluginPatch { enabled?: boolean; assistants?: string[] | null; tools?: Record<string, { enabled?: boolean }> }
+
+export interface LoginAutoEntry {
+  provider: string;
+  itemId: string;
+  host: string;
+  username: string;
+  at: Iso;
+}
 
 export type Iso = string; // ISO 8601 时间
 
@@ -633,6 +655,44 @@ export interface ApprovalAnswer {
   text?: string;
 }
 
+export interface FillLoginCandidate {
+  provider: string;
+  providerName: string;
+  id: string;
+  name: string;
+  username: string;
+  folder?: string;
+  uris: string[];
+}
+
+export type PasswordCharacter = "lowercase" | "uppercase" | "numbers" | "symbols";
+
+export interface FillNewPasswordApproval {
+  host: string;
+  pageUrl: string;
+  username: string;
+  mode: "register" | "change";
+  provider: string;
+  providerName: string;
+  length: number;
+  characters: PasswordCharacter[];
+  name: string;
+  origin: string;
+  folders: string[];
+  folder?: string;
+  candidate?: FillLoginCandidate;
+  state?: "pending" | "filled" | "rejected" | "failed";
+  result?: string;
+}
+export interface FillLoginApproval {
+  host: string;
+  currentHost?: string;
+  candidates: FillLoginCandidate[];
+  chosenId?: string;
+  state?: "pending" | "filled" | "rejected" | "mismatch" | "failed";
+  result?: string;
+}
+
 export interface Approval {
   id: string;
   assistantId: string; // 提问的助手
@@ -653,7 +713,7 @@ export interface Approval {
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
-  login?: { site: string; reason: string }; // ask_login 的登录交接信息
+  login?: { site: string; reason: string; fillLogin?: FillLoginApproval; fillNewPassword?: FillNewPasswordApproval }; // ask_login 或填登录的交接信息
   createdAt: Iso;
   answeredAt?: Iso;
 }
@@ -1058,6 +1118,8 @@ export interface SendMessageBody {
 /** POST /api/approvals/:id 的请求体：选一个选项（key），或者用户自己写的一段（text）。 */
 export interface AnswerApprovalBody {
   key?: ApprovalOption["key"];
+  candidateId?: string;
+  folder?: string;
   /** 单问题卡：用户自己写的一段；多问题卡：整张卡的补充说明（可选） */
   text?: string;
   /** 多问题卡：每个问题的答案，和 questions 一一对应 */

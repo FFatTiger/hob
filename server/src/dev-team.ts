@@ -9,6 +9,7 @@ import type { Assistant, Group } from "../../shared/types.ts";
 import { archiveAssistantsDir, systemDir } from "./config.ts";
 import type { CreateGroupInput } from "./groups.ts";
 import type { Store } from "./store.ts";
+import { PluginStore } from "./plugin-store.ts";
 
 export interface DevTeamRole {
   id: string;
@@ -108,6 +109,21 @@ export function seedHacker(store: Store, locale: Locale): void {
   writeSeeded(store.home, { hacker: true });
 }
 
+export function seedBuiltinVault(plugins: PluginStore): void {
+  const seeded = readSeeded(plugins.home);
+  if (seeded.vault) return;
+  if (plugins.list().some(plugin => plugin.id === "vault")) {
+    writeSeeded(plugins.home, { vault: true });
+    return;
+  }
+  try {
+    plugins.install("vault");
+    writeSeeded(plugins.home, { vault: true });
+  } catch (error) {
+    console.error("安装自带密码库失败，下次启动再试：", error instanceof Error ? error.message : error);
+  }
+}
+
 /** 默认建的那个群：自带的敏捷团队走「软件开发」这一套。 */
 export const DEV_TEAM_GROUP = {
   name: "敏捷团队",
@@ -135,6 +151,7 @@ export function devTeamGroup(locale: Locale) {
 interface SeededFile {
   devTeam?: boolean;
   hacker?: boolean;
+  vault?: boolean;
 }
 
 function seededPath(home: string): string {

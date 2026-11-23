@@ -42,6 +42,8 @@ const JOB_STATE: Record<JobStatus, string> = { queued: "排队中", running: "�
 interface Wave {
   turns: number;
   stopped: boolean;
+  pending: number;
+  finalSpeaker?: string;
 }
 
 /** 一个成员正在说的这一轮：正文（@ 检测用）、当前这条消息的条目、最后一条说成的条目、叫到它的条目。 */
@@ -140,6 +142,7 @@ export class GroupManager {
       unread: this.unread(group.id, items),
       busy: this.busyOf(group.id),
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
+      ...(this.runtime.router.suggestionsFor(group.ownerId, group.id)?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, group.id) } : {}),
       ...(Object.keys(activity).length ? { activity } : {}),
     };
   }
@@ -536,6 +539,7 @@ export class GroupManager {
       this.store.saveApproval(expired);
       this.bus.emit({ type: "approval", approval: expired });
     }
+    this.runtime.router.clearSuggestions(group.ownerId, gid);
     const item = this.append(gid, {
       kind: "user",
       speaker: "user",
@@ -545,7 +549,7 @@ export class GroupManager {
     });
     this.bus.emit({ type: "group-item", groupId: gid, item });
     this.publish(gid);
-    const wave: Wave = { turns: 0, stopped: false };
+    const wave: Wave = { turns: 0, stopped: false, pending: 0 };
     for (const id of this.targetsOf(group, body.text, body.quote)) void this.callTurn(gid, group, id, wave, item.id);
     return item;
   }
@@ -588,10 +592,15 @@ export class GroupManager {
   private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = false): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
+    wave.pending += 1;
     const previous = this.queues.get(key) ?? Promise.resolve();
     const next = previous
       .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event, workDone))
-      .catch(() => undefined);
+      .catch(() => undefined)
+      .finally(() => {
+        wave.pending = Math.max(0, wave.pending - 1);
+        if (wave.pending === 0 && wave.finalSpeaker && !wave.stopped) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, gid);
+      });
     this.queues.set(key, next);
     void next.then(() => {
       if (this.queues.get(key) === next) this.queues.delete(key);
@@ -632,7 +641,7 @@ export class GroupManager {
   async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = false): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
-    await this.schedule(gid, assistantId, { turns: 0, stopped: false }, triggerId, text, workDone);
+    await this.schedule(gid, assistantId, { turns: 0, stopped: false, pending: 0 }, triggerId, text, workDone);
   }
 
   /**
@@ -694,6 +703,7 @@ export class GroupManager {
     if ((this.epochs.get(gid) ?? 0) !== epoch) return;
     // 回复里 @ 了别的成员：接着轮到他们（用这一轮最后一条的 id 当触发条目）
     if (!turn.lastId) return;
+    wave.finalSpeaker = assistantId;
     for (const id of this.mentions(text, group, assistantId)) this.schedule(gid, id, wave, turn.lastId);
   }
 

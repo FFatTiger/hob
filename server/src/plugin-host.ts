@@ -127,12 +127,13 @@ export class PluginHost {
       this.scheduleRetry(connection, raw);
     });
     let hadCredentials = false;
+    let transport: StdioTransport | StreamableHttpTransport | undefined;
     try {
       if (parsed.kind === "http") {
         connection.hadCredentials = hadCredentials = pluginOAuthLoggedIn(this.oauthTarget(state.pluginId, state.name));
         state.oauth = { declared: isObject(raw) && isObject(raw.oauth), loggedIn: hadCredentials };
       }
-      const transport = parsed.kind === "stdio"
+      transport = parsed.kind === "stdio"
         ? new StdioTransport({ command: parsed.config.command, args: parsed.config.args, cwd: parsed.config.cwd, env: { ...parsed.config.env, ...proxyEnvironment(process.env, this.proxySettings()) } })
         : new StreamableHttpTransport({ url: parsed.config.url, headers: parsed.config.headers, authProvider: pluginOAuthProvider(this.oauthTarget(state.pluginId, state.name)) });
       await client.connect(transport);
@@ -147,7 +148,10 @@ export class PluginHost {
       if (connection.stopped || this.closed) return;
       const authError = error instanceof McpOAuthAuthorizationRequiredError || error instanceof McpAuthRequiredError || (error instanceof McpHttpError && (error.status === 401 || error.status === 403));
       state.status = authError ? (hadCredentials || (parsed.kind === "http" && pluginOAuthNeedsRelogin(this.oauthTarget(state.pluginId, state.name))) ? "needs_relogin" : "needs_login") : "error";
-      state.error = this.redact(state.pluginId, error instanceof Error ? error.message : String(error));
+      // 本地服务启动就退出时，原因在它的 stderr 里；只取最后几行
+      const stderr = transport instanceof StdioTransport ? transport.stderr.trim().split("\n").slice(-5).join("\n").slice(-600) : "";
+      const message = error instanceof Error ? error.message : String(error);
+      state.error = state.status === "needs_login" ? undefined : this.redact(state.pluginId, stderr ? `${message}：${stderr}` : message);
       if (connection.client === client) connection.client = undefined;
       await client.close().catch(() => {});
       this.scheduleRetry(connection, raw);

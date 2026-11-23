@@ -26,7 +26,7 @@ describe("CardView", () => {
   it("renders plugin source, lock notice, nested form fields, and button", () => {
     const html = renderToStaticMarkup(<CardView record={record} fresh itemId="item-card" />);
     expect(html).toContain("密码箱");
-    expect(html).toContain("填写的内容只交给插件");
+    expect(html).toContain("填写的内容只交给 密码箱");
     expect(html).toContain("保存登录信息");
     expect(html).toContain("用户名");
     expect(html).toContain('type="password"');

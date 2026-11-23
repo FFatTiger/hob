@@ -1,9 +1,12 @@
 import { t } from "../../../shared/i18n.ts";
-import { useEffect, useState } from "react";
+import { createPortal } from "react-dom";
+import { useEffect, useState, type ReactNode } from "react";
 import type { CardElement, CardRecord } from "../../../shared/types.ts";
 import type { CardActionRequest } from "../../../shared/cards.ts";
 import { answerCard } from "../store.ts";
 import { Markdown } from "./Markdown.tsx";
+import { Disclosure } from "./Disclosure.tsx";
+import { useMenu } from "./use-menu.ts";
 import { Icon } from "../icons.tsx";
 
 function cardText(value: unknown): string {
@@ -52,6 +55,16 @@ function hasPassword(card: CardRecord["card"]): boolean {
   return visit(card.body.elements);
 }
 
+function sourceIcon(pluginId: string | undefined) {
+  if (pluginId === "github") return <Icon name="github" size={15} />;
+  if (pluginId === "cloudflare") return <Icon name="globe" size={15} />;
+  if (pluginId === "email") return <Icon name="mail" size={15} />;
+  if (pluginId === "nas") return <Icon name="server" size={15} />;
+  if (pluginId === "bitwarden") return <Icon name="lock" size={15} />;
+  return <Icon name="plugin" size={15} />;
+}
+
+
 function validateElements(elements: any[], values: Record<string, unknown>): Record<string, string> {
   const errors: Record<string, string> = {};
   const visit = (children: any[]) => {
@@ -78,11 +91,64 @@ function validateElements(elements: any[], values: Record<string, unknown>): Rec
 function CardResult({ record }: { record: CardRecord }) {
   const result = record.result;
   if (!result) return null;
+  const findLabel = (elements: any[], name: string): string | undefined => {
+    for (const element of elements) {
+      if (element.name === name) return cardLabel(element);
+      const nested = cardElementChildren(element);
+      const found = findLabel(nested, name);
+      if (found) return found;
+    }
+    return undefined;
+  };
   const fields = Object.entries(result.fields ?? {});
   return <div className="hc-result-list">
-    {result.buttonText ? <div className="hc-result-row"><span>{t("操作")}</span><b>{result.buttonText}</b></div> : null}
-    {fields.map(([key, value]) => <div className="hc-result-row" key={key}><span>{key}</span><b><CardValue value={value} /></b></div>)}
+    {fields.map(([key, value]) => <div className="hc-result-row" key={key}><span>{findLabel(record.card.body.elements, key) ?? key}</span><b><CardValue value={value} /></b></div>)}
   </div>;
+}
+
+function formatDateValue(value: string): string {
+  if (!value) return "";
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) return value;
+  const lang = globalThis.document?.documentElement.lang || globalThis.navigator?.language || "zh-CN";
+  if (lang.toLowerCase().startsWith("zh")) {
+    const weekday = new Intl.DateTimeFormat("zh-CN", { weekday: "short" }).format(date);
+    return t("{month} 月 {day} 日 {weekday}", { month: date.getMonth() + 1, day: date.getDate(), weekday });
+  }
+  return new Intl.DateTimeFormat(lang, { month: "short", day: "numeric", weekday: "short" }).format(date);
+}
+
+function CardMenuField({ element, value, onChange, disabled }: { element: any; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
+  const menu = useMenu();
+  const multi = element.tag === "multi_select_static";
+  const options = element.options ?? [];
+  const selected: string[] | string = multi ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "");
+  const labels = (Array.isArray(selected) ? selected : [selected]).map((item: string) => cardText(options.find((option: any) => option.value === item)?.text)).filter(Boolean);
+  const label = labels.length ? labels.join("、") : cardText(element.placeholder) || "⋯";
+  return <>
+    <button type="button" className="hc-select-button" disabled={disabled} aria-expanded={menu.menu?.id === element.name} onClick={(event) => menu.toggle(element.name || element.tag, event.currentTarget)}><span>{label}</span><Icon name="down" size={15} /></button>
+    {menu.menu ? createPortal(<div className="amenu hc-card-menu" ref={menu.box} role="menu">
+      {options.map((option: any) => {
+        const active = Array.isArray(selected) ? selected.includes(option.value) : selected === option.value;
+        return <button type="button" role="menuitem" className={active ? "selected" : ""} key={option.value} onClick={() => {
+          if (Array.isArray(selected)) onChange(active ? selected.filter((item: string) => item !== option.value) : [...selected, option.value]);
+          else { onChange(option.value); menu.close(); }
+        }}>{active ? <Icon name="check" size={14} /> : <span className="hc-menu-empty" />}{cardText(option.text)}</button>;
+      })}
+    </div>, document.body) : null}
+  </>;
+}
+
+function CardDateControl({ element, value, onChange, disabled }: { element: any; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
+  const text = value === undefined ? "" : String(value);
+  return <span className="hc-date"><span>{formatDateValue(text)}</span><Icon name="cal" size={15} /><input aria-label={cardLabel(element)} className="hc-date-native" type="date" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} /></span>;
+}
+
+function CardTableValue({ value }: { value: unknown }) {
+  const [checked, setChecked] = useState(typeof value === "boolean" ? value : false);
+  if (typeof value === "boolean") return <button type="button" className={`hc-table-switch${checked ? " on" : ""}`} role="switch" aria-checked={checked} onClick={() => setChecked((current) => !current)}><span /></button>;
+  if (value === undefined || value === null || value === "") return <span className="hc-empty">—</span>;
+  return <span>{String(value)}</span>;
 }
 
 function generatedPassword(): string {
@@ -99,31 +165,40 @@ function CardInputControl({ element, value, onChange, disabled }: { element: any
   if (element.tag === "select_static" || element.tag === "multi_select_static") {
     const options = element.options ?? [];
     const compact = options.length <= (element.tag === "select_static" ? 5 : 8) && options.every((option: any) => cardText(option.text).length <= 8);
-    const selected = element.tag === "multi_select_static" ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "");
-    const pick = (optionValue: string) => {
-      if (element.tag === "multi_select_static") {
-        const next = new Set(selected);
-        if (next.has(optionValue)) next.delete(optionValue); else next.add(optionValue);
-        onChange([...next]);
-      } else onChange(optionValue);
-    };
-    if (compact) return <div className="hc-options">{options.map((option: any) => { const active = Array.isArray(selected) ? selected.includes(option.value) : selected === option.value; return <button type="button" className={`hc-option${active ? " active" : ""}`} disabled={disabled} aria-pressed={active} onClick={() => pick(option.value)} key={option.value}>{active && element.tag === "multi_select_static" ? <b>✓</b> : null}{cardText(option.text)}</button>; })}</div>;
-    return <select className="hc-select" disabled={disabled} multiple={element.tag === "multi_select_static"} value={Array.isArray(selected) ? selected : selected} onChange={(event) => onChange(element.tag === "multi_select_static" ? [...event.target.selectedOptions].map((option) => option.value) : event.target.value)}>
-      {!element.required && element.tag === "select_static" ? <option value="">{cardText(element.placeholder) || t("请选择")}</option> : null}
-      {options.map((option: any) => <option value={option.value} key={option.value}>{cardText(option.text)}</option>)}
-    </select>;
+    if (compact) {
+      const selected = element.tag === "multi_select_static" ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "");
+      return <div className="hc-options">{options.map((option: any) => { const active = Array.isArray(selected) ? selected.includes(option.value) : selected === option.value; return <button type="button" className={`hc-option${active ? " active" : ""}`} disabled={disabled} aria-pressed={active} onClick={() => {
+        if (Array.isArray(selected)) onChange(active ? selected.filter((item) => item !== option.value) : [...selected, option.value]);
+        else onChange(option.value);
+      }} key={option.value}>{active && element.tag === "multi_select_static" ? <Icon name="check" size={13} /> : null}{cardText(option.text)}</button>; })}</div>;
+    }
+    return <CardMenuField element={element} value={value} onChange={onChange} disabled={disabled} />;
   }
-  if (element.tag === "date_picker") return <input className="hc-input" type="date" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
-  if (element.tag === "picker_time") return <input className="hc-input" type="time" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
-  if (element.tag === "picker_datetime") return <input className="hc-input" type="datetime-local" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
-  if (element.tag === "overflow") return <select className="hc-select" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)}><option value="">⋯</option>{(element.options ?? []).map((option: any) => <option value={option.value} key={option.value}>{cardText(option.text)}</option>)}</select>;
+  if (element.tag === "overflow") return <CardMenuField element={element} value={value} onChange={onChange} disabled={disabled} />;
+  if (["date_picker", "picker_time", "picker_datetime"].includes(element.tag)) return element.tag === "date_picker" ? <CardDateControl element={element} value={value} onChange={onChange} disabled={disabled} /> : <input className="hc-input" type={element.tag === "picker_time" ? "time" : "datetime-local"} disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
   if (element.input_type === "number") return <span className="hc-number"><button type="button" disabled={disabled || (element.min !== undefined && Number(value || 0) <= element.min)} onClick={() => onChange(Math.max(element.min ?? -Infinity, Number(value || 0) - 1))}>−</button><input className="hc-input" disabled={disabled} type="number" value={text} min={element.min} max={element.max} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} /><button type="button" disabled={disabled || (element.max !== undefined && Number(value || 0) >= element.max)} onClick={() => onChange(Math.min(element.max ?? Infinity, Number(value || 0) + 1))}>＋</button></span>;
   if (element.input_type === "multiline_text") return <textarea className="hc-input hc-area" disabled={disabled} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />;
+  if (element.tag === "input" && element.name === "to" && text.includes("<") && text.endsWith(">")) return <div className="hc-input hc-recipient"><span>{text}</span><Icon name="close" size={13} /></div>;
   const password = element.input_type === "password";
-  return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />{password ? <button type="button" className="hc-eye" disabled={disabled} onClick={() => setShow((current) => !current)}>{show ? "◉" : "◎"}</button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
+  return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
 }
 
 type Submit = (element?: any, formElements?: any[], directValue?: unknown) => void;
+
+function CardElementList({ elements, values, setValue, errors, disabled, submit, openUrl, formElements }: { elements: any[]; values: Record<string, unknown>; setValue: (name: string, value: unknown) => void; errors: Record<string, string>; disabled: boolean; submit: Submit; openUrl: (url: string) => void; formElements?: any[] }) {
+  const result: ReactNode[] = [];
+  for (let index = 0; index < elements.length;) {
+    if (elements[index]?.tag === "button") {
+      const buttons: any[] = [];
+      while (elements[index]?.tag === "button") buttons.push(elements[index++]);
+      result.push(<div className="hc-actions" key={`actions-${index}`}>{buttons.map((element, buttonIndex) => <CardElementView key={element.element_id ?? buttonIndex} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>);
+      continue;
+    }
+    const element = elements[index++];
+    result.push(<CardElementView key={element.element_id ?? index} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />);
+  }
+  return <>{result}</>;
+}
 
 function actionFor(element: any, value?: unknown): Record<string, unknown> {
   const action: Record<string, unknown> = { tag: element.tag, ...(element.name ? { name: element.name } : {}) };
@@ -139,18 +214,18 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   const interactive = ["input", "select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow"].includes(element.tag);
   const inForm = Boolean(formElements);
   if (element.tag === "markdown") return <Markdown text={cardText(element.content)} />;
-  if (element.tag === "div") return <div className="hc-div">{cardText(element.text)}</div>;
+  if (element.tag === "div") return element.icon ? <div className="hc-file-row"><Icon name={element.icon === "file" ? "file" : "doc"} size={15} /><span>{cardText(element.text)}</span></div> : <div className="hc-div">{cardText(element.text)}</div>;
   if (element.tag === "hr") return <hr className="hc-hr" />;
   if (element.tag === "img") return <img className="hc-img" src={element.src} alt={cardText(element.alt)} />;
-  if (element.tag === "table") return <div className="hc-table-wrap"><table className="hc-table"><thead><tr>{(element.columns ?? []).map((column: any) => <th key={column.name}>{cardText(column.display_name)}</th>)}</tr></thead><tbody>{(element.rows ?? []).map((row: any, index: number) => <tr key={index}>{(element.columns ?? []).map((column: any) => <td key={column.name}>{String(row[column.name] ?? "")}</td>)}</tr>)}</tbody></table></div>;
-  if (element.tag === "form") return <form className="hc-form" onSubmit={(event) => { event.preventDefault(); submit(undefined, element.elements ?? []); }}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={element.elements ?? []} />)}</form>;
+  if (element.tag === "table") return <div className="hc-table-wrap"><table className="hc-table"><thead><tr>{(element.columns ?? []).map((column: any) => <th key={column.name}>{cardText(column.display_name)}</th>)}</tr></thead><tbody>{(element.rows ?? []).map((row: any, index: number) => <tr key={index}>{(element.columns ?? []).map((column: any) => <td key={column.name}><CardTableValue value={row[column.name]} /></td>)}</tr>)}</tbody></table></div>;
+  if (element.tag === "form") return <form className="hc-form" onSubmit={(event) => { event.preventDefault(); submit(undefined, element.elements ?? []); }}><CardElementList elements={element.elements ?? []} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={element.elements ?? []} /></form>;
   if (element.tag === "column_set") return <div className="hc-columns">{(element.columns ?? []).map((column: any, index: number) => <div className="hc-column" key={index}>{(column.elements ?? []).map((child: any, childIndex: number) => <CardElementView key={child.element_id ?? childIndex} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>)}</div>;
   if (element.tag === "collapsible_panel") return <details className="hc-collapse" open={element.expanded}><summary>{cardText(element.header?.title)}</summary>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</details>;
   if (element.tag === "interactive_container") return <div className="hc-interactive" onClick={() => element.behaviors?.find((behavior: any) => behavior.type === "open_url") && openUrl(element.behaviors.find((behavior: any) => behavior.type === "open_url").default_url)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>;
   if (element.tag === "button") return <button type="button" className={`hob-btn${element.type === "primary_filled" ? " hob-btn-primary" : element.type === "danger" ? " hob-btn-danger" : ""}`} disabled={disabled} onClick={(event) => { event.preventDefault(); const url = element.behaviors?.find((behavior: any) => behavior.type === "open_url")?.default_url; if (url) openUrl(url); else submit(element, formElements); }}>{cardText(element.text)}</button>;
   if (interactive && field) {
     const change = (value: unknown) => { setValue(field, value); if (!inForm) submit({ ...element, value: undefined }, undefined, value); };
-    return <label className="hc-field"><span className="hc-label"><span>{cardLabel(element)}{element.required ? <b>*</b> : null}</span>{element.min_length !== undefined ? <span className="hc-aside">{t("至少 {count} 位", { count: element.min_length })}</span> : element.tag === "multi_select_static" ? <span className="hc-aside">{t("可多选")}</span> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
+    return <label className={`hc-field${errors[field] ? " has-error" : ""}`}><span className="hc-label"><span>{cardLabel(element)}{element.required ? <b>*</b> : null}</span>{element.min_length !== undefined ? <span className="hc-aside">{t("至少 {count} 位", { count: element.min_length })}</span> : element.tag === "multi_select_static" ? <span className="hc-aside">{t("可多选")}</span> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
   }
   return null;
 }
@@ -177,12 +252,12 @@ export function CardView({ record, fresh, itemId }: { record: CardRecord; fresh:
   };
   const elements = record.card.body.elements;
   return <div className={`hov${fresh ? " enter" : ""}`} data-item-id={itemId}><div className={`b q hc${plugin ? " hc-plugin" : ""}${disabled ? " hc-disabled" : ""}`}>
-    {plugin ? <div className="hc-source"><Icon name="plugin" size={15} />{record.plugin?.pluginName ?? (record.owner.type === "plugin" ? record.owner.pluginId : t("插件"))}{hasPassword(record.card) ? <span className="hc-lock">🔒 {t("填写的内容只交给插件")}</span> : null}</div> : null}
+    {plugin ? <div className="hc-source">{sourceIcon(record.owner.type === "plugin" ? record.owner.pluginId : undefined)}{record.plugin?.pluginName ?? (record.owner.type === "plugin" ? record.owner.pluginId : t("插件"))}{hasPassword(record.card) ? <span className="hc-lock"><Icon name="lock" size={13} />{t("填写的内容只交给 {plugin}", { plugin: record.plugin?.pluginName ?? t("插件") })}</span> : null}</div> : null}
     <div className="qt">{title}</div>
     {record.card.header?.subtitle ? <div className="qs">{cardText(record.card.header.subtitle)}</div> : null}
     {record.feedback?.unavailable ? <div className="hc-unavailable">{record.feedback.unavailable}</div> : null}
+    {record.status === "done" ? <CardResult record={record} /> : <div className="hc-elements"><CardElementList elements={elements} values={values} setValue={(name, value) => { setValues((current) => ({ ...current, [name]: value })); setErrors((current) => { const next = { ...current }; delete next[name]; return next; }); }} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} /></div>}
     {record.feedback?.toast ? <div className={`hc-toast ${record.feedback.toast.type}`}>{record.feedback.toast.content}</div> : null}
-    {record.status === "done" ? <CardResult record={record} /> : <div className="hc-elements">{elements.map((element, index) => <CardElementView key={(element as any).element_id ?? index} element={element} values={values} setValue={(name, value) => { setValues((current) => ({ ...current, [name]: value })); setErrors((current) => { const next = { ...current }; delete next[name]; return next; }); }} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} />)}</div>}
     {busy ? <div className="hc-loading"><Icon name="spin" className="spin" size={14} />{t("处理中…")}</div> : null}
   </div></div>;
 }

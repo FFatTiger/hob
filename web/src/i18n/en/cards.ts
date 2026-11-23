@@ -8,4 +8,10 @@ export const cardsEn: Record<string, string> = {
   "插件": "Plugin",
   "填写的内容只交给插件": "Your entry is sent only to the plugin",
   "处理中…": "Processing…",
+  "生成": "Generate",
+  "这是必填项": "This field is required",
+  "至少 {count} 个字": "At least {count} characters",
+  "最多 {count} 个字": "At most {count} characters",
+  "不能小于 {value}": "Cannot be less than {value}",
+  "不能大于 {value}": "Cannot be greater than {value}",
 };

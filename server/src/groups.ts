@@ -557,6 +557,7 @@ export class GroupManager {
   /** 停掉这个群里所有成员正在进行的回合（不停任务）；排队里的回合也不再生效。 */
   async stop(gid: string, group?: Group): Promise<void> {
     const target = group ?? this.group(gid);
+    this.runtime.router.clearSuggestions(target.ownerId, gid);
     this.epochs.set(gid, (this.epochs.get(gid) ?? 0) + 1);
     await Promise.all(target.members.map((id) => this.runtime.router.stop(id, gid)));
   }

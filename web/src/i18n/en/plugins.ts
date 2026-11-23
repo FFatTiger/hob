@@ -73,6 +73,8 @@ export const pluginsEn = {
   "服务返回的原话：": "The service returned:",
   "没有返回具体原因": "No further reason was returned.",
   "工具": "Tools",
+  "自动填写的网站": "Auto-fill websites",
+  "改成每次问": "Ask every time",
   "其余步骤": "Remaining steps",
   "{n} 项": { one: "{n} item", other: "{n} items" },
   "配置": "Configuration",

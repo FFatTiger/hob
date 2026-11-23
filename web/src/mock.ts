@@ -2410,6 +2410,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     addCustomPlugin: async id => { const p = makePlugin(id, "custom"); pluginViews.push(p); return clone(p); },
     startPluginOAuth: async (id, name) => { const service = mockPlugin(id).services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = true; service.status = "connected"; } return { authorized: true, callbackUrl: `${globalThis.location?.origin ?? "http://localhost"}/api/plugins/oauth/callback` }; },
     disconnectPluginOAuth: async (id, name) => { const p = mockPlugin(id); const service = p.services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = false; service.status = "needs_login"; } return clone(p); },
+    removePluginLoginAuto: async (id, host, username) => { const p = mockPlugin(id); p.autoLogins = (p.autoLogins ?? []).filter(entry => entry.host !== host || entry.username !== username); return clone(p); },
     search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");

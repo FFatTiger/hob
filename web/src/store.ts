@@ -771,6 +771,7 @@ export const deletePluginProfile = (id: string, profileId: string) => api.delete
 export const savePluginProfileConfig = (id: string, profileId: string, values: Record<string, unknown>) => api.savePluginProfileConfig(id, profileId, values);
 export const startPluginOAuth = (id: string, service: string) => api.startPluginOAuth(id, service);
 export const disconnectPluginOAuth = (id: string, service: string) => api.disconnectPluginOAuth(id, service);
+export const removePluginLoginAuto = (id: string, host: string, username: string) => api.removePluginLoginAuto(id, host, username);
 export const addCustomPlugin = (id: string, server: Record<string, unknown>) => api.addCustomPlugin(id, server);
 export const patchPlugin = (id: string, patch: import("../../shared/types.ts").PluginPatch) => api.patchPlugin(id, patch);
 export const deletePlugin = (id: string) => api.deletePlugin(id);

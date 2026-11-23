@@ -9,6 +9,7 @@ import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
+import { candidateId, fillCandidate, rememberAutoLogin } from "./login.ts";
 
 export interface ActionResult {
   status: number;
@@ -302,12 +303,53 @@ export async function answerCard(runtime: HobRuntime, cardId: string, input: Car
   return { status: 200, body: { card: answered } };
 }
 
+/** 填登录批准卡的答案：凭据只在这次 CDP 操作里取用，不进入审批记录。 */
+async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, input: AnswerApprovalBody): Promise<ActionResult> {
+  const { store, bus, router, jobs } = runtime;
+  const fill = approval.login?.fillLogin;
+  if (!fill) return { status: 400, body: { error: "登录批准卡数据不完整" } };
+  const option = input.key ? approval.options.find((item) => item.key === input.key) : undefined;
+  if (!option) return { status: 400, body: { error: "没有这个选项" } };
+  const selectedId = input.candidateId || fill.chosenId || (fill.candidates.length === 1 ? candidateId(fill.candidates[0]!) : undefined);
+  const candidate = selectedId ? fill.candidates.find((item) => candidateId(item) === selectedId) : undefined;
+  if (option.key !== "A" && !candidate) return { status: 400, body: { error: "请选择要填写的账号" } };
+  let reply: string;
+  let nextFill = { ...fill, ...(selectedId ? { chosenId: selectedId } : {}) };
+  if (option.key === "A") {
+    nextFill = { ...nextFill, state: "rejected", result: "已拒绝" };
+    reply = `用户没有允许在 ${fill.host} 填写登录。`;
+  } else {
+    try {
+      const result = await fillCandidate(runtime, approval.assistantId, candidate!, fill.host);
+      nextFill = { ...nextFill, state: "filled", result: result.kind === "username" ? `已填好用户名 ${result.username}` : option.key === "C" ? "已登录 · 以后都允许" : "已登录 · 这次允许" };
+      if (option.key === "C") rememberAutoLogin(runtime, candidate!, fill.host);
+      reply = result.kind === "username"
+        ? `用户允许了在 ${fill.host} 登录，Hob 已填好用户名 ${result.username}，点下一步后再调一次 fill_login 填密码。`
+        : `用户允许了在 ${fill.host} 登录，Hob 已填好 ${result.username} 的账号和密码，接下来点登录按钮。`;
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
+      nextFill = { ...nextFill, state: "failed", result: `没有填写：${reason}` };
+      reply = `用户允许了在 ${fill.host} 登录，但没有填上：${reason}`;
+    }
+  }
+  const answered: Approval = { ...approval, status: "answered", chosen: option.key, login: { ...approval.login!, fillLogin: nextFill }, answeredAt: new Date().toISOString() };
+  store.saveApproval(answered);
+  if (answered.groupId) runtime.groups.publish(answered.groupId);
+  const delegation = approval.source === "job" ? undefined : store.delegations().find((item) => item.approvalIds?.includes(approval.id));
+  const delegationId = delegation && runtime.delegations.resume(delegation.id) ? delegation.id : undefined;
+  bus.emit({ type: "approval", approval: answered });
+  if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, reply);
+  else await routeAnswer(runtime, approval, reply, delegationId);
+  return { status: 200, body: { approval: answered } };
+}
+
 /** 答复审批卡：记答案、写 always 规则、叫醒阻塞的 Worker 或把答案推回 Router。 */
 export async function answerApproval(runtime: HobRuntime, approvalId: string, input: AnswerApprovalBody): Promise<ActionResult> {
   const { store, bus, router, jobs } = runtime;
   const approval = store.approval(approvalId);
   if (!approval) return { status: 404, body: { error: "审批不存在" } };
   if (approval.status !== "pending") return { status: 409, body: { error: "这个审批已答复" } };
+  if (approval.login?.fillLogin) return answerFillLoginApproval(runtime, approval, input);
   const questions = approval.questions?.length ? approval.questions : undefined;
   // 多问题卡：每个问题都要答（选了选项或自己写了一句都算），补充说明可有可无
   let answers: ApprovalAnswer[] = [];

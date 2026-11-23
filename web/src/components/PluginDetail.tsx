@@ -4,7 +4,7 @@ import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
 import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
-import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPlugins, openPlugins, patchPlugin, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
+import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
 import { PluginIcon, pluginName, PluginStatus } from "./Plugins.tsx";
 
@@ -195,6 +195,13 @@ export function PluginDetail({ id }: { id: string }) {
         <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
     </section>
+
+    {item.autoLogins?.length ? <section className="plugin-section"><h2>{t("自动填写的网站")}</h2><div className="plugin-list">{item.autoLogins.map((entry) => (
+      <div className="plugin-tool" key={`${entry.host}:${entry.username}`}>
+        <div className="tool-info"><div className="tool-name">{entry.host}</div><div className="tool-desc">{entry.username}</div></div>
+        <button className="plugin-link" disabled={busy} onClick={() => void run(() => removePluginLoginAuto(id, entry.host, entry.username))}>{t("改成每次问")}</button>
+      </div>
+    ))}</div></section> : null}
 
     {profileMode ? <section className="plugin-section"><h2>{profileTitle} <span className="plugin-state">{t("{n} 个", { n: item.profiles?.length ?? 0 })}</span></h2>
       <div className="plugin-profile-list">

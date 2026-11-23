@@ -55,6 +55,7 @@ import { deleteSkill } from "./delete-skill.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
 import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
+import { readLoginAuto, removeLoginAuto } from "./login-auto.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -338,7 +339,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     try { view = runtime.plugins.store.view(id); }
     catch { view = { plugin: { ...runtime.plugins.store.get(id), config: {} }, manifest: {}, config: {}, missing: [] }; }
     const services = runtime.plugins.states(id);
-    return { ...view, skills: runtime.plugins.store.skills(id), services: services.map(service => ({ ...service, tools: service.tools.map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
+    return { ...view, skills: runtime.plugins.store.skills(id), autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id), services: services.map(service => ({ ...service, tools: service.tools.map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
   };
   const pluginError = (error: unknown) => error instanceof Error ? error.message : String(error);
   app.get("/api/plugins", (c) => {
@@ -475,6 +476,15 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.delete("/api/plugins/:id/services/:service/oauth", async c => {
     try { const id = c.req.param("id"); disconnectPluginOAuth(runtime.plugins.oauthTarget(id, c.req.param("service"))); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
     catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/:id/login-auto", async c => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json().catch(() => ({})) as { host?: unknown; username?: unknown };
+      if (typeof body.host !== "string" || typeof body.username !== "string") return c.json({ error: "网站和用户名不能为空" }, 400);
+      removeLoginAuto(options.home, id, body.host, body.username);
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
 
   // 设置 → 模型：引擎注册表里现在能用的聊天模型 + 名单里哪些已经不可用

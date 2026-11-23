@@ -21,6 +21,7 @@ import {
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
 import type { Approval, ApprovalQuestion, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
+import { candidateId, fillCandidate, prepareFillLogin } from "./login.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
@@ -288,6 +289,10 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     detectImageMimeType: async (path) => IMAGE_TYPES[extname(checkFile(path)).toLowerCase()],
   } }) as unknown as Tool;
   delete (read as { promptSnippet?: unknown }).promptSnippet; // 用了自定义系统提示词，引擎自带的这段不进提示词
+  const fillLoginAvailable = (() => {
+    const desktop = runtime.desktop.view();
+    return desktop.enabled && Boolean(desktop.url && desktop.tokenConfigured) && runtime.plugins.hasCredentialProvider(assistantId);
+  })();
   const tools: Tool[] = [
     {
       name: "search_history",
@@ -542,6 +547,52 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           : ok("卡片已显示给用户。");
       },
     },
+    ...(fillLoginAvailable ? [{
+      name: "fill_login",
+      label: "填写登录",
+      description: "把用户密码管理器里存的账号和密码，填进云桌面浏览器当前页面的登录表单，密码不经过你。Hob 先核对当前页面的网址和保存的网址是否一致，再请用户批准（用户设了这个网站自动填写的，直接填）。site 写你要登录的网站，网址或名称都行，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在批准卡上选。填好以后由你点登录按钮。",
+      parameters: Type.Object({
+        site: Type.String({ description: "网站网址或名称" }),
+        account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })),
+      }),
+      execute: async (_id: string, params: any, signal?: AbortSignal) => {
+        const site = String(params.site ?? "").trim();
+        const account = typeof params.account === "string" ? params.account.trim() : undefined;
+        if (!site) return fail("site 要填写网站网址或名称。");
+        try {
+          const prepared = await prepareFillLogin(runtime, assistantId, site, account);
+          if (prepared.kind === "message") return ok(prepared.text);
+          if (prepared.kind === "mismatch") {
+            const approval: Approval = {
+              id: newId("q-"), assistantId, title: "没有填写密码", detail: prepared.text, options: [], status: "answered", source: "router",
+              ...(groupId ? { groupId } : {}), login: { site, reason: prepared.text, fillLogin: prepared.approval }, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
+            };
+            store.saveApproval(approval);
+            await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
+            bus.emit({ type: "approval", approval });
+            return ok(prepared.text);
+          }
+          if (prepared.approval.chosenId) {
+            const chosen = prepared.approval.candidates.find((candidate) => candidateId(candidate) === prepared.approval.chosenId);
+            if (!chosen) return fail("没有找到要填写的账号。");
+            try { return ok((await fillCandidate(runtime, assistantId, chosen, prepared.approval.host)).text); }
+            catch (error) { return fail(`没有填写：${error instanceof Error ? error.message : String(error)}`); }
+          }
+          const approval: Approval = {
+            id: newId("q-"), assistantId, title: prepared.title, detail: prepared.detail,
+            options: [{ key: "A", label: "不允许" }, { key: "B", label: "这次允许" }, { key: "C", label: "这个网站以后都允许", always: true }],
+            status: "pending", source: "router", ...(groupId ? { groupId } : {}), login: { site, reason: prepared.detail, fillLogin: prepared.approval }, createdAt: new Date().toISOString(),
+          };
+          store.saveApproval(approval);
+          const delegationId = router.currentDelegation(assistantId, groupId);
+          if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
+          await presentApproval(approval, signal);
+          return endTurn(`已请用户批准在 ${prepared.approval.host} 填写登录，这一轮先到这里；用户批准后 Hob 会填好并告诉你。`);
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : String(error));
+        }
+      },
+    }] : []),
     {
       name: "ask_login",
       label: "请用户登录",

@@ -179,6 +179,7 @@ export interface HobApi {
   addCustomPlugin(id: string, server: Record<string, unknown>): Promise<PluginView>;
   startPluginOAuth(id: string, service: string): Promise<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>;
   disconnectPluginOAuth(id: string, service: string): Promise<PluginView>;
+  removePluginLoginAuto(id: string, host: string, username: string): Promise<PluginView>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
   testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
@@ -347,6 +348,7 @@ export const realApi: HobApi = {
   addCustomPlugin: (id, server) => req<PluginView>("/api/plugins/custom", json({ id, server })),
   startPluginOAuth: (id, service) => req<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, json({})),
   disconnectPluginOAuth: (id, service) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, { method: "DELETE" }),
+  removePluginLoginAuto: (id, host, username) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/login-auto`, json({ host, username }, "DELETE")),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
   testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),

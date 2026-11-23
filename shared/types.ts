@@ -74,11 +74,20 @@ export interface PluginView {
   missing: string[];
   skills?: string[];
   services: PluginServiceView[];
+  autoLogins?: LoginAutoEntry[];
 }
 export interface PluginsView { plugins: PluginView[]; migrationErrors: string[] }
 export interface PluginSourceView { id: string; name: string; url: string; updatedAt?: string; error?: string; refreshing?: boolean }
 export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
 export interface PluginPatch { enabled?: boolean; assistants?: string[] | null; tools?: Record<string, { enabled?: boolean }> }
+
+export interface LoginAutoEntry {
+  provider: string;
+  itemId: string;
+  host: string;
+  username: string;
+  at: Iso;
+}
 
 export type Iso = string; // ISO 8601 时间
 
@@ -633,6 +642,24 @@ export interface ApprovalAnswer {
   text?: string;
 }
 
+export interface FillLoginCandidate {
+  provider: string;
+  providerName: string;
+  id: string;
+  username: string;
+  folder?: string;
+  uris: string[];
+}
+
+export interface FillLoginApproval {
+  host: string;
+  currentHost?: string;
+  candidates: FillLoginCandidate[];
+  chosenId?: string;
+  state?: "pending" | "filled" | "rejected" | "mismatch" | "failed";
+  result?: string;
+}
+
 export interface Approval {
   id: string;
   assistantId: string; // 提问的助手
@@ -653,7 +680,7 @@ export interface Approval {
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
-  login?: { site: string; reason: string }; // ask_login 的登录交接信息
+  login?: { site: string; reason: string; fillLogin?: FillLoginApproval }; // ask_login 或填登录的交接信息
   createdAt: Iso;
   answeredAt?: Iso;
 }
@@ -1058,6 +1085,7 @@ export interface SendMessageBody {
 /** POST /api/approvals/:id 的请求体：选一个选项（key），或者用户自己写的一段（text）。 */
 export interface AnswerApprovalBody {
   key?: ApprovalOption["key"];
+  candidateId?: string;
   /** 单问题卡：用户自己写的一段；多问题卡：整张卡的补充说明（可选） */
   text?: string;
   /** 多问题卡：每个问题的答案，和 questions 一一对应 */

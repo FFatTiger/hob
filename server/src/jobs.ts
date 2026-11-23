@@ -37,7 +37,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
 import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, JOB_REMINDER_LEAD, browserCommandLabel, deriveSteps, reminderStep, textOfContent, toolStep, withOutput } from "./transcript.ts";
-import { registerAskLoginTool, registerAskTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
+import { registerAskLoginTool, registerAskTool, registerFillLoginTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
 import { scriptToolList } from "./script-tools.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 import { searchTools } from "./search.ts";
@@ -485,6 +485,7 @@ export class JobManager {
     if (abilities.image) customTools.push(registerImageTool(this.runtime, job.id));
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
     const desktop = await availableDesktopTools(this.runtime, job.assistantId, !!this.runtime.models.find(job.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"), job.title, join(this.store.workDir(job.id), "screenshots"));
+    if (desktop && this.runtime.plugins.hasCredentialProvider(job.assistantId)) customTools.push(registerFillLoginTool(this.runtime, job.id, sediment));
     if (desktop) customTools.push(...desktop.tools());
     const cliEnvironment = desktop ? await desktop.preparePlaywrightCli() : undefined;
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报
@@ -509,7 +510,7 @@ export class JobManager {
       skills: loadedVisibleSkills(taskSkillInfo),
       disabledSkills: this.runtime.settings.settings.skills?.disabled,
       systemPrompt: () =>
-        buildWorkerPrompt(this.store, job.id, { ...this.promptSettings(), abilities: promptAbilities, desktopEnabled: !!desktop, knowledgeNames: knowledge.map((collection) => collection.name), ...(taskSkills ? { taskSkills } : {}) }),
+        buildWorkerPrompt(this.store, job.id, { ...this.promptSettings(), abilities: promptAbilities, desktopEnabled: !!desktop, credentialsEnabled: !!desktop && this.runtime.plugins.hasCredentialProvider(job.assistantId), knowledgeNames: knowledge.map((collection) => collection.name), ...(taskSkills ? { taskSkills } : {}) }),
       tools: [
         ...new Set([
           ...workerTools(abilities),
@@ -1145,7 +1146,7 @@ export class JobManager {
   /** Worker 的 ask_user：只交给助手（用户只和助手打交道，不推送、不给用户出卡），把任务标成待确认，阻塞到助手或用户答复。 */
   async askQuestion(
     jobId: string,
-    input: { title: string; detail?: string; options: ApprovalOption[]; recommended?: ApprovalOption["key"]; ruleText?: string; login?: { site: string; reason: string } },
+    input: { title: string; detail?: string; options: ApprovalOption[]; recommended?: ApprovalOption["key"]; ruleText?: string; login?: Approval["login"] },
     signal?: AbortSignal,
   ): Promise<string> {
     const job = this.store.job(jobId);

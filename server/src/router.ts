@@ -94,7 +94,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  */
 const GROUP_TOOL_NAMES = new Set([
   "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
-  "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
+  "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "fill_login",
   "open_topic", "close_topic",
 ]);
 
@@ -545,6 +545,7 @@ export class RouterManager {
           imageEnabled: tools.some((tool) => tool.name === "generate_image"),
           showPageEnabled: tools.some((tool) => tool.name === "show_page"),
           desktopEnabled: desktopEnabled,
+          credentialsEnabled: desktopEnabled && this.runtime.plugins.hasCredentialProvider(assistant.id),
           models: this.promptModels(assistant.id, groupId),
           skills: visibleSkills(this.runtime, assistant.id, group),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,

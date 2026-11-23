@@ -1406,7 +1406,40 @@ svg.i {
 .qacts {
   display: flex;
   justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
 }
+.qfill-source {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text2);
+  font-size: 12.5px;
+  margin-bottom: 7px;
+}
+.qfill-group {
+  margin-top: 10px;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 4px;
+}
+.qfill-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-height: 38px;
+  padding: 7px 10px;
+  font-size: 14px;
+}
+.qfill-label { color: var(--text2); width: 58px; flex: none; }
+.qfill-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qfill-provider { color: var(--text2); font-size: 12.5px; white-space: nowrap; }
+.qfill-ok, .qfill-bad { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12.5px; }
+.qfill-ok { color: var(--ok); }
+.qfill-bad, .qfill-result.bad { color: var(--danger); }
+.qfill-options { margin-top: 8px; }
+.qfill-hint { color: var(--text3); font-size: 12.5px; line-height: 1.55; margin-top: 9px; }
+.qfill-result { display: flex; align-items: center; gap: 5px; margin-top: 9px; color: var(--text2); font-size: 13px; }
 .tt {
   display: flex;
   align-items: center;

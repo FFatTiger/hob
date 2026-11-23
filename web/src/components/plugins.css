@@ -165,8 +165,11 @@
   .plugin-card-desc { min-height: 0; }
 }
 .plugin-logins { position: relative; }
-.plugin-login-status { display: flex; align-items: center; gap: 12px; min-height: 32px; padding: 10px 0 12px; color: var(--text2); font-size: 13px; }
-.plugin-login-status .plugin-link { margin-left: auto; }
+.plugin-login-status { display: flex; align-items: center; gap: 12px; min-height: 22px; padding: 13px 16px; border-radius: 14px; background: var(--field); color: var(--text2); font-size: 13px; }
+.plugin-login-status-text { display: inline-flex; align-items: center; gap: 5px; }
+.plugin-login-status-dot { width: 7px; height: 7px; flex: none; border-radius: 50%; background: var(--ok); }
+.plugin-login-count { color: var(--text2); }
+.plugin-login-status .plugin-login-import { margin-left: auto; background: var(--card); }
 .plugin-file-input { display: none; }
 .plugin-login-heading { display: flex; align-items: center; gap: 14px; margin-top: 4px; }
 .plugin-login-heading h2 { margin: 0; }
@@ -176,12 +179,12 @@
 .plugin-login-wrap { border-radius: 10px; }
 .plugin-login-row { display: flex; align-items: center; gap: 10px; min-width: 0; min-height: 50px; padding: 8px 10px; }
 .plugin-login-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); }
-.plugin-login-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--accent) 16%, var(--field)); color: var(--accent); font-size: 13px; font-weight: 600; }
+.plugin-login-avatar { display: grid; place-items: center; width: 30px; height: 30px; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--text) 8%, var(--field)); color: var(--text3); font-size: 13px; font-weight: 600; }
 .plugin-login-info { flex: 1; min-width: 0; }
 .plugin-login-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .plugin-login-meta { margin-top: 3px; overflow: hidden; color: var(--text2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-login-meta.secret { color: var(--text); font-family: "JetBrains Mono", monospace; }
-.plugin-login-folder { display: inline-flex; align-items: center; gap: 4px; flex: none; max-width: 130px; overflow: hidden; color: var(--text3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.plugin-login-folder { display: block; flex: none; max-width: 130px; overflow: hidden; color: var(--text3); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .plugin-login-edit { padding: 0 12px 12px 52px; }
 .plugin-login-edit .lbl { display: block; margin-top: 10px; }
 .plugin-login-edit .field { display: block; width: 100%; box-sizing: border-box; margin-top: 5px; background: var(--bg); }

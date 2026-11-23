@@ -7,7 +7,7 @@ import { Icon } from "../icons.tsx";
 import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
-import { PluginIcon, pluginName, PluginStatus } from "./Plugins.tsx";
+import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
 
 function Description({ text }: { text: string }) {
   return <div className="plugin-sub">{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
@@ -104,6 +104,8 @@ export function PluginDetail({ id }: { id: string }) {
   };
   if (!item) return <div className="plugin-content"><div className="badline">{error}</div></div>;
 
+  const hasList = item.credentialRoles?.includes("list") ?? false;
+  const credentialConnected = hasList && loginData !== null;
   const extensions = item.manifest.extensions as Record<string, unknown> | undefined;
   const hob = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
   const profileSpec = hob?.profiles as Record<string, unknown> | undefined;
@@ -132,6 +134,7 @@ export function PluginDetail({ id }: { id: string }) {
   const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "builtin" ? t("Hob 自带") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
   const name = pluginName(item.manifest, id);
   const publisher = typeof hob?.publisher === "string" ? hob.publisher : "";
+  const subtitle = item.plugin.source === "builtin" && hasList ? t("Hob 自带 · 存在这台机器上，加密保存") : [publisher, origin, t("版本 {version}", { version: item.plugin.version })].filter(Boolean).join(" · ");
   const configFields = fields.length > 0 && !profileMode;
   const missingProfile = item.profiles?.find(candidate => candidate.missing.length);
   const missingProfileLabels = missingProfile ? fieldMissing(item.config, missingProfile.missing) : [];
@@ -185,16 +188,18 @@ export function PluginDetail({ id }: { id: string }) {
   const statusBlock = serviceStatus === "connected" ? <div className="plugin-connection-top"><PluginStatus status="connected" /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
     : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{serviceStatus === "error" ? <button className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void refresh()}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
 
+  const assistantSection = <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>;
+
   return <div className="plugin-content">
     <div className="plugin-identity">
       <PluginIcon name={name} id={id} manifest={item.manifest} />
-      <div><div className="plugin-title">{name}</div><div className="plugin-sub">{publisher && <>{publisher} · </>}{origin} · {t("版本 {version}", { version: item.plugin.version })}</div></div>
+      <div><div className="plugin-title">{name}</div><div className="plugin-sub">{subtitle}</div></div>
       <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu"><button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button>{latest && newerPluginVersion(latest.version, item.plugin.version) ? <button onClick={() => void run(() => updatePlugin(id))}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
     </div>
-    <Description text={String(item.manifest.description ?? "")} />
+    <Description text={pluginDescription(item.manifest, id)} />
     {error && <div className="badline" role="alert">{error}</div>}
 
-    <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
+    {!credentialConnected ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
       {statusBlock}
       {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
       {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}
@@ -204,11 +209,11 @@ export function PluginDetail({ id }: { id: string }) {
         {optional.length > 0 && <MoreSettings key={`${id}:single`} initialOpen={initialOpen}>{optional.map(renderField)}</MoreSettings>}
         <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
-    </section>
+    </section> : null}
 
     {loginData ? <PluginLogins id={id} data={loginData} canSave={item.credentialRoles?.includes("save") ?? false} canDelete={item.credentialRoles?.includes("delete") ?? false} reload={async () => { const value = await loadPluginLogins(id, loginData.service); setLoginData(value); }} /> : null}
 
-    {item.autoLogins?.length ? <section className="plugin-section"><h2>{t("自动填写的网站")}</h2><div className="plugin-list">{item.autoLogins.map((entry) => (
+    {item.autoLogins?.length ? <section className="plugin-section"><h2>{t("自动填写的网站")} <span className="plugin-state">{t("不用每次批准")}</span></h2><div className="plugin-list">{item.autoLogins.map((entry) => (
       <div className="plugin-tool" key={`${entry.host}:${entry.username}`}>
         <div className="tool-info"><div className="tool-name">{entry.host}</div><div className="tool-desc">{entry.username}</div></div>
         <button className="plugin-link" disabled={busy} onClick={() => void run(() => removePluginLoginAuto(id, entry.host, entry.username))}>{t("改成每次问")}</button>
@@ -232,6 +237,7 @@ export function PluginDetail({ id }: { id: string }) {
       {profileError && <div className="badline" role="alert">{profileError}</div>}
     </section> : null}
 
+    {hasList ? assistantSection : null}
     {tools.total > 0 ? <section className="plugin-section"><div className="plugin-tools-head"><h2>{t("工具")} <span className="plugin-state">{t("{n} 个 · {changed} 个会改动", { n: tools.total, changed: tools.changed })}</span></h2>
       {hasAnnotations ? <div className="plugin-filter" role="tablist">{([ ["all", t("全部")], ["readOnly", t("只读")], ["mutating", t("会改动")] ] as const).map(([key, label]) => <button key={key} className={toolFilter === key ? "on" : ""} role="tab" aria-selected={toolFilter === key} onClick={() => { setToolFilter(key); setToolsOpen(false); }}>{label}</button>)}</div> : null}
     </div>
@@ -242,7 +248,7 @@ export function PluginDetail({ id }: { id: string }) {
       {toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}
     </section> : toolErrors.length ? <div className="plugin-tool-errors">{toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}</div> : null}
 
-    <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>
+    {!hasList ? assistantSection : null}
     {!!item.skills?.length && <section className="plugin-section"><h2>{t("技能")}</h2><div className="plugin-list">{item.skills.map(skill => <div className="plugin-tool" key={skill}>{skill}</div>)}</div></section>}
   </div>;
 }

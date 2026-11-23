@@ -146,7 +146,7 @@ export function PluginLogins({ id, data, canSave, canDelete, reload }: { id: str
       <div className="plugin-login-row">
         <span className="plugin-login-avatar">{login.name.slice(0, 1).toUpperCase() || "?"}</span>
         <div className="plugin-login-info"><div className="plugin-login-name">{login.name}</div><div className={`plugin-login-meta${shownPassword ? " secret" : ""}`}>{shownPassword ?? `${login.username || t("无用户名")} · ${login.uris[0] ? host(login.uris[0]) : t("无网址")}`}</div></div>
-        {login.folder ? <span className="plugin-login-folder"><Icon name="folder" size={13} />{login.folder}</span> : null}
+        {login.folder ? <span className="plugin-login-folder">{login.folder}</span> : null}
         <button className="hob-icon-btn" type="button" title={t("更多")} aria-label={t("更多")} onClick={event => menu.toggle(login.id, event.currentTarget)}><Icon name="more" size={16} /></button>
       </div>
       {edit?.id === login.id ? <div className="plugin-login-edit">
@@ -161,7 +161,7 @@ export function PluginLogins({ id, data, canSave, canDelete, reload }: { id: str
   };
   const menuLogin = menu.menu ? data.logins.find(login => login.id === menu.menu?.id) : undefined;
   return <section className="plugin-section plugin-logins">
-    <div className="plugin-login-status"><span>{t("已开启 · {n} 个登录", { n: data.logins.length })}</span>{canSave ? <><input ref={file} className="plugin-file-input" type="file" accept=".csv,text/csv" onChange={event => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void readFile(selected); }} /><button className="plugin-link" type="button" onClick={() => file.current?.click()}>{t("从别处导入")}</button></> : null}</div>
+    <div className="plugin-login-status"><span className="plugin-login-status-text"><span className="plugin-login-status-dot" />{t("已开启")} <span className="plugin-login-count">· {t("{n} 个登录", { n: data.logins.length })}</span></span>{canSave ? <><input ref={file} className="plugin-file-input" type="file" accept=".csv,text/csv" onChange={event => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void readFile(selected); }} /><button className="hob-btn plugin-login-import" type="button" onClick={() => file.current?.click()}>{t("从别处导入")}</button></> : null}</div>
     <div className="plugin-login-heading"><h2>{t("已保存的登录 {n} 个", { n: filtered.length })}</h2><label className="plugin-login-search"><Icon name="search" size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t("搜索名称、用户名或网址")} /></label></div>
     {imported ? <div className="plugin-import-preview"><div>{t("认出 {n} 条，{m} 条已存在会跳过", { n: imported.length, m: imported.filter(row => duplicate(row, data.logins)).length })}</div><div className="plugin-actions"><button className="hob-btn hob-btn-primary" type="button" disabled={importing} onClick={() => void doImport()}>{t("确认导入")}</button><button className="hob-btn" type="button" disabled={importing} onClick={() => setImported(null)}>{t("取消")}</button></div></div> : null}
     {filtered.length ? <div className="plugin-login-list">{filtered.slice(0, 20).map(row)}{filtered.length > 20 ? <Disclosure className="plugin-login-more" label={t("其余 {n} 个", { n: filtered.length - 20 })} count={filtered.length - 20} open={moreOpen} onToggle={() => setMoreOpen(value => !value)}>{filtered.slice(20).map(row)}</Disclosure> : null}</div> : <div className="plugin-empty-login">{query ? t("没有匹配的登录") : t("还没有保存的登录")}</div>}

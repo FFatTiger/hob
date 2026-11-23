@@ -1927,7 +1927,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     { id: "github", version: "1.0.0", manifest: { name: "GitHub", description: "查看和管理代码仓库、议题与拉取请求。", mockIcon: githubIcon, extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } } }, installed: false },
     { id: "gmail", version: "1.0.0", manifest: { name: "Gmail", description: "查找邮件、创建草稿并管理邮件。", mockIcon: gmailIcon, extensions: { "com.hob.plugins": { publisher: "Google", categories: ["communication"] } } }, installed: false },
     { id: "email", version: "1.0.0", manifest: { ...emailManifest, mockIcon: emailIcon }, installed: false },
-    { id: "vault", version: "1.0.0", source: "builtin", sourceName: "Hob 自带", manifest: { name: "密码库", description: "存网站的账号和密码。助手只看得到存了哪些账号，看不到密码；要登录、注册时，由 Hob 核对网址、请你批准后直接填进网页。", extensions: { "com.hob.plugins": { publisher: "Hob", categories: ["productivity"] } } }, installed: false },
+    { id: "vault", version: "1.0.0", source: "builtin", sourceName: "Hob 自带", manifest: { name: "密码库", description: "Saves the usernames and passwords for your websites on this machine, encrypted. Assistants can see which logins you have and ask you to save new ones on a card, but never the passwords: when a site needs a login, Hob fills it into the page itself after you approve. The key is stored next to the vault in Hob's data folder, so anyone who can read that folder can read the vault.", extensions: { "com.hob.plugins": { publisher: "Hob", categories: ["productivity"] } } }, installed: false },
     { id: "calendar", version: "1.0.0", manifest: { name: "日历", description: "查看和安排日程。", extensions: { "com.hob.plugins": { categories: ["productivity"] } } }, installed: false },
   ];
   const mockPlugin = (id: string): PluginView => {
@@ -1976,14 +1976,18 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   vault.services[0]!.status = "connected";
   vault.services[0]!.missing = [];
   vault.credentialRoles = ["list", "secret", "generate", "save", "delete"];
+  vault.autoLogins = scene === "vault-empty" ? [] : [{ provider: "vault", itemId: "vault-forum", host: "forum.example.net", username: "lin@example.com", at: new Date().toISOString() }];
   vault.services[0]!.tools = ([
     ["list_logins", "列出密码库里的登录，不返回密码。", true],
     ["save_login", "请用户把一个登录存进密码库。", false],
   ] as [string, string, boolean][]).map(([name, description, readOnlyHint]) => ({ name, toolName: `vault_${name}`, enabled: true, description, inputSchema: {}, annotations: { readOnlyHint: Boolean(readOnlyHint) } }));
   const mockVaultLogins: PluginLoginView[] = scene === "vault-empty" ? [] : [
     { id: "vault-forum", name: "Example 论坛", username: "lin@example.com", uris: ["https://forum.example.net/login"], folder: "论坛账号", hasPassword: true, hasTotp: true },
-    { id: "vault-shop", name: "Example 商城", username: "buyer@example.com", uris: ["https://shop.example.net"], folder: "购物", hasPassword: true, hasTotp: false },
-    { id: "vault-docs", name: "团队文档", username: "writer@example.com", uris: ["https://docs.example.net"], hasPassword: true, hasTotp: false },
+    { id: "vault-photo", name: "摄影社区", username: "linphoto", uris: ["https://photo.example.org"], folder: "论坛账号", hasPassword: true, hasTotp: false },
+    { id: "vault-books", name: "二手书市", username: "lin@example.com", uris: ["https://books.example.com"], folder: "论坛账号", hasPassword: true, hasTotp: false },
+    { id: "vault-shop", name: "Example 商城", username: "lin@example.com", uris: ["https://shop.example.com"], folder: "购物", hasPassword: true, hasTotp: false },
+    { id: "vault-water", name: "水电缴费", username: "13800000000", uris: ["https://pay.example.cn"], folder: "生活", hasPassword: true, hasTotp: false },
+    { id: "vault-router", name: "家里路由器", username: "admin", uris: ["http://192.168.1.1"], folder: "家里", hasPassword: true, hasTotp: false },
   ];
   for (const plugin of [github, gmail, email, vault, custom]) plugin.plugin.assistants = ["hob", "page"];
   pluginViews.push(github, gmail, email, vault, custom);

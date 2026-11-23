@@ -1,8 +1,18 @@
 import { describe, expect, it, vi } from "vitest";
+import { renderToStaticMarkup } from "react-dom/server";
 vi.mock("../store.ts", () => ({ deletePluginLogin: vi.fn(), loadPluginLoginSecret: vi.fn(), savePluginLogin: vi.fn() }));
-import { parseLoginCsv } from "./PluginLogins.tsx";
+import { PluginLogins, parseLoginCsv } from "./PluginLogins.tsx";
 
 describe("password vault CSV import", () => {
+  it("renders the enabled status, gray folder text, and import action", () => {
+    const html = renderToStaticMarkup(<PluginLogins id="vault" data={{ service: "vault", folders: ["工作"], logins: [{ id: "one", name: "Example", username: "user", uris: ["https://example.test"], folder: "工作", hasPassword: true, hasTotp: false }] }} canSave canDelete reload={async () => undefined} />);
+    expect(html).toContain("已开启");
+    expect(html).toContain("1 个登录");
+    expect(html).toContain("plugin-login-import");
+    expect(html).toContain("plugin-login-folder");
+    expect(html).not.toContain("name=\"folder\"");
+  });
+
   it("recognizes Bitwarden, Chrome, and 1Password headers in memory", () => {
     expect(parseLoginCsv("name,login_uri,login_username,login_password,folder\n论坛,https://forum.example,lin@example.com,secret,工作")).toEqual([{ name: "论坛", uri: "https://forum.example", username: "lin@example.com", password: "secret", folder: "工作" }]);
     expect(parseLoginCsv("\ufeffname,url,username,password\n商城,https://shop.example,buyer@example.com,shop-secret")).toEqual([{ name: "商城", uri: "https://shop.example", username: "buyer@example.com", password: "shop-secret" }]);

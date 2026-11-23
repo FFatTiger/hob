@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
@@ -30,7 +30,7 @@ vi.mock("../src/desktop-tools.ts", () => ({
 }));
 
 import type { FillNewPasswordApproval } from "../../shared/types.ts";
-import { generateSaveAndFill, passwordCharactersText, passwordTargets, prepareFillNewPassword } from "../src/new-password.ts";
+import { generateSaveAndFill, NewPasswordError, passwordCharactersText, passwordTargets, prepareFillNewPassword } from "../src/new-password.ts";
 
 describe("fill_new_password", () => {
   it("describes the default and constrained character sets", () => {
@@ -51,6 +51,41 @@ describe("fill_new_password", () => {
     };
     expect(passwordTargets(info, "change")).toEqual([1, 2]);
     expect(passwordTargets({ ...info, inputs: info.inputs.map((input) => ({ ...input, autocomplete: "" })) }, "change")).toEqual([1, 2]);
+    // 改密码页只有新密码和确认两个框（没有旧密码框）：两个都填新密码
+    expect(passwordTargets({ ...info, inputs: info.inputs.slice(1).map((input, index) => ({ ...input, index })) }, "change")).toEqual([0, 1]);
+  });
+
+  it("a retry after the site rejected the password stays a registration and updates the item saved minutes ago", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-new-password-"));
+    try {
+      const saved = { id: "login-new", name: "shop.example.com", username: "lin@example.com", uris: ["http://shop.example.com"] };
+      mkdirSync(join(home, "system"), { recursive: true });
+      writeFileSync(join(home, "system", "new-password.json"), JSON.stringify([{ provider: "bitwarden", itemId: saved.id, host: "shop.example.com", username: "lin@example.com", name: saved.name, at: new Date().toISOString() }]));
+      mocks.inspect.mockResolvedValue({ url: "http://shop.example.com/register", host: "shop.example.com", inputs: [{ index: 0, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
+      // list 里现在有刚存的那一条
+      mocks.candidates.mockResolvedValue([{ provider: "bitwarden", providerName: "Bitwarden", ...saved }]);
+      const runtime = { home, plugins: { hasPasswordGenerator: () => true, displayName: () => "Bitwarden", credentialProviders: (_assistant: string, role: string) => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: role, role }] } } as any;
+      const result = await prepareFillNewPassword(runtime, "hob", "lin@example.com", 12, ["lowercase", "numbers"]);
+      assert.equal(result.kind, "approval");
+      if (result.kind !== "approval") return;
+      expect(result.title).toBe("在 shop.example.com 注册");
+      expect(result.approval.mode).toBe("register");
+      expect(result.approval.candidate?.id).toBe(saved.id);
+
+      // 不是这次流程存的（30 分钟以前）：是改密码
+      writeFileSync(join(home, "system", "new-password.json"), JSON.stringify([{ provider: "bitwarden", itemId: saved.id, host: "shop.example.com", username: "lin@example.com", name: saved.name, at: new Date(Date.now() - 31 * 60 * 1000).toISOString() }]));
+      const change = await prepareFillNewPassword(runtime, "hob", "lin@example.com", 12);
+      assert.equal(change.kind, "approval");
+      if (change.kind !== "approval") return;
+      expect(change.approval.mode).toBe("change");
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("NewPasswordError carries the item name separately from the error class name", () => {
+    const error = new NewPasswordError("页面跳走了", true, "Bitwarden", "Example 商城");
+    expect(error.name).toBe("NewPasswordError");
+    expect(error.itemName).toBe("Example 商城");
+    expect(error.saved).toBe(true);
   });
 
   it("classifies an existing same-user item as a change and carries only metadata in the approval", async () => {

@@ -2813,6 +2813,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       pushItem("hob", { kind: "delegation", id: uid("item-"), at: next.createdAt, delegationId: next.id });
       pushItem(next.to, { kind: "user", id: uid("item-"), at: next.createdAt, text: next.text, from: { assistantId: "hob", name: "Hob", delegationId: next.id } });
     },
+    answerCard: async () => ({}),
     createDraft: async (draftId) => {
       const d = db.drafts[draftId];
       if (!d) return;

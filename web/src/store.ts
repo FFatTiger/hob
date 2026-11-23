@@ -1937,6 +1937,19 @@ export async function answer(approvalId: string, answer: AnswerApprovalBody) {
   }
 }
 
+export async function answerCard(cardId: string, action: import("../../shared/cards.ts").CardActionRequest) {
+  const card = state.cards[cardId];
+  if (!card) return false;
+  try {
+    const result = await api.answerCard(cardId, action);
+    if (result.card) applyEvent({ type: "card", card: result.card });
+    return true;
+  } catch (e) {
+    set({ notice: t("提交失败：{error}", { error: errText(e) }) });
+    return false;
+  }
+}
+
 export function openLoginDesktop(approvalId: string, assistantId: string) {
   set({ desktopLogin: { approvalId, assistantId } });
 }

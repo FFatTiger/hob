@@ -54,6 +54,8 @@ import { actionsFor, menuPosition, moveSwipe, swipeReply, type SwipeState } from
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon, jobStatusMeta, sedimentText } from "./status-meta.tsx";
 import { membersOf } from "./Groups.tsx";
 import { Disclosure } from "./Disclosure.tsx";
+import { CardView } from "./CardView.tsx";
+import type { CardActionRequest, CardText } from "../../../shared/cards.ts";
 
 /* ---------------- markdown ---------------- */
 
@@ -961,6 +963,11 @@ function ItemView({
   if (item.kind === "delegation") {
     const delegation = s.delegations[item.delegationId];
     return delegation ? <DelegationCard delegation={delegation} fresh={fresh} /> : null;
+  }
+
+  if (item.kind === "card") {
+    const card = s.cards[item.cardId];
+    return card ? <CardView record={card} fresh={fresh} itemId={item.id} /> : null;
   }
 
   if (item.kind === "topic") return <TopicCard topicId={item.topicId} fresh={fresh} itemId={item.id} />;

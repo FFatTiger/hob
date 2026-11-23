@@ -40,7 +40,7 @@ export function PluginIcon({ name: _name, id, manifest, source }: { name: string
   const extensions = manifest.extensions as Record<string, unknown> | undefined;
   const hob = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
   const src = MOCK && typeof manifest.mockIcon === "string" ? manifest.mockIcon : typeof hob?.icon === "string" ? `/api/plugins/${encodeURIComponent(id)}/icon${source ? `?source=${encodeURIComponent(source)}` : ""}` : "";
-  return <div className="plugin-icon">{src && !failed ? <img alt="" src={src} onError={() => setFailed(true)} /> : <Icon name="plugin" size={22} />}</div>;
+  return <div className="plugin-icon">{src && !failed ? <img alt="" src={src} onError={() => setFailed(true)} /> : <Icon name={id === "vault" ? "key" : "plugin"} size={22} />}</div>;
 }
 
 function PluginNav({ narrow, page, pluginId, view }: { narrow: boolean; page: PluginPage; pluginId: string | null; view: PluginsView | null }) {
@@ -265,7 +265,8 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
     <div className="plugin-grid">{shown.map((item, index) => {
       const installedVersion = view?.plugins.find(plugin => plugin.plugin.id === item.id && plugin.plugin.source === item.source)?.plugin.version;
       const update = Boolean(item.installed && !item.error && installedVersion && newerPluginVersion(item.version, installedVersion));
-      return <PluginCard key={`${item.source}:${item.id}:${index}`} item={item} sourceLabel={sources.length > 1 ? sourceName({ id: item.source ?? "", name: item.sourceName ?? "" }) : undefined} update={update} onOpen={item.error ? undefined : item.installed ? () => openPlugins(item.id) : () => setMarketDetail(item)} onInstall={() => run(() => installPlugin(item.id, item.source))} onUpdate={() => run(() => updatePlugin(item.id))} />;
+      const sourceLabel = item.source === "builtin" ? t("Hob 自带") : sources.length > 1 ? sourceName({ id: item.source ?? "", name: item.sourceName ?? "" }) : undefined;
+      return <PluginCard key={`${item.source}:${item.id}:${index}`} item={item} sourceLabel={sourceLabel} update={update} onOpen={item.error ? undefined : item.installed ? () => openPlugins(item.id) : () => setMarketDetail(item)} onInstall={() => run(() => installPlugin(item.id, item.source))} onUpdate={() => run(() => updatePlugin(item.id))} />;
     })}</div>
     {catalog && !shown.length && <div className="plugin-note plugin-empty">{query.trim() ? t("没有找到「{query}」相关的插件。", { query: query.trim() }) : t("这个分类还没有插件。")}</div>}
   </> : s.pluginPage === "new" ? <>

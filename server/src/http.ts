@@ -339,7 +339,14 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     try { view = runtime.plugins.store.view(id); }
     catch { view = { plugin: { ...runtime.plugins.store.get(id), config: {} }, manifest: {}, config: {}, missing: [] }; }
     const services = runtime.plugins.states(id);
-    return { ...view, skills: runtime.plugins.store.skills(id), autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id), services: services.map(service => ({ ...service, tools: service.tools.map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
+    const appOnly = (tool: { _meta?: unknown }) => {
+      const meta = tool._meta && typeof tool._meta === "object" && !Array.isArray(tool._meta) ? tool._meta as Record<string, unknown> : undefined;
+      const ui = meta?.ui && typeof meta.ui === "object" && !Array.isArray(meta.ui) ? meta.ui as Record<string, unknown> : undefined;
+      const visibility = ui?.visibility;
+      return Array.isArray(visibility) && visibility.includes("app") && !visibility.includes("model");
+    };
+    const credentialRoles = runtime.plugins.credentialRolesForPlugin(id);
+    return { ...view, credentialRoles, skills: runtime.plugins.store.skills(id), autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id), services: services.map(service => ({ ...service, tools: service.tools.filter(tool => !appOnly(tool)).map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
   };
   const pluginError = (error: unknown) => error instanceof Error ? error.message : String(error);
   app.get("/api/plugins", (c) => {
@@ -352,6 +359,53 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       if (!icon) return c.notFound();
       return new Response(new Uint8Array(icon.content), { headers: { "Content-Type": icon.type, "X-Content-Type-Options": "nosniff" } });
     } catch { return c.notFound(); }
+  });
+  app.get("/api/plugins/:id/logins", async c => {
+    try {
+      const id = c.req.param("id");
+      const service = c.req.query("service");
+      const provider = runtime.plugins.credentialProvidersForPlugin(id, "list").find(item => !service || item.service === service);
+      if (!provider) throw new Error("这个插件没有可用的密码库列表工具");
+      const result = await runtime.plugins.callCredential(provider, {});
+      const logins = Array.isArray(result.logins) ? result.logins : [];
+      const folders = [...new Set(logins.map(login => login && typeof login === "object" && typeof login.folder === "string" ? login.folder : "").filter(Boolean))].sort();
+      return c.json({ service: provider.service, logins, folders });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/logins/secret", async c => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json().catch(() => null) as { id?: unknown; service?: unknown } | null;
+      if (typeof body?.id !== "string" || !body.id) throw new Error("登录 id 无效");
+      const service = typeof body.service === "string" ? body.service : undefined;
+      const provider = runtime.plugins.credentialProvidersForPlugin(id, "secret").find(item => !service || item.service === service);
+      if (!provider) throw new Error("这个插件没有可用的密码读取工具");
+      return c.json(await runtime.plugins.callCredential(provider, { id: body.id }));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/logins", async c => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json().catch(() => null) as { id?: unknown; service?: unknown; name?: unknown; uris?: unknown; username?: unknown; password?: unknown; folder?: unknown } | null;
+      if (typeof body?.name !== "string" || !Array.isArray(body.uris) || body.uris.some(uri => typeof uri !== "string") || typeof body.username !== "string" || typeof body.password !== "string") throw new Error("登录信息格式无效");
+      if (body.id !== undefined && typeof body.id !== "string") throw new Error("登录 id 无效");
+      if (body.service !== undefined && typeof body.service !== "string") throw new Error("插件服务无效");
+      if (body.folder !== undefined && typeof body.folder !== "string") throw new Error("文件夹无效");
+      const provider = runtime.plugins.credentialProvidersForPlugin(id, "save").find(item => !body.service || item.service === body.service);
+      if (!provider) throw new Error("这个插件没有可用的密码保存工具");
+      const result = await runtime.plugins.callCredential(provider, { ...(body.id ? { id: body.id } : {}), name: body.name, uris: body.uris, username: body.username, password: body.password, ...(body.folder !== undefined ? { folder: body.folder } : {}) });
+      return c.json(result);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/:id/logins/:loginId", async c => {
+    try {
+      const id = c.req.param("id");
+      const service = c.req.query("service");
+      const provider = runtime.plugins.credentialProvidersForPlugin(id, "delete").find(item => !service || item.service === service);
+      if (!provider) throw new Error("这个插件没有可用的密码删除工具");
+      await runtime.plugins.callCredential(provider, { id: c.req.param("loginId") });
+      return c.json({ ok: true });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.get("/api/plugins/catalog", async (c) => {
     try {

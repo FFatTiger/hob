@@ -48,7 +48,7 @@ export class PluginStore {
     return join(this.home, "plugins", id);
   }
   private builtinRoot(): string { return fileURLToPath(new URL("../mcp/vault", import.meta.url)); }
-  private builtinCatalog(): { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string }[] {
+  private builtinCatalog(): { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; error?: string }[] {
     const path = this.builtinRoot();
     try {
       const manifest = readJson(join(path, "plugin.json"));
@@ -118,7 +118,6 @@ export class PluginStore {
     const type = lower.endsWith(".svg") ? "image/svg+xml" : lower.endsWith(".png") ? "image/png" : lower.endsWith(".webp") ? "image/webp" : "image/jpeg";
     return { content: readFileSync(actual), type };
   }
-  catalog() { return this.sources.catalog(); }
   catalog() { return [...this.builtinCatalog(), ...this.sources.catalog()]; }
   install(id: string, update = false, force = false, sourceId?: string): InstalledPlugin {
     const doc = this.read();

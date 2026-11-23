@@ -73,6 +73,7 @@ export interface PluginView {
   config: Record<string, Record<string, unknown>>;
   profiles?: PluginProfileView[];
   missing: string[];
+  credentialRoles?: PluginCredentialRole[];
   skills?: string[];
   services: PluginServiceView[];
   autoLogins?: LoginAutoEntry[];
@@ -80,6 +81,17 @@ export interface PluginView {
 export interface PluginsView { plugins: PluginView[]; migrationErrors: string[] }
 export interface PluginSourceView { id: string; name: string; url: string; updatedAt?: string; error?: string; refreshing?: boolean }
 export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
+export interface PluginLoginView {
+  id: string;
+  name: string;
+  username: string;
+  uris: string[];
+  folder?: string;
+  hasPassword: boolean;
+  hasTotp: boolean;
+}
+export interface PluginLoginsView { service: string; logins: PluginLoginView[]; folders: string[] }
+
 export interface PluginPatch { enabled?: boolean; assistants?: string[] | null; tools?: Record<string, { enabled?: boolean }> }
 
 export interface LoginAutoEntry {

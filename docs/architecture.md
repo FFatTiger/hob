@@ -355,7 +355,11 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 ## 填写登录
 
-密码管理插件可以在 MCP 工具的 `_meta["hob/credentials"]` 上声明 `list`、`secret`、`generate`、`save` 四个角色；这些工具同时带 `_meta.ui.visibility: ["app"]`，不进入助手和任务的模型工具列表。Hob 按角色调用它们，`list` 只拿登录概况，`secret` 只在一次填写操作中拿账号、密码和可选的当前两步验证码，结果不进入对话、会话文件、事件、日志或任何持久化记录。
+Hob 首次启动会安装自带的「密码库」插件，默认对所有助手开启，不需要账号。密码库把登录记录写入 `HOB_HOME/plugin-data/vault/vault.json`，用同目录随机生成的 32 字节 `vault.key` 以 AES-256-GCM 加密，两个文件都是 0600 并原子写入；`system/seeded.json` 记下只安装一次，用户停用或卸载后不会自动补回。Bitwarden 等外部插件可以同时启用，Hob 按同一凭据协议分别查找。
+
+所有声明 `list` 角色的凭据提供者都会在插件详情页显示登录列表。列表只通过 app-only 的 `list` 角色读取概况；密码显示、复制、编辑、删除和 CSV 导入分别调用 `secret`、`save`、`delete`，密码只在这一次请求和界面内存中经过，不写入 Hob 文件、事件、日志或会话。详情页支持 Bitwarden、Chrome 和 1Password 的 CSV 表头，文件只在浏览器内存里解析，重复的名称、用户名和网址会跳过。
+
+密码管理插件可以在 MCP 工具的 `_meta["hob/credentials"]` 上声明 `list`、`secret`、`generate`、`save` 四个角色；这些工具同时带 `_meta.ui.visibility: ["app"]`，不进入助手和任务的模型工具列表。Hob 按角色调用它们，`list` 只拿登录概况，`secret` 只在一次填写操作中拿账号、密码和可选的当前两步验证码，`delete` 是只给界面用的 app-only 角色；模型只看到插件提供的 `list_logins` 和 `save_login`。
 
 `fill_login` 先读取当前显示的云桌面页面，再从助手启用的凭据提供者里按网站名称、保存的网址和可选用户名筛选登录。页面主机名必须等于保存网址的主机名，或是保存主机名的子域名；反向的父域名和相似的仿冒域名不通过。网址不一致时只显示当前页面和保存网址，不填写任何内容。
 

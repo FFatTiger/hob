@@ -4,8 +4,9 @@ import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
 import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
-import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
+import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
+import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginName, PluginStatus } from "./Plugins.tsx";
 
 function Description({ text }: { text: string }) {
@@ -68,6 +69,7 @@ export function PluginDetail({ id }: { id: string }) {
   const [menuOpen, setMenuOpen] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [loginData, setLoginData] = useState<LoginData | null>(null);
 
   const refresh = async () => {
     const [view, entries] = await Promise.all([loadPlugins(), loadPluginCatalog()]);
@@ -82,6 +84,14 @@ export function PluginDetail({ id }: { id: string }) {
     setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false);
     void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
+  useEffect(() => {
+    const hasList = Boolean(item?.credentialRoles?.includes("list"));
+    const service = hasList ? item?.services.find(candidate => candidate.status === "connected")?.name : undefined;
+    if (!service) { setLoginData(null); return; }
+    let active = true;
+    void loadPluginLogins(id, service).then(value => { if (active) setLoginData(value); }).catch(error => { if (active) setError(error instanceof Error ? error.message : String(error)); });
+    return () => { active = false; };
+  }, [id, item?.credentialRoles?.includes("list"), item?.services.find(candidate => candidate.status === "connected")?.name]);
   useEffect(() => {
     const profile = item?.profiles?.find(candidate => candidate.id === profileId);
     if (profile) setProfileName(profile.name);
@@ -119,7 +129,7 @@ export function PluginDetail({ id }: { id: string }) {
   const toolErrors = item.services.flatMap(serviceItem => serviceItem.toolErrors ?? []);
   const latest = catalog?.plugins.find(p => p.id === id && p.source === item.plugin.source && !p.error);
   const source = catalog?.sources?.find(source => source.id === item.plugin.source);
-  const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
+  const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "builtin" ? t("Hob 自带") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
   const name = pluginName(item.manifest, id);
   const publisher = typeof hob?.publisher === "string" ? hob.publisher : "";
   const configFields = fields.length > 0 && !profileMode;
@@ -195,6 +205,8 @@ export function PluginDetail({ id }: { id: string }) {
         <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
     </section>
+
+    {loginData ? <PluginLogins id={id} data={loginData} canSave={item.credentialRoles?.includes("save") ?? false} canDelete={item.credentialRoles?.includes("delete") ?? false} reload={async () => { const value = await loadPluginLogins(id, loginData.service); setLoginData(value); }} /> : null}
 
     {item.autoLogins?.length ? <section className="plugin-section"><h2>{t("自动填写的网站")}</h2><div className="plugin-list">{item.autoLogins.map((entry) => (
       <div className="plugin-tool" key={`${entry.host}:${entry.username}`}>

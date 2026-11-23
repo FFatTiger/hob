@@ -15,6 +15,7 @@ import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
+import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -780,8 +781,10 @@ export class GroupManager {
         const topic = this.store.group(item.topicId);
         return `${who}：创建了话题「${topic?.name ?? item.topicId}」`;
       }
-      case "card":
-        return `${who}：显示了一张卡片`;
+      case "card": {
+        const card = this.store.card(item.cardId);
+        return `${who}：${card ? cardHistoryLine(card.card) : "显示了一张卡片"}`;
+      }
       default:
         return "";
     }

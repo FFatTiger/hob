@@ -42,6 +42,7 @@ import { visibleSkills } from "./skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
+import { cardHistoryLine } from "./cards.ts";
 
 import { pushAssistantTurnEnd } from "./push.ts";
 import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
@@ -1494,6 +1495,17 @@ export class RouterManager {
     return item;
   }
 
+  private cardHistory(assistantId: string, groupId?: string): string[] {
+    const items = groupId ? this.runtime.groups.timeline(groupId) : this.derived(assistantId).result.items;
+    const seen = new Set<string>();
+    return items.flatMap((item) => {
+      if (item.kind !== "card" || seen.has(item.cardId)) return [];
+      seen.add(item.cardId);
+      const card = this.store.card(item.cardId);
+      return card ? [cardHistoryLine(card.card)] : [];
+    });
+  }
+
   async send(assistantId: string, body: SendMessageBody): Promise<Item> {
     this.clearSuggestions(assistantId);
     this.runtime.delegations.takeOver(assistantId);
@@ -1523,7 +1535,8 @@ export class RouterManager {
     this.bus.emit({ type: "item", assistantId, item });
     for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
 
-    const lines = [body.text];
+    const cardContext = this.cardHistory(assistantId);
+    const lines = [...cardContext, body.text];
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;

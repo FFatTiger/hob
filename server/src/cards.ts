@@ -335,6 +335,19 @@ export function validateCard(input: unknown, options: { mode?: CardValidationMod
   return { ok: true, value };
 }
 
+export function cardComponentSummary(card: Card): string {
+  const elements = card.body.elements;
+  const forms = elements.filter((element) => element.tag === "form").length;
+  const tables = elements.filter((element) => element.tag === "table").reduce((count, element) => count + element.rows.length, 0);
+  if (forms) return `表单 ${forms} 项`;
+  if (tables) return `表格 ${tables} 行`;
+  return `组件 ${elements.length} 个`;
+}
+
+export function cardHistoryLine(card: Card): string {
+  return `（卡片「${cardTitle(card) || "未命名卡片"}」：${cardSummary(card) || cardComponentSummary(card)}）`;
+}
+
 export function cardHasCallback(card: Card): boolean {
   const visit = (element: CardElement): boolean => {
     const behaviors: CardBehavior[] = "behaviors" in element && Array.isArray(element.behaviors) ? element.behaviors : [];

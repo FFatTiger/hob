@@ -1716,11 +1716,17 @@ export async function loadProfile(id: string) {
 /* ---------------- 发消息 ---------------- */
 
 export function setText(text: string) {
-  set((s) => ({
-    text,
-    assistants: s.sel ? s.assistants.map((assistant) => assistant.id === s.sel ? { ...assistant, suggestions: undefined } : assistant) : s.assistants,
-    groups: s.gsel ? s.groups.map((group) => group.id === s.gsel ? { ...group, suggestions: undefined } : group) : s.groups,
-  }));
+  set((s) => {
+    // 打字时只在当前对话确实挂着推荐时才清，免得每个按键都换掉整份助手 / 群列表
+    const a = s.gsel ? undefined : s.assistants.find((x) => x.id === s.sel);
+    const g = s.gsel ? s.groups.find((x) => x.id === s.gsel) : undefined;
+    if (!a?.suggestions && !g?.suggestions) return { text };
+    return {
+      text,
+      assistants: a ? s.assistants.map((x) => x === a ? { ...x, suggestions: undefined } : x) : s.assistants,
+      groups: g ? s.groups.map((x) => x === g ? { ...x, suggestions: undefined } : x) : s.groups,
+    };
+  });
 }
 
 export function setQuote(quote: { itemId: string; text: string } | null) {

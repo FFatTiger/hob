@@ -674,7 +674,7 @@ export class GroupManager {
         wave.stopped = true;
         this.note(gid, SYSTEM, RELAY_NOTE, "info");
         // 群主在群里收尾：只给它这一轮，它再 @ 人也不接着转，免得停了又起
-        void this.schedule(gid, group.ownerId, { turns: MAX_WAVE_TURNS - 1, stopped: true }, "", `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`)
+        void this.schedule(gid, group.ownerId, { turns: MAX_WAVE_TURNS - 1, stopped: true, pending: 0 }, "", `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`)
           .catch(() => undefined);
       }
       return;

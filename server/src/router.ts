@@ -28,7 +28,7 @@ import type {
 } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
-import { conversationPick, assistantInGroup, defaultWorkRef, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
+import { conversationPick, assistantInGroup, defaultWorkRef, followUpPick, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
 import { scriptToolList } from "./script-tools.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 import { buildRouterTools } from "./router-tools.ts";
@@ -1781,16 +1781,17 @@ export class RouterManager {
     const key = this.suggestionKey(assistantId, groupId);
     const epoch = this.suggestionEpoch.get(key) ?? 0;
     const assistant = this.store.assistant(assistantId);
-    if (!assistant || this.runtime.settings.settings.models.suggest === null) return;
-    const group = groupId ? this.store.group(groupId) : undefined;
-    const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models);
-    const configured = this.runtime.settings.settings.models.suggest;
-    const pick = configured ?? conversationPick(this.runtime.settings.settings.models, effective);
+    if (!assistant) return;
     try {
       await this.runtime.models.get();
-      if (!this.runtime.models.find(pick.ref)) return;
+      const group = groupId ? this.store.group(groupId) : undefined;
+      const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models);
+      const pick = followUpPick(this.runtime.settings.settings.models, effective, this.runtime.models);
+      if (!pick) return;
       const model = await this.runtime.pi.model(pick.ref);
-      const turns = groupId ? groupHistory(this.store.groupItems(groupId)) : routerHistory(this.entries(assistantId));
+      const turns = groupId
+        ? groupHistory(this.store.groupItems(groupId), (speaker) => speaker === "user" ? "用户" : this.store.assistant(speaker)?.name ?? speaker)
+        : routerHistory(this.entries(assistantId));
       const suggestions = await generateFollowUpSuggestions(await this.runtime.pi.runtime(), model, turns);
       if ((this.suggestionEpoch.get(key) ?? 0) !== epoch || !suggestions.length) return;
       const state = this.routers.get(this.keyOf(assistantId, groupId));

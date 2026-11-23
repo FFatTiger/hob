@@ -57,6 +57,7 @@ function userText(data: Record<string, unknown>): string {
 /** 把 Router 会话中的稳定消息转换成推荐模型看到的固定文字。 */
 export function routerHistory(entries: readonly SessionEntryLike[]): FollowUpTurn[] {
   const turns: FollowUpTurn[] = [];
+  const hasCustomUser = entries.some((entry) => entry.type === "custom" && entry.customType === "hob.user");
   for (const entry of entries) {
     if (entry.type === "custom" && entry.customType === "hob.user") {
       const data = entry.data && typeof entry.data === "object" ? entry.data as Record<string, unknown> : {};
@@ -66,6 +67,7 @@ export function routerHistory(entries: readonly SessionEntryLike[]): FollowUpTur
     }
     if (entry.type !== "message" || !entry.message) continue;
     if (entry.message.role === "user") {
+      if (hasCustomUser) continue;
       const text = contentText(entry.message.content, false);
       if (text) turns.push({ role: "user", text });
     } else if (entry.message.role === "assistant") {
@@ -76,13 +78,13 @@ export function routerHistory(entries: readonly SessionEntryLike[]): FollowUpTur
   return turns;
 }
 
-function speakerName(speaker: string): string {
-  return speaker === "user" ? "用户" : speaker;
+function speakerName(speaker: string, nameOf: (speaker: string) => string): string {
+  return nameOf(speaker);
 }
 
 /** 把群时间线中的一条消息写成一句稳定事实。 */
-export function groupLine(item: GroupItem): string {
-  const who = speakerName(item.speaker);
+export function groupLine(item: GroupItem, nameOf: (speaker: string) => string = (speaker) => speaker === "user" ? "用户" : speaker): string {
+  const who = speakerName(item.speaker, nameOf);
   switch (item.kind) {
     case "user": {
       const text = [item.text, ...(item.files ?? []).map((file) => isImagePath(file) ? "（图片）" : `（文件：${attachmentName(basename(file))}）`), item.quote ? `（引用：「${item.quote.text}」）` : ""].filter(Boolean).join("\n");
@@ -92,27 +94,27 @@ export function groupLine(item: GroupItem): string {
     case "note":
       return item.text ? `${who}：${item.text}` : "";
     case "job":
-      return `${who}：（创建了任务）`;
+      return `${who}：（调用了 start_job）`;
     case "question":
-      return `${who}：（询问了用户）`;
+      return `${who}：（调用了 ask_user）`;
     case "file":
-      return `${who}：（文件：${item.name}）`;
+      return `${who}：（调用了 send_file）`;
     case "image":
-      return `${who}：（图片）`;
+      return `${who}：（调用了 generate_image）`;
     case "draft":
-      return `${who}：（提议创建助手）`;
+      return `${who}：（调用了 create_assistant）`;
     case "delegation":
-      return `${who}：（转交了一件事）`;
+      return `${who}：（调用了 message_assistant）`;
     case "topic":
-      return `${who}：（创建了话题）`;
+      return `${who}：（调用了 open_topic）`;
     case "todos":
       return "";
   }
 }
 
 /** 把群时间线中的消息转换成推荐模型看到的固定文字。 */
-export function groupHistory(items: readonly GroupItem[]): FollowUpTurn[] {
-  return items.map(groupLine).filter(Boolean).map((text) => ({ role: "user" as const, text }));
+export function groupHistory(items: readonly GroupItem[], nameOf: (speaker: string) => string = (speaker) => speaker === "user" ? "用户" : speaker): FollowUpTurn[] {
+  return items.map((item) => groupLine(item, nameOf)).filter(Boolean).map((text) => ({ role: "user" as const, text }));
 }
 
 export function historyText(turns: readonly FollowUpTurn[]): string {

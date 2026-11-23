@@ -7499,8 +7499,13 @@ button.screen,
 .hc-interactive { padding: 4px; border-radius: 10px; background: var(--card); cursor: pointer; }
 .hc-form { display: flex; flex-direction: column; gap: 10px; }
 .hc-field { display: flex; flex-direction: column; gap: 5px; }
-.hc-label { color: var(--text2); font-size: 12.5px; }
+.hc-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text2); font-size: 12.5px; }
+.hc-aside { margin-left: auto; color: var(--text3); font-size: 12px; }
 .hc-label b { color: var(--accent); margin-left: 3px; }
+.hc-options { display: flex; flex-wrap: wrap; gap: 6px; }
+.hc-option { min-height: 34px; padding: 6px 12px; border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13.5px; }
+.hc-option.active { background: var(--text); color: var(--bg); }
+.hc-option b { margin-right: 4px; font-size: 12px; }
 .hc-input, .hc-select { width: 100%; min-height: 38px; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--card); color: var(--text); font: inherit; font-size: 14px; outline: none; }
 .hc-input-wrap { display: flex; align-items: center; gap: 4px; min-height: 38px; padding-right: 4px; border-radius: 10px; background: var(--card); }
 .hc-input-wrap .hc-input { min-width: 0; background: transparent; }

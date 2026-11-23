@@ -96,15 +96,29 @@ function CardInputControl({ element, value, onChange, disabled }: { element: any
   const [show, setShow] = useState(false);
   const text = value === undefined ? "" : String(value);
   if (element.tag === "checker") return <label className="hc-checker"><span>{cardLabel(element)}</span><input type="checkbox" checked={Boolean(value ?? element.checked)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /></label>;
-  if (element.tag === "select_static" || element.tag === "multi_select_static") return <select className="hc-select" disabled={disabled} multiple={element.tag === "multi_select_static"} value={element.tag === "multi_select_static" ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "")} onChange={(event) => onChange(element.tag === "multi_select_static" ? [...event.target.selectedOptions].map((option) => option.value) : event.target.value)}>
-    {!element.required && element.tag === "select_static" ? <option value="">{cardText(element.placeholder) || t("请选择")}</option> : null}
-    {(element.options ?? []).map((option: any) => <option value={option.value} key={option.value}>{cardText(option.text)}</option>)}
-  </select>;
+  if (element.tag === "select_static" || element.tag === "multi_select_static") {
+    const options = element.options ?? [];
+    const compact = options.length <= (element.tag === "select_static" ? 5 : 8) && options.every((option: any) => cardText(option.text).length <= 8);
+    const selected = element.tag === "multi_select_static" ? (Array.isArray(value) ? value.map(String) : []) : String(value ?? "");
+    const pick = (optionValue: string) => {
+      if (element.tag === "multi_select_static") {
+        const next = new Set(selected);
+        if (next.has(optionValue)) next.delete(optionValue); else next.add(optionValue);
+        onChange([...next]);
+      } else onChange(optionValue);
+    };
+    if (compact) return <div className="hc-options">{options.map((option: any) => { const active = Array.isArray(selected) ? selected.includes(option.value) : selected === option.value; return <button type="button" className={`hc-option${active ? " active" : ""}`} disabled={disabled} aria-pressed={active} onClick={() => pick(option.value)} key={option.value}>{active && element.tag === "multi_select_static" ? <b>✓</b> : null}{cardText(option.text)}</button>; })}</div>;
+    return <select className="hc-select" disabled={disabled} multiple={element.tag === "multi_select_static"} value={Array.isArray(selected) ? selected : selected} onChange={(event) => onChange(element.tag === "multi_select_static" ? [...event.target.selectedOptions].map((option) => option.value) : event.target.value)}>
+      {!element.required && element.tag === "select_static" ? <option value="">{cardText(element.placeholder) || t("请选择")}</option> : null}
+      {options.map((option: any) => <option value={option.value} key={option.value}>{cardText(option.text)}</option>)}
+    </select>;
+  }
   if (element.tag === "date_picker") return <input className="hc-input" type="date" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "picker_time") return <input className="hc-input" type="time" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "picker_datetime") return <input className="hc-input" type="datetime-local" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "overflow") return <select className="hc-select" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)}><option value="">⋯</option>{(element.options ?? []).map((option: any) => <option value={option.value} key={option.value}>{cardText(option.text)}</option>)}</select>;
   if (element.input_type === "number") return <span className="hc-number"><button type="button" disabled={disabled || (element.min !== undefined && Number(value || 0) <= element.min)} onClick={() => onChange(Math.max(element.min ?? -Infinity, Number(value || 0) - 1))}>−</button><input className="hc-input" disabled={disabled} type="number" value={text} min={element.min} max={element.max} onChange={(event) => onChange(event.target.value === "" ? "" : Number(event.target.value))} /><button type="button" disabled={disabled || (element.max !== undefined && Number(value || 0) >= element.max)} onClick={() => onChange(Math.min(element.max ?? Infinity, Number(value || 0) + 1))}>＋</button></span>;
+  if (element.input_type === "multiline_text") return <textarea className="hc-input hc-area" disabled={disabled} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />;
   const password = element.input_type === "password";
   return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />{password ? <button type="button" className="hc-eye" disabled={disabled} onClick={() => setShow((current) => !current)}>{show ? "◉" : "◎"}</button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
 }
@@ -136,7 +150,7 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   if (element.tag === "button") return <button type="button" className={`hob-btn${element.type === "primary_filled" ? " hob-btn-primary" : element.type === "danger" ? " hob-btn-danger" : ""}`} disabled={disabled} onClick={(event) => { event.preventDefault(); const url = element.behaviors?.find((behavior: any) => behavior.type === "open_url")?.default_url; if (url) openUrl(url); else submit(element, formElements); }}>{cardText(element.text)}</button>;
   if (interactive && field) {
     const change = (value: unknown) => { setValue(field, value); if (!inForm) submit({ ...element, value: undefined }, undefined, value); };
-    return <label className="hc-field"><span className="hc-label">{cardLabel(element)}{element.required ? <b>*</b> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
+    return <label className="hc-field"><span className="hc-label"><span>{cardLabel(element)}{element.required ? <b>*</b> : null}</span>{element.min_length !== undefined ? <span className="hc-aside">{t("至少 {count} 位", { count: element.min_length })}</span> : element.tag === "multi_select_static" ? <span className="hc-aside">{t("可多选")}</span> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
   }
   return null;
 }

@@ -4879,7 +4879,8 @@ button.screen,
 .disclosure-end { display: inline-flex; align-items: center; gap: 8px; flex: none; color: var(--text3); }
 .disclosure-count { color: var(--text3); font-size: 12.5px; white-space: nowrap; }
 .disclosure-arrow { color: var(--text3); transition: transform var(--t-mid) var(--ease-in); }
-.disclosure.open .disclosure-arrow { transform: rotate(180deg); }
+/* 只转自己那一行的箭头：展开里面套着的展开行（如「其余步骤」里的每一步）各管各的 */
+.disclosure.open > .disclosure-row .disclosure-arrow { transform: rotate(180deg); }
 @media (hover: hover) {
   .disclosure-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); }
 }

@@ -255,7 +255,8 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
   const sediment = sedimentIndex < 0 ? undefined : groupThinking(part.steps!.slice(sedimentIndex + 1));
   const reason = jobReason(part.job);
   const ended = !active(part.job);
-  const initiallyVisible = new Set(timeline ? visibleSteps(timeline.rows, ended, false).rows.map((row) => row.id) : []);
+  // 折起来时露出的前几步固定不变；「其余步骤」展开后接在下面，不能随展开状态重算（重算后剩余为 0，这一行和里面的步骤就一起没了）
+  const collapsed = timeline ? visibleSteps(timeline.rows, ended) : undefined;
   return (
     <>
       {last ? null : (
@@ -270,16 +271,16 @@ function RoundBody({ part, last, index }: { part: { job: Job; instruction?: stri
       <div className="lbl">{t("执行过程")}</div>
       <div className="jd-timeline">
         {timeline === undefined ? <Empty><DelayedText text={t("正在读取执行过程…")} /></Empty> : timeline.rows.length || timeline.thinking ? <>
-          {visibleSteps(timeline.rows, ended, expanded).rows.map((step) => expanded && !initiallyVisible.has(step.id) ? null : <Step key={step.id} step={step} cwd={part.job.cwd} />)}
-          {visibleSteps(timeline.rows, ended, expanded).remaining ? (
+          {collapsed!.rows.map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+          {collapsed!.remaining ? (
             <Disclosure
               className="jd-more-steps"
               label={t("其余步骤")}
-              count={visibleSteps(timeline.rows, ended, expanded).remaining}
+              count={collapsed!.remaining}
               open={expanded}
               onToggle={() => setExpanded((value) => !value)}
             >
-              {timeline.rows.filter((step) => !initiallyVisible.has(step.id)).map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
+              {timeline.rows.slice(collapsed!.rows.length).map((step) => <Step key={step.id} step={step} cwd={part.job.cwd} />)}
             </Disclosure>
           ) : null}
           {timeline.thinking ? <ThinkingLive text={timeline.thinking} /> : null}

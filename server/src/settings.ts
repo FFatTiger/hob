@@ -168,9 +168,8 @@ function normalizeModels(raw: unknown, base: ModelSettings): ModelSettings {
     };
   };
   const rawSuggest = input.suggest;
-  const suggestRef = rawSuggest && typeof rawSuggest === "object" && !Array.isArray(rawSuggest) && typeof (rawSuggest as Partial<ModelPick>).ref === "string"
-    ? (rawSuggest as Partial<ModelPick>).ref.trim()
-    : "";
+  const rawSuggestRef = rawSuggest && typeof rawSuggest === "object" && !Array.isArray(rawSuggest) ? (rawSuggest as Partial<ModelPick>).ref : undefined;
+  const suggestRef = typeof rawSuggestRef === "string" ? rawSuggestRef.trim() : "";
   const suggest = rawSuggest === null
     ? null
     : suggestRef ? pick(rawSuggest, base.conversation) : rawSuggest === undefined ? base.suggest : undefined;

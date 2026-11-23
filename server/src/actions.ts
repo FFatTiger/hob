@@ -10,6 +10,7 @@ import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
 import { candidateId, fillCandidate, rememberAutoLogin } from "./login.ts";
+import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
 
 export interface ActionResult {
   status: number;
@@ -343,12 +344,55 @@ async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, 
   return { status: 200, body: { approval: answered } };
 }
 
+/** 答复生成新密码批准卡：密码只在生成、保存和 CDP 填写的这次调用里经过。 */
+async function answerFillNewPasswordApproval(runtime: HobRuntime, approval: Approval, input: AnswerApprovalBody): Promise<ActionResult> {
+  const { store, bus, router, jobs } = runtime;
+  const fill = approval.login?.fillNewPassword;
+  if (!fill) return { status: 400, body: { error: "新密码批准卡数据不完整" } };
+  const option = input.key ? approval.options.find((item) => item.key === input.key) : undefined;
+  if (!option) return { status: 400, body: { error: "没有这个选项" } };
+  const folder = fill.mode === "register" ? (input.folder !== undefined ? input.folder : fill.folder) : undefined;
+  if (fill.mode === "register" && folder && !fill.folders.includes(folder)) return { status: 400, body: { error: "没有这个文件夹选项" } };
+  const storedFolder = fill.mode === "register" ? folder : fill.candidate?.folder;
+  let reply: string;
+  let nextFill = { ...fill };
+  const mode = newPasswordModeText(fill.mode);
+  const characters = passwordCharactersText(fill.characters);
+  const folderText = storedFolder || "未分类";
+  if (option.key === "A") {
+    nextFill = { ...nextFill, state: "rejected", result: "已拒绝" };
+    reply = `用户没有允许在 ${fill.host} ${mode}。`;
+  } else {
+    try {
+      await generateSaveAndFill(runtime, approval.assistantId, fill, folder);
+      nextFill = { ...nextFill, state: "filled", ...(fill.mode === "register" && folder ? { folder } : {}), result: `已填写，已存进 ${fill.providerName}「${folderText}」` };
+      reply = `用户允许了在 ${fill.host} ${mode}，Hob 已生成 ${fill.length} 位新密码（${characters}），存进 ${fill.providerName}「${folderText}」的「${fill.name}」，并填好了密码框。接下来提交表单；网站不接受这个密码的话，照页面提示的要求再调一次 fill_new_password，会更新同一条，不会多存。`;
+    } catch (error) {
+      const reason = error instanceof NewPasswordError && error.saved
+        ? `新密码已经存进 ${error.providerName}「${error.name}」；${error.message}`
+        : error instanceof Error ? error.message : String(error);
+      nextFill = { ...nextFill, state: "failed", result: `没有完成：${reason}` };
+      reply = `用户允许了在 ${fill.host} ${mode}，但没有完成：${reason}`;
+    }
+  }
+  const answered: Approval = { ...approval, status: "answered", chosen: option.key, login: { ...approval.login!, fillNewPassword: nextFill }, answeredAt: new Date().toISOString() };
+  store.saveApproval(answered);
+  if (answered.groupId) runtime.groups.publish(answered.groupId);
+  const delegation = approval.source === "job" ? undefined : store.delegations().find((item) => item.approvalIds?.includes(approval.id));
+  const delegationId = delegation && runtime.delegations.resume(delegation.id) ? delegation.id : undefined;
+  bus.emit({ type: "approval", approval: answered });
+  if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, reply);
+  else await routeAnswer(runtime, approval, reply, delegationId);
+  return { status: 200, body: { approval: answered } };
+}
+
 /** 答复审批卡：记答案、写 always 规则、叫醒阻塞的 Worker 或把答案推回 Router。 */
 export async function answerApproval(runtime: HobRuntime, approvalId: string, input: AnswerApprovalBody): Promise<ActionResult> {
   const { store, bus, router, jobs } = runtime;
   const approval = store.approval(approvalId);
   if (!approval) return { status: 404, body: { error: "审批不存在" } };
   if (approval.status !== "pending") return { status: 409, body: { error: "这个审批已答复" } };
+  if (approval.login?.fillNewPassword) return answerFillNewPasswordApproval(runtime, approval, input);
   if (approval.login?.fillLogin) return answerFillLoginApproval(runtime, approval, input);
   const questions = approval.questions?.length ? approval.questions : undefined;
   // 多问题卡：每个问题都要答（选了选项或自己写了一句都算），补充说明可有可无

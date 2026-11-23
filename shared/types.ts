@@ -646,11 +646,31 @@ export interface FillLoginCandidate {
   provider: string;
   providerName: string;
   id: string;
+  name: string;
   username: string;
   folder?: string;
   uris: string[];
 }
 
+export type PasswordCharacter = "lowercase" | "uppercase" | "numbers" | "symbols";
+
+export interface FillNewPasswordApproval {
+  host: string;
+  pageUrl: string;
+  username: string;
+  mode: "register" | "change";
+  provider: string;
+  providerName: string;
+  length: number;
+  characters: PasswordCharacter[];
+  name: string;
+  origin: string;
+  folders: string[];
+  folder?: string;
+  candidate?: FillLoginCandidate;
+  state?: "pending" | "filled" | "rejected" | "failed";
+  result?: string;
+}
 export interface FillLoginApproval {
   host: string;
   currentHost?: string;
@@ -680,7 +700,7 @@ export interface Approval {
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
-  login?: { site: string; reason: string; fillLogin?: FillLoginApproval }; // ask_login 或填登录的交接信息
+  login?: { site: string; reason: string; fillLogin?: FillLoginApproval; fillNewPassword?: FillNewPasswordApproval }; // ask_login 或填登录的交接信息
   createdAt: Iso;
   answeredAt?: Iso;
 }
@@ -1086,6 +1106,7 @@ export interface SendMessageBody {
 export interface AnswerApprovalBody {
   key?: ApprovalOption["key"];
   candidateId?: string;
+  folder?: string;
   /** 单问题卡：用户自己写的一段；多问题卡：整张卡的补充说明（可选） */
   text?: string;
   /** 多问题卡：每个问题的答案，和 questions 一一对应 */

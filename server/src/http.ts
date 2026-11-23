@@ -1212,9 +1212,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/approvals/:id", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as AnswerApprovalBody;
     // 多问题卡只带 answers（没写补充说明）也算答了
-    if (body.key === undefined && body.text === undefined && !body.answers?.length) return c.json({ error: "缺答案：key、text、answers 至少给一个" }, 400);
+    if (body.key === undefined && body.text === undefined && body.candidateId === undefined && body.folder === undefined && !body.answers?.length) return c.json({ error: "缺答案：key、text、answers 至少给一个" }, 400);
     const result = await answerApproval(runtime, c.req.param("id"), {
       ...(body.key !== undefined ? { key: body.key } : {}),
+      ...(body.candidateId !== undefined ? { candidateId: body.candidateId } : {}),
+      ...(body.folder !== undefined ? { folder: body.folder } : {}),
       ...(body.text !== undefined ? { text: body.text } : {}),
       ...(body.answers?.length ? { answers: body.answers } : {}),
     });

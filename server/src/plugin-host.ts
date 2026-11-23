@@ -59,6 +59,11 @@ export class PluginHost {
   hasCredentialProvider(assistantId: string): boolean {
     return this.credentialProviders(assistantId, "list").length > 0 && this.credentialProviders(assistantId, "secret").length > 0;
   }
+  hasPasswordGenerator(assistantId: string): boolean {
+    return this.hasCredentialProvider(assistantId)
+      && this.credentialProviders(assistantId, "generate").length > 0
+      && this.credentialProviders(assistantId, "save").length > 0;
+  }
   async callCredential(provider: CredentialProvider, args: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const response = await this.call(provider.pluginId, provider.service, provider.tool, args, signal);
     if (response.isError) {

@@ -1434,6 +1434,7 @@ svg.i {
 .qfill-label { color: var(--text2); width: 58px; flex: none; }
 .qfill-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .qfill-provider { color: var(--text2); font-size: 12.5px; white-space: nowrap; }
+.qfill-select { min-width: 0; max-width: 190px; flex: 1; border: 0; background: transparent; color: var(--text); font: inherit; outline: none; }
 .qfill-ok, .qfill-bad { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12.5px; }
 .qfill-ok { color: var(--ok); }
 .qfill-bad, .qfill-result.bad { color: var(--danger); }

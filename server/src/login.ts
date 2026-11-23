@@ -10,8 +10,8 @@ export type FillLoginPreparation =
   | { kind: "mismatch"; text: string; approval: FillLoginApproval }
   | { kind: "approval"; approval: FillLoginApproval; title: string; detail: string };
 
-type InputInfo = { index: number; type: string; autocomplete: string; name: string; beforePassword: boolean };
-type PageInfo = { url: string; host: string; inputs: InputInfo[]; usernameIndex?: number; passwordIndex?: number };
+export type InputInfo = { index: number; type: string; autocomplete: string; name: string; value: string; beforePassword: boolean };
+export type PageInfo = { url: string; host: string; inputs: InputInfo[]; usernameIndex?: number; passwordIndex?: number };
 
 const recentAllowed = new WeakMap<HobRuntime, Map<string, number>>();
 
@@ -52,7 +52,7 @@ function recentFor(runtime: HobRuntime, candidate: FillLoginCandidate, host: str
   return until >= Date.now();
 }
 
-async function pageInfo(page: Page): Promise<PageInfo> {
+export async function pageInfo(page: Page): Promise<PageInfo> {
   const url = page.url();
   const host = hostOf(url);
   if (!host) throw new Error(`当前页面（${url}）没有网站地址。先打开登录页再调 fill_login。`);
@@ -60,7 +60,7 @@ async function pageInfo(page: Page): Promise<PageInfo> {
     const input = element as HTMLInputElement;
     const style = window.getComputedStyle(input);
     if (input.type === "hidden" || input.disabled || style.display === "none" || style.visibility === "hidden" || input.getClientRects().length === 0) return [];
-    return [{ index, type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase() }];
+    return [{ index, type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value }];
   }));
   const password = inputs.find((input) => input.type === "password");
   const passwordIndex = password?.index;
@@ -70,17 +70,19 @@ async function pageInfo(page: Page): Promise<PageInfo> {
   return { url, host, inputs: inputs.map((input) => ({ ...input, beforePassword: passwordIndex === undefined || input.index < passwordIndex })), ...(username ? { usernameIndex: username.index } : {}), ...(password ? { passwordIndex } : {}) };
 }
 
-async function inspect(runtime: HobRuntime, assistantId: string): Promise<PageInfo> {
+export async function inspectCurrentPage(runtime: HobRuntime, assistantId: string): Promise<PageInfo> {
   const session = new DesktopToolSession(runtime, assistantId);
   try { return await session.withCurrentPage(pageInfo); }
   finally { await session.dispose(); }
 }
 
+const inspect = inspectCurrentPage;
+
 function listUris(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-async function candidatesFor(runtime: HobRuntime, assistantId: string, site: string, account?: string): Promise<FillLoginCandidate[]> {
+export async function credentialCandidates(runtime: HobRuntime, assistantId: string, site: string, account?: string): Promise<FillLoginCandidate[]> {
   const providers = runtime.plugins.credentialProviders(assistantId, "list");
   const query = site.trim().toLowerCase();
   const queryHost = hostOf(site.trim());
@@ -102,6 +104,7 @@ async function candidatesFor(runtime: HobRuntime, assistantId: string, site: str
         provider: provider.pluginId,
         providerName: provider.providerName,
         id: typeof login.id === "string" ? login.id : String(login.id ?? ""),
+        name,
         username,
         ...(typeof login.folder === "string" && login.folder ? { folder: login.folder } : {}),
         uris,
@@ -125,7 +128,7 @@ function approvalDetail(candidates: FillLoginCandidate[]): string {
 
 export async function prepareFillLogin(runtime: HobRuntime, assistantId: string, site: string, account?: string): Promise<FillLoginPreparation> {
   const info = await inspect(runtime, assistantId);
-  const candidates = await candidatesFor(runtime, assistantId, site, account);
+  const candidates = await credentialCandidates(runtime, assistantId, site, account);
   if (!candidates.length) {
     return { kind: "message", text: `密码管理器里没有 ${site} 的账号。注册新账号用 fill_new_password；用户有账号但没存的，可以请他在云桌面里自己登录，或者用密码管理插件的保存工具存进去。` };
   }

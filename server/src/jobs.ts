@@ -37,7 +37,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
 import { SEDIMENT_PROMPT_HEAD, STEP_EVENT_LIMIT, JOB_REMINDER_LEAD, browserCommandLabel, deriveSteps, reminderStep, textOfContent, toolStep, withOutput } from "./transcript.ts";
-import { registerAskLoginTool, registerAskTool, registerFillLoginTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
+import { registerAskLoginTool, registerAskTool, registerFillLoginTool, registerFillNewPasswordTool, registerImageTool, registerReportTool } from "./worker-tools.ts";
 import { scriptToolList } from "./script-tools.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 import { searchTools } from "./search.ts";
@@ -486,6 +486,7 @@ export class JobManager {
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
     const desktop = await availableDesktopTools(this.runtime, job.assistantId, !!this.runtime.models.find(job.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"), job.title, join(this.store.workDir(job.id), "screenshots"));
     if (desktop && this.runtime.plugins.hasCredentialProvider(job.assistantId)) customTools.push(registerFillLoginTool(this.runtime, job.id, sediment));
+    if (desktop && this.runtime.plugins.hasPasswordGenerator(job.assistantId)) customTools.push(registerFillNewPasswordTool(this.runtime, job.id, sediment));
     if (desktop) customTools.push(...desktop.tools());
     const cliEnvironment = desktop ? await desktop.preparePlaywrightCli() : undefined;
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报

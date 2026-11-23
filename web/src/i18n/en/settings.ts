@@ -54,5 +54,6 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "较慢": "Slow",
   "较快": "Fast",
   "很快": "Very fast",
+  "配色": "Color theme", "海盐": "Sea salt", "森林": "Forest", "暮紫": "Dusk", "玫瑰": "Rose", "深色和浅色各有一套颜色，配色不影响深浅；选了只存在这台设备的浏览器里，不跟着账号同步。": "Dark and light each have their own colors, and the color theme does not change which one you get. Your choice is saved in this browser only.",
   "智能 {smart}% · 成本 {cost}% · 速度 {speed}%": "Intelligence {smart}% · Cost {cost}% · Speed {speed}%",
 };

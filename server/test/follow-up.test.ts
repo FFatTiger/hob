@@ -14,6 +14,8 @@ async function signIn(app: ReturnType<typeof createApp>): Promise<string> {
   return response.headers.get("set-cookie")?.split(";")[0] ?? "";
 }
 
+import {
+  FOLLOW_UP_SYSTEM_PROMPT,
   followUpContext,
   generateFollowUpSuggestions,
   groupHistory,
@@ -88,6 +90,25 @@ describe("follow-up suggestion output", () => {
       follow.close();
       off.close();
       explicit.close();
+    }
+  });
+
+  it("rejects an unavailable selected model", async () => {
+    const hob = makeHob();
+    try {
+      const app = createApp(hob.runtime, { home: hob.home });
+      const cookie = await signIn(app);
+      const response = await app.request("/api/settings", {
+        method: "PUT",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({
+          revision: hob.runtime.settings.get().revision,
+          patch: { models: { suggest: { ref: "gone/model", thinking: "off" } } },
+        }),
+      });
+      expect(response.status).toBe(400);
+    } finally {
+      hob.close();
     }
   });
 });

@@ -74,7 +74,12 @@ export async function startFakeDesktopd({ port = 0, host = "127.0.0.1", cdp, tok
   const address = server.address();
   return {
     url: `http://${host}:${address.port}`,
-    close: () => new Promise((resolve) => { wss.close(); server.close(() => resolve()); server.closeAllConnections(); }),
+    close: () => new Promise((resolve) => {
+      for (const client of wss.clients) client.terminate();
+      wss.close();
+      server.close(() => resolve());
+      server.closeAllConnections();
+    }),
   };
 }
 

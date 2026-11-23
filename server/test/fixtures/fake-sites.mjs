@@ -62,16 +62,17 @@ export async function startFakeSites({ port = 0, host = "127.0.0.1", expected = 
       return send(302, "", { location: "/" });
     }
 
-    // ---------- shop.example.com：注册页，密码 8–16 位、只能字母和数字 ----------
+    // ---------- shop.example.com：注册页，密码 8–16 位、只能字母和数字（?rule=quiet 时页面只写长度，字符要求要被拒了才知道） ----------
     if (site === "shop.example.com") {
-      if (url.pathname === "/register" && req.method === "GET") return send(200, page("Example 商城 · 注册", form("/register", [["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="new-password" required><p class="rule">密码 8–16 位，只能用字母和数字</p>`], ["再输一次密码", `<input type="password" name="confirm" autocomplete="new-password" required>`]], "注册")));
+      const rule = url.searchParams.get("rule") === "quiet" ? "密码 8–16 位" : "密码 8–16 位，只能用字母和数字";
+      if (url.pathname === "/register" && req.method === "GET") return send(200, page("Example 商城 · 注册", form("/register", [["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="new-password" required><p class="rule">${rule}</p>`], ["再输一次密码", `<input type="password" name="confirm" autocomplete="new-password" required>`]], "注册")));
       if (url.pathname === "/register" && req.method === "POST") {
         const problems = [];
         if (body.password !== body.confirm) problems.push("两次输入的密码不一致");
         if (body.password.length < 8 || body.password.length > 16) problems.push("密码要 8–16 位");
         if (!/^[A-Za-z0-9]*$/.test(body.password)) problems.push("密码不能包含符号");
         record("register", { username: body.email, password: body.password, accepted: problems.length === 0, problems });
-        if (problems.length) return send(200, page("Example 商城 · 注册", `<p class="bad">${problems.join("；")}</p>${form("/register", [["邮箱", `<input type="email" name="email" autocomplete="username" value="${body.email ?? ""}" required>`], ["密码", `<input type="password" name="password" autocomplete="new-password" required><p class="rule">密码 8–16 位，只能用字母和数字</p>`], ["再输一次密码", `<input type="password" name="confirm" autocomplete="new-password" required>`]], "注册")}`));
+        if (problems.length) return send(200, page("Example 商城 · 注册", `<p class="bad">${problems.join("；")}</p>${form("/register", [["邮箱", `<input type="email" name="email" autocomplete="username" value="${body.email ?? ""}" required>`], ["密码", `<input type="password" name="password" autocomplete="new-password" required><p class="rule">${rule}</p>`], ["再输一次密码", `<input type="password" name="confirm" autocomplete="new-password" required>`]], "注册")}`));
         return send(200, page("Example 商城 · 注册成功", `<p>注册成功，欢迎 ${body.email}。</p><ul><li>密码长度 ${mark(true)}（8–16 位）</li><li>字符 ${mark(true)}（字母和数字）</li></ul>`));
       }
       return send(200, page("Example 商城", "<p><a href=\"/register\">注册</a></p>"));

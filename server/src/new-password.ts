@@ -1,7 +1,7 @@
 import type { FillLoginCandidate, FillNewPasswordApproval, PasswordCharacter } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { credentialCandidates, hostsMatch, inspectCurrentPage, pageInfo, type PageInfo } from "./login.ts";
-import { DesktopToolSession } from "./desktop-tools.ts";
+import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -220,6 +220,8 @@ export async function generateSaveAndFill(runtime: HobRuntime, assistantId: stri
           await page.locator("input").nth(old.index).fill(oldPassword);
         }
         for (const index of targets) await page.locator("input").nth(index).fill(password);
+        // 页面上现在有这些密码：助手的浏览器命令（快照、读值）输出里要把它们抹掉
+        rememberFilledSecret(runtime, assistantId, password, oldPassword);
       });
     } finally {
       await session.dispose();

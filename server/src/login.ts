@@ -1,7 +1,7 @@
 import type { Page } from "playwright-core";
 import type { FillLoginApproval, FillLoginCandidate, LoginAutoEntry } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
-import { DesktopToolSession } from "./desktop-tools.ts";
+import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
 import { readLoginAuto, saveLoginAuto } from "./login-auto.ts";
 
 export type FillLoginResult = { kind: "filled" | "username"; host: string; username: string; text: string };
@@ -187,6 +187,7 @@ export async function fillCandidate(runtime: HobRuntime, assistantId: string, ca
         return { kind: "username", host, username, text: `已在 ${host} 填好用户名 ${username}，点下一步后再调一次 fill_login 填密码。` };
       }
       await page.locator("input").nth(fields.passwordIndex).fill(password);
+      rememberFilledSecret(runtime, assistantId, password);
       return { kind: "filled", host, username, text: `已在 ${host} 填好 ${username} 的账号和密码，接下来点登录按钮。` };
     });
   } catch (error) {

@@ -19,6 +19,7 @@ vi.mock("../src/login.ts", () => ({
 }));
 
 vi.mock("../src/desktop-tools.ts", () => ({
+  rememberFilledSecret: () => {},
   DesktopToolSession: class {
     constructor(..._args: unknown[]) {}
     async withCurrentPage(run: (page: unknown) => Promise<unknown>) {

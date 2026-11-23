@@ -24,6 +24,18 @@ const action = Type.Object({
 type Release = () => void;
 type Claim = () => Release;
 
+async function readJsonBody(request: IncomingMessage, limit: number): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for await (const chunk of request) {
+    size += (chunk as Buffer).length;
+    if (size > limit) throw new Error("请求体太大。");
+    chunks.push(chunk as Buffer);
+  }
+  const text = Buffer.concat(chunks).toString("utf8");
+  try { return text ? JSON.parse(text) : {}; } catch { throw new Error("请求体不是 JSON。"); }
+}
+
 type RelayConnection = {
   client?: WebSocket;
   upstream?: WebSocket;
@@ -32,6 +44,26 @@ type RelayConnection = {
 };
 
 const jobConnections = new WeakMap<HobRuntime, Map<string, Map<DesktopToolSession, string>>>();
+
+/** 这个助手的屏幕上 Hob 刚填进去的密码：只放在 Hob 进程的内存里，用来从浏览器命令的输出里抹掉。 */
+const filledSecrets = new WeakMap<HobRuntime, Map<string, string[]>>();
+
+export function rememberFilledSecret(runtime: HobRuntime, assistantId: string, ...secrets: string[]): void {
+  const screen = desktopProfile(assistantId);
+  let byScreen = filledSecrets.get(runtime);
+  if (!byScreen) filledSecrets.set(runtime, byScreen = new Map());
+  const list = byScreen.get(screen) ?? [];
+  for (const secret of secrets) if (secret && !list.includes(secret)) list.push(secret);
+  byScreen.set(screen, list.slice(-20));
+}
+
+export function redactSecrets(text: string, secrets: string[]): string {
+  return secrets.filter(Boolean).reduce((result, secret) => result.split(secret).join("••••"), text);
+}
+
+export function filledSecretsFor(runtime: HobRuntime, assistantId: string): string[] {
+  return [...(filledSecrets.get(runtime)?.get(desktopProfile(assistantId)) ?? [])];
+}
 
 /**
  * A local-only CDP WebSocket relay. The child process receives only the local
@@ -85,6 +117,14 @@ class BrowserRelay {
       if (this.closed) throw new Error("浏览器转发会话已结束。");
       this.check();
       await this.runtime.desktop.request("/api/health");
+      // 浏览器命令的输出和它写的快照文件先送到这里，把 Hob 填进页面的密码抹掉再还给命令行（密码不出 Hob 进程）
+      if (request.method === "POST") {
+        const body = await readJsonBody(request, 16 * 1024 * 1024) as { texts?: unknown };
+        const secrets = filledSecretsFor(this.runtime, this.screen);
+        const texts = Array.isArray(body.texts) ? body.texts : [];
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ texts: texts.map((text) => typeof text === "string" ? redactSecrets(text, secrets) : text) }));
+        return;
+      }
       response.writeHead(200).end("ok");
     } catch (error) {
       response.writeHead(409, { "content-type": "text/plain; charset=utf-8" }).end(error instanceof Error ? error.message : String(error));
@@ -273,7 +313,7 @@ export class DesktopToolSession {
     try {
       this.check();
       const pages = browser.contexts().flatMap((context) => context.pages());
-      const page = pages.at(-1);
+      const page = await currentPage(pages);
       if (!page) throw new Error("云桌面里没有打开的页面。");
       return await run(page);
     } finally {
@@ -356,6 +396,25 @@ export class DesktopToolSession {
 /** 无效或过长的助手 id 用稳定哈希。 */
 export function desktopProfile(assistantId: string): string {
   return /^[a-z0-9-]{1,64}$/.test(assistantId) ? assistantId : `p-${createHash("sha256").update(assistantId).digest("hex").slice(0, 62)}`;
+}
+
+/**
+ * 用户正在看的那个标签页。Playwright 列出的页面顺序和 Chrome 的 Target.getTargets 顺序都不可靠，不能用位置当「当前页面」。
+ * 前台标签页 document.hasFocus() 为 true（headless Chrome 里也只能靠它：visibilityState 全是 visible）；
+ * 窗口本身没有焦点时（用户在看别的窗口）退到可见的标签页；都没有就取最后一个。
+ */
+export async function currentPage(pages: Page[]): Promise<Page | undefined> {
+  const states: Array<{ page: Page; focus: boolean; visible: boolean }> = [];
+  for (const page of pages) {
+    states.push({
+      page,
+      ...(await Promise.race([
+        page.evaluate(() => ({ focus: document.hasFocus(), visible: document.visibilityState === "visible" })).catch(() => ({ focus: false, visible: false })),
+        new Promise<{ focus: false; visible: false }>((resolve) => setTimeout(() => resolve({ focus: false, visible: false }), 2_000)),
+      ])),
+    });
+  }
+  return states.find((state) => state.focus)?.page ?? states.find((state) => state.visible)?.page ?? pages.at(-1);
 }
 
 /** 在云桌面里打开（或提到最前）这个助手的浏览器，供用户接管并手动登录。 */

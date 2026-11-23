@@ -6,11 +6,16 @@ import { createServer as createNetServer } from "node:net";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { execFile } from "node:child_process";
+import { mkdirSync, readdirSync } from "node:fs";
 import { chromium, type Browser, type Page } from "playwright-core";
 import type { Approval, HobEvent } from "../../shared/types.ts";
 import { answerApproval } from "../src/actions.ts";
+import { DesktopToolSession } from "../src/desktop-tools.ts";
 import { readLoginAuto } from "../src/login-auto.ts";
+import { ensurePlaywrightCli } from "../src/playwright-cli.ts";
 import { call, makeHob, text, type TestHob } from "./helpers.ts";
 import { startFakeDesktopd } from "./fixtures/fake-desktopd.mjs";
 import { startFakeSites } from "./fixtures/fake-sites.mjs";
@@ -213,6 +218,48 @@ describeE2E("填写登录 / 新密码端到端（真 Chrome）", () => {
     expectNoSecrets();
     // 后面的场景还要在论坛上出批准卡：把自动填写清掉
     rmSync(join(hob.home, "system", "login-auto.json"));
+  });
+
+  // 有几个标签页时取「正在看的那个」（document.hasFocus / visibilityState）在 headless Chrome 里测不了：所有标签页都报 visible、hasFocus 也不可靠，
+  // 这里始终保持只有一个标签页；真浏览器里的行为靠 currentPage 的规则（前台标签页 → 可见的 → 最后一个）
+  it("助手用 playwright-cli 看页面时，输出和快照文件里看不到 Hob 填的密码", async () => {
+    // 助手自己的浏览器命令行：快照会把密码框的值带出来，Hob 把它填过的密码从输出和 .playwright-cli 的快照文件里抹掉
+    ensurePlaywrightCli(join(hob.home, "system", "engine"));
+    const launcher = join(hob.home, "system", "engine", "bin", "playwright-cli");
+    const work = join(tmp, "cli-work");
+    mkdirSync(work, { recursive: true });
+    const session = new DesktopToolSession(hob.runtime, "hob");
+    try {
+      const env = await session.preparePlaywrightCli();
+      // 要用异步的 execFile：同步的 execFileSync 会卡住这个进程的事件循环，转发入口（就在这个进程里）就没法应答启动器的检查
+      const execFileAsync = promisify(execFile);
+      const run = async (args: string[]) => {
+        try {
+          return (await execFileAsync(process.execPath, [launcher, ...args], { cwd: work, env: { ...process.env, ...env }, encoding: "utf8", timeout: 90_000 })).stdout;
+        } catch (error) {
+          throw new Error(`playwright-cli ${args.join(" ")} 失败：${error instanceof Error ? `${error.message}\n${String((error as { stderr?: string }).stderr ?? '').slice(0, 2000)}` : String(error)}`);
+        }
+      };
+      // 照助手的真实顺序：先用命令行连上浏览器、打开登录页，再让 Hob 填，然后命令行看页面
+      await run(["open"]);
+      await run(["goto", "http://forum.example.net/login"]);
+      await turn("fill_login", { site: "forum.example.net" });
+      await approve({ key: "B", candidateId: "vault:login-forum" });
+      const snapshot = await run(["snapshot"]);
+      expect(snapshot).toContain("••••");
+      expect(snapshot).not.toContain(PASSWORDS.forum);
+      // 存心去翻的也翻不到：读输入框的值同样经过输出
+      expect(await run(["eval", "document.querySelector('input[type=password]').value"])).not.toContain(PASSWORDS.forum);
+      for (const name of readdirSync(join(work, ".playwright-cli"))) {
+        if (!/\.ya?ml$/.test(name)) continue;
+        expect(readFileSync(join(work, ".playwright-cli", name), "utf8")).not.toContain(PASSWORDS.forum);
+      }
+      // 别的值、没填过的东西照原样输出
+      expect(await run(["eval", "document.querySelector('input[type=email]').value"])).toContain("lin@example.com");
+    } finally {
+      await session.dispose();
+    }
+    expectNoSecrets();
   });
 
   it("仿冒页：对不上就不填，不出批准卡，也不去密码库取密码", async () => {

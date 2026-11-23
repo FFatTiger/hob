@@ -162,7 +162,7 @@ export function CardView({ record, fresh, itemId }: { record: CardRecord; fresh:
   const [busy, setBusy] = useState(false);
   useEffect(() => { setErrors(record.feedback?.errors ?? {}); setValues(initialValues(record.card)); }, [record.card, record.feedback?.errors]);
   const title = cardText(record.card.header?.title) || t("未命名卡片");
-  const disabled = busy || record.status === "done" || Boolean(record.feedback?.unavailable);
+  const disabled = busy || record.status === "done";
   const openUrl = (url: string) => { if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener"); };
   const submit: Submit = async (element, formElements, directValue) => {
     if (disabled) return;

@@ -34,6 +34,10 @@ describe("plugin cards", () => {
       expect(hob.runtime.store.card(record.id)).toMatchObject({ feedback: { toast: { type: "success", content: "保存成功" } }, card: { header: { title: "已保存" } } });
       const files = readFileSync(join(hob.home, "assistants/hob/cards.json"), "utf8");
       expect(files).not.toContain("fixture-password");
+
+      const rawTool = pluginToolsForAssistant(host, "hob").find((tool) => tool.name === "github_show_card")!;
+      const rawResult = await rawTool.execute("call-raw", {}) as { content: { text?: string }[] };
+      expect(rawResult.content.map((part) => part.text ?? "").join("\n")).not.toContain("已显示给用户");
     } finally {
       await hob.runtime.plugins.close();
       hob.close();
@@ -76,6 +80,14 @@ describe("plugin cards", () => {
       const offline = await answerCard(hob.runtime, "c-offline", { action: { tag: "button" }, button_text: "保存" });
       expect(offline.status).toBe(409);
       expect(hob.runtime.store.card("c-offline")?.feedback?.unavailable).toBe("GitHub 现在用不了");
+
+      host.store.patch("github", { enabled: true });
+      await host.reload("github");
+      vi.spyOn(host, "call").mockResolvedValue({ content: [{ type: "text", text: "恢复后已保存" }] } as any);
+      const recovered = await answerCard(hob.runtime, "c-offline", { action: { tag: "button" }, button_text: "保存" });
+      expect(recovered.status).toBe(200);
+      expect(hob.runtime.store.card("c-offline")?.feedback).toBeUndefined();
+      vi.restoreAllMocks();
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();

@@ -34,6 +34,12 @@ describe("CardView", () => {
     expect(html).toContain('data-item-id="item-card"');
   });
 
+  it("keeps plugin controls enabled after an unavailable callback", () => {
+    const unavailable: CardRecord = { ...record, feedback: { unavailable: "密码箱 现在用不了" } };
+    const html = renderToStaticMarkup(<CardView record={unavailable} fresh={false} itemId="item-card" />);
+    expect(html).toContain("密码箱 现在用不了");
+    expect(html).not.toContain('disabled=""');
+  });
   it("renders a locked result with toast and field error state", () => {
     const done: CardRecord = {
       ...record,

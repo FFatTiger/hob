@@ -37,6 +37,20 @@ describe("send_card", () => {
     } finally { hob.close(); }
   });
 
+  it("does not prepend old card history to later user messages", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      await tool(hob).execute("call", { card: interactive });
+      hob.faux.setResponses([text("收到。")]);
+      await hob.runtime.router.send("hob", { text: "继续处理" });
+      await hob.runtime.router.waitIdle("hob");
+      const entries = readFileSync(hob.runtime.store.routerFile("hob"), "utf8").trim().split("\n").map((line) => JSON.parse(line));
+      const prompts = entries.filter((entry) => entry.type === "message" && entry.message?.role === "user").map((entry) => JSON.stringify(entry.message.content));
+      expect(prompts.at(-1)).toContain("继续处理");
+      expect(prompts.at(-1)).not.toContain("卡片「出行偏好」");
+    } finally { hob.close(); }
+  });
+
   it("locks an assistant card and sends the exact event message back", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {

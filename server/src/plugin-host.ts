@@ -322,14 +322,16 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
                   };
                 }
                 const config = card.config as { callback_tool?: unknown } | undefined;
-                await options.onCard?.({
-                  pluginId: plugin.id,
-                  pluginName: host.displayName(plugin.id),
-                  service: state.name,
-                  ...(typeof config?.callback_tool === "string" ? { callbackTool: config.callback_tool } : {}),
-                  card,
-                });
-                content.push({ type: "text", text: `（${host.displayName(plugin.id)} 的卡片「${cardTitle(card) || "未命名"}」已显示给用户）` });
+                if (options.onCard) {
+                  await options.onCard({
+                    pluginId: plugin.id,
+                    pluginName: host.displayName(plugin.id),
+                    service: state.name,
+                    ...(typeof config?.callback_tool === "string" ? { callbackTool: config.callback_tool } : {}),
+                    card,
+                  });
+                  content.push({ type: "text", text: `（${host.displayName(plugin.id)} 的卡片「${cardTitle(card) || "未命名"}」已显示给用户）` });
+                }
               }
             }
             return { content, details: response.structuredContent, isError: response.isError };

@@ -127,19 +127,44 @@ function recordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function pluginText(response: { content?: { type?: string; text?: string }[] }, runtime: HobRuntime, pluginId: string): string {
-  return (response.content ?? []).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => runtime.plugins.redact(pluginId, block.text!)).join("\n").trim();
+function submittedValues(input: CardActionRequest): string[] {
+  const values: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const text = String(value);
+      if (text) values.push(text);
+    } else if (Array.isArray(value)) {
+      value.forEach(collect);
+    } else if (recordObject(value)) {
+      Object.values(value).forEach(collect);
+    }
+  };
+  collect(input.form_value);
+  const action = input.action;
+  collect(action.value);
+  collect(action.option);
+  collect(action.options);
+  collect(action.checked);
+  return [...new Set(values)].sort((a, b) => b.length - a.length);
 }
 
-function pluginFeedback(meta: Record<string, unknown>): { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } {
+function redactSubmittedText(text: string, values: string[]): string {
+  return values.reduce((result, value) => result.split(value).join("***"), text);
+}
+
+function pluginText(response: { content?: { type?: string; text?: string }[] }, runtime: HobRuntime, pluginId: string, redact: (text: string) => string = (text) => text): string {
+  return (response.content ?? []).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => redact(runtime.plugins.redact(pluginId, block.text!))).join("\n").trim();
+}
+
+function pluginFeedback(meta: Record<string, unknown>, redact: (text: string) => string = (text) => text): { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } {
   const result: { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } = {};
   const toast = meta["hob/toast"];
   if (recordObject(toast) && ["info", "success", "error", "warning"].includes(String(toast.type)) && typeof toast.content === "string") {
-    result.toast = { type: toast.type as "info" | "success" | "error" | "warning", content: toast.content };
+    result.toast = { type: toast.type as "info" | "success" | "error" | "warning", content: redact(toast.content) };
   }
   const errors = meta["hob/errors"];
   if (recordObject(errors)) {
-    const fields = Object.fromEntries(Object.entries(errors).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+    const fields = Object.fromEntries(Object.entries(errors).filter(([, value]) => typeof value === "string").map(([name, value]) => [name, redact(value as string)])) as Record<string, string>;
     if (Object.keys(fields).length) result.errors = fields;
   }
   return result;
@@ -169,6 +194,7 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
     return { status: 409, body: { error: unavailable, card: next } };
   }
   const action = { ...(input.action as Record<string, unknown>), ...(input.form_value ? { form_value: input.form_value } : {}) } as Record<string, unknown>;
+  const redact = (text: string) => redactSubmittedText(runtime.plugins.redact(pluginId, text), submittedValues(input));
   const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || (typeof action.name === "string" ? action.name : undefined) || "按钮";
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
@@ -178,30 +204,32 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
       new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("插件回调超过 60 秒未返回")); }, 60_000); }),
     ]);
     const meta = recordObject(response._meta) ? response._meta : {};
-    const feedback = pluginFeedback(meta);
+    const feedback = pluginFeedback(meta, redact);
     let nextCard = record.card;
     if (meta["hob/card"] !== undefined) {
       const parsed = pluginCard(meta["hob/card"]);
       if (parsed.error) {
-        feedback.toast = { type: "error", content: `插件返回的卡片格式不对：${parsed.error}` };
+        feedback.toast = { type: "error", content: redact(`插件返回的卡片格式不对：${parsed.error}`) };
       } else if (parsed.card) {
         nextCard = parsed.card;
       }
     }
     if (response.isError) {
-      feedback.toast = { type: "error", content: pluginText(response, runtime, pluginId) || "插件调用失败" };
+      feedback.toast = { type: "error", content: pluginText(response, runtime, pluginId, redact) || "插件调用失败" };
     }
     const nextPlugin = nextCard.config && recordObject(nextCard.config) && typeof nextCard.config.callback_tool === "string"
       ? { ...plugin, callbackTool: nextCard.config.callback_tool }
       : plugin;
-    const next: CardRecord = { ...record, card: nextCard, plugin: nextPlugin, ...(Object.keys(feedback).length ? { feedback } : {}), updatedAt: new Date().toISOString() };
+    const next: CardRecord = { ...record, card: nextCard, plugin: nextPlugin, updatedAt: new Date().toISOString() };
+    if (Object.keys(feedback).length) next.feedback = feedback;
+    else delete next.feedback;
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });
-    const text = pluginText(response, runtime, pluginId);
+    const text = pluginText(response, runtime, pluginId, redact);
     if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
     return { status: 200, body: { card: next } };
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+    const message = redact(error instanceof Error ? error.message : String(error));
     const next: CardRecord = { ...record, feedback: { toast: { type: "error", content: message } }, updatedAt: new Date().toISOString() };
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });

@@ -1,7 +1,7 @@
 import type { FillLoginCandidate, FillNewPasswordApproval, PasswordCharacter } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { credentialCandidates, hostsMatch, inspectCurrentPage, pageInfo, type PageInfo } from "./login.ts";
-import { DesktopToolSession } from "./desktop-tools.ts";
+import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -106,6 +106,7 @@ export async function prepareFillNewPassword(
   const info = await inspectCurrentPage(runtime, assistantId);
   const passwordInputs = info.inputs.filter((input) => input.type === "password");
   if (!passwordInputs.length) return { kind: "message", text: `当前页面（${info.url}）上没有找到密码框。先打开注册或修改密码的表单再调 fill_new_password。` };
+  const pageOrigin = originOf(info.url);
   if (!runtime.plugins.hasPasswordGenerator(assistantId)) return { kind: "message", text: "启用的密码管理器没有生成和保存新密码的工具，先启用支持 generate 和 save 的凭据提供者。" };
   const chosenLength = length ?? 20;
   if (!Number.isInteger(chosenLength) || chosenLength < 4 || chosenLength > 128) return { kind: "message", text: "length 要填 4 到 128 之间的整数。" };
@@ -114,17 +115,17 @@ export async function prepareFillNewPassword(
   const invalid = chosenCharacters.find((character) => !["lowercase", "uppercase", "numbers", "symbols"].includes(character));
   if (invalid) return { kind: "message", text: `characters 里没有这种字符种类：${invalid}。` };
   const allCandidates = await credentialCandidates(runtime, assistantId, "");
-  const listedCandidate = matching(allCandidates, info.host, username);
-  const pageOrigin = originOf(info.url);
-  const recentSaved = listedCandidate ? undefined : recentForAny(runtime.home, info.host, username, runtime.plugins.credentialProviders(assistantId, "generate").map((provider) => provider.pluginId));
-  const candidate = listedCandidate ?? (recentSaved ? { provider: recentSaved.provider, providerName: runtime.plugins.displayName(recentSaved.provider), id: recentSaved.itemId, name: recentSaved.name, username: recentSaved.username, ...(recentSaved.folder ? { folder: recentSaved.folder } : {}), uris: [pageOrigin] } : undefined);
-  const mode: FillNewPasswordApproval["mode"] = candidate ? "change" : "register";
+  const listed = matching(allCandidates, info.host, username);
+  const recent = recentForAny(runtime.home, info.host, username, runtime.plugins.credentialProviders(assistantId, "generate").map((provider) => provider.pluginId));
+  // 30 分钟内刚由 fill_new_password 存进去的那一条（网站拒收后的重试）：还是注册，只是更新它，不多存
+  const retry = listed && recent && recent.itemId === listed.id;
+  const candidate = listed ?? (recent ? { provider: recent.provider, providerName: runtime.plugins.displayName(recent.provider), id: recent.itemId, name: recent.name, username: recent.username, ...(recent.folder ? { folder: recent.folder } : {}), uris: [pageOrigin] } : undefined);
+  const mode: FillNewPasswordApproval["mode"] = listed && !retry ? "change" : "register";
   const baseProvider = candidate ? providerFor(runtime, assistantId, "generate", candidate.provider) : providerFor(runtime, assistantId, "generate");
   if (!baseProvider) return { kind: "message", text: "密码管理器没有可用的密码生成工具。" };
   const saveProvider = providerFor(runtime, assistantId, "save", baseProvider.pluginId);
   if (!saveProvider) return { kind: "message", text: `${baseProvider.providerName} 没有可用的凭据保存工具。` };
   const folders = [...new Set(allCandidates.filter((item) => item.provider === baseProvider.pluginId).map((item) => item.folder).filter((folder): folder is string => Boolean(folder)))];
-  const recent = mode === "register" ? recentFor(runtime.home, baseProvider.pluginId, info.host, username) : undefined;
   const defaultFolder = candidate?.folder ?? recent?.folder;
   const selectedFolder = defaultFolder && folders.includes(defaultFolder) ? defaultFolder : undefined;
   const approval: FillNewPasswordApproval = {
@@ -149,7 +150,7 @@ export async function prepareFillNewPassword(
 }
 
 export class NewPasswordError extends Error {
-  constructor(message: string, readonly saved: boolean, readonly providerName: string, readonly name: string) {
+  constructor(message: string, readonly saved: boolean, readonly providerName: string, readonly itemName: string) {
     super(message);
     this.name = "NewPasswordError";
   }
@@ -164,8 +165,8 @@ export function passwordTargets(info: PageInfo, mode: FillNewPasswordApproval["m
   const marked = passwords.filter((input) => input.autocomplete === "new-password");
   if (marked.length) return marked.map((input) => input.index);
   if (mode === "register") return passwords.map((input) => input.index);
-  if (passwords.length > 1) return passwords.slice(1).map((input) => input.index);
-  return passwords.map((input) => input.index);
+  // 改密码页：三个框时第一个是旧密码；只有两个框（新密码和确认）就都填新密码
+  return (passwords.length >= 3 ? passwords.slice(1) : passwords).map((input) => input.index);
 }
 
 export async function generateSaveAndFill(runtime: HobRuntime, assistantId: string, approval: FillNewPasswordApproval, folder?: string): Promise<void> {
@@ -193,7 +194,7 @@ export async function generateSaveAndFill(runtime: HobRuntime, assistantId: stri
       if (!oldPassword) throw new Error("密码管理器没有存原来的密码。");
     }
     const savedValue = await runtime.plugins.callCredential(saveProvider, {
-      ...(approval.mode === "change" && approval.candidate ? { id: approval.candidate.id } : {}),
+      ...(approval.candidate ? { id: approval.candidate.id } : {}),
       name: approval.name,
       uris: [approval.origin],
       username: approval.username,
@@ -219,6 +220,8 @@ export async function generateSaveAndFill(runtime: HobRuntime, assistantId: stri
           await page.locator("input").nth(old.index).fill(oldPassword);
         }
         for (const index of targets) await page.locator("input").nth(index).fill(password);
+        // 页面上现在有这些密码：助手的浏览器命令（快照、读值）输出里要把它们抹掉
+        rememberFilledSecret(runtime, assistantId, password, oldPassword);
       });
     } finally {
       await session.dispose();

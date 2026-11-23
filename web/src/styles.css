@@ -1409,38 +1409,50 @@ svg.i {
   flex-wrap: wrap;
   gap: 8px;
 }
+/* 填登录 / 新密码的批准卡（效果图 253/3、4、5、7、8）：和插件卡同宽、同样的内边距；行组、行、标签的尺寸照效果图 */
+.b.q.qfill { width: 548px; max-width: 100%; padding: 12px 14px 14px; }
+.mmsgs .b.q.qfill { width: 88%; }
 .qfill-source {
   display: flex;
   align-items: center;
   gap: 6px;
   color: var(--text2);
   font-size: 12.5px;
-  margin-bottom: 7px;
+  margin-bottom: 6px;
 }
+.qfill-source svg { flex: none; }
 .qfill-group {
   margin-top: 10px;
   background: var(--card);
   border-radius: 12px;
   padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .qfill-row {
   display: flex;
   align-items: center;
-  gap: 9px;
-  min-height: 38px;
-  padding: 7px 10px;
+  flex-wrap: wrap;
+  row-gap: 2px;
+  gap: 10px;
+  padding: 9px 10px;
+  border-radius: 9px;
   font-size: 14px;
 }
-.qfill-label { color: var(--text2); width: 58px; flex: none; }
-.qfill-value { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.qfill-provider { color: var(--text2); font-size: 12.5px; white-space: nowrap; }
-.qfill-select { min-width: 0; max-width: 190px; flex: 1; border: 0; background: transparent; color: var(--text); font: inherit; outline: none; }
+.qfill-label { color: var(--text2); width: 76px; flex: none; font-size: 13.5px; }
+.qfill-value { min-width: 0; flex: 1 1 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.qfill-provider { color: var(--text2); font-size: 12.5px; white-space: nowrap; display: inline-flex; align-items: center; gap: 4px; }
+.qfill-selectwrap { flex: 1 1 auto; min-width: 0; display: flex; align-items: center; gap: 4px; color: var(--text2); }
+.qfill-select { flex: 1; min-width: 0; appearance: none; border: 0; background: transparent; color: var(--text); font: inherit; padding: 0; outline: none; }
 .qfill-ok, .qfill-bad { display: inline-flex; align-items: center; gap: 4px; white-space: nowrap; font-size: 12.5px; }
 .qfill-ok { color: var(--ok); }
 .qfill-bad, .qfill-result.bad { color: var(--danger); }
 .qfill-options { margin-top: 8px; }
-.qfill-hint { color: var(--text3); font-size: 12.5px; line-height: 1.55; margin-top: 9px; }
-.qfill-result { display: flex; align-items: center; gap: 5px; margin-top: 9px; color: var(--text2); font-size: 13px; }
+.qfill-hint { color: var(--text3); font-size: 12.5px; line-height: 1.55; margin-top: 10px; }
+.qfill-result { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text2); font-size: 14px; }
+.qfill-result svg { flex: none; }
+.qfill .qacts .hob-btn:not(.hob-btn-primary) { background: var(--card); }
 .tt {
   display: flex;
   align-items: center;

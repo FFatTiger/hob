@@ -1,7 +1,7 @@
 import type { Page } from "playwright-core";
 import type { FillLoginApproval, FillLoginCandidate, LoginAutoEntry } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
-import { DesktopToolSession } from "./desktop-tools.ts";
+import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
 import { readLoginAuto, saveLoginAuto } from "./login-auto.ts";
 
 export type FillLoginResult = { kind: "filled" | "username"; host: string; username: string; text: string };
@@ -62,7 +62,7 @@ export async function pageInfo(page: Page): Promise<PageInfo> {
     if (input.type === "hidden" || input.disabled || style.display === "none" || style.visibility === "hidden" || input.getClientRects().length === 0) return [];
     return [{ index, type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value }];
   }));
-  const password = inputs.find((input) => input.type === "password");
+  const password = inputs.find((input) => input.type === "password" && input.autocomplete === "current-password") ?? inputs.find((input) => input.type === "password");
   const passwordIndex = password?.index;
   const usernameCandidates = inputs.filter((input) => input.type === "email" || input.autocomplete === "username" || /user|email|login|account/i.test(`${input.name} ${input.type}`));
   const before = inputs.filter((input) => input.type === "text" || input.type === "email").filter((input) => passwordIndex === undefined || input.index < passwordIndex);
@@ -86,7 +86,7 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
   const providers = runtime.plugins.credentialProviders(assistantId, "list");
   const query = site.trim().toLowerCase();
   const queryHost = hostOf(site.trim());
-  const result: FillLoginCandidate[] = [];
+  const result: Array<FillLoginCandidate & { exact: boolean }> = [];
   for (const provider of providers) {
     const value = await runtime.plugins.callCredential(provider, {});
     const logins = Array.isArray(value.logins) ? value.logins : [];
@@ -97,10 +97,15 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
       const username = typeof login.username === "string" ? login.username : "";
       const uris = listUris(login.uris);
       const nameMatch = name.toLowerCase().includes(query);
-      const uriMatch = queryHost !== undefined && uris.some((uri) => hostOf(uri) === queryHost);
+      // site 是网址时：保存的主机名和它相同，或者是它的父域名 / 子域名（页面 login.example.net 对保存的 example.net）；
+      // 主机名完全一样的排在前面，批准卡上默认选中的就是它
+      const savedHosts = uris.map(hostOf).filter((host): host is string => host !== undefined);
+      const exact = queryHost !== undefined && savedHosts.includes(queryHost);
+      const uriMatch = queryHost !== undefined && savedHosts.some((saved) => saved === queryHost || queryHost.endsWith(`.${saved}`) || saved.endsWith(`.${queryHost}`));
       if (!nameMatch && !uriMatch) continue;
       if (account && !username.toLowerCase().includes(account.trim().toLowerCase())) continue;
       result.push({
+        exact,
         provider: provider.pluginId,
         providerName: provider.providerName,
         id: typeof login.id === "string" ? login.id : String(login.id ?? ""),
@@ -111,7 +116,7 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
       });
     }
   }
-  return result.filter((candidate) => candidate.id);
+  return result.filter((candidate) => candidate.id).sort((a, b) => Number(b.exact) - Number(a.exact)).map(({ exact: _exact, ...candidate }) => candidate);
 }
 
 function matchingCandidates(candidates: FillLoginCandidate[], host: string): FillLoginCandidate[] {
@@ -141,7 +146,8 @@ export async function prepareFillLogin(runtime: HobRuntime, assistantId: string,
       approval: { host: info.host, currentHost: info.host, candidates, state: "mismatch" },
     };
   }
-  if (info.inputs.length === 0) return { kind: "message", text: `当前页面（${info.url}）上没有找到登录框。先打开登录表单再调 fill_login。` };
+  // 出卡之前就看清页面上有没有能填的框：只有搜索框之类的页面不该让用户白批一次
+  if (info.usernameIndex === undefined && info.passwordIndex === undefined) return { kind: "message", text: `当前页面（${info.url}）上没有找到登录框。先打开登录表单再调 fill_login。` };
   const auto = matched.filter((candidate) => autoFor(runtime.home, candidate, info.host) || recentFor(runtime, candidate, info.host));
   if (auto.length === 1) return { kind: "approval", approval: { host: info.host, candidates: matched, chosenId: candidateKey(auto[0]), state: "pending" }, title: `在 ${info.host} 登录`, detail: approvalDetail(matched) };
   if (matched.length === 1) return { kind: "approval", approval: { host: info.host, candidates: matched, state: "pending" }, title: `在 ${info.host} 登录`, detail: approvalDetail(matched) };
@@ -153,10 +159,16 @@ async function visibleInputIndices(page: Page): Promise<{ inputs: InputInfo[]; u
   return { inputs: info.inputs, ...(info.usernameIndex === undefined ? {} : { usernameIndex: info.usernameIndex }), ...(info.passwordIndex === undefined ? {} : { passwordIndex: info.passwordIndex }) };
 }
 
+/** 错误原因里不能带出密码：取到的密码和页面上的值都可能出现在浏览器的报错里。 */
+function hideSecrets(error: unknown, secrets: string[]): string {
+  return secrets.filter(Boolean).reduce((text, secret) => text.split(secret).join("[已隐藏]"), error instanceof Error ? error.message : String(error));
+}
+
 export async function fillCandidate(runtime: HobRuntime, assistantId: string, candidate: FillLoginCandidate, host: string): Promise<FillLoginResult> {
   const provider = runtime.plugins.credentialProviders(assistantId, "secret").find((item) => item.pluginId === candidate.provider);
   if (!provider) throw new Error(`${candidate.providerName} 的凭据工具现在不可用。`);
   const session = new DesktopToolSession(runtime, assistantId);
+  let password = "";
   try {
     return await session.withCurrentPage(async (page) => {
       const current = await pageInfo(page);
@@ -167,7 +179,7 @@ export async function fillCandidate(runtime: HobRuntime, assistantId: string, ca
       if (fields.usernameIndex === undefined && fields.passwordIndex === undefined) throw new Error(`当前页面（${current.url}）上没有找到登录框。先打开登录表单再调 fill_login。`);
       const secret = await runtime.plugins.callCredential(provider, { id: candidate.id });
       const username = typeof secret.username === "string" ? secret.username : candidate.username;
-      const password = typeof secret.password === "string" ? secret.password : "";
+      password = typeof secret.password === "string" ? secret.password : "";
       if (!password && fields.passwordIndex !== undefined) throw new Error("密码管理器没有存密码。");
       if (fields.usernameIndex !== undefined) await page.locator("input").nth(fields.usernameIndex).fill(username);
       if (fields.passwordIndex === undefined) {
@@ -175,8 +187,11 @@ export async function fillCandidate(runtime: HobRuntime, assistantId: string, ca
         return { kind: "username", host, username, text: `已在 ${host} 填好用户名 ${username}，点下一步后再调一次 fill_login 填密码。` };
       }
       await page.locator("input").nth(fields.passwordIndex).fill(password);
+      rememberFilledSecret(runtime, assistantId, password);
       return { kind: "filled", host, username, text: `已在 ${host} 填好 ${username} 的账号和密码，接下来点登录按钮。` };
     });
+  } catch (error) {
+    throw new Error(hideSecrets(error, [password]));
   } finally { await session.dispose(); }
 }
 

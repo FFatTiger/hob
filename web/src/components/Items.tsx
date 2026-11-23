@@ -477,14 +477,14 @@ function FillNewPasswordCard({ approval, fresh }: { approval: Approval; fresh: b
   const submit = (key: ApprovalOption["key"]) => void answer(approval.id, { key, ...(fill.mode === "register" ? { folder } : {}) });
   return (
     <div className={`b q qfill${fresh ? " enter" : ""}`}>
-      <div className="qfill-source"><Icon name="key" size={15} />{fill.mode === "register" ? t("Hob · 注册新账号") : t("Hob · 修改密码")}</div>
+      <div className="qfill-source"><Icon name="key" size={16} />{fill.mode === "register" ? t("Hob · 注册新账号") : t("Hob · 修改密码")}</div>
       <div className="qt">{approval.title}</div>
       {pending ? <div className="qs">{approval.detail}</div> : null}
       <div className="qfill-group">
-        <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span><span className="qfill-ok"><Icon name="check" size={13} />{websiteMatch}</span></div>
+        <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span>{pending ? <span className="qfill-ok"><Icon name="check" size={13} />{websiteMatch}</span> : null}</div>
         <div className="qfill-row"><span className="qfill-label">{t("用户名")}</span><span className="qfill-value">{fill.username}</span></div>
         <div className="qfill-row"><span className="qfill-label">{t("密码")}</span><span className="qfill-value">{t("{provider} 生成", { provider: fill.providerName })}</span><span className="qfill-provider">{t("{length} 位 · {characters}", { length: fill.length, characters: passwordCharacterText(fill.characters) })}</span></div>
-        {fill.mode === "register" ? <div className="qfill-row"><span className="qfill-label">{t("存到")}</span><select className="qfill-select" value={folder} disabled={!pending} onChange={(event) => setFolder(event.target.value)}><option value="">{t("不放进文件夹")}</option>{fill.folders.map((item) => <option key={item} value={item}>{item}</option>)}</select></div> : null}
+        {fill.mode === "register" && pending ? <div className="qfill-row"><span className="qfill-label">{t("存到")}</span><span className="qfill-selectwrap"><select className="qfill-select" value={folder} onChange={(event) => setFolder(event.target.value)}><option value="">{t("不放进文件夹")}</option>{fill.folders.map((item) => <option key={item} value={item}>{item}</option>)}</select><Icon name="down" size={13} /></span></div> : null}
       </div>
       {fill.state === "failed" ? <div className="qfill-result bad">{fill.result}</div> : done ? <div className="qfill-result"><Icon name="check" size={15} />{fill.result}</div> : fill.state === "rejected" ? <div className="qfill-result">{t("已拒绝")}</div> : null}
       {pending ? <div className="qfoot qacts"><button className="hob-btn" onClick={() => submit("A")}>{t("不允许")}</button><button className="hob-btn hob-btn-primary" onClick={() => submit("B")}>{t("生成并填写")}</button></div> : null}
@@ -497,24 +497,26 @@ function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean
   const [selected, setSelected] = useState(fill.chosenId ?? (fill.candidates.length === 1 ? `${fill.candidates[0]!.provider}:${fill.candidates[0]!.id}` : ""));
   const chosen = fill.candidates.find((candidate) => `${candidate.provider}:${candidate.id}` === (fill.chosenId ?? selected)) ?? fill.candidates[0];
   const pending = approval.status === "pending" && fill.state !== "mismatch";
-  const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.result ? `✓ ${fill.result}` : undefined;
+  const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.state === "filled" ? fill.result : undefined;
+  const providerNames = [...new Set(fill.candidates.map((candidate) => candidate.providerName))].join(t("、"));
+  const savedHosts = [...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((uri) => { try { return new URL(uri).hostname; } catch { return uri; } })))];
   return (
     <div className={`b q qfill${fresh ? " enter" : ""}`}>
-      <div className="qfill-source"><Icon name="key" size={15} />{t("Hob · 填写登录")}</div>
+      <div className="qfill-source"><Icon name="key" size={16} />{t("Hob · 填写登录")}</div>
       <div className="qt">{approval.title}</div>
       {pending ? <div className="qs">{approval.detail}</div> : null}
       {fill.state === "mismatch" ? (
         <>
           <div className="qfill-group">
-            <div className="qfill-row"><span className="qfill-label">{t("当前页面")}</span><span className="qfill-value">{fill.currentHost ?? fill.host}</span><span className="qfill-bad">{t("对不上")}</span></div>
-            <div className="qfill-row"><span className="qfill-label">{t("保存的网址")}</span><span className="qfill-value">{[...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((uri) => { try { return new URL(uri).hostname; } catch { return uri; } })))].join("、")}</span></div>
+            <div className="qfill-row"><span className="qfill-label">{t("当前页面")}</span><span className="qfill-value">{fill.currentHost ?? fill.host}</span><span className="qfill-bad"><Icon name="alert" size={13} />{t("对不上")}</span></div>
+            <div className="qfill-row"><span className="qfill-label">{t("保存的网址")}</span><span className="qfill-value">{savedHosts.join("、")}</span></div>
           </div>
-          <div className="qfill-hint">{t("登录页的网址和密码管理器里保存的网址不一致，可能是仿冒的页面。")}</div>
+          <div className="qfill-hint">{t("登录页的网址和 {provider} 里保存的不一致，可能是仿冒的页面。", { provider: providerNames })}</div>
         </>
       ) : (
         <>
           <div className="qfill-group">
-            <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span><span className="qfill-ok"><Icon name="check" size={13} />{t("和保存的网址一致")}</span></div>
+            <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span>{pending ? <span className="qfill-ok"><Icon name="check" size={13} />{t("和保存的网址一致")}</span> : null}</div>
             {chosen ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
           </div>
           {pending && fill.candidates.length > 1 ? <div className="opts qfill-options">{fill.candidates.map((candidate) => { const id = `${candidate.provider}:${candidate.id}`; return <button className={`opt${selected === id ? " chosen" : ""}`} key={id} onClick={() => setSelected(id)}><span className="key">{candidate.username.slice(0, 1).toUpperCase()}</span><span className="olabel">{candidate.username}{candidate.folder ? ` · ${candidate.folder}` : ""}</span>{selected === id ? <span className="ck"><Icon name="check" size={16} /></span> : null}</button>; })}</div> : null}

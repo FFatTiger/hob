@@ -369,7 +369,7 @@ async function answerFillNewPasswordApproval(runtime: HobRuntime, approval: Appr
       reply = `用户允许了在 ${fill.host} ${mode}，Hob 已生成 ${fill.length} 位新密码（${characters}），存进 ${fill.providerName}「${folderText}」的「${fill.name}」，并填好了密码框。接下来提交表单；网站不接受这个密码的话，照页面提示的要求再调一次 fill_new_password，会更新同一条，不会多存。`;
     } catch (error) {
       const reason = error instanceof NewPasswordError && error.saved
-        ? `新密码已经存进 ${error.providerName}「${error.name}」；${error.message}`
+        ? `新密码已经存进 ${error.providerName}「${error.itemName}」；${error.message}`
         : error instanceof Error ? error.message : String(error);
       nextFill = { ...nextFill, state: "failed", result: `没有完成：${reason}` };
       reply = `用户允许了在 ${fill.host} ${mode}，但没有完成：${reason}`;

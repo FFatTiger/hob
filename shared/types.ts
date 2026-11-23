@@ -86,6 +86,8 @@ export interface ModelSettings {
   roster: RosterEntry[]; // Hob 能用的模型
   conversation: ModelPick; // 对话（助手本身）
   work: ModelPick; // 任务执行（分派任务不指定就用它）
+  /** 推荐提问模型：undefined 跟随对话模型，null 关闭 */
+  suggest?: ModelPick | null;
   thinkingChoice?: "auto" | "fixed"; // 缺省 auto：助手按任务选择；fixed：使用模型默认档
   /** 每个模型的自定义思考档，键是模型 ref（"服务商/模型"）；没存就用 Hob 的默认规则 */
   thinking?: Record<string, ThinkingLevelMapSetting>;
@@ -292,6 +294,7 @@ export interface AssistantSummary extends Assistant {
   busy: boolean; // Router 正在回复（在跑的任务不算，任务状态看任务卡）
   activity?: RouterActivity | null;
   todos?: TodoItem[]; // 这个助手单聊里的待办，按做的先后
+  suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
 }
 
 /**
@@ -355,6 +358,7 @@ export interface GroupSummary extends Group {
   unread: number;
   busy: string[]; // 正在这个群（话题）里说话、或者有任务在跑的成员
   todos?: TodoItem[]; // 这个会话（综合、话题）的待办，按做的先后
+  suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
   activity?: Record<string, RouterActivity>; // 正在说话的成员现在在做什么：页面刚打开时用，之后跟 group-activity 事件
 }
 

@@ -33,6 +33,8 @@ export interface MakeHobOptions {
   tokensPerSecond?: number;
   /** 假模型注册表里的模型（第一个是默认）；thinkingLevelMap 模拟引擎注册表里自带的映射（Hob 不读它） */
   models?: { id: string; input?: ("text" | "image")[]; reasoning?: boolean; thinkingLevelMap?: ThinkingLevelMap }[];
+  /** 测试是否显式开启推荐提问；默认关闭以隔离旧测试的模型响应队列 */
+  followUpSuggestions?: boolean;
   /** 不去写 settings.json（测迁移用） */
   keepSettings?: boolean;
   /** 记忆提供者：写进 settings.json 的 memory 键（不写就按有没有配好 Lore 推） */
@@ -91,6 +93,7 @@ export function makeHob(overrides: Partial<HobConfig> = {}, options: MakeHobOpti
     roster: [{ ref: defaultModel, note: "" }],
     conversation: { ref: defaultModel, thinking: "off" },
     work: { ref: defaultModel, thinking: "off" },
+    ...(options.followUpSuggestions ? {} : { suggest: null }),
   };
   const merged = {
     general: { ...settings.general, locale: "zh-CN", ...(options.settings?.general ?? {}) },

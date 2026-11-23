@@ -40,7 +40,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
-import { t } from "../../../shared/i18n.ts";
+import { currentLocale, t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
@@ -1525,7 +1525,7 @@ function ProviderForm({
     const open = expandedModel === model.id;
     const summary = [model.contextWindow ? t("上下文 {size}", { size: contextText(model.contextWindow) }) : "", model.input?.includes("image") ? t("能看图") : "", model.reasoning ? t("会推理") : "", model.reasoning && info ? t("{n} 档思考", { n: info.levels.length }) : ""].filter(Boolean).join(" · ");
     const ref = `${draft.id}/${model.id}`;
-    const isDefault = s.settings.settings.models.conversation.ref === ref || s.settings.settings.models.work.ref === ref;
+    const isDefault = s.settings.settings.models.conversation.ref === ref || s.settings.settings.models.work.ref === ref || s.settings.settings.models.suggest?.ref === ref;
     return <div className={`provider-model${open ? " open" : ""}`} key={model.id}>
       {/* 一整行：点名字那块就地展开；右边是加不加入可用模型的开关（默认模型写「默认模型」） */}
       <div className="provider-model-head">
@@ -1867,14 +1867,14 @@ function useModelSettings() {
     void feedback.save((current) => ({ models: { roster: current.models.roster.map((entry) => entry.ref === ref ? { ...entry, ...patch } : entry) } }));
   /** 这个模型当前担任的默认角色。 */
   const roles = (ref: string) =>
-    [models.conversation.ref === ref ? t("对话") : null, models.work.ref === ref ? t("任务执行") : null].filter(
+    [models.conversation.ref === ref ? t("对话") : null, models.work.ref === ref ? t("任务执行") : null, models.suggest?.ref === ref ? t("推荐提问") : null].filter(
       (role): role is string => role !== null,
     );
   return { models, save, setRoster, update, roles, feedback };
 }
 
-function roleLabel(key: "conversation" | "work"): string {
-  return key === "conversation" ? t("对话") : t("任务执行");
+function roleLabel(key: "conversation" | "work" | "suggest"): string {
+  return key === "conversation" ? t("对话") : key === "work" ? t("任务执行") : t("推荐提问");
 }
 
 function SubBack({ label }: { label?: string }) {
@@ -1891,6 +1891,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
   const providers = useApp().settings.settings.providers;
   const { models, save, roles, feedback } = useModelSettings();
   const byRef = new Map(view.models.map((model) => [model.ref, model]));
+  const suggestOff = "__suggest_off__";
   const pickOptions = (current: string) => [
     ...(models.roster.length ? [] : [{ value: "", text: t("未设置") }]),
     ...models.roster
@@ -1915,6 +1916,12 @@ function ModelsHome({ view }: { view: ModelsView }) {
       </span>
     </div>
   );
+  const suggestRef = models.suggest === null ? suggestOff : models.suggest?.ref ?? "";
+  const suggestOptions = [
+    { value: "", text: t("跟随对话模型") },
+    { value: suggestOff, text: currentLocale() === "en" ? t("推荐提问关闭") : t("关闭") },
+    ...pickOptions(models.suggest?.ref ?? ""),
+  ];
 
   return (
     <>
@@ -1926,7 +1933,19 @@ function ModelsHome({ view }: { view: ModelsView }) {
         <div className="group-card settings-card">
           {role("conversation", t("对话"), t("对话模型"))}
           {role("work", t("任务执行"), t("默认任务模型"))}
+          <div className="mline">
+            <span className="k">{t("推荐提问模型")}</span>
+            <span className="vals">
+              <ValuePick
+                value={suggestRef}
+                label={t("推荐提问模型")}
+                options={suggestOptions}
+                onChange={(ref) => save({ suggest: ref === suggestOff ? null : ref ? { ref, thinking: "off" } : { ref: "", thinking: "off" } })}
+              />
+            </span>
+          </div>
         </div>
+        <div className="note">{t("助手每轮做完后，用这个模型在输入框上方推荐你接下来可能说的话。选便宜的模型就行。")}</div>
         <div className="note">{t("助手分派任务时未指定模型，使用任务执行的模型。")}</div>
         <div className="lbl">{t("任务的思考档")}</div>
         <Seg items={[{ key: "auto", label: t("助手按任务选择") }, { key: "fixed", label: t("固定使用默认档") }]} value={models.thinkingChoice ?? "auto"} disabled={feedback.busy} onChange={(thinkingChoice) => save({ thinkingChoice })} />
@@ -1956,7 +1975,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
                 <span className="mprev">
                   {roles(entry.ref).map((label) => (
                     <span className="mrole" key={label}>
-                      {roleLabel(label === t("对话") ? "conversation" : "work")}
+                      {roleLabel(label === t("对话") ? "conversation" : label === t("任务执行") ? "work" : "suggest")}
                     </span>
                   ))}
                   {scoreSummary(usage.scores)}

@@ -502,6 +502,7 @@ function mergeSettings(base: Settings, patch: SettingsPatch): Settings {
       roster: models.roster ?? base.models.roster,
       conversation: models.conversation ?? base.models.conversation,
       work: models.work ?? base.models.work,
+      ...(models.suggest !== undefined ? { suggest: models.suggest } : base.models.suggest !== undefined ? { suggest: base.models.suggest } : {}),
       thinkingChoice: models.thinkingChoice ?? base.models.thinkingChoice,
       ...(models.thinking ?? base.models.thinking ? { thinking: models.thinking ?? base.models.thinking } : {}),
     },
@@ -1715,7 +1716,17 @@ export async function loadProfile(id: string) {
 /* ---------------- 发消息 ---------------- */
 
 export function setText(text: string) {
-  set({ text });
+  set((s) => {
+    // 打字时只在当前对话确实挂着推荐时才清，免得每个按键都换掉整份助手 / 群列表
+    const a = s.gsel ? undefined : s.assistants.find((x) => x.id === s.sel);
+    const g = s.gsel ? s.groups.find((x) => x.id === s.gsel) : undefined;
+    if (!a?.suggestions && !g?.suggestions) return { text };
+    return {
+      text,
+      assistants: a ? s.assistants.map((x) => x === a ? { ...x, suggestions: undefined } : x) : s.assistants,
+      groups: g ? s.groups.map((x) => x === g ? { ...x, suggestions: undefined } : x) : s.groups,
+    };
+  });
 }
 
 export function setQuote(quote: { itemId: string; text: string } | null) {
@@ -1823,10 +1834,10 @@ async function deliver(p: PendingMessage) {
   }
 }
 
-export async function send() {
+export async function send(textOverride?: string) {
   const groupId = state.gsel;
   const id = state.sel;
-  const text = state.text.trim();
+  const text = (textOverride ?? state.text).trim();
   // 只发图片 / 文件不写字也行（和 Telegram 一样）
   if ((!groupId && !id) || (!text && !state.attachments.length)) return;
   const key = groupId ? `group:${groupId}` : id!;
@@ -1841,7 +1852,15 @@ export async function send() {
     status: "sending",
   };
   markFresh([p.localId]);
-  set((s) => ({ text: "", quote: null, attachments: [], nonce: s.nonce + 1, pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] } }));
+  set((s) => ({
+    text: "",
+    quote: null,
+    attachments: [],
+    nonce: s.nonce + 1,
+    pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] },
+    assistants: groupId ? s.assistants : s.assistants.map((assistant) => assistant.id === id ? { ...assistant, suggestions: undefined } : assistant),
+    groups: groupId ? s.groups.map((group) => group.id === groupId ? { ...group, suggestions: undefined } : group) : s.groups,
+  }));
   await deliver(p);
 }
 

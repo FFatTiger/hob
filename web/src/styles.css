@@ -1879,6 +1879,36 @@ svg.i {
   align-items: center;
   gap: 10px;
 }
+.followup-strip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow-x: auto;
+  padding: 2px 4px 4px 10px;
+  scrollbar-width: none;
+  animation: followup-in 180ms ease both;
+}
+.followup-strip::-webkit-scrollbar { display: none; }
+.followup-chip {
+  flex: none;
+  max-width: 280px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 6px 10px;
+  border: 0;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text3) 14%, transparent);
+  color: var(--text2);
+  font-size: 13px;
+  line-height: 1.25;
+  text-align: left;
+}
+.followup-chip:hover { background: color-mix(in srgb, var(--text3) 22%, transparent); color: var(--text); }
+.followup-strip.leaving { animation: followup-out 180ms ease forwards; }
+@keyframes followup-in { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes followup-out { to { opacity: 0; transform: translateY(3px); } }
 .comp .pl {
   width: 34px;
   height: 34px;

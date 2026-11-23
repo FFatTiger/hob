@@ -258,6 +258,7 @@ function validateElement(value: unknown, path: string, context: ValidationContex
       if (tag === "select_static" && value.initial_option !== undefined && (typeof value.initial_option !== "string" || !values.has(value.initial_option))) return failure(path, "的 initial_option 不在 options 里");
       if (tag === "multi_select_static" && value.initial_options !== undefined && (!Array.isArray(value.initial_options) || value.initial_options.some((option) => typeof option !== "string" || !values.has(option)))) return failure(path, "的 initial_options 不在 options 里");
       if (value.required !== undefined && typeof value.required !== "boolean") return typeFailure(path, "required");
+      if (tag === "select_static" && value.display !== undefined && value.display !== "dropdown" && value.display !== "chips") return typeFailure(path, "display");
       return value as CardElement;
     }
     if (tag === "overflow") {

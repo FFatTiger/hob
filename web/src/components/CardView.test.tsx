@@ -26,12 +26,41 @@ describe("CardView", () => {
   it("renders plugin source, lock notice, nested form fields, and button", () => {
     const html = renderToStaticMarkup(<CardView record={record} fresh itemId="item-card" />);
     expect(html).toContain("密码箱");
+    // 来源行用插件自己的图标（/api/plugins/:id/icon），不按插件 id 写死
+    expect(html).toContain('src="/api/plugins/vault/icon"');
     expect(html).toContain("填写的内容只交给 密码箱");
     expect(html).toContain("保存登录信息");
     expect(html).toContain("用户名");
     expect(html).toContain('type="password"');
     expect(html).toContain("保存");
     expect(html).toContain('data-item-id="item-card"');
+  });
+
+  it("follows select display, column weights, result rows, the generate button and clickable rows", () => {
+    const html = renderToStaticMarkup(<CardView record={{ ...record, plugin: undefined, owner: { type: "assistant", assistantId: "hob" }, card: { body: { elements: [
+      { tag: "form", name: "f", elements: [
+        { tag: "select_static", name: "a", label: "下拉", display: "dropdown", options: [{ text: "甲", value: "a" }, { text: "乙", value: "b" }] },
+        { tag: "select_static", name: "b", label: "小块", options: [{ text: "丙", value: "c" }, { text: "丁", value: "d" }] },
+        { tag: "input", name: "secret", label: "密码", input_type: "password", generate: true },
+      ] },
+      { tag: "column_set", background_style: "light", columns: [{ weight: 1, elements: [{ tag: "div", text: "名称" }] }, { weight: 5, elements: [{ tag: "div", text: "值" }] }] },
+      { tag: "interactive_container", elements: [{ tag: "div", text: "第一行\n第二行" }, { tag: "div", text: "右侧" }] },
+      { tag: "interactive_container", behaviors: [{ type: "open_url", default_url: "https://example.com" }], elements: [{ tag: "div", text: "能点" }] },
+      { tag: "div", icon: "check", text: "已保存到「论坛账号」" },
+    ] } } } } fresh={false} itemId="item-card" />);
+    expect(html).toContain("hc-select-button"); // display: dropdown 画成下拉
+    expect(html).toContain("hc-options"); // 不写 display、选项少：画成小块
+    expect(html).toMatch(/class="hc-column" style="flex:1"/);
+    expect(html).toMatch(/class="hc-column" style="flex:5"/);
+    // 「生成」在输入框外面并排，带骰子图标
+    expect(html).toMatch(/<\/span><button type="button" class="hc-generate"/);
+    expect(html).toContain("hc-input-row");
+    // 没有 behaviors 的行不给手型光标
+    expect(html.match(/class="hc-interactive"/g)?.length).toBe(1);
+    expect(html.match(/class="hc-interactive hc-clickable"/g)?.length).toBe(1);
+    expect(html).toMatch(/class="hc-result"><svg[^>]*>[^<]*<path d="M5 12.5 10 17l9-10"/);
+    expect(html).toContain("已保存到「论坛账号」");
+    expect(html).not.toContain("hc-source");
   });
 
   it("keeps plugin controls enabled after an unavailable callback", () => {

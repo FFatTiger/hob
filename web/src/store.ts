@@ -64,6 +64,7 @@ import { isImagePath } from "../../shared/media.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
+import { applyPalette, flashThemeSwitch, readStoredPalette, storePalette, type Palette } from "./palette.ts";
 import { isNarrow, resolveTheme, updateManifest, updateStatusColor } from "./theme.ts";
 import { popPage, pushPage, removeMissingLivePages, replacePage, selectPanelStack, type PanelPage } from "./panel-stack.ts";
 export type { FilePreviewState, PanelPage } from "./panel-stack.ts";
@@ -171,6 +172,7 @@ export interface State {
   sideCollapsed: boolean;
   nowWide: boolean; // 右栏「正在做」展开成宽栏
   theme: Theme;
+  palette: Palette;
   query: string;
   homeFilter: "all" | "assistants" | "jobs" | "routines";
   homeOrder: "recent" | "custom";
@@ -338,6 +340,7 @@ function initial(): State {
     sideCollapsed: loadSideCollapsed(),
     nowWide: false,
     theme: storedTheme() ?? "system",
+    palette: readStoredPalette() ?? "default",
     query: "",
     homeFilter: storedHomeFilter(),
     homeOrder: storedHomeOrder(),
@@ -529,13 +532,16 @@ async function writeSettings(patch: SettingsPatch): Promise<boolean> {
   const optimisticLocale = optimistic.settings.general.locale;
   set({ settings: optimistic, ...(optimisticLocale ? { locale: optimisticLocale } : {}), theme: optimistic.settings.general.theme });
   if (optimisticLocale) applyLocale(optimisticLocale);
-  if (patch.general?.theme) applyTheme(patch.general.theme);
+  if (patch.general?.theme) {
+    flashThemeSwitch();
+    applyLook(patch.general.theme, state.palette);
+  }
   try {
     const next = await api.putSettings(before.revision, patch);
     const nextLocale = next.settings.general.locale;
     set({ settings: next, ...(nextLocale ? { locale: nextLocale } : {}), theme: next.settings.general.theme });
     if (nextLocale) applyLocale(nextLocale);
-    applyTheme(next.settings.general.theme);
+    applyLook(next.settings.general.theme, state.palette);
     if (patch.models) refreshGroupProfiles();
     localStorage.setItem(THEME_KEY, next.settings.general.theme);
     return true;
@@ -546,6 +552,7 @@ async function writeSettings(patch: SettingsPatch): Promise<boolean> {
         const freshLocale = fresh.settings.general.locale;
         set({ settings: fresh, ...(freshLocale ? { locale: freshLocale } : {}), theme: fresh.settings.general.theme });
         if (freshLocale) applyLocale(freshLocale);
+        applyLook(fresh.settings.general.theme, state.palette);
       } catch {
         set({ settings: before });
       }
@@ -553,7 +560,7 @@ async function writeSettings(patch: SettingsPatch): Promise<boolean> {
       return false;
     }
     set({ settings: before, theme: before.settings.general.theme, notice: t("保存失败：{error}", { error: errText(e) }) });
-    applyTheme(before.settings.general.theme);
+    applyLook(before.settings.general.theme, state.palette);
     return false;
   }
 }
@@ -982,14 +989,38 @@ function applyTheme(theme: Theme) {
   updateStatusColor(state, isNarrow());
 }
 
-export function setTheme(theme: Theme) {
+/**
+ * 两件事分开做：深浅（.dark 类）和配色（data-palette）。
+ * 换配色时开一次全页颜色过渡，深浅切换也跟着过渡一下——都是同一个「整体换色」的感觉。
+ */
+function applyLook(theme: Theme, palette: Palette) {
+  applyPalette(palette);
   applyTheme(theme);
+}
+
+export function setTheme(theme: Theme) {
+  flashThemeSwitch();
+  applyLook(theme, state.palette);
   set({ theme });
   localStorage.setItem(THEME_KEY, theme); // 只是下次打开时先按它刷一下，避免闪白
   void saveSettings({ general: { theme } });
 }
 
-darkQuery.addEventListener("change", () => applyTheme(state.theme));
+/** 换配色只改这台浏览器：只写 localStorage，不调 saveSettings，服务端的设置一个字都不动。 */
+export function setPalette(palette: Palette) {
+  if (palette === state.palette) return;
+  flashThemeSwitch();
+  applyPalette(palette);
+  set({ palette });
+  storePalette(palette);
+  // 状态栏和 meta theme-color 跟着新底色走
+  updateStatusColor(state, isNarrow());
+}
+
+darkQuery.addEventListener("change", () => {
+  flashThemeSwitch();
+  applyLook(state.theme, state.palette);
+});
 
 /* ---------------- 启动与事件 ---------------- */
 
@@ -999,7 +1030,7 @@ let stopEvents: (() => void) | null = null;
 export async function start() {
   if (started) return;
   started = true;
-  applyTheme(state.theme);
+  applyLook(state.theme, state.palette);
   if (MOCK) {
     if (scene === "boot") return;
     await loadBootstrap();
@@ -1081,7 +1112,7 @@ async function loadBootstrap(reconnect = false) {
       // 默认内容是存下语言时才建的，建完重拉一遍，界面上的助手和群才是新建的那份
       void saveSettings({ general: { locale: state.locale } }).then((saved) => { if (saved) void loadBootstrap(true); });
     }
-    applyTheme(boot.settings.settings.general.theme);
+    applyLook(boot.settings.settings.general.theme, state.palette);
     localStorage.setItem(THEME_KEY, boot.settings.settings.general.theme);
     if (!stopEvents) {
       stopEvents = api.events(

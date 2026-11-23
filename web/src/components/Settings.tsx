@@ -35,6 +35,7 @@ import type {
   ThinkingLevelMapSetting,
 } from "../../../shared/types.ts";
 import type { SearchProviderName, SearchProviderSetting, SearchView } from "../../../shared/search.ts";
+import type { Palette } from "../palette.ts";
 import type { SkillImportSource, SkillImportView, SkillsView, SkillView } from "../../../shared/skills.ts";
 import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
@@ -95,6 +96,7 @@ import {
   saveThinking,
   sendTestPush,
   setLocale,
+  setPalette,
   setSection,
   openSub,
   closeSub,
@@ -105,7 +107,7 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-import { PageHead, Group, Seg, LinkRow } from "./SettingsParts.tsx";
+import { PageHead, Group, PalettePicker, Seg, LinkRow } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
@@ -195,6 +197,20 @@ function themeItems(): { key: Theme; label: string }[] {
     { key: "system", label: t("跟随系统") },
     { key: "light", label: t("浅色") },
     { key: "dark", label: t("深色") },
+  ];
+}
+
+/**
+ * 配色的中文名：放在这里而不是 shared/theme.ts，页面照常用 t() 翻。
+ * 顺序和 shared/theme.ts 的 PALETTE_IDS 一致。
+ */
+function paletteItems(): { key: Palette; label: string }[] {
+  return [
+    { key: "default", label: t("默认") },
+    { key: "ocean", label: t("海盐") },
+    { key: "forest", label: t("森林") },
+    { key: "dusk", label: t("暮紫") },
+    { key: "rose", label: t("玫瑰") },
   ];
 }
 
@@ -508,6 +524,17 @@ function GeneralSection() {
         <div className="lbl">{t("主题")}</div>
         <Seg items={themes} value={s.theme} disabled={feedback.busy} onChange={(theme) => void feedback.save({ general: { theme } })} />
         <SaveFeedback message={feedback.message} />
+      </Group>
+
+      <Group>
+        <div className="lbl">{t("配色")}</div>
+        <PalettePicker
+          items={paletteItems()}
+          value={s.palette}
+          dark={s.theme === "dark" || (s.theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches)}
+          onChange={setPalette}
+        />
+        <div className="note">{t("深色和浅色各有一套颜色，配色不影响深浅；选了只存在这台设备的浏览器里，不跟着账号同步。")}</div>
       </Group>
 
       <Group>

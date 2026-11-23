@@ -255,6 +255,7 @@
   --ok: #22a065;
   --danger: #d92d20;
   --stage: #ecebe7;
+  --seg-thumb: #ffffff;
   /* 设置 → 消耗：热力图五档和占比条 */
   --u-l0: #e7e4dc;
   --u-l1: #f2dfae;
@@ -280,6 +281,9 @@
   --field: #232326;
   --user: #f1f1ef;
   --utext: #151516;
+  /* 强调色和成功色深浅共用同一个，写在这里是为了每套配色的两份色表变量一致（见 web/test/palette.test.ts） */
+  --accent: #ff6a2b;
+  --ok: #22a065;
   --danger: #ff6b5e;
   --stage: #0e0e0f;
   --u-l0: #2c2c30;
@@ -289,7 +293,264 @@
   --u-l4: #f0b429;
   --u-bar: #b98717;
   --u-strong: #e0a526;
+  --seg-thumb: #3a3a3e;
 }
+/* ---------------- 配色主题 ----------------
+   第二层：在「跟随系统 / 浅色 / 深色」之上只换颜色，不动尺寸和布局。
+   默认配色就是上面 :root / .dark 那两块，页面上不挂 data-palette；其余四套在此基础上覆盖变量，
+   每套都写了浅色和深色两份。新增一套：在这里加两块，再往 shared/theme.ts 的 PALETTE_IDS 里加 id。 */
+html[data-palette="ocean"] {
+  --composer-shadow: rgba(8, 26, 48, 0.08);
+  --jump-shadow: rgba(8, 26, 48, 0.08);
+  --bg: #ffffff;
+  --side: #f2f6fa;
+  --sel: #e2ebf4;
+  --panel: #f8fafc;
+  --line: #e3eaf1;
+  --text: #16191d;
+  --text2: #5f6b78;
+  --text3: #97a3b0;
+  --bubble: #eef3f8;
+  --card: #ffffff;
+  --field: #e9f0f6;
+  --user: #17202b;
+  --utext: #ffffff;
+  --accent: #2f7de1;
+  --ok: #1f9d6b;
+  --danger: #d92d20;
+  --stage: #e6edf3;
+  --seg-thumb: #ffffff;
+  --u-l0: #dfe7ee;
+  --u-l1: #d8e6fb;
+  --u-l2: #a9c9f4;
+  --u-l3: #5c94e0;
+  --u-l4: #2a5f9e;
+  --u-bar: #5c94e0;
+  --u-strong: #2a5f9e;
+}
+html.dark[data-palette="ocean"] {
+  --composer-shadow: rgba(0, 0, 0, 0.5);
+  --jump-shadow: rgba(0, 0, 0, 0.5);
+  --bg: #101418;
+  --side: #161b21;
+  --sel: #22303c;
+  --panel: #131820;
+  --line: #212a33;
+  --text: #e9edf2;
+  --text2: #9aa7b5;
+  --text3: #64707d;
+  --bubble: #1e262f;
+  --card: #232c37;
+  --field: #1e262f;
+  --user: #eaf0f7;
+  --utext: #101418;
+  --accent: #4a90e8;
+  --ok: #37b378;
+  --danger: #ff6b5e;
+  --stage: #0b0e12;
+  --seg-thumb: #35424f;
+  --u-l0: #232c37;
+  --u-l1: #1d3a52;
+  --u-l2: #2a5b84;
+  --u-l3: #4a90e8;
+  --u-l4: #8dc0ff;
+  --u-bar: #4a90e8;
+  --u-strong: #8dc0ff;
+}
+html[data-palette="forest"] {
+  --composer-shadow: rgba(10, 32, 18, 0.08);
+  --jump-shadow: rgba(10, 32, 18, 0.08);
+  --bg: #ffffff;
+  --side: #f3f7f2;
+  --sel: #e4efe2;
+  --panel: #f9fbf8;
+  --line: #e4ece1;
+  --text: #171c17;
+  --text2: #5c6a5c;
+  --text3: #95a395;
+  --bubble: #eef5ec;
+  --card: #ffffff;
+  --field: #eaf1e8;
+  --user: #17231a;
+  --utext: #ffffff;
+  --accent: #2f9e63;
+  --ok: #1f9d6b;
+  --danger: #d92d20;
+  --stage: #e7efe5;
+  --seg-thumb: #ffffff;
+  --u-l0: #e2e8dd;
+  --u-l1: #d9efdf;
+  --u-l2: #a8ddb9;
+  --u-l3: #58b07b;
+  --u-l4: #2b7a4d;
+  --u-bar: #58b07b;
+  --u-strong: #2b7a4d;
+}
+html.dark[data-palette="forest"] {
+  --composer-shadow: rgba(0, 0, 0, 0.5);
+  --jump-shadow: rgba(0, 0, 0, 0.5);
+  --bg: #101412;
+  --side: #161b18;
+  --sel: #22322a;
+  --panel: #131816;
+  --line: #212b25;
+  --text: #e9f0ea;
+  --text2: #9aa89e;
+  --text3: #647167;
+  --bubble: #1e2721;
+  --card: #232e27;
+  --field: #1e2721;
+  --user: #eaf4ec;
+  --utext: #101412;
+  --accent: #3fbc7a;
+  --ok: #37b378;
+  --danger: #ff6b5e;
+  --stage: #0b0f0c;
+  --seg-thumb: #35443a;
+  --u-l0: #232e27;
+  --u-l1: #1c3a28;
+  --u-l2: #2a6040;
+  --u-l3: #3fbc7a;
+  --u-l4: #86e0ab;
+  --u-bar: #3fbc7a;
+  --u-strong: #86e0ab;
+}
+html[data-palette="dusk"] {
+  --composer-shadow: rgba(20, 12, 40, 0.08);
+  --jump-shadow: rgba(20, 12, 40, 0.08);
+  --bg: #ffffff;
+  --side: #f6f4fa;
+  --sel: #ebe6f7;
+  --panel: #faf9fd;
+  --line: #ebe7f2;
+  --text: #1a1720;
+  --text2: #65607a;
+  --text3: #a09aae;
+  --bubble: #f3effa;
+  --card: #ffffff;
+  --field: #efeaf7;
+  --user: #201a2b;
+  --utext: #ffffff;
+  --accent: #7c5cf0;
+  --ok: #1f9d6b;
+  --danger: #d92d20;
+  --stage: #efeaf5;
+  --seg-thumb: #ffffff;
+  --u-l0: #e6e1ee;
+  --u-l1: #e4dcfb;
+  --u-l2: #c1b0f4;
+  --u-l3: #8b70e0;
+  --u-l4: #5a44a3;
+  --u-bar: #8b70e0;
+  --u-strong: #5a44a3;
+}
+html.dark[data-palette="dusk"] {
+  --composer-shadow: rgba(0, 0, 0, 0.5);
+  --jump-shadow: rgba(0, 0, 0, 0.5);
+  --bg: #121117;
+  --side: #18171f;
+  --sel: #2a2638;
+  --panel: #15141b;
+  --line: #262333;
+  --text: #eeebf5;
+  --text2: #a49fb5;
+  --text3: #6d6880;
+  --bubble: #24212f;
+  --card: #2b2739;
+  --field: #24212f;
+  --user: #f1eef9;
+  --utext: #121117;
+  --accent: #9678ff;
+  --ok: #37b378;
+  --danger: #ff6b5e;
+  --stage: #0c0b10;
+  --seg-thumb: #3b3550;
+  --u-l0: #2b2739;
+  --u-l1: #322a54;
+  --u-l2: #4c3f80;
+  --u-l3: #8b6ff0;
+  --u-l4: #c0adff;
+  --u-bar: #8b6ff0;
+  --u-strong: #c0adff;
+}
+html[data-palette="rose"] {
+  --composer-shadow: rgba(40, 10, 18, 0.08);
+  --jump-shadow: rgba(40, 10, 18, 0.08);
+  --bg: #ffffff;
+  --side: #faf4f5;
+  --sel: #f7e4e7;
+  --panel: #fdfafb;
+  --line: #f0e5e7;
+  --text: #1d1719;
+  --text2: #6d5f63;
+  --text3: #a99a9e;
+  --bubble: #f9eff1;
+  --card: #ffffff;
+  --field: #f6eaec;
+  --user: #26171a;
+  --utext: #ffffff;
+  --accent: #d94f68;
+  --ok: #1f9d6b;
+  --danger: #cf1f2e;
+  --stage: #f5eaec;
+  --seg-thumb: #ffffff;
+  --u-l0: #f0e2e4;
+  --u-l1: #fbdde3;
+  --u-l2: #f2b3c0;
+  --u-l3: #dd7d92;
+  --u-l4: #a4445a;
+  --u-bar: #dd7d92;
+  --u-strong: #a4445a;
+}
+html.dark[data-palette="rose"] {
+  --composer-shadow: rgba(0, 0, 0, 0.5);
+  --jump-shadow: rgba(0, 0, 0, 0.5);
+  --bg: #151113;
+  --side: #1c1618;
+  --sel: #35242a;
+  --panel: #181214;
+  --line: #2b2024;
+  --text: #f5eef0;
+  --text2: #b3a2a7;
+  --text3: #7d6d72;
+  --bubble: #291e22;
+  --card: #31232a;
+  --field: #291e22;
+  --user: #f9f0f2;
+  --utext: #151113;
+  --accent: #f2728c;
+  --ok: #37b378;
+  --danger: #ff6b5e;
+  --stage: #0e0a0c;
+  --seg-thumb: #42303a;
+  --u-l0: #31232a;
+  --u-l1: #4a2029;
+  --u-l2: #7c3244;
+  --u-l3: #cf5f7a;
+  --u-l4: #ff9fb3;
+  --u-bar: #cf5f7a;
+  --u-strong: #ff9fb3;
+}
+
+/* 换主题时的那一下：只在切换的 ~200ms 里打开颜色过渡，平时不加，免得每次点按、滚动都带渐变 */
+html.theme-switching,
+html.theme-switching *:not(img):not(video):not(canvas),
+html.theme-switching *::before,
+html.theme-switching *::after {
+  transition:
+    background-color 180ms var(--ease-in),
+    border-color 180ms var(--ease-in),
+    color 180ms var(--ease-in),
+    fill 180ms var(--ease-in),
+    stroke 180ms var(--ease-in) !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  html.theme-switching,
+  html.theme-switching *:not(img):not(video):not(canvas),
+  html.theme-switching *::before,
+  html.theme-switching *::after { transition: none !important; }
+}
+
 html,
 body,
 #root {
@@ -4094,7 +4355,7 @@ button:not(:disabled):active {
   transform: translateX(calc(var(--seg-index) * (100% + 2px)));
   transition: transform var(--t-slow) var(--ease-in);
 }
-.dark .seg::before { background: #3a3a3e; }
+.seg::before { background: var(--seg-thumb); }
 .seg > button {
   position: relative;
   text-align: center;
@@ -4113,6 +4374,42 @@ button:not(:disabled):active {
 .seg > button:disabled {
   cursor: default;
 }
+/* 配色色卡：一排，每张上深、下浅两颗色点（当前深浅那颗大一点），下面写名字 */
+.palettes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.palette {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  min-width: 64px;
+  padding: 10px 10px 8px;
+  border-radius: 10px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 1px transparent;
+  transition: box-shadow var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in);
+}
+@media (hover: hover) {
+  .palette:not(:disabled):hover { background: color-mix(in srgb, var(--text) 6%, var(--field)); }
+}
+.palette.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+.palette:disabled { cursor: default; opacity: .6; }
+.palette-dots { display: flex; align-items: center; gap: 5px; height: 22px; }
+.palette-dots i {
+  display: block;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .08);
+  transition: width var(--t-mid) var(--ease-in), height var(--t-mid) var(--ease-in);
+}
+.palette-dots i.lead { width: 20px; height: 20px; }
+.palette-name { font-size: 12.5px; color: var(--text2); }
+.palette.on .palette-name { color: var(--text); font-weight: 500; }
+
 /* 只读的值：和输入框同一个框，字色压一档，看得出不能改 */
 .field.ro {
   color: var(--text2);

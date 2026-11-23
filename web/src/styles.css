@@ -7560,6 +7560,8 @@ button.screen,
 .hc-date span { white-space: nowrap; font-size: 14px; }
 .hc-date-native { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .hc-input:focus, .hc-select:focus, .hc-select-button:focus, .hc-input-wrap:focus-within, .hc-number:focus-within, .hc-date:focus-within { box-shadow: inset 0 0 0 1.5px var(--text); }
+/* 密码框外面那一圈已经亮了，里面的输入框不再画第二圈 */
+.hc-input-wrap .hc-input:focus { box-shadow: none; }
 .hc-area { min-height: 112px; resize: none; }
 .hc-checker { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 8px 12px; border-radius: 10px; background: var(--card); font-size: 14px; }
 .hc-checker input { appearance: none; position: relative; width: 32px; height: 19px; margin: 0; border-radius: 999px; background: var(--text3); accent-color: var(--text); }

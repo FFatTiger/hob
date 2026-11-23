@@ -8,7 +8,7 @@ import { clampDuty } from "./text.ts";
 import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
-import { cardTitle } from "./cards.ts";
+import { cardTitle, validateCard } from "./cards.ts";
 
 export interface ActionResult {
   status: number;
@@ -123,14 +123,103 @@ function cardFormFields(card: CardRecord, values: Record<string, unknown>): stri
     });
 }
 
+function recordObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function pluginText(response: { content?: { type?: string; text?: string }[] }, runtime: HobRuntime, pluginId: string): string {
+  return (response.content ?? []).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => runtime.plugins.redact(pluginId, block.text!)).join("\n").trim();
+}
+
+function pluginFeedback(meta: Record<string, unknown>): { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } {
+  const result: { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } = {};
+  const toast = meta["hob/toast"];
+  if (recordObject(toast) && ["info", "success", "error", "warning"].includes(String(toast.type)) && typeof toast.content === "string") {
+    result.toast = { type: toast.type as "info" | "success" | "error" | "warning", content: toast.content };
+  }
+  const errors = meta["hob/errors"];
+  if (recordObject(errors)) {
+    const fields = Object.fromEntries(Object.entries(errors).filter(([, value]) => typeof value === "string")) as Record<string, string>;
+    if (Object.keys(fields).length) result.errors = fields;
+  }
+  return result;
+}
+
+function pluginCard(value: unknown): { card?: CardRecord["card"]; unsupported?: number; error?: string } {
+  const validation = validateCard(value, { mode: "plugin" });
+  if (!validation.ok) return { error: validation.error.error };
+  let card = validation.value.card;
+  if (validation.value.unsupportedCount) {
+    card = { ...card, body: { ...card.body, elements: [...card.body.elements, { tag: "div", text: `有 ${validation.value.unsupportedCount} 个组件 Hob 显示不了` }] } };
+  }
+  return { card, unsupported: validation.value.unsupportedCount };
+}
+
+async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: CardActionRequest): Promise<ActionResult> {
+  const plugin = record.plugin;
+  if (!plugin || record.owner.type !== "plugin" || !plugin.callbackTool) return { status: 400, body: { error: "插件卡片没有可用的回调工具" } };
+  const pluginId = record.owner.type === "plugin" ? record.owner.pluginId : "";
+  const installed = runtime.plugins.store.list().find((item) => item.id === pluginId);
+  const service = runtime.plugins.states(pluginId).find((item) => item.name === plugin.service);
+  const unavailable = `${plugin.pluginName} 现在用不了`;
+  if (!installed?.enabled || !service || service.status !== "connected") {
+    const next = { ...record, feedback: { unavailable }, updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    return { status: 409, body: { error: unavailable, card: next } };
+  }
+  const action = { ...(input.action as Record<string, unknown>), ...(input.form_value ? { form_value: input.form_value } : {}) } as Record<string, unknown>;
+  const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || (typeof action.name === "string" ? action.name : undefined) || "按钮";
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const response = await Promise.race([
+      runtime.plugins.call(pluginId, plugin.service, plugin.callbackTool, { card_id: record.id, action }, controller.signal),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("插件回调超过 60 秒未返回")); }, 60_000); }),
+    ]);
+    const meta = recordObject(response._meta) ? response._meta : {};
+    const feedback = pluginFeedback(meta);
+    let nextCard = record.card;
+    if (meta["hob/card"] !== undefined) {
+      const parsed = pluginCard(meta["hob/card"]);
+      if (parsed.error) {
+        feedback.toast = { type: "error", content: `插件返回的卡片格式不对：${parsed.error}` };
+      } else if (parsed.card) {
+        nextCard = parsed.card;
+      }
+    }
+    if (response.isError) {
+      feedback.toast = { type: "error", content: pluginText(response, runtime, pluginId) || "插件调用失败" };
+    }
+    const nextPlugin = nextCard.config && recordObject(nextCard.config) && typeof nextCard.config.callback_tool === "string"
+      ? { ...plugin, callbackTool: nextCard.config.callback_tool }
+      : plugin;
+    const next: CardRecord = { ...record, card: nextCard, plugin: nextPlugin, ...(Object.keys(feedback).length ? { feedback } : {}), updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    const text = pluginText(response, runtime, pluginId);
+    if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
+    return { status: 200, body: { card: next } };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const next: CardRecord = { ...record, feedback: { toast: { type: "error", content: message } }, updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    return { status: 200, body: { card: next } };
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
 /** 用户操作助手发的卡片：锁卡、保存结果，并以事件消息回到原来的助手。 */
 export async function answerCard(runtime: HobRuntime, cardId: string, input: CardActionRequest): Promise<ActionResult> {
   const { store, bus, router } = runtime;
   const record = store.card(cardId);
   if (!record) return { status: 404, body: { error: "卡片不存在" } };
   if (record.status !== "open") return { status: 409, body: { error: "这张卡片已操作" } };
-  if (record.owner.type !== "assistant") return { status: 400, body: { error: "插件卡片要交给插件处理" } };
   if (!input || typeof input.action !== "object" || Array.isArray(input.action)) return { status: 400, body: { error: "卡片操作无效" } };
+  if (record.owner.type === "plugin") return answerPluginCard(runtime, record, input);
+  if (record.owner.type !== "assistant") return { status: 400, body: { error: "卡片主人无效" } };
   const action = input.action;
   const tag = typeof action.tag === "string" ? action.tag : "";
   const name = typeof action.name === "string" ? action.name : undefined;

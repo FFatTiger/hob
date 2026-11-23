@@ -1,0 +1,86 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { join } from "node:path";
+import { describe, expect, it, vi } from "vitest";
+import type { CardRecord } from "../../shared/types.ts";
+import { answerCard } from "../src/actions.ts";
+import { pluginToolsForAssistant } from "../src/plugin-host.ts";
+import { call, makeHob, seedPluginSource, text } from "./helpers.ts";
+
+describe("plugin cards", () => {
+  it("keeps app-only callback tools out of model tools and displays/callbacks plugin cards", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    seedPluginSource(hob.home);
+    try {
+      const host = hob.runtime.plugins;
+      host.store.install("github");
+      host.store.saveConfig("github", { GITHUB_PERSONAL_ACCESS_TOKEN: "fixture-token" });
+      const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+      writeFileSync(join(hob.home, "plugins/github/mcp.json"), JSON.stringify({ mcpServers: { demo: { command: process.execPath, args: [fixture], env: { HOB_MCP_CARDS: "1" } } } }));
+      await host.start();
+      const pluginTools = pluginToolsForAssistant(host, "hob");
+      expect(pluginTools.map((tool) => tool.name)).toContain("github_show_card");
+      expect(pluginTools.map((tool) => tool.name)).not.toContain("github_save_callback");
+
+      hob.faux.setResponses([call("github_show_card", {}), text("卡片已出")]);
+      await hob.runtime.router.send("hob", { text: "请显示凭据卡" });
+      await hob.runtime.router.waitIdle("hob");
+      const record = hob.runtime.store.cards()[0]!;
+      expect(record).toMatchObject({ owner: { type: "plugin", pluginId: "github" }, plugin: { service: "demo", callbackTool: "save_callback" }, card: { header: { title: "保存凭据" } } });
+
+      hob.faux.setResponses([text("收到插件结果")]);
+      const response = await answerCard(hob.runtime, record.id, { action: { tag: "button" }, button_text: "保存", form_value: { secret: "fixture-password" } });
+      expect(response.status).toBe(200);
+      expect(hob.runtime.store.card(record.id)).toMatchObject({ feedback: { toast: { type: "success", content: "保存成功" } }, card: { header: { title: "已保存" } } });
+      const files = readFileSync(join(hob.home, "assistants/hob/cards.json"), "utf8");
+      expect(files).not.toContain("fixture-password");
+    } finally {
+      await hob.runtime.plugins.close();
+      hob.close();
+    }
+  });
+
+  it("keeps plugin cards open on errors, timeouts, and unavailable services", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    seedPluginSource(hob.home);
+    try {
+      const host = hob.runtime.plugins;
+      host.store.install("github");
+      host.store.saveConfig("github", { GITHUB_PERSONAL_ACCESS_TOKEN: "fixture-token" });
+      const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+      writeFileSync(join(hob.home, "plugins/github/mcp.json"), JSON.stringify({ mcpServers: { demo: { command: process.execPath, args: [fixture], env: { HOB_MCP_CARDS: "1" } } } }));
+      await host.start();
+      const record = (id: string): CardRecord => ({ id, owner: { type: "plugin", pluginId: "github", assistantId: "hob" }, plugin: { service: "demo", callbackTool: "save_callback", pluginName: "GitHub" }, card: { header: { title: "保存凭据" }, body: { elements: [{ tag: "div", text: "原卡" }] } }, status: "open", createdAt: new Date().toISOString() });
+
+      hob.runtime.store.saveCard(record("c-error"));
+      vi.spyOn(host, "call").mockRejectedValueOnce(new Error("插件拒绝"));
+      const failed = await answerCard(hob.runtime, "c-error", { action: { tag: "button" }, button_text: "保存" });
+      expect(failed.status).toBe(200);
+      expect(hob.runtime.store.card("c-error")).toMatchObject({ status: "open", feedback: { toast: { type: "error", content: "插件拒绝" } } });
+      vi.restoreAllMocks();
+
+      hob.runtime.store.saveCard(record("c-timeout"));
+      vi.useFakeTimers();
+      vi.spyOn(host, "call").mockImplementation(() => new Promise<never>(() => {}));
+      const pending = answerCard(hob.runtime, "c-timeout", { action: { tag: "button" }, button_text: "保存" });
+      await vi.advanceTimersByTimeAsync(60_000);
+      const timed = await pending;
+      expect(timed.status).toBe(200);
+      expect(hob.runtime.store.card("c-timeout")?.feedback?.toast?.content).toContain("60 秒");
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+
+      hob.runtime.store.saveCard(record("c-offline"));
+      host.store.patch("github", { enabled: false });
+      await host.reload("github");
+      const offline = await answerCard(hob.runtime, "c-offline", { action: { tag: "button" }, button_text: "保存" });
+      expect(offline.status).toBe(409);
+      expect(hob.runtime.store.card("c-offline")?.feedback?.unavailable).toBe("GitHub 现在用不了");
+    } finally {
+      vi.useRealTimers();
+      vi.restoreAllMocks();
+      await hob.runtime.plugins.close();
+      hob.close();
+    }
+  });
+});

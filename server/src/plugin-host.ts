@@ -6,7 +6,9 @@ import { readSecrets } from "./secrets.ts";
 import { pluginOAuthLoggedIn, pluginOAuthNeedsRelogin, pluginOAuthProvider, type PluginOAuthConfig } from "./plugin-oauth.ts";
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { McpAuthRequiredError, McpClient, McpHttpError, StdioTransport, StreamableHttpTransport, limitMcpContent, normalizeMcpInputSchema, toLlmContent, validateMcpServerConfig, type Tool } from "@earendil-works/pi-mcp";
+import type { Card } from "../../shared/cards.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { cardTitle, validateCard } from "./cards.ts";
 import type { TSchema } from "typebox";
 import { resolvePluginMcp, validatePluginValues } from "./plugin-config.ts";
 import { PluginStore } from "./plugin-store.ts";
@@ -249,21 +251,37 @@ export function pluginToolDisplayNames(host: PluginHost): Record<string, string>
   return names;
 }
 
+export type PluginCardHandler = (card: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: Card }) => void | Promise<void>;
+export type PluginCardErrorHandler = (pluginId: string, message: string) => void | Promise<void>;
+export interface PluginToolOptions {
+  onCard?: PluginCardHandler;
+  onCardError?: PluginCardErrorHandler;
+}
+
 export type PluginAgentTool = Omit<ToolDefinition<any, any>, "execute"> & {
   execute(toolCallId: string, params: Record<string, unknown>, signal?: AbortSignal, onUpdate?: Parameters<ToolDefinition<any, any>["execute"]>[3]): ReturnType<ToolDefinition<any, any>["execute"]>;
 };
 
+function visibleToModel(tool: Tool): boolean {
+  const meta = tool._meta;
+  const ui = isObject(meta?.ui) ? meta.ui : undefined;
+  const visibility = ui?.visibility;
+  return !(Array.isArray(visibility) && visibility.every((item) => item !== "model"));
+}
+
 /** The same tool set is used for assistant, group, worker and future script calls. */
-export function pluginToolsForAssistant(host: PluginHost, assistantId: string, reservedNames: ReadonlySet<string> = new Set()): PluginAgentTool[] {
+export function pluginToolsForAssistant(host: PluginHost, assistantId: string, reservedNames: ReadonlySet<string> = new Set(), options: PluginToolOptions = {}): PluginAgentTool[] {
   const result: PluginAgentTool[] = [];
   const used = new Set(reservedNames);
   for (const plugin of host.store.list()) {
     if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
     const states = host.states(plugin.id).filter(state => state.status === "connected");
-    const count = states.reduce((n, state) => n + state.tools.length, 0);
-    for (const state of states) {
+    const visibleStates = states.map((state) => ({ ...state, tools: state.tools.filter(visibleToModel) }));
+    const count = visibleStates.reduce((n, state) => n + state.tools.length, 0);
+    for (const state of visibleStates) {
       const errors: { name: string; reason: string }[] = [];
       for (const tool of state.tools) {
+        if (!visibleToModel(tool)) continue;
         const setting = plugin.tools[tool.name];
         if (setting?.enabled === false) continue;
         const name = pluginToolName(plugin.id, tool.name);
@@ -284,7 +302,37 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
             const response = await host.call(plugin.id, state.name, tool.name, args, signal);
             if (response.isError) response.content = response.content.map(block => block.type === "text" ? { ...block, text: host.redact(plugin.id, block.text) } : block);
             const limited = await limitMcpContent(toLlmContent(response));
-            return { content: limited.content, details: response.structuredContent, isError: response.isError };
+            const content = [...limited.content];
+            const cardMeta = isObject(response._meta) ? response._meta["hob/card"] : undefined;
+            if (cardMeta !== undefined) {
+              const validation = validateCard(cardMeta, { mode: "plugin" });
+              if (!validation.ok) {
+                const reason = `${host.displayName(plugin.id)} 的卡片格式不对：${validation.error.error}`;
+                await options.onCardError?.(plugin.id, reason);
+                content.push({ type: "text", text: reason });
+              } else {
+                let card = validation.value.card;
+                if (validation.value.unsupportedCount) {
+                  card = {
+                    ...card,
+                    body: {
+                      ...card.body,
+                      elements: [...card.body.elements, { tag: "div", text: `有 ${validation.value.unsupportedCount} 个组件 Hob 显示不了` }],
+                    },
+                  };
+                }
+                const config = card.config as { callback_tool?: unknown } | undefined;
+                await options.onCard?.({
+                  pluginId: plugin.id,
+                  pluginName: host.displayName(plugin.id),
+                  service: state.name,
+                  ...(typeof config?.callback_tool === "string" ? { callbackTool: config.callback_tool } : {}),
+                  card,
+                });
+                content.push({ type: "text", text: `（${host.displayName(plugin.id)} 的卡片「${cardTitle(card) || "未命名"}」已显示给用户）` });
+              }
+            }
+            return { content, details: response.structuredContent, isError: response.isError };
           },
         });
       }

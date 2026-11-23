@@ -17,6 +17,7 @@ export type {
   CardDateTimePicker,
   CardDiv,
   CardElement,
+  CardFeedback,
   CardForm,
   CardHeader,
   CardImg,

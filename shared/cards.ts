@@ -198,7 +198,7 @@ export interface CardHeader {
 
 export interface Card {
   schema?: "2.0";
-  config?: { summary?: { content: CardText } };
+  config?: { summary?: { content: CardText }; callback_tool?: string };
   header?: CardHeader;
   body: { elements: CardElement[] };
 }
@@ -238,10 +238,13 @@ export type CardOwner = CardOwnerAssistant | CardOwnerPlugin;
 export interface CardRecord {
   id: string;
   owner: CardOwner;
+  /** 插件卡的回调目标，只在服务端使用，不展示给模型。 */
+  plugin?: { service: string; callbackTool?: string; pluginName: string };
   groupId?: string;
   card: Card;
   status: "open" | "done";
   result?: CardActionResult;
+  feedback?: CardFeedback;
   createdAt: string;
   updatedAt?: string;
 }
@@ -256,4 +259,10 @@ export interface CardActionRequest {
   action: Record<string, unknown>;
   form_value?: Record<string, unknown>;
   button_text?: string;
+}
+
+export interface CardFeedback {
+  toast?: { type: "info" | "success" | "error" | "warning"; content: string };
+  errors?: Record<string, string>;
+  unavailable?: string;
 }

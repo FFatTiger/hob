@@ -4,6 +4,7 @@ import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { newId } from "./ids.ts";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
@@ -509,7 +510,10 @@ export class RouterManager {
     mkdirSync(workDir, { recursive: true });
     const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, workDir);
     const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
-    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames);
+    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames, {
+      onCard: (payload) => this.addPluginCard(assistant.id, state.groupId, payload),
+      onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, state.groupId, message),
+    });
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
     const allowedTools = state.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
     const tools = [...customTools.filter((tool) => allowedTools.includes(tool.name)), ...pluginTools];
@@ -1154,6 +1158,23 @@ export class RouterManager {
   updateCard(record: CardRecord): void {
     this.store.saveCard(record);
     this.bus.emit({ type: "card", card: record });
+  }
+
+  private async addPluginCard(assistantId: string, groupId: string | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"] }): Promise<void> {
+    const record: CardRecord = {
+      id: newId("c-"),
+      owner: { type: "plugin", pluginId: payload.pluginId, assistantId },
+      plugin: { service: payload.service, ...(payload.callbackTool ? { callbackTool: payload.callbackTool } : {}), pluginName: payload.pluginName },
+      ...(groupId ? { groupId } : {}),
+      card: payload.card,
+      status: "open",
+      createdAt: new Date().toISOString(),
+    };
+    await this.addCard(assistantId, record, groupId);
+  }
+
+  private async addPluginCardError(assistantId: string, groupId: string | undefined, message: string): Promise<void> {
+    await this.addItem(assistantId, { kind: "note", icon: "info", text: message }, groupId);
   }
 
   async updateImage(

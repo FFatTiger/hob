@@ -337,11 +337,18 @@ export async function checkModelsPatch(
   for (const [label, pick] of [
     ["对话", next.conversation],
     ["任务执行", next.work],
+    ["推荐提问", next.suggest],
   ] as const) {
-    if (!pick) continue;
-    if (!pick.ref) throw new Error(`未选择${label}模型。`);
+    if (pick === null || !pick) continue;
+    if (!pick.ref) continue; // 空 ref = 跟随对话模型，仅用于设置补丁，不会落盘
     if (!rosterRefs.has(pick.ref)) throw new Error(`${label}模型 ${pick.ref} 不在模型列表中。`);
-    checkThinking(pick.thinking);
+    if (next.suggest !== undefined && next.suggest !== null) {
+      if (next.suggest.ref.trim()) {
+        if (!rosterRefs.has(next.suggest.ref)) throw new Error(`推荐提问模型 ${next.suggest.ref} 不在模型列表中。`);
+        if (!catalog.find(next.suggest.ref)) throw new Error(`推荐提问模型 ${next.suggest.ref} 当前不可用（该模型的服务商已删除或未配置 Key）。`);
+      }
+      checkThinking(next.suggest.thinking);
+    }
   }
 }
 

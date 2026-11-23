@@ -40,7 +40,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
-import { t } from "../../../shared/i18n.ts";
+import { currentLocale, t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
@@ -1919,7 +1919,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
   const suggestRef = models.suggest === null ? suggestOff : models.suggest?.ref ?? "";
   const suggestOptions = [
     { value: "", text: t("跟随对话模型") },
-    { value: suggestOff, text: t("关闭") },
+    { value: suggestOff, text: currentLocale() === "en" ? t("推荐提问关闭") : t("关闭") },
     ...pickOptions(models.suggest?.ref ?? ""),
   ];
 

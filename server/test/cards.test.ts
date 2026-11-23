@@ -41,6 +41,12 @@ describe("card JSON validation", () => {
     expect(validateCard({ body: { elements: [{ tag: "button", element_id: "1bad", text: "点我" }] } })).toMatchObject({ ok: false, error: { error: expect.stringContaining("element_id 无效") } });
     expect(validateCard({ body: { elements: [{ tag: "input", input_type: "password" }] } })).toMatchObject({ ok: false, error: { error: "卡片不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你。" } });
     expect(validateCard({ body: { elements: [{ tag: "button", text: "打开", behaviors: [{ type: "open_url", default_url: "javascript:alert(1)" }] }] } })).toMatchObject({ ok: false, error: { error: expect.stringContaining("只支持 http:// 或 https://") } });
+    expect(validateCard({ body: { elements: [{ tag: "select_static", name: "s", options: [{ text: "甲", value: "a" }], display: "list" }] } })).toMatchObject({ ok: false, error: { error: "卡片 body里的第 1 个组件的 display 无效" } });
+  });
+
+  it("accepts the Hob extensions on select_static and div", () => {
+    expect(validateCard({ body: { elements: [{ tag: "select_static", name: "s", options: [{ text: "甲", value: "a" }], display: "dropdown" }, { tag: "div", icon: "check", text: "已保存" }] } })).toMatchObject({ ok: true, value: { componentCount: 2 } });
+    expect(validateCard({ body: { elements: [{ tag: "select_static", name: "s", options: [{ text: "甲", value: "a" }], display: "chips" }] } })).toMatchObject({ ok: true });
   });
 
   it("allows plugin cards to omit unknown components and reports how many were hidden", () => {

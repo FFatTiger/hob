@@ -7515,10 +7515,16 @@ button.screen,
 /* 通用卡片：内容由服务端声明，样式由 Hob 统一提供 */
 .hc { width: 548px; max-width: 100%; flex: 0 1 548px; padding: 12px 14px 14px; box-sizing: border-box; }
 .hc.hc-disabled { opacity: .88; }
-.hc-source { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--text2); font-size: 12.5px; }
+.hc-source { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text2); font-size: 12.5px; }
+.hc-source img { flex: none; }
 .hc-source .hc-lock { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text3); }
-.hc-elements { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
+/* 内容区：行组、结果行、按钮行之间 10px（效果图）；表单的第一项离标题 12px、和字段之间一样，按钮行离上面的内容 14px */
+.hc-elements { display: flex; flex-direction: column; gap: 10px; margin-top: 10px; }
+.hc-elements > .hc-form { margin-top: 2px; }
+.hc-elements > .hc-actions { margin-top: 4px; }
 .hc-div { white-space: pre-wrap; line-height: 1.55; }
+/* 结果行：勾 + 灰字（div 带 icon: check） */
+.hc-result { display: flex; align-items: center; gap: 6px; color: var(--text2); font-size: 14px; }
 .hc-file-row { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 10px; border-radius: 10px; background: var(--card); color: var(--text2); font-size: 13.5px; }
 .hc-file-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc-hr { width: 100%; border: 0; border-top: 1px solid var(--line); }
@@ -7534,17 +7540,24 @@ button.screen,
 .hc-table-switch.on span { transform: translateX(13px); }
 .hc-columns { display: flex; gap: 8px; }
 .hc-column { flex: 1; min-width: 0; }
-.hc-group { display: flex; flex-direction: column; border-radius: 10px; background: var(--card); overflow: hidden; }
-.hc-group > * { border-radius: 0; background: transparent; }
+/* 行组：白底圆角块，里面的行之间留 8px；分栏行（结果行的样子）第一栏是标签 */
+.hc-group { display: flex; flex-direction: column; gap: 8px; padding: 4px; border-radius: 12px; background: var(--card); overflow: hidden; }
+.hc-group > * { border-radius: 9px; background: transparent; }
+.hc-group > .hc-columns { padding: 9px 10px; }
+.hc-group .hc-div { font-size: 14px; line-height: 1.6; }
+.hc-group > .hc-columns > .hc-column:first-child .hc-div { color: var(--text2); font-size: 13.5px; }
 .hc-group > .hc-collapse .disclosure-row { background: transparent; }
 .hc-collapse-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
-.hc-interactive .hc-div + .hc-div { flex: none; color: var(--text3); font-size: 12.5px; }
-.hc-interactive { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 9px 10px; border-radius: 9px; background: var(--card); cursor: pointer; }
-.hc-interactive .hc-div { flex: 1; min-width: 0; color: var(--text3); font-size: 12px; line-height: 1.6; }
-/* 行里的文字：第一行是标题，后面是灰色小字的说明 */
-.hc-interactive .hc-div::first-line { color: var(--text); font-size: 13.5px; }
+.hc-interactive .hc-div + .hc-div { flex: none; }
+/* 整块可点的行：有 behaviors 才给手型光标 */
+.hc-interactive { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 9px 10px; border-radius: 9px; background: var(--card); }
+.hc-clickable { cursor: pointer; }
+.hc-interactive .hc-div { flex: 1; min-width: 0; color: var(--text2); font-size: 12.5px; line-height: 1.6; }
+/* 行里的文字：第一行是标题，后面是灰色小字的说明（只管第一个 div，右侧的小字不按标题画） */
+.hc-interactive > .hc-div:first-child::first-line { color: var(--text); font-size: 14px; font-weight: 500; }
 .hc-interactive .hob-btn { flex: none; }
-.hc-form { display: flex; flex-direction: column; gap: 14px; }
+.hc-form { display: flex; flex-direction: column; gap: 12px; }
+.hc-form > .hc-actions { margin-top: 2px; }
 .hc-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }
 .hc-actions .hob-btn { width: auto; min-width: 0; }
 .hc-actions .hob-btn:not(.hob-btn-primary) { background: var(--card); }
@@ -7553,13 +7566,14 @@ button.screen,
 .hc-form > .hob-btn, .hc-elements > .hob-btn { align-self: flex-end; width: auto; min-width: 0; }
 .hc-field { display: flex; flex-direction: column; gap: 5px; }
 .hc-label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--text2); font-size: 12.5px; }
-.hc-aside { margin-left: auto; color: var(--text3); font-size: 12px; }
-.hc-label b { color: var(--accent); margin-left: 3px; }
+.hc-aside { margin-left: auto; color: var(--text3); font-size: 12.5px; }
+.hc-label b { color: var(--accent); margin-left: 6px; }
 .hc-options { display: flex; flex-wrap: wrap; gap: 6px; }
 .hc-option { min-height: 34px; padding: 6px 12px; border-radius: 999px; background: var(--card); color: var(--text); font: inherit; font-size: 13.5px; display: inline-flex; align-items: center; gap: 4px; }
 .hc-option.active { background: var(--text); color: var(--bg); }
-.hc-input, .hc-select, .hc-select-button { width: 100%; min-height: 38px; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--card); color: var(--text); font: inherit; font-size: 14px; outline: none; }
+.hc-input, .hc-select, .hc-select-button { width: 100%; min-height: 38px; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--card); color: var(--text); font: inherit; font-size: 14px; line-height: 1.5; outline: none; }
 .hc-select-button { display: flex; align-items: center; justify-content: space-between; text-align: left; }
+.hc-select-button .i { color: var(--text2); }
 .hc-select-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc-card-menu { min-width: 180px; }
 .hc-card-menu button { display: flex; align-items: center; gap: 7px; }
@@ -7567,8 +7581,11 @@ button.screen,
 .hc-menu-empty { width: 14px; }
 .hc-input-wrap { display: flex; align-items: center; gap: 4px; min-height: 38px; padding-right: 4px; border-radius: 10px; background: var(--card); }
 .hc-input-wrap .hc-input { min-width: 0; background: transparent; }
-.hc-eye, .hc-generate { flex: none; padding: 5px 7px; color: var(--text2); font-size: 12px; }
-.hc-generate { margin-left: 4px; padding: 0 12px; min-height: 38px; border-radius: 10px; background: var(--card); color: var(--text); font-weight: 500; }
+.hc-eye { flex: none; padding: 5px 7px; color: var(--text2); font-size: 12px; }
+/* 密码框和「生成」并排，中间 8px；生成是独立的白底按钮 */
+.hc-input-row { display: flex; align-items: center; gap: 8px; }
+.hc-input-row .hc-input-wrap { flex: 1; min-width: 0; }
+.hc-generate { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 12px; border-radius: 10px; background: var(--card); color: var(--text); font-size: 13px; font-weight: 500; }
 .hc-number { display: flex; align-items: center; width: fit-content; min-height: 38px; border-radius: 10px; background: var(--card); overflow: hidden; }
 .hc-number .hc-input { width: 64px; flex: none; padding-left: 4px; padding-right: 4px; text-align: center; background: transparent; }
 .hc-number button { width: 36px; height: 38px; flex: none; color: var(--text2); font-size: 18px; }
@@ -7577,6 +7594,8 @@ button.screen,
 .hc-date span { white-space: nowrap; font-size: 14px; }
 .hc-date-native { position: absolute; inset: 0; width: 100%; opacity: 0; cursor: pointer; }
 .hc-input:focus, .hc-select:focus, .hc-select-button:focus, .hc-input-wrap:focus-within, .hc-number:focus-within, .hc-date:focus-within { box-shadow: inset 0 0 0 1.5px var(--text); }
+/* 密码框外面那一圈已经亮了，里面的输入框不再画第二圈 */
+.hc-input-wrap .hc-input:focus { box-shadow: none; }
 .hc-area { min-height: 112px; resize: none; }
 .hc-checker { display: flex; align-items: center; justify-content: space-between; gap: 10px; min-height: 38px; padding: 8px 12px; border-radius: 10px; background: var(--card); font-size: 14px; }
 .hc-checker input { appearance: none; position: relative; width: 32px; height: 19px; margin: 0; border-radius: 999px; background: var(--text3); accent-color: var(--text); }

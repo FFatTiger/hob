@@ -25,6 +25,8 @@ export interface CardMarkdown extends CardElementBase {
 export interface CardDiv extends CardElementBase {
   tag: "div";
   text: CardText;
+  /** Hob 扩展：file / doc 画成文件行，check 画成结果行（勾 + 灰字）。 */
+  icon?: "file" | "doc" | "check";
 }
 
 export interface CardHr extends CardElementBase {
@@ -107,6 +109,8 @@ export interface CardSelectStatic extends CardElementBase {
   initial_option?: string;
   placeholder?: CardText;
   required?: boolean;
+  /** Hob 扩展：画成下拉还是圆角小块；不写时选项少画小块、多了画下拉。 */
+  display?: "dropdown" | "chips";
 }
 
 export interface CardMultiSelectStatic extends CardElementBase {

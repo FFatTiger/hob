@@ -79,8 +79,8 @@ describe("follow-up suggestion output", () => {
   });
 
   it("supports the three setting values", () => {
-    const follow = makeHob();
-    const off = makeHob({}, { settings: { models: { suggest: null } } });
+    const follow = makeHob({}, { followUpSuggestions: true });
+    const off = makeHob();
     const explicit = makeHob({}, { settings: { models: { suggest: { ref: "hob-faux/faux-1", thinking: "high" } } } });
     try {
       expect(follow.runtime.settings.settings.models.suggest).toBeUndefined();

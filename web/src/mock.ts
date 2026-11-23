@@ -297,7 +297,7 @@ function buildDb(scene: SceneId): Db {
       last: { text: L("已交给任务处理，完成后通知你。", "Handed it to a job. I'll tell you when it's done."), at: at(0, 10, 5) },
       unread: 0,
       busy: true,
-      ...(scene === "h-hob" || scene === "mchat" || scene === "todo-chat" ? { suggestions: [L("把结果里的关键数字列给我", "List the key numbers from the result"), L("再做一份适合发给同事的版本", "Make a version I can send to my colleagues")] } : {}),
+      ...(scene === "h-hob" || scene === "h-dark" || scene === "mchat" || scene === "todo-chat" ? { suggestions: [L("把结果里的关键数字列给我", "List the key numbers from the result"), L("再做一份适合发给同事的版本", "Make a version I can send to my colleagues")] } : {}),
     },
     {
       id: "page",
@@ -1360,6 +1360,7 @@ cp now.txt "$seen"`,
       last: { at: minsAgo(1), speaker: developer.id, text: L("深色主题正在实现。", "Building the dark theme.") },
       unread: 1,
       busy: [developer.id],
+      suggestions: [L("先把深色模式的切换入口列给我", "List the dark mode switch entry points first"), L("把手机端的验收结果也发我", "Send me the mobile acceptance results too")],
     };
     // 左栏的群二级页：一件刚写好说明、一件已经做完关了，和正在做的那件一起
     const readmeSearch: GroupSummary = {

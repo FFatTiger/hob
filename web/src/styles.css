@@ -7482,7 +7482,7 @@ button.screen,
 .hc.hc-disabled { opacity: .88; }
 .hc-source { display: flex; align-items: center; gap: 6px; margin-bottom: 10px; color: var(--text2); font-size: 12.5px; }
 .hc-source .hc-lock { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text3); }
-.hc-elements { display: flex; flex-direction: column; gap: 14px; }
+.hc-elements { display: flex; flex-direction: column; gap: 14px; margin-top: 12px; }
 .hc-div { white-space: pre-wrap; line-height: 1.55; }
 .hc-file-row { display: flex; align-items: center; gap: 8px; min-height: 38px; padding: 8px 10px; border-radius: 10px; background: var(--card); color: var(--text2); font-size: 13.5px; }
 .hc-file-row span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -7499,11 +7499,15 @@ button.screen,
 .hc-table-switch.on span { transform: translateX(13px); }
 .hc-columns { display: flex; gap: 8px; }
 .hc-column { flex: 1; min-width: 0; }
-.hc-collapse { padding: 8px 10px; background: var(--card); border-radius: 10px; }
-.hc-collapse summary { cursor: pointer; color: var(--text2); font-size: 13px; }
-.hc-collapse[open] summary { margin-bottom: 8px; }
+.hc-group { display: flex; flex-direction: column; border-radius: 10px; background: var(--card); overflow: hidden; }
+.hc-group > * { border-radius: 0; background: transparent; }
+.hc-group > .hc-collapse .disclosure-row { background: transparent; }
+.hc-collapse-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+.hc-interactive .hc-div + .hc-div { flex: none; color: var(--text3); font-size: 12.5px; }
 .hc-interactive { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 9px 10px; border-radius: 9px; background: var(--card); cursor: pointer; }
-.hc-interactive .hc-div { flex: 1; min-width: 0; font-size: 13.5px; }
+.hc-interactive .hc-div { flex: 1; min-width: 0; color: var(--text3); font-size: 12px; line-height: 1.6; }
+/* 行里的文字：第一行是标题，后面是灰色小字的说明 */
+.hc-interactive .hc-div::first-line { color: var(--text); font-size: 13.5px; }
 .hc-interactive .hob-btn { flex: none; }
 .hc-form { display: flex; flex-direction: column; gap: 14px; }
 .hc-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; }

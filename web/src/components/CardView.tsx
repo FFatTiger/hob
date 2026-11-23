@@ -197,6 +197,9 @@ function CardInputControl({ element, value, onChange, disabled, onCommit }: { el
   return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit?.(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
 }
 
+/** 白底的行：连着的几行并成一组（列表、结果行） */
+const isRow = (element: any) => element?.tag === "interactive_container" || (element?.tag === "column_set" && element.background_style && element.background_style !== "default");
+
 type Submit = (element?: any, formElements?: any[], directValue?: unknown) => void;
 
 function CardElementList({ elements, values, setValue, errors, disabled, submit, openUrl, formElements }: { elements: any[]; values: Record<string, unknown>; setValue: (name: string, value: unknown) => void; errors: Record<string, string>; disabled: boolean; submit: Submit; openUrl: (url: string) => void; formElements?: any[] }) {
@@ -208,10 +211,21 @@ function CardElementList({ elements, values, setValue, errors, disabled, submit,
       result.push(<div className="hc-actions" key={`actions-${index}`}>{buttons.map((element, buttonIndex) => <CardElementView key={element.element_id ?? buttonIndex} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>);
       continue;
     }
+    if (isRow(elements[index])) {
+      const rows: any[] = [];
+      while (isRow(elements[index]) || elements[index]?.tag === "collapsible_panel") rows.push(elements[index++]);
+      result.push(<div className="hc-group" key={`group-${index}`}>{rows.map((element, rowIndex) => <CardElementView key={element.element_id ?? rowIndex} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>);
+      continue;
+    }
     const element = elements[index++];
     result.push(<CardElementView key={element.element_id ?? index} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />);
   }
   return <>{result}</>;
+}
+
+function CardCollapse({ title, expanded, children }: { title: string; expanded: boolean; children: ReactNode }) {
+  const [open, setOpen] = useState(expanded);
+  return <Disclosure className="hc-collapse" label={title} open={open} onToggle={() => setOpen((value) => !value)}><div className="hc-collapse-body">{children}</div></Disclosure>;
 }
 
 function actionFor(element: any, value?: unknown): Record<string, unknown> {
@@ -234,7 +248,7 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   if (element.tag === "table") return <div className="hc-table-wrap"><table className="hc-table"><thead><tr>{(element.columns ?? []).map((column: any) => <th key={column.name}>{cardText(column.display_name)}</th>)}</tr></thead><tbody>{(element.rows ?? []).map((row: any, index: number) => <tr key={index}>{(element.columns ?? []).map((column: any) => <td key={column.name}><CardTableValue value={row[column.name]} /></td>)}</tr>)}</tbody></table></div>;
   if (element.tag === "form") return <form className="hc-form" onSubmit={(event) => { event.preventDefault(); submit(undefined, element.elements ?? []); }}><CardElementList elements={element.elements ?? []} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={element.elements ?? []} /></form>;
   if (element.tag === "column_set") return <div className="hc-columns">{(element.columns ?? []).map((column: any, index: number) => <div className="hc-column" key={index}>{(column.elements ?? []).map((child: any, childIndex: number) => <CardElementView key={child.element_id ?? childIndex} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>)}</div>;
-  if (element.tag === "collapsible_panel") return <details className="hc-collapse" open={element.expanded}><summary>{cardText(element.header?.title)}</summary>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</details>;
+  if (element.tag === "collapsible_panel") return <CardCollapse title={cardText(element.header?.title)} expanded={Boolean(element.expanded)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</CardCollapse>;
   if (element.tag === "interactive_container") return <div className="hc-interactive" onClick={() => element.behaviors?.find((behavior: any) => behavior.type === "open_url") && openUrl(element.behaviors.find((behavior: any) => behavior.type === "open_url").default_url)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>;
   if (element.tag === "button") return <button type="button" className={`hob-btn${element.type === "primary_filled" ? " hob-btn-primary" : element.type === "danger" ? " hob-btn-danger" : ""}`} disabled={disabled} onClick={(event) => { event.preventDefault(); const url = element.behaviors?.find((behavior: any) => behavior.type === "open_url")?.default_url; if (url) openUrl(url); else submit(element, formElements); }}>{cardText(element.text)}</button>;
   if (interactive && field) {

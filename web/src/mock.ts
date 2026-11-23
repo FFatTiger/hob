@@ -1595,7 +1595,7 @@ cp now.txt "$seen"`,
     };
     cardsByVariant["agent-done"] = makeCard("mock-card-agent-done", { type: "assistant", assistantId: "hob" }, { schema: "2.0", header: { title: "青岛行程" }, body: { elements: [{ tag: "markdown", content: "已经按你的选择排好行程。" }] } }, { status: "done", result: { action: { tag: "button" }, buttonText: "按这个排", fields: { 出发: "2025-12-12", 回来: "2025-12-15", 几个人: 3, 想去的地方: ["栈桥", "八大关"] } } });
     cardsByVariant.list = namedPlugin("mock-card-list", "github", "GitHub", { schema: "2.0", header: { title: "等你审的合并请求", subtitle: "acme/notes-app" }, body: { elements: [
-      { tag: "interactive_container", elements: [{ tag: "div", text: "修复同步时偶尔丢失最后一条笔记\n#128 · 小林 · +42 −8 · 2 小时前" }, { tag: "button", text: "✓ 已合并", type: "default" }] },
+      { tag: "interactive_container", elements: [{ tag: "div", text: "修复同步时偶尔丢失最后一条笔记\n#128 · 小林 · +42 −8 · 2 小时前" }, { tag: "div", text: "✓ 已合并" }] },
       { tag: "interactive_container", elements: [{ tag: "div", text: "笔记列表支持按标签筛选\n#131 · 阿周 · +310 −54 · 昨天" }, { tag: "button", text: "合并", type: "default" }, { tag: "button", text: "···", type: "default" }] },
       { tag: "interactive_container", elements: [{ tag: "div", text: "升级编辑器依赖到 4.2\n#133 · bot · +18 −18 · 3 天前" }, { tag: "button", text: "合并", type: "default" }, { tag: "button", text: "···", type: "default" }] },
       { tag: "collapsible_panel", header: { title: "其余开着的 2" }, expanded: false, elements: [] },

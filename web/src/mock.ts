@@ -43,6 +43,7 @@ import type {
   UsageRow,
   UsageView,
   WorklogEntry,
+  CardRecord,
 } from "../../shared/types.ts";
 import githubIcon from "./mock-plugins/github.svg?url";
 import gmailIcon from "./mock-plugins/gmail.svg?url";
@@ -56,13 +57,14 @@ import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "plugin-demo" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "cards-demo" | "plugin-demo" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
   { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
 > = {
+  "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "readme-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -248,6 +250,7 @@ interface Db {
   rules: Record<string, Rule[]>;
   worklog: Record<string, WorklogEntry[]>;
   settings: Bootstrap["settings"];
+  cards: Record<string, CardRecord>;
 }
 
 /**
@@ -296,7 +299,7 @@ function buildDb(scene: SceneId): Db {
       createdAt: at(30, 9, 0),
       last: { text: L("已交给任务处理，完成后通知你。", "Handed it to a job. I'll tell you when it's done."), at: at(0, 10, 5) },
       unread: 0,
-      busy: true,
+      busy: scene !== "cards-demo",
       ...(scene === "h-hob" || scene === "h-dark" || scene === "mchat" || scene === "todo-chat" ? { suggestions: [L("把结果里的关键数字列给我", "List the key numbers from the result"), L("再做一份适合发给同事的版本", "Make a version I can send to my colleagues")] } : {}),
     },
     {
@@ -1566,6 +1569,37 @@ cp now.txt "$seen"`,
     }
   }
 
+  const cards: Record<string, CardRecord> = {};
+  if (scene === "cards-demo") {
+    const variant = new URLSearchParams(globalThis.location?.search ?? "").get("card") ?? "plugin";
+    const now = new Date().toISOString();
+    const makeCard = (id: string, owner: CardRecord["owner"], card: CardRecord["card"], patch: Partial<CardRecord> = {}): CardRecord => ({ id, owner, card, status: "open", createdAt: now, ...patch });
+    const pluginOwner: CardRecord["owner"] = { type: "plugin", pluginId: "bitwarden", assistantId: "hob" };
+    const plugin = (id: string, card: CardRecord["card"], patch: Partial<CardRecord> = {}) => makeCard(id, pluginOwner, card, { plugin: { service: "bitwarden", callbackTool: "save_login", pluginName: "Bitwarden" }, ...patch });
+    const formButton = (text: string): CardRecord["card"]["body"]["elements"][number] => ({ tag: "button", text, type: "primary_filled", form_action_type: "submit" });
+    const cardsByVariant: Record<string, CardRecord> = {
+      plugin: plugin("mock-card-plugin", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "markdown", content: "密码会直接交给 Bitwarden，我看不到。" }, { tag: "form", name: "login", elements: [{ tag: "input", name: "name", label: "名称", default_value: "Example 论坛", required: true }, { tag: "input", name: "username", label: "用户名", default_value: "lin@example.com", required: true }, { tag: "input", name: "password", label: "密码", input_type: "password", min_length: 10, required: true, generate: true }, formButton("保存")] }] } }),
+      "plugin-done": plugin("mock-card-plugin-done", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "markdown", content: "已保存到 Bitwarden。" }] } }, { status: "done", result: { action: { tag: "button" }, buttonText: "保存", fields: { 名称: "Example 论坛", 用户名: "lin@example.com", 密码: "已填写" } } }),
+      agent: makeCard("mock-card-agent", { type: "assistant", assistantId: "hob" }, { schema: "2.0", header: { title: "青岛行程", subtitle: "选好后点「按这个排」，不确定的可以空着。" }, body: { elements: [{ tag: "form", name: "trip", elements: [{ tag: "column_set", columns: [{ weight: 1, elements: [{ tag: "date_picker", name: "from", label: "出发", required: true, initial_date: "2025-12-12" }] }, { weight: 1, elements: [{ tag: "date_picker", name: "to", label: "回来", required: true, initial_date: "2025-12-15" }] }] }, { tag: "input", name: "people", label: "几个人", input_type: "number", default_value: 3, min: 1, max: 12 }, { tag: "multi_select_static", name: "places", label: "想去的地方", options: [{ text: "栈桥", value: "栈桥" }, { text: "八大关", value: "八大关" }, { text: "崂山", value: "崂山" }, { text: "啤酒博物馆", value: "啤酒博物馆" }], initial_options: ["栈桥", "八大关"] }, { tag: "input", name: "notes", label: "其他要求", input_type: "multiline_text", placeholder: "比如每天别走太多路" }, formButton("按这个排")] }] } }),
+      table: plugin("mock-card-table", { schema: "2.0", header: { title: "example.com 的解析记录", subtitle: "一共 6 条，下面是全部" }, body: { elements: [{ tag: "table", columns: [{ name: "type", display_name: "类型" }, { name: "name", display_name: "名称" }, { name: "content", display_name: "内容" }, { name: "proxy", display_name: "代理" }], rows: [{ type: "A", name: "@", content: "203.0.113.10", proxy: "开" }, { type: "A", name: "www", content: "203.0.113.10", proxy: "开" }, { type: "CNAME", name: "blog", content: "example.pages.dev", proxy: "开" }, { type: "A", name: "api", content: "203.0.113.24", proxy: "关" }] }, formButton("添加记录")] } }),
+      validate: plugin("mock-card-validate", { schema: "2.0", header: { title: "新建账号" }, body: { elements: [{ tag: "form", name: "account", elements: [{ tag: "input", name: "username", label: "用户名", default_value: "parents", required: true }, { tag: "input", name: "password", label: "密码", input_type: "password", default_value: "short", min_length: 8, required: true }, formButton("创建")] }] } }, { feedback: { errors: { password: "密码至少 8 位" } } }),
+      unavailable: plugin("mock-card-unavailable", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "markdown", content: "Bitwarden 暂时无法使用，请稍后再试。" }] } }, { feedback: { unavailable: "Bitwarden 暂时不可用" } }),
+    };
+    cardsByVariant["agent-done"] = makeCard("mock-card-agent-done", { type: "assistant", assistantId: "hob" }, { schema: "2.0", header: { title: "青岛行程" }, body: { elements: [{ tag: "markdown", content: "已经按你的选择排好行程。" }] } }, { status: "done", result: { action: { tag: "button" }, buttonText: "按这个排", fields: { 出发: "2025-12-12", 回来: "2025-12-15", 几个人: 3, 想去的地方: ["栈桥", "八大关"] } } });
+    cardsByVariant.list = plugin("mock-card-list", { schema: "2.0", header: { title: "等你审的合并请求", subtitle: "acme/notes-app" }, body: { elements: [{ tag: "column_set", columns: [{ weight: 1, elements: [{ tag: "div", text: "修复同步时偶尔丢失最后一条笔记\n#128 · 小林 · +42 −8" }, { tag: "button", text: "已合并", type: "default" }] }, { weight: 1, elements: [{ tag: "div", text: "笔记列表支持按标签筛选\n#131 · 阿周 · +310 −54" }, { tag: "button", text: "合并", type: "default" }] }] }] } });
+    cardsByVariant.draft = plugin("mock-card-draft", { schema: "2.0", header: { title: "回复邮件" }, body: { elements: [{ tag: "form", name: "reply", elements: [{ tag: "input", name: "to", label: "收件人", default_value: "王经理 <wang@example.com>", required: true }, { tag: "input", name: "subject", label: "主题", default_value: "回复：下周项目评审时间", required: true }, { tag: "input", name: "body", label: "正文", input_type: "multiline_text", default_value: "王经理好，周四下午 2 点到 4 点我这边都可以。", required: true }, formButton("发送")] }] } });
+    cardsByVariant.toast = plugin("mock-card-toast", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "markdown", content: "已连接 Bitwarden。" }] } }, { feedback: { toast: { type: "success", content: "已连接 Bitwarden，可以填写了" } } });
+    cardsByVariant.processing = plugin("mock-card-processing", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "form", name: "login", elements: [{ tag: "input", name: "username", label: "用户名", default_value: "lin@example.com" }, formButton("保存")] }] } });
+    cardsByVariant.unavailable = plugin("mock-card-unavailable", { schema: "2.0", header: { title: "保存登录信息" }, body: { elements: [{ tag: "markdown", content: "Bitwarden 暂时无法使用，请稍后再试。" }] } }, { feedback: { unavailable: "Bitwarden 暂时不可用" } });
+    const record = cardsByVariant[variant] ?? cardsByVariant.plugin!;
+    cards[record.id] = record;
+    items.hob = [
+      { kind: "user", id: "mock-card-user", at: minsAgo(3), text: variant === "agent" ? "帮我排一个青岛行程" : "帮我处理这件事" },
+      { kind: "assistant", id: "mock-card-assistant", at: minsAgo(2), text: variant === "agent" ? "先定几件事，填完我就按这个排。" : variant === "table" ? "一共 6 条，下面是全部：" : "卡片在下面。" },
+      { kind: "card", id: "mock-card-item", at: minsAgo(1), cardId: record.id },
+    ];
+  }
+
   return {
     assistants,
     groups,
@@ -1663,6 +1697,7 @@ cp now.txt "$seen"`,
         push: { email: "" },
       },
     },
+    cards,
   };
 }
 
@@ -2447,6 +2482,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       jobs: clone(Object.values(db.jobs)),
       drafts: clone(Object.values(db.drafts)),
       delegations: clone(Object.values(db.delegations)),
+      cards: clone(Object.values(db.cards)),
       hasMore: false,
     }),
     profile: async (assistantId) => {
@@ -2675,6 +2711,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       items: clone(db.groupItems[groupId] ?? []),
       approvals: clone(Object.values(db.approvals).filter((a) => a.groupId === groupId)),
       jobs: clone(Object.values(db.jobs).filter((j) => j.groupId === groupId)),
+      cards: clone(Object.values(db.cards).filter((card) => card.groupId === groupId)),
       hasMore: false,
     }),
     sendGroupMessage: async (groupId, body) => {
@@ -2813,7 +2850,16 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       pushItem("hob", { kind: "delegation", id: uid("item-"), at: next.createdAt, delegationId: next.id });
       pushItem(next.to, { kind: "user", id: uid("item-"), at: next.createdAt, text: next.text, from: { assistantId: "hob", name: "Hob", delegationId: next.id } });
     },
-    answerCard: async () => ({}),
+    answerCard: async (cardId, action) => {
+      const card = db.cards[cardId];
+      if (!card) throw new ApiError(404, "卡片不存在");
+      if (cardId.includes("processing")) await new Promise((resolve) => setTimeout(resolve, 5_000));
+      card.status = "done";
+      card.updatedAt = new Date().toISOString();
+      card.result = { action: clone(action.action), ...(action.button_text ? { buttonText: action.button_text } : {}), ...(action.form_value ? { fields: clone(action.form_value) } : {}) };
+      emit({ type: "card", card: clone(card) });
+      return { card: clone(card) };
+    },
     createDraft: async (draftId) => {
       const d = db.drafts[draftId];
       if (!d) return;

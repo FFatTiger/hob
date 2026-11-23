@@ -4,6 +4,7 @@ import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
+import { newId } from "./ids.ts";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
@@ -13,6 +14,7 @@ import type {
   Assistant,
   AssistantSummary,
   Bootstrap,
+  CardRecord,
   Group,
   Iso,
   Item,
@@ -91,7 +93,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
+  "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image",
   "open_topic", "close_topic",
 ]);
@@ -508,7 +510,10 @@ export class RouterManager {
     mkdirSync(workDir, { recursive: true });
     const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, workDir);
     const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
-    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames);
+    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames, {
+      onCard: (payload) => this.addPluginCard(assistant.id, state.groupId, payload),
+      onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, state.groupId, message),
+    });
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
     const allowedTools = state.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
     const tools = [...customTools.filter((tool) => allowedTools.includes(tool.name)), ...pluginTools];
@@ -1142,6 +1147,36 @@ export class RouterManager {
     return full;
   }
 
+  async addCard(assistantId: string, record: CardRecord, groupId?: string): Promise<Item> {
+    const card: CardRecord = { ...record, ...(groupId ? { groupId } : {}) };
+    this.store.saveCard(card);
+    const item = await this.addItem(assistantId, { kind: "card", cardId: card.id }, groupId);
+    this.bus.emit({ type: "card", card });
+    return item;
+  }
+
+  updateCard(record: CardRecord): void {
+    this.store.saveCard(record);
+    this.bus.emit({ type: "card", card: record });
+  }
+
+  private async addPluginCard(assistantId: string, groupId: string | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"] }): Promise<void> {
+    const record: CardRecord = {
+      id: newId("c-"),
+      owner: { type: "plugin", pluginId: payload.pluginId, assistantId },
+      plugin: { service: payload.service, ...(payload.callbackTool ? { callbackTool: payload.callbackTool } : {}), pluginName: payload.pluginName },
+      ...(groupId ? { groupId } : {}),
+      card: payload.card,
+      status: "open",
+      createdAt: new Date().toISOString(),
+    };
+    await this.addCard(assistantId, record, groupId);
+  }
+
+  private async addPluginCardError(assistantId: string, groupId: string | undefined, message: string): Promise<void> {
+    await this.addItem(assistantId, { kind: "note", icon: "info", text: message }, groupId);
+  }
+
   async updateImage(
     assistantId: string,
     id: string,
@@ -1489,6 +1524,7 @@ export class RouterManager {
     for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
 
     const lines = [body.text];
+
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
@@ -1714,6 +1750,9 @@ export class RouterManager {
     const approvalIds = new Set(
       page.filter((item) => item.kind === "question").map((item) => (item as { approvalId: string }).approvalId),
     );
+    const cardIds = new Set(
+      page.filter((item) => item.kind === "card").map((item) => (item as { cardId: string }).cardId),
+    );
     const ids = new Set(page.filter((item) => item.kind === "delegation").map((item) => (item as { delegationId: string }).delegationId));
     const delegations = this.store.delegations().filter((item) => ids.has(item.id));
     for (const delegation of delegations) {
@@ -1726,6 +1765,7 @@ export class RouterManager {
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
       jobs: [...jobIds].flatMap((id) => { const job = this.store.job(id); return job ? [job] : []; }),
       drafts: this.store.drafts().filter((draft) => draftIds.has(draft.id)),
+      cards: this.store.cards().filter((card) => cardIds.has(card.id)),
       delegations,
       hasMore: start > 0,
     };

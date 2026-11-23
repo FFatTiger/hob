@@ -8,6 +8,7 @@ import type {
   ConversationRef,
   AnswerApprovalBody,
   Approval,
+  CardRecord,
   Assistant,
   AssistantSummary,
   Bootstrap,
@@ -141,6 +142,7 @@ export interface State {
   routines: Routine[];
   approvals: Record<string, Approval>;
   drafts: Record<string, Draft>;
+  cards: Record<string, CardRecord>;
   settings: SettingsFile;
   locale: Locale;
   globalRules: { rules: Rule[] | null; error: string | null; busy: boolean };
@@ -191,7 +193,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["plugin-demo", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["cards-demo", "plugin-demo", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -307,6 +309,7 @@ function initial(): State {
     routines: [],
     approvals: {},
     drafts: {},
+    cards: {},
     settings: { revision: 0, settings: EMPTY_SETTINGS },
     locale: initialLocale,
     globalRules: { rules: null, error: null, busy: false },
@@ -1043,7 +1046,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [] });
+  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {} });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1072,6 +1075,7 @@ async function loadBootstrap(reconnect = false) {
       delegations: index(boot.delegations ?? []),
       routines: boot.routines,
       approvals: index(boot.approvals),
+      cards: {},
       settings: boot.settings,
       ...(boot.settings.settings.general.locale ? { locale: boot.settings.settings.general.locale } : {}),
       theme: boot.settings.settings.general.theme,
@@ -1223,6 +1227,9 @@ export function applyEvent(ev: HobEvent) {
       break;
     case "draft":
       set((s) => ({ drafts: { ...s.drafts, [ev.draft.id]: ev.draft } }));
+      break;
+    case "card":
+      set((s) => ({ cards: { ...s.cards, [ev.card.id]: ev.card } }));
       break;
     case "routine":
       set((s) => ({ routines: upsert(s.routines, ev.routine) }));
@@ -1602,6 +1609,7 @@ async function loadItems(id: string) {
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
       drafts: mergePage(s.drafts, page.drafts),
+      cards: mergePage(s.cards, page.cards ?? []),
       delegations: mergePage(s.delegations, page.delegations ?? []),
     }));
     for (const event of events) applyEvent(event);
@@ -1631,6 +1639,7 @@ export function loadOlderItems(id: string, retry = false): Promise<void> {
           items: { ...s.items, [id]: [...page.items.filter((item) => !known.has(item.id)), ...current] },
           itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
           jobs: { ...index(page.jobs), ...s.jobs }, approvals: { ...index(page.approvals), ...s.approvals },
+          cards: { ...index(page.cards ?? []), ...s.cards },
           drafts: { ...index(page.drafts), ...s.drafts }, delegations: { ...index(page.delegations ?? []), ...s.delegations },
         };
       });
@@ -1665,6 +1674,7 @@ async function loadGroupItems(id: string) {
       groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
+      cards: mergePage(s.cards, page.cards ?? []),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {
@@ -1693,6 +1703,7 @@ export function loadOlderGroupItems(id: string, retry = false): Promise<void> { 
           groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
           jobs: { ...index(page.jobs), ...s.jobs },
           approvals: { ...index(page.approvals), ...s.approvals },
+          cards: { ...index(page.cards ?? []), ...s.cards },
         };
       });
     } catch (e) {
@@ -1925,6 +1936,19 @@ export async function answer(approvalId: string, answer: AnswerApprovalBody) {
     return true;
   } catch (e) {
     set({ approvals: { ...state.approvals, [approvalId]: ap }, notice: t("提交失败：{error}", { error: errText(e) }) });
+    return false;
+  }
+}
+
+export async function answerCard(cardId: string, action: import("../../shared/cards.ts").CardActionRequest) {
+  const card = state.cards[cardId];
+  if (!card) return false;
+  try {
+    const result = await api.answerCard(cardId, action);
+    if (result.card) applyEvent({ type: "card", card: result.card });
+    return true;
+  } catch (e) {
+    set({ notice: t("提交失败：{error}", { error: errText(e) }) });
     return false;
   }
 }

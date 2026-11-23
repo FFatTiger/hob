@@ -1,6 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
-import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, Draft } from "../../shared/types.ts";
+import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -8,6 +8,7 @@ import { clampDuty } from "./text.ts";
 import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
+import { cardTitle, validateCard } from "./cards.ts";
 
 export interface ActionResult {
   status: number;
@@ -58,6 +59,247 @@ async function routeAnswer(runtime: HobRuntime, approval: Approval, reply: strin
     void runtime.router.relay(approval.assistantId, reply, delegationId).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
   } else if (approval.groupId) await runtime.router.answerEvent(approval.assistantId, reply, approval.groupId);
   else await runtime.router.answerEvent(approval.assistantId, reply);
+}
+
+function cardChildren(element: CardElement): CardElement[] {
+  if (element.tag === "form" || element.tag === "collapsible_panel" || element.tag === "interactive_container") return element.elements;
+  if (element.tag === "column_set") return element.columns.flatMap((column) => column.elements);
+  return [];
+}
+
+function cardElements(card: CardRecord): CardElement[] {
+  const result: CardElement[] = [];
+  const visit = (elements: CardElement[]) => {
+    for (const element of elements) {
+      result.push(element);
+      visit(cardChildren(element));
+    }
+  };
+  visit(card.card.body.elements);
+  return result;
+}
+
+function cardText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as { content?: unknown }).content === "string") return (value as { content: string }).content;
+  return "";
+}
+
+function cardField(card: CardRecord, name: string | undefined): { label: string; element?: CardElement } | undefined {
+  if (!name) return undefined;
+  const element = cardElements(card).find((item) => {
+    const raw = item as unknown as { tag?: string; name?: unknown };
+    return raw.tag !== "form" && raw.tag !== "button" && raw.name === name;
+  });
+  if (!element) return undefined;
+  const raw = element as unknown as { label?: unknown; text?: unknown };
+  return { label: cardText(raw.label) || cardText(raw.text) || name, element };
+}
+
+function cardOption(card: CardRecord, name: string | undefined, selected: unknown): string {
+  const field = cardField(card, name)?.element as unknown as { options?: { text?: unknown; value?: unknown }[] } | undefined;
+  const values = Array.isArray(field?.options) ? field.options : [];
+  const selectedValues = Array.isArray(selected) ? selected : [selected];
+  const labels = selectedValues.map((value) => values.find((option) => option.value === value)?.text).map(cardText).filter(Boolean);
+  return labels.length ? labels.join("、") : selectedValues.map((value) => value == null ? "（没填）" : String(value)).join("、");
+}
+
+function cardValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "（没填）";
+  if (typeof value === "boolean") return value ? "开" : "关";
+  if (Array.isArray(value)) return value.length ? value.map(cardValue).join("、") : "（没填）";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function cardFormFields(card: CardRecord, values: Record<string, unknown>): string[] {
+  return cardElements(card)
+    .filter((element) => ["input", "select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow"].includes(element.tag))
+    .flatMap((element) => {
+      const raw = element as unknown as { name?: unknown; label?: unknown; text?: unknown };
+      if (typeof raw.name !== "string" || !raw.name) return [];
+      const label = cardText(raw.label) || cardText(raw.text) || raw.name;
+      return [`- ${label}：${cardValue(values[raw.name])}`];
+    });
+}
+
+function recordObject(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
+}
+
+function submittedValues(input: CardActionRequest): string[] {
+  const values: string[] = [];
+  const collect = (value: unknown): void => {
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
+      const text = String(value);
+      if (text) values.push(text);
+    } else if (Array.isArray(value)) {
+      value.forEach(collect);
+    } else if (recordObject(value)) {
+      Object.values(value).forEach(collect);
+    }
+  };
+  collect(input.form_value);
+  const action = input.action;
+  collect(action.value);
+  collect(action.option);
+  collect(action.options);
+  collect(action.checked);
+  return [...new Set(values)].sort((a, b) => b.length - a.length);
+}
+
+function redactSubmittedText(text: string, values: string[]): string {
+  return values.reduce((result, value) => result.split(value).join("***"), text);
+}
+
+function pluginText(response: { content?: { type?: string; text?: string }[] }, runtime: HobRuntime, pluginId: string, redact: (text: string) => string = (text) => text): string {
+  return (response.content ?? []).filter((block) => block.type === "text" && typeof block.text === "string").map((block) => redact(runtime.plugins.redact(pluginId, block.text!))).join("\n").trim();
+}
+
+function pluginFeedback(meta: Record<string, unknown>, redact: (text: string) => string = (text) => text): { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } {
+  const result: { toast?: { type: "info" | "success" | "error" | "warning"; content: string }; errors?: Record<string, string> } = {};
+  const toast = meta["hob/toast"];
+  if (recordObject(toast) && ["info", "success", "error", "warning"].includes(String(toast.type)) && typeof toast.content === "string") {
+    result.toast = { type: toast.type as "info" | "success" | "error" | "warning", content: redact(toast.content) };
+  }
+  const errors = meta["hob/errors"];
+  if (recordObject(errors)) {
+    const fields = Object.fromEntries(Object.entries(errors).filter(([, value]) => typeof value === "string").map(([name, value]) => [name, redact(value as string)])) as Record<string, string>;
+    if (Object.keys(fields).length) result.errors = fields;
+  }
+  return result;
+}
+
+function pluginCard(value: unknown): { card?: CardRecord["card"]; unsupported?: number; error?: string } {
+  const validation = validateCard(value, { mode: "plugin" });
+  if (!validation.ok) return { error: validation.error.error };
+  let card = validation.value.card;
+  if (validation.value.unsupportedCount) {
+    card = { ...card, body: { ...card.body, elements: [...card.body.elements, { tag: "div", text: t("有 {count} 个组件 Hob 显示不了", { count: validation.value.unsupportedCount }) }] } };
+  }
+  return { card, unsupported: validation.value.unsupportedCount };
+}
+
+const pluginCardCalls = new WeakMap<HobRuntime, Set<string>>();
+
+async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: CardActionRequest): Promise<ActionResult> {
+  const plugin = record.plugin;
+  if (!plugin || record.owner.type !== "plugin" || !plugin.callbackTool) return { status: 400, body: { error: "插件卡片没有可用的回调工具" } };
+  const pluginId = record.owner.type === "plugin" ? record.owner.pluginId : "";
+  const installed = runtime.plugins.store.list().find((item) => item.id === pluginId);
+  const service = runtime.plugins.states(pluginId).find((item) => item.name === plugin.service);
+  const unavailable = t("{plugin} 现在用不了", { plugin: plugin.pluginName });
+  if (!installed?.enabled || !service || service.status !== "connected") {
+    const next = { ...record, feedback: { unavailable }, updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    return { status: 409, body: { error: unavailable, card: next } };
+  }
+  const calls = pluginCardCalls.get(runtime) ?? new Set<string>();
+  pluginCardCalls.set(runtime, calls);
+  if (record.processing || calls.has(record.id)) return { status: 409, body: { error: t("这张卡正在处理中") } };
+  calls.add(record.id);
+  const processing: CardRecord = { ...record, processing: true, updatedAt: new Date().toISOString() };
+  runtime.store.saveCard(processing);
+  runtime.bus.emit({ type: "card", card: processing });
+  const action = { ...(input.action as Record<string, unknown>), ...(input.form_value ? { form_value: input.form_value } : {}) } as Record<string, unknown>;
+  const redact = (text: string) => redactSubmittedText(runtime.plugins.redact(pluginId, text), submittedValues(input));
+  const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || (typeof action.name === "string" ? action.name : undefined) || "按钮";
+  const controller = new AbortController();
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const response = await Promise.race([
+      runtime.plugins.call(pluginId, plugin.service, plugin.callbackTool, { card_id: record.id, action }, controller.signal),
+      new Promise<never>((_, reject) => { timer = setTimeout(() => { controller.abort(); reject(new Error("插件回调超过 60 秒未返回")); }, 60_000); }),
+    ]);
+    const meta = recordObject(response._meta) ? response._meta : {};
+    const feedback = pluginFeedback(meta, redact);
+    let nextCard = record.card;
+    if (meta["hob/card"] !== undefined) {
+      const parsed = pluginCard(meta["hob/card"]);
+      if (parsed.error) {
+        feedback.toast = { type: "error", content: redact(`插件返回的卡片格式不对：${parsed.error}`) };
+      } else if (parsed.card) {
+        nextCard = parsed.card;
+      }
+    }
+    if (response.isError) {
+      feedback.toast = { type: "error", content: pluginText(response, runtime, pluginId, redact) || "插件调用失败" };
+    }
+    const nextPlugin = nextCard.config && recordObject(nextCard.config) && typeof nextCard.config.callback_tool === "string"
+      ? { ...plugin, callbackTool: nextCard.config.callback_tool }
+      : plugin;
+    const next: CardRecord = { ...record, card: nextCard, plugin: nextPlugin, updatedAt: new Date().toISOString() };
+    if (Object.keys(feedback).length) next.feedback = feedback;
+    else delete next.feedback;
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    const text = pluginText(response, runtime, pluginId, redact);
+    if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
+    return { status: 200, body: { card: next } };
+  } catch (error) {
+    const message = redact(error instanceof Error ? error.message : String(error));
+    const next: CardRecord = { ...record, feedback: { toast: { type: "error", content: message } }, updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+    return { status: 200, body: { card: next } };
+  } finally {
+    if (timer) clearTimeout(timer);
+    calls.delete(record.id);
+    const current = runtime.store.card(record.id);
+    if (current?.processing) {
+      const cleared = { ...current };
+      delete cleared.processing;
+      runtime.store.saveCard(cleared);
+      runtime.bus.emit({ type: "card", card: cleared });
+    }
+  }
+}
+
+/** 用户操作助手发的卡片：锁卡、保存结果，并以事件消息回到原来的助手。 */
+export async function answerCard(runtime: HobRuntime, cardId: string, input: CardActionRequest): Promise<ActionResult> {
+  const { store, bus, router } = runtime;
+  const record = store.card(cardId);
+  if (!record) return { status: 404, body: { error: "卡片不存在" } };
+  if (record.status !== "open") return { status: 409, body: { error: "这张卡片已操作" } };
+  if (!input || typeof input.action !== "object" || Array.isArray(input.action)) return { status: 400, body: { error: "卡片操作无效" } };
+  if (record.owner.type === "plugin") return answerPluginCard(runtime, record, input);
+  if (record.owner.type !== "assistant") return { status: 400, body: { error: "卡片主人无效" } };
+  const action = input.action;
+  const tag = typeof action.tag === "string" ? action.tag : "";
+  const name = typeof action.name === "string" ? action.name : undefined;
+  const title = cardTitle(record.card) || "未命名卡片";
+  const fields = input.form_value && typeof input.form_value === "object" ? input.form_value : undefined;
+  let text: string;
+  let result: CardActionResult;
+  if (tag === "button" && fields) {
+    const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || name || "提交";
+    const lines = cardFormFields(record, fields);
+    text = `用户在卡片「${title}」上点了「${buttonText}」，填写的内容：${lines.length ? `\n${lines.join("\n")}` : ""}`;
+    result = { action, ...(input.button_text ? { buttonText: input.button_text } : { buttonText }), fields };
+  } else if (tag === "button") {
+    const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || name || "按钮";
+    text = `用户在卡片「${title}」上点了「${buttonText}」。`;
+    result = { action, buttonText };
+  } else if (["select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow", "input"].includes(tag)) {
+    const field = cardField(record, name);
+    if (!field) return { status: 400, body: { error: "卡片操作的字段不存在" } };
+    const rawValue = action.option ?? action.options ?? action.value ?? action.checked;
+    const selected = ["select_static", "multi_select_static", "overflow"].includes(tag) ? cardOption(record, name, rawValue) : cardValue(rawValue);
+    text = `用户在卡片「${title}」的「${field.label}」里选了「${selected}」。`;
+    result = { action, fields: name ? { [name]: rawValue } : undefined };
+  } else {
+    return { status: 400, body: { error: "卡片操作类型无效" } };
+  }
+  const answered: CardRecord = { ...record, status: "done", result, updatedAt: new Date().toISOString() };
+  store.saveCard(answered);
+  bus.emit({ type: "card", card: answered });
+  try {
+    await router.answerEvent(record.owner.assistantId, text, record.groupId);
+  } catch {
+    return { status: 503, body: { error: "卡片操作已保存，但没有送回助手" } };
+  }
+  return { status: 200, body: { card: answered } };
 }
 
 /** 答复审批卡：记答案、写 always 规则、叫醒阻塞的 Worker 或把答案推回 Router。 */

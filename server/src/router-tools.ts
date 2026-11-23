@@ -20,7 +20,7 @@ import {
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
-import type { Approval, ApprovalQuestion, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
+import type { Approval, ApprovalQuestion, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
@@ -42,6 +42,7 @@ import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
 import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./todos.ts";
 import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
+import { validateCard } from "./cards.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -496,6 +497,49 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
+      },
+    },
+    {
+      name: "send_card",
+      label: "发送卡片",
+      description: `**说明**：在对话里发一张卡片。卡片可以只用来展示（表格、分栏、折叠的详情），也可以让用户填表、选择、点按钮。卡片里有能操作的东西时，这一轮在这里结束，用户操作完，结果会作为系统消息回到对话；只有展示内容的卡片不结束这一轮。你发的卡片不能有密码框：密码、密钥这类值要用插件的卡片收，不经过你。
+
+**参数**
+- \`card\`：卡片 JSON，格式是飞书卡片 JSON 2.0 的一个子集：\`{ "header": { "title": "标题", "subtitle": "可选" }, "body": { "elements": [组件…] } }\`。组件用 \`tag\` 区分：
+  - \`markdown {content}\`：一段 Markdown。\`hr\`：分割线。\`img {src, alt}\`：图片，src 是 https 网址。
+  - \`table {columns: [{name, display_name}], rows: [{列的 name: 值}]}\`：表格。
+  - \`column_set {columns: [{weight, elements}]}\`：分栏，手机上会竖着排。\`collapsible_panel {header: {title}, expanded, elements}\`：折叠的详情。
+  - \`form {name, elements}\`：表单，里面的输入在点提交按钮时一起交回。
+  - \`input {name, label, placeholder, default_value, required, input_type: text | multiline_text | number, min, max}\`：输入框。
+  - \`select_static\` / \`multi_select_static {name, label, options: [{text, value}], initial_option / initial_options, required}\`：单选 / 多选。
+  - \`date_picker\` / \`picker_time\` / \`picker_datetime {name, label, required}\`：日期、时间、日期和时间。
+  - \`checker {name, text, checked}\`：开关。
+  - \`button {text, type: primary_filled | default | danger, form_action_type: submit}\`：按钮。表单里用 \`form_action_type: submit\` 提交；表单外的按钮点了就算一次操作；\`behaviors: [{type: "open_url", default_url}]\` 是打开网址。
+
+  表单里的每个输入都要有不重复的 \`name\`。`,
+      parameters: Type.Object({
+        card: Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "卡片 JSON" }),
+      }),
+      execute: async (_id, params: { card?: unknown }) => {
+        const result = validateCard(params.card);
+        if (!result.ok) {
+          const error = result.error.error.startsWith("卡片不能有")
+            ? `你发的${result.error.error}`
+            : `卡片格式不对：${result.error.error}`;
+          return fail(error);
+        }
+        const record: CardRecord = {
+          id: newId("c-"),
+          owner: { type: "assistant", assistantId },
+          ...(groupId ? { groupId } : {}),
+          card: result.value.card,
+          status: "open",
+          createdAt: new Date().toISOString(),
+        };
+        await router.addCard(assistantId, record, groupId);
+        return result.value.interactive
+          ? endTurn("卡片已显示给用户，用户操作完结果会回到对话。")
+          : ok("卡片已显示给用户。");
       },
     },
     {

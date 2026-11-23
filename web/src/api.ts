@@ -205,6 +205,7 @@ export interface HobApi {
   deleteRule(assistantId: string, ruleId: string): Promise<void>;
   retryDelegation(id: string): Promise<void>;
   answerApproval(approvalId: string, answer: AnswerApprovalBody): Promise<void>;
+  answerCard(cardId: string, action: import("../../shared/cards.ts").CardActionRequest): Promise<{ card?: import("../../shared/cards.ts").CardRecord }>;
   createDraft(draftId: string): Promise<void>;
   dismissDraft(draftId: string): Promise<void>;
   createRoutine(body: Omit<Routine, "id" | "createdAt" | "runs">): Promise<{ routine: Routine }>;
@@ -259,6 +260,7 @@ const EVENT_TYPES: HobEvent["type"][] = [
   "job_step",
   "activity",
   "approval",
+  "card",
   "draft",
   "routine",
   "routine_removed",
@@ -390,6 +392,8 @@ export const realApi: HobApi = {
   retryDelegation: (id) => req<void>(`/api/delegations/${encodeURIComponent(id)}/retry`, { method: "POST" }),
   answerApproval: (approvalId, answer) =>
     req<void>(`/api/approvals/${encodeURIComponent(approvalId)}`, json(answer)),
+  answerCard: (cardId, action) =>
+    req<{ card?: import("../../shared/cards.ts").CardRecord }>(`/api/cards/${encodeURIComponent(cardId)}`, json(action)),
   createDraft: (draftId) =>
     req<void>(`/api/drafts/${encodeURIComponent(draftId)}/create`, { method: "POST" }),
   dismissDraft: (draftId) =>

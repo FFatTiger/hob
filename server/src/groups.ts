@@ -15,6 +15,7 @@ import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
+import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -780,6 +781,10 @@ export class GroupManager {
         const topic = this.store.group(item.topicId);
         return `${who}：创建了话题「${topic?.name ?? item.topicId}」`;
       }
+      case "card": {
+        const card = this.store.card(item.cardId);
+        return `${who}：${card ? cardHistoryLine(card.card) : "显示了一张卡片"}`;
+      }
       default:
         return "";
     }
@@ -797,6 +802,7 @@ export class GroupManager {
     const page = all.slice(start, end);
     const jobIds = new Set(page.flatMap((item) => (item.kind === "job" ? [item.jobId] : [])));
     const approvalIds = new Set(page.flatMap((item) => (item.kind === "question" ? [item.approvalId] : [])));
+    const cardIds = new Set(page.flatMap((item) => (item.kind === "card" ? [item.cardId] : [])));
     return {
       items: page,
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
@@ -804,6 +810,7 @@ export class GroupManager {
         const job = this.store.job(id);
         return job ? [job] : [];
       }),
+      cards: this.store.cards().filter((card) => cardIds.has(card.id)),
       hasMore: start > 0,
     };
   }

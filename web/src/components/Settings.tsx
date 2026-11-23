@@ -40,7 +40,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
-import { currentLocale, t } from "../../../shared/i18n.ts";
+import { t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
@@ -1944,23 +1944,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
               />
             </span>
           </div>
-          <div className="mline">
-            <span className="k">{t("推荐提问")}</span>
-            <span className="vals">
-              <Select
-                aria-label={t("推荐提问模型")}
-                value={models.suggest === null ? "__off" : models.suggest?.ref ?? ""}
-                onChange={(ref) => save({ suggest: ref === "__off" ? null : { ref, thinking: "off" } })}
-                options={[
-                  { value: "", label: t("跟随对话模型") },
-                  { value: "__off", label: currentLocale() === "en" ? t("推荐提问关闭") : t("关闭") },
-                  ...pickOptions(models.suggest?.ref ?? "").map((option) => ({ value: option.value, label: option.text, icon: option.icon })),
-                ]}
-              />
-            </span>
-          </div>
         </div>
-        <div className="note">{t("助手每轮做完后，用这个模型在输入框上方推荐你接下来可能说的话。选便宜的模型就行。")}</div>
         <div className="note">{t("助手每轮做完后，用这个模型在输入框上方推荐你接下来可能说的话。选便宜的模型就行。")}</div>
         <div className="note">{t("助手分派任务时未指定模型，使用任务执行的模型。")}</div>
         <div className="lbl">{t("任务的思考档")}</div>

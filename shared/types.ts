@@ -4,6 +4,7 @@ import type { Locale } from "./i18n.ts";
 import type { CardRecord } from "./cards.ts";
 export type {
   Card,
+  CardActionRequest,
   CardActionResult,
   CardBehavior,
   CardButton,

@@ -251,3 +251,9 @@ export interface CardActionResult {
   buttonText?: string;
   fields?: Record<string, unknown>;
 }
+
+export interface CardActionRequest {
+  action: Record<string, unknown>;
+  form_value?: Record<string, unknown>;
+  button_text?: string;
+}

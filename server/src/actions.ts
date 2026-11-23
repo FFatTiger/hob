@@ -1,6 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
-import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, Draft } from "../../shared/types.ts";
+import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -8,6 +8,7 @@ import { clampDuty } from "./text.ts";
 import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
+import { cardTitle } from "./cards.ts";
 
 export interface ActionResult {
   status: number;
@@ -58,6 +59,113 @@ async function routeAnswer(runtime: HobRuntime, approval: Approval, reply: strin
     void runtime.router.relay(approval.assistantId, reply, delegationId).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
   } else if (approval.groupId) await runtime.router.answerEvent(approval.assistantId, reply, approval.groupId);
   else await runtime.router.answerEvent(approval.assistantId, reply);
+}
+
+function cardChildren(element: CardElement): CardElement[] {
+  if (element.tag === "form" || element.tag === "collapsible_panel" || element.tag === "interactive_container") return element.elements;
+  if (element.tag === "column_set") return element.columns.flatMap((column) => column.elements);
+  return [];
+}
+
+function cardElements(card: CardRecord): CardElement[] {
+  const result: CardElement[] = [];
+  const visit = (elements: CardElement[]) => {
+    for (const element of elements) {
+      result.push(element);
+      visit(cardChildren(element));
+    }
+  };
+  visit(card.card.body.elements);
+  return result;
+}
+
+function cardText(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (value && typeof value === "object" && !Array.isArray(value) && typeof (value as { content?: unknown }).content === "string") return (value as { content: string }).content;
+  return "";
+}
+
+function cardField(card: CardRecord, name: string | undefined): { label: string; element?: CardElement } | undefined {
+  if (!name) return undefined;
+  const element = cardElements(card).find((item) => {
+    const raw = item as unknown as { tag?: string; name?: unknown };
+    return raw.tag !== "form" && raw.tag !== "button" && raw.name === name;
+  });
+  if (!element) return undefined;
+  const raw = element as unknown as { label?: unknown; text?: unknown };
+  return { label: cardText(raw.label) || cardText(raw.text) || name, element };
+}
+
+function cardOption(card: CardRecord, name: string | undefined, selected: unknown): string {
+  const field = cardField(card, name)?.element as unknown as { options?: { text?: unknown; value?: unknown }[] } | undefined;
+  const values = Array.isArray(field?.options) ? field.options : [];
+  const selectedValues = Array.isArray(selected) ? selected : [selected];
+  const labels = selectedValues.map((value) => values.find((option) => option.value === value)?.text).map(cardText).filter(Boolean);
+  return labels.length ? labels.join("、") : selectedValues.map((value) => value == null ? "（没填）" : String(value)).join("、");
+}
+
+function cardValue(value: unknown): string {
+  if (value === undefined || value === null || value === "") return "（没填）";
+  if (typeof value === "boolean") return value ? "开" : "关";
+  if (Array.isArray(value)) return value.length ? value.map(cardValue).join("、") : "（没填）";
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+
+function cardFormFields(card: CardRecord, values: Record<string, unknown>): string[] {
+  return cardElements(card)
+    .filter((element) => ["input", "select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow"].includes(element.tag))
+    .flatMap((element) => {
+      const raw = element as unknown as { name?: unknown; label?: unknown; text?: unknown };
+      if (typeof raw.name !== "string" || !raw.name) return [];
+      const label = cardText(raw.label) || cardText(raw.text) || raw.name;
+      return [`- ${label}：${cardValue(values[raw.name])}`];
+    });
+}
+
+/** 用户操作助手发的卡片：锁卡、保存结果，并以事件消息回到原来的助手。 */
+export async function answerCard(runtime: HobRuntime, cardId: string, input: CardActionRequest): Promise<ActionResult> {
+  const { store, bus, router } = runtime;
+  const record = store.card(cardId);
+  if (!record) return { status: 404, body: { error: "卡片不存在" } };
+  if (record.status !== "open") return { status: 409, body: { error: "这张卡片已操作" } };
+  if (record.owner.type !== "assistant") return { status: 400, body: { error: "插件卡片要交给插件处理" } };
+  if (!input || typeof input.action !== "object" || Array.isArray(input.action)) return { status: 400, body: { error: "卡片操作无效" } };
+  const action = input.action;
+  const tag = typeof action.tag === "string" ? action.tag : "";
+  const name = typeof action.name === "string" ? action.name : undefined;
+  const title = cardTitle(record.card) || "未命名卡片";
+  const fields = input.form_value && typeof input.form_value === "object" ? input.form_value : undefined;
+  let text: string;
+  let result: CardActionResult;
+  if (tag === "button" && fields) {
+    const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || name || "提交";
+    const lines = cardFormFields(record, fields);
+    text = `用户在卡片「${title}」上点了「${buttonText}」，填写的内容：${lines.length ? `\n${lines.join("\n")}` : ""}`;
+    result = { action, ...(input.button_text ? { buttonText: input.button_text } : { buttonText }), fields };
+  } else if (tag === "button") {
+    const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || name || "按钮";
+    text = `用户在卡片「${title}」上点了「${buttonText}」。`;
+    result = { action, buttonText };
+  } else if (["select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow", "input"].includes(tag)) {
+    const field = cardField(record, name);
+    if (!field) return { status: 400, body: { error: "卡片操作的字段不存在" } };
+    const rawValue = action.option ?? action.options ?? action.value ?? action.checked;
+    const selected = ["select_static", "multi_select_static", "overflow"].includes(tag) ? cardOption(record, name, rawValue) : cardValue(rawValue);
+    text = `用户在卡片「${title}」的「${field.label}」里选了「${selected}」。`;
+    result = { action, fields: name ? { [name]: rawValue } : undefined };
+  } else {
+    return { status: 400, body: { error: "卡片操作类型无效" } };
+  }
+  const answered: CardRecord = { ...record, status: "done", result, updatedAt: new Date().toISOString() };
+  store.saveCard(answered);
+  bus.emit({ type: "card", card: answered });
+  try {
+    await router.answerEvent(record.owner.assistantId, text, record.groupId);
+  } catch {
+    return { status: 503, body: { error: "卡片操作已保存，但没有送回助手" } };
+  }
+  return { status: 200, body: { card: answered } };
 }
 
 /** 答复审批卡：记答案、写 always 规则、叫醒阻塞的 Worker 或把答案推回 Router。 */

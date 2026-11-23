@@ -16,6 +16,7 @@ import type {
   ImageSettingsSaved,
   ImageTestResult,
   AnswerApprovalBody,
+  CardActionRequest,
   FileMeta,
   JobStatus,
   ModelThinkingPatch,
@@ -27,7 +28,7 @@ import type {
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
-import { answerApproval, archiveAssistant, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
+import { answerApproval, answerCard, archiveAssistant, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -1207,6 +1208,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       ...(body.text !== undefined ? { text: body.text } : {}),
       ...(body.answers?.length ? { answers: body.answers } : {}),
     });
+    return c.json(result.body as Record<string, unknown>, result.status as 200);
+  });
+
+  app.post("/api/cards/:id", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as CardActionRequest;
+    const result = await answerCard(runtime, c.req.param("id"), body);
     return c.json(result.body as Record<string, unknown>, result.status as 200);
   });
 

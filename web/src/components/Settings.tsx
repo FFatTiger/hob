@@ -40,7 +40,7 @@ import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
-import { t } from "../../../shared/i18n.ts";
+import { currentLocale, t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
@@ -1953,7 +1953,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
                 onChange={(ref) => save({ suggest: ref === "__off" ? null : { ref, thinking: "off" } })}
                 options={[
                   { value: "", label: t("跟随对话模型") },
-                  { value: "__off", label: t("关闭") },
+                  { value: "__off", label: currentLocale() === "en" ? t("推荐提问关闭") : t("关闭") },
                   ...pickOptions(models.suggest?.ref ?? "").map((option) => ({ value: option.value, label: option.text, icon: option.icon })),
                 ]}
               />

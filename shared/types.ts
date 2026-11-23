@@ -86,6 +86,8 @@ export interface ModelSettings {
   roster: RosterEntry[]; // Hob 能用的模型
   conversation: ModelPick; // 对话（助手本身）
   work: ModelPick; // 任务执行（分派任务不指定就用它）
+  /** 推荐提问模型：undefined 跟随对话模型，null 关闭 */
+  suggest?: ModelPick | null;
   thinkingChoice?: "auto" | "fixed"; // 缺省 auto：助手按任务选择；fixed：使用模型默认档
   /** 每个模型的自定义思考档，键是模型 ref（"服务商/模型"）；没存就用 Hob 的默认规则 */
   thinking?: Record<string, ThinkingLevelMapSetting>;

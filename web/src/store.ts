@@ -502,6 +502,7 @@ function mergeSettings(base: Settings, patch: SettingsPatch): Settings {
       roster: models.roster ?? base.models.roster,
       conversation: models.conversation ?? base.models.conversation,
       work: models.work ?? base.models.work,
+      ...(models.suggest !== undefined ? { suggest: models.suggest } : base.models.suggest !== undefined ? { suggest: base.models.suggest } : {}),
       thinkingChoice: models.thinkingChoice ?? base.models.thinkingChoice,
       ...(models.thinking ?? base.models.thinking ? { thinking: models.thinking ?? base.models.thinking } : {}),
     },

@@ -167,11 +167,18 @@ function normalizeModels(raw: unknown, base: ModelSettings): ModelSettings {
       thinking: isThinkingLevel(raw.thinking) ? raw.thinking : fallback.thinking,
     };
   };
+  const rawSuggest = input.suggest;
+  const suggest = rawSuggest === null
+    ? null
+    : rawSuggest && typeof rawSuggest === "object" && !Array.isArray(rawSuggest)
+      ? (typeof (rawSuggest as Partial<ModelPick>).ref === "string" && (rawSuggest as Partial<ModelPick>).ref.trim() ? pick(rawSuggest, base.conversation) : undefined)
+      : rawSuggest === undefined ? base.suggest : base.suggest;
   const thinking = input.thinking === undefined ? undefined : normalizeThinking(input.thinking);
   return {
     roster,
     conversation: pick(input.conversation, base.conversation),
     work: pick(input.work, base.work),
+    ...(suggest !== undefined ? { suggest } : {}),
     ...(input.thinkingChoice === "auto" || input.thinkingChoice === "fixed" ? { thinkingChoice: input.thinkingChoice } : {}),
     ...(thinking ? { thinking } : {}),
   };
@@ -405,6 +412,7 @@ export class SettingsStore {
           roster: models.roster ?? current.models.roster,
           conversation: models.conversation ?? current.models.conversation,
           work: models.work ?? current.models.work,
+          ...(models.suggest !== undefined ? { suggest: models.suggest } : current.models.suggest !== undefined ? { suggest: current.models.suggest } : {}),
           thinkingChoice: models.thinkingChoice ?? current.models.thinkingChoice,
           ...((models.thinking ?? current.models.thinking) ? { thinking: models.thinking ?? current.models.thinking } : {}),
         },

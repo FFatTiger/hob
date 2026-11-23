@@ -46,6 +46,7 @@ import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./follow-up.ts";
 
 export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
 export const IDLE_COMPACTION_TOKEN_THRESHOLD = 150_000;
@@ -351,6 +352,8 @@ export class RouterManager {
   private livePages = new Map<string, Map<string, { page: PageLive; timer?: NodeJS.Timeout; last: number }>>();
   private liveJson = new Map<string, string>();
   private idleCompactionTimer?: NodeJS.Timeout;
+  private suggestions = new Map<string, string[]>();
+  private suggestionEpoch = new Map<string, number>();
   /** 不在内存里的会话：上次查过的会话文件修改时间，文件没变就不再打开 */
   private idleChecked = new Map<string, number>();
 
@@ -1353,6 +1356,9 @@ export class RouterManager {
       );
     }
     void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.groupId).catch((error) => console.error("收尾任务提问失败：", error));
+    if (!state.groupId && !error && !busy && !state.stalled && !state.turnSilent && state.turnLastText && !this.hasIdleWork(state)) {
+      void this.generateSuggestionsFor(state.assistantId);
+    }
     state.turnHadWork = false;
     state.turnWorkDone = false;
     state.turnDelegation = false;
@@ -1454,6 +1460,7 @@ export class RouterManager {
   }
 
   async send(assistantId: string, body: SendMessageBody): Promise<Item> {
+    this.clearSuggestions(assistantId);
     this.runtime.delegations.takeOver(assistantId);
     for (const approval of this.store.approvals()) {
       if (approval.assistantId !== assistantId || approval.groupId || approval.source !== "router" || approval.status !== "pending") continue;
@@ -1540,6 +1547,7 @@ export class RouterManager {
     text: string,
     options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
   ): Promise<void> {
+    this.clearSuggestions(state.assistantId, state.groupId);
     const previousDelivery = state.pendingDelivery;
     let releaseDelivery!: () => void;
     const delivery = new Promise<void>((resolve) => { releaseDelivery = resolve; });
@@ -1748,6 +1756,53 @@ export class RouterManager {
     return this.derived(assistantId).last;
   }
 
+  private suggestionKey(assistantId: string, groupId?: string): string {
+    return groupId ? `group:${groupId}` : assistantId;
+  }
+
+  suggestionsFor(assistantId: string, groupId?: string): string[] | undefined {
+    return this.suggestions.get(this.suggestionKey(assistantId, groupId));
+  }
+
+  clearSuggestions(assistantId: string, groupId?: string): void {
+    const key = this.suggestionKey(assistantId, groupId);
+    this.suggestionEpoch.set(key, (this.suggestionEpoch.get(key) ?? 0) + 1);
+    const had = this.suggestions.delete(key);
+    if (!had) return;
+    if (groupId) this.runtime.groups?.publish(groupId);
+    else {
+      const assistant = this.store.assistant(assistantId);
+      if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
+    }
+  }
+
+  /** 在一轮真正停下后后台生成推荐提问；结果只接受当前这一轮。 */
+  async generateSuggestionsFor(assistantId: string, groupId?: string): Promise<void> {
+    const key = this.suggestionKey(assistantId, groupId);
+    const epoch = this.suggestionEpoch.get(key) ?? 0;
+    const assistant = this.store.assistant(assistantId);
+    if (!assistant || this.runtime.settings.settings.models.suggest === null) return;
+    const group = groupId ? this.store.group(groupId) : undefined;
+    const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models);
+    const configured = this.runtime.settings.settings.models.suggest;
+    const pick = configured ?? conversationPick(this.runtime.settings.settings.models, effective);
+    try {
+      await this.runtime.models.get();
+      if (!this.runtime.models.find(pick.ref)) return;
+      const model = await this.runtime.pi.model(pick.ref);
+      const turns = groupId ? groupHistory(this.store.groupItems(groupId)) : routerHistory(this.entries(assistantId));
+      const suggestions = await generateFollowUpSuggestions(await this.runtime.pi.runtime(), model, turns);
+      if ((this.suggestionEpoch.get(key) ?? 0) !== epoch || !suggestions.length) return;
+      const state = this.routers.get(this.keyOf(assistantId, groupId));
+      if (state && (state.running > 0 || state.session?.isStreaming || this.hasIdleWork(state))) return;
+      this.suggestions.set(key, suggestions);
+      if (groupId) this.runtime.groups?.publish(groupId);
+      else this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
+    } catch (error) {
+      console.error("推荐提问准备失败：", error instanceof Error ? error.message : String(error));
+    }
+  }
+
   summary(assistant: Assistant): AssistantSummary {
     const last = this.last(assistant.id);
     return {
@@ -1758,6 +1813,7 @@ export class RouterManager {
       busy: this.isBusy(assistant.id),
       activity: this.routers.get(assistant.id)?.activity ?? null,
       todos: readTodos(assistantTodosPath(this.runtime.home, assistant.id)),
+      ...(this.suggestionsFor(assistant.id)?.length ? { suggestions: this.suggestionsFor(assistant.id) } : {}),
     };
   }
 

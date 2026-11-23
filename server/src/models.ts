@@ -208,6 +208,19 @@ export function conversationPick(settings: ModelSettings, assistant: Assistant):
   return pick;
 }
 
+/** 推荐提问这一轮使用的模型：null 关闭，缺省跟随这个助手的对话模型，思考固定关闭。 */
+export function followUpPick(settings: ModelSettings, assistant: Assistant, catalog: ModelCatalog): ModelPick | undefined {
+  if (settings.suggest === null) return undefined;
+  let pick: ModelPick;
+  try {
+    pick = settings.suggest ?? conversationPick(settings, assistant);
+  } catch (error) {
+    if (error instanceof NoModelError) return undefined;
+    throw error;
+  }
+  return pick.ref && catalog.find(pick.ref) ? { ref: pick.ref, thinking: "off" } : undefined;
+}
+
 export interface JobModelInput {
   settings: ModelSettings;
   assistant: Assistant;

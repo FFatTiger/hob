@@ -7,6 +7,7 @@ import { pluginOAuthLoggedIn, pluginOAuthNeedsRelogin, pluginOAuthProvider, type
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { McpAuthRequiredError, McpClient, McpHttpError, StdioTransport, StreamableHttpTransport, limitMcpContent, normalizeMcpInputSchema, toLlmContent, validateMcpServerConfig, type Tool } from "@earendil-works/pi-mcp";
 import type { Card } from "../../shared/cards.ts";
+import { t } from "../../shared/i18n.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { cardTitle, validateCard } from "./cards.ts";
 import type { TSchema } from "typebox";
@@ -244,6 +245,7 @@ export function pluginToolDisplayNames(host: PluginHost): Record<string, string>
       }
     } catch { /* A broken plugin cannot supply display names. */ }
     for (const service of host.states(plugin.id)) for (const tool of service.tools) {
+      if (!visibleToModel(tool)) continue;
       const name = pluginToolName(plugin.id, tool.name);
       names[name] ??= `${service.name} · ${tool.name}`;
     }
@@ -317,7 +319,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
                     ...card,
                     body: {
                       ...card.body,
-                      elements: [...card.body.elements, { tag: "div", text: `有 ${validation.value.unsupportedCount} 个组件 Hob 显示不了` }],
+                      elements: [...card.body.elements, { tag: "div", text: t("有 {count} 个组件 Hob 显示不了", { count: validation.value.unsupportedCount }) }],
                     },
                   };
                 }

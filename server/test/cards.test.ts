@@ -39,7 +39,7 @@ describe("card JSON validation", () => {
     expect(validateCard({ body: { elements: [{ tag: "slider" }] } })).toMatchObject({ ok: false, error: { error: "卡片 body里的第 1 个组件的 tag「slider」不支持" } });
     expect(validateCard({ body: { elements: [{ tag: "img", src: "javascript:alert(1)", alt: "x" }] } })).toMatchObject({ ok: false, error: { error: "卡片 body里的第 1 个组件的 src 只支持 https:// 或 data:image/" } });
     expect(validateCard({ body: { elements: [{ tag: "button", element_id: "1bad", text: "点我" }] } })).toMatchObject({ ok: false, error: { error: expect.stringContaining("element_id 无效") } });
-    expect(validateCard({ body: { elements: [{ tag: "input", input_type: "password" }] } })).toMatchObject({ ok: false, error: { error: "卡片不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你" } });
+    expect(validateCard({ body: { elements: [{ tag: "input", input_type: "password" }] } })).toMatchObject({ ok: false, error: { error: "卡片不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你。" } });
     expect(validateCard({ body: { elements: [{ tag: "button", text: "打开", behaviors: [{ type: "open_url", default_url: "javascript:alert(1)" }] }] } })).toMatchObject({ ok: false, error: { error: expect.stringContaining("只支持 http:// 或 https://") } });
   });
 
@@ -48,6 +48,9 @@ describe("card JSON validation", () => {
     expect(result).toMatchObject({ ok: true, value: { unsupportedCount: 1, componentCount: 1, card: { body: { elements: [{ tag: "div" }] } } } });
   });
 
+  it("rejects nested forms", () => {
+    expect(validateCard({ body: { elements: [{ tag: "form", name: "outer", elements: [{ tag: "form", name: "inner", elements: [] }] }] } })).toMatchObject({ ok: false, error: { error: "卡片 body里的第 1 个组件「outer」里的第 1 个组件里不能嵌套 form" } });
+  });
   it("enforces the card and component limits", () => {
     const tooLarge = validateCard({ body: { elements: [{ tag: "div", text: "x".repeat(110_000) }] } });
     expect(tooLarge).toMatchObject({ ok: false, error: { error: "卡片不能超过 100 KB" } });

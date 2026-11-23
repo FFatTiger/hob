@@ -158,6 +158,7 @@ function validateElement(value: unknown, path: string, context: ValidationContex
     return value as CardElement;
   }
   if (tag === "form") {
+    if (formName !== undefined) return failure(path, "里不能嵌套 form");
     const nameError = requireString(value, "name", path);
     if (nameError) return nameError;
     const childResult = validateChildren(value.elements, `${path}「${value.name}」`, context, value.name);
@@ -322,7 +323,7 @@ export function validateCard(input: unknown, options: { mode?: CardValidationMod
   const children = validateChildren(input.body.elements, "卡片 body", context);
   if (!children.ok) return children;
   if ((options.mode ?? "assistant") === "assistant" && context.assistantPassword) {
-    return failure("卡片", "不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你");
+    return failure("卡片", "不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你。");
   }
   const card = { ...input, body: { ...input.body, elements: children.elements } } as Card;
   const value: ValidatedCard = {

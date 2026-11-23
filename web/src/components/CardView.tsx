@@ -1,6 +1,6 @@
 import { t } from "../../../shared/i18n.ts";
 import { createPortal } from "react-dom";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { CardElement, CardRecord } from "../../../shared/types.ts";
 import type { CardActionRequest } from "../../../shared/cards.ts";
 import { answerCard } from "../store.ts";
@@ -55,6 +55,20 @@ function hasPassword(card: CardRecord["card"]): boolean {
   return visit(card.body.elements);
 }
 
+function fieldDefinitions(card: CardRecord["card"]): Map<string, { signature: string; initial: unknown }> {
+  const result = new Map<string, { signature: string; initial: unknown }>();
+  const visit = (elements: any[]) => {
+    for (const element of elements) {
+      if (typeof element.name === "string") {
+        const initial = initialValues({ body: { elements: [element] } } as CardRecord["card"])[element.name];
+        result.set(element.name, { signature: JSON.stringify(element), initial });
+      }
+      visit(cardElementChildren(element));
+    }
+  };
+  visit(card.body.elements);
+  return result;
+}
 function sourceIcon(pluginId: string | undefined) {
   if (pluginId === "github") return <Icon name="github" size={15} />;
   if (pluginId === "cloudflare") return <Icon name="globe" size={15} />;
@@ -158,7 +172,7 @@ function generatedPassword(): string {
   return Array.from(bytes, (byte) => alphabet[byte % alphabet.length]).join("");
 }
 
-function CardInputControl({ element, value, onChange, disabled }: { element: any; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
+function CardInputControl({ element, value, onChange, disabled, onCommit }: { element: any; value: unknown; onChange: (value: unknown) => void; disabled: boolean; onCommit?: () => void }) {
   const [show, setShow] = useState(false);
   const text = value === undefined ? "" : String(value);
   if (element.tag === "checker") return <label className="hc-checker"><span>{cardLabel(element)}</span><input type="checkbox" checked={Boolean(value ?? element.checked)} disabled={disabled} onChange={(event) => onChange(event.target.checked)} /></label>;
@@ -180,7 +194,7 @@ function CardInputControl({ element, value, onChange, disabled }: { element: any
   if (element.input_type === "multiline_text") return <textarea className="hc-input hc-area" disabled={disabled} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "input" && element.name === "to" && text.includes("<") && text.endsWith(">")) return <div className="hc-input hc-recipient"><span>{text}</span><Icon name="close" size={13} /></div>;
   const password = element.input_type === "password";
-  return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
+  return <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter") { event.preventDefault(); onCommit?.(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}{password && element.generate ? <button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}>{t("生成")}</button> : null}</span>;
 }
 
 type Submit = (element?: any, formElements?: any[], directValue?: unknown) => void;
@@ -224,8 +238,9 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   if (element.tag === "interactive_container") return <div className="hc-interactive" onClick={() => element.behaviors?.find((behavior: any) => behavior.type === "open_url") && openUrl(element.behaviors.find((behavior: any) => behavior.type === "open_url").default_url)}>{(element.elements ?? []).map((child: any, index: number) => <CardElementView key={child.element_id ?? index} element={child} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} />)}</div>;
   if (element.tag === "button") return <button type="button" className={`hob-btn${element.type === "primary_filled" ? " hob-btn-primary" : element.type === "danger" ? " hob-btn-danger" : ""}`} disabled={disabled} onClick={(event) => { event.preventDefault(); const url = element.behaviors?.find((behavior: any) => behavior.type === "open_url")?.default_url; if (url) openUrl(url); else submit(element, formElements); }}>{cardText(element.text)}</button>;
   if (interactive && field) {
-    const change = (value: unknown) => { setValue(field, value); if (!inForm) submit({ ...element, value: undefined }, undefined, value); };
-    return <label className={`hc-field${errors[field] ? " has-error" : ""}`}><span className="hc-label"><span>{cardLabel(element)}{element.required ? <b>*</b> : null}</span>{element.min_length !== undefined ? <span className="hc-aside">{t("至少 {count} 位", { count: element.min_length })}</span> : element.tag === "multi_select_static" ? <span className="hc-aside">{t("可多选")}</span> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
+    const change = (value: unknown) => { setValue(field, value); if (!inForm && element.tag !== "input") submit({ ...element, value: undefined }, undefined, value); };
+    const commit = () => { if (!inForm && element.tag === "input") submit({ ...element, value: undefined }, undefined, values[field]); };
+    return <label className={`hc-field${errors[field] ? " has-error" : ""}`}><span className="hc-label"><span>{cardLabel(element)}{element.required ? <b>*</b> : null}</span>{element.min_length !== undefined ? <span className="hc-aside">{t("至少 {count} 位", { count: element.min_length })}</span> : element.tag === "multi_select_static" ? <span className="hc-aside">{t("可多选")}</span> : null}</span><CardInputControl element={element} value={values[field]} onChange={change} disabled={disabled} onCommit={commit} />{errors[field] ? <span className="hc-error">{errors[field]}</span> : null}</label>;
   }
   return null;
 }
@@ -235,9 +250,28 @@ export function CardView({ record, fresh, itemId }: { record: CardRecord; fresh:
   const [values, setValues] = useState<Record<string, unknown>>(() => initialValues(record.card));
   const [errors, setErrors] = useState<Record<string, string>>(record.feedback?.errors ?? {});
   const [busy, setBusy] = useState(false);
-  useEffect(() => { setErrors(record.feedback?.errors ?? {}); setValues(initialValues(record.card)); }, [record.card, record.feedback?.errors]);
+  const previousCard = useRef(record.card);
+  useEffect(() => {
+    const previous = fieldDefinitions(previousCard.current);
+    const next = fieldDefinitions(record.card);
+    const changed = [...new Set([...previous.keys(), ...next.keys()])].filter((name) => previous.get(name)?.signature !== next.get(name)?.signature);
+    if (changed.length) {
+      setValues((current) => {
+        const values = { ...current };
+        for (const name of changed) {
+          const field = next.get(name);
+          if (!field) delete values[name];
+          else if (field.initial === undefined) delete values[name];
+          else values[name] = field.initial;
+        }
+        return values;
+      });
+    }
+    previousCard.current = record.card;
+  }, [record.card]);
+  useEffect(() => { setErrors(record.feedback?.errors ?? {}); }, [record.feedback?.errors]);
   const title = cardText(record.card.header?.title) || t("未命名卡片");
-  const disabled = busy || record.status === "done";
+  const disabled = busy || record.status === "done" || Boolean(record.processing);
   const openUrl = (url: string) => { if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener"); };
   const submit: Submit = async (element, formElements, directValue) => {
     if (disabled) return;

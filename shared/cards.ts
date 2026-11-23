@@ -245,6 +245,8 @@ export interface CardRecord {
   status: "open" | "done";
   result?: CardActionResult;
   feedback?: CardFeedback;
+  /** 插件回调进行中时由服务端设置，其他页面据此暂时禁用操作。 */
+  processing?: boolean;
   createdAt: string;
   updatedAt?: string;
 }

@@ -514,7 +514,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
   - \`select_static\` / \`multi_select_static {name, label, options: [{text, value}], initial_option / initial_options, required}\`：单选 / 多选。
   - \`date_picker\` / \`picker_time\` / \`picker_datetime {name, label, required}\`：日期、时间、日期和时间。
   - \`checker {name, text, checked}\`：开关。
-  - \`button {text, type: primary_filled | default | danger, form_action_type: submit}\`：按钮。表单里用 \`form_action_type: submit\` 提交；表单外的按钮点了就算一次操作；\`behaviors: [{type: open_url, default_url}]\` 是打开网址。
+  - \`button {text, type: primary_filled | default | danger, form_action_type: submit}\`：按钮。表单里用 \`form_action_type: submit\` 提交；表单外的按钮点了就算一次操作；\`behaviors: [{type: "open_url", default_url}]\` 是打开网址。
 
   表单里的每个输入都要有不重复的 \`name\`。`,
       parameters: Type.Object({

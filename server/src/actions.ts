@@ -175,10 +175,12 @@ function pluginCard(value: unknown): { card?: CardRecord["card"]; unsupported?: 
   if (!validation.ok) return { error: validation.error.error };
   let card = validation.value.card;
   if (validation.value.unsupportedCount) {
-    card = { ...card, body: { ...card.body, elements: [...card.body.elements, { tag: "div", text: `有 ${validation.value.unsupportedCount} 个组件 Hob 显示不了` }] } };
+    card = { ...card, body: { ...card.body, elements: [...card.body.elements, { tag: "div", text: t("有 {count} 个组件 Hob 显示不了", { count: validation.value.unsupportedCount }) }] } };
   }
   return { card, unsupported: validation.value.unsupportedCount };
 }
+
+const pluginCardCalls = new WeakMap<HobRuntime, Set<string>>();
 
 async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: CardActionRequest): Promise<ActionResult> {
   const plugin = record.plugin;
@@ -186,13 +188,20 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
   const pluginId = record.owner.type === "plugin" ? record.owner.pluginId : "";
   const installed = runtime.plugins.store.list().find((item) => item.id === pluginId);
   const service = runtime.plugins.states(pluginId).find((item) => item.name === plugin.service);
-  const unavailable = `${plugin.pluginName} 现在用不了`;
+  const unavailable = t("{plugin} 现在用不了", { plugin: plugin.pluginName });
   if (!installed?.enabled || !service || service.status !== "connected") {
     const next = { ...record, feedback: { unavailable }, updatedAt: new Date().toISOString() };
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });
     return { status: 409, body: { error: unavailable, card: next } };
   }
+  const calls = pluginCardCalls.get(runtime) ?? new Set<string>();
+  pluginCardCalls.set(runtime, calls);
+  if (record.processing || calls.has(record.id)) return { status: 409, body: { error: t("这张卡正在处理中") } };
+  calls.add(record.id);
+  const processing: CardRecord = { ...record, processing: true, updatedAt: new Date().toISOString() };
+  runtime.store.saveCard(processing);
+  runtime.bus.emit({ type: "card", card: processing });
   const action = { ...(input.action as Record<string, unknown>), ...(input.form_value ? { form_value: input.form_value } : {}) } as Record<string, unknown>;
   const redact = (text: string) => redactSubmittedText(runtime.plugins.redact(pluginId, text), submittedValues(input));
   const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || (typeof action.name === "string" ? action.name : undefined) || "按钮";
@@ -236,6 +245,14 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
     return { status: 200, body: { card: next } };
   } finally {
     if (timer) clearTimeout(timer);
+    calls.delete(record.id);
+    const current = runtime.store.card(record.id);
+    if (current?.processing) {
+      const cleared = { ...current };
+      delete cleared.processing;
+      runtime.store.saveCard(cleared);
+      runtime.bus.emit({ type: "card", card: cleared });
+    }
   }
 }
 

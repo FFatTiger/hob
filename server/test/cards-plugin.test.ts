@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CardRecord } from "../../shared/types.ts";
 import { answerCard } from "../src/actions.ts";
-import { pluginToolsForAssistant } from "../src/plugin-host.ts";
+import { pluginToolDisplayNames, pluginToolsForAssistant } from "../src/plugin-host.ts";
 import { call, makeHob, seedPluginSource, text } from "./helpers.ts";
 
 describe("plugin cards", () => {
@@ -21,6 +21,7 @@ describe("plugin cards", () => {
       const pluginTools = pluginToolsForAssistant(host, "hob");
       expect(pluginTools.map((tool) => tool.name)).toContain("github_show_card");
       expect(pluginTools.map((tool) => tool.name)).not.toContain("github_save_callback");
+      expect(pluginToolDisplayNames(host)).not.toHaveProperty("github_save_callback");
 
       hob.faux.setResponses([call("github_show_card", {}), text("卡片已出")]);
       await hob.runtime.router.send("hob", { text: "请显示凭据卡" });
@@ -87,6 +88,18 @@ describe("plugin cards", () => {
       const recovered = await answerCard(hob.runtime, "c-offline", { action: { tag: "button" }, button_text: "保存" });
       expect(recovered.status).toBe(200);
       expect(hob.runtime.store.card("c-offline")?.feedback).toBeUndefined();
+      vi.restoreAllMocks();
+
+      let release!: (value: unknown) => void;
+      hob.runtime.store.saveCard(record("c-lock"));
+      vi.spyOn(host, "call").mockImplementation(() => new Promise((resolve) => { release = resolve; }));
+      const first = answerCard(hob.runtime, "c-lock", { action: { tag: "button" }, button_text: "保存" });
+      await vi.waitFor(() => expect(hob.runtime.store.card("c-lock")?.processing).toBe(true));
+      const second = await answerCard(hob.runtime, "c-lock", { action: { tag: "button" }, button_text: "再次保存" });
+      expect(second).toMatchObject({ status: 409, body: { error: "这张卡正在处理中" } });
+      release({ content: [{ type: "text", text: "完成" }] });
+      await expect(first).resolves.toMatchObject({ status: 200 });
+      expect(hob.runtime.store.card("c-lock")?.processing).toBeUndefined();
       vi.restoreAllMocks();
     } finally {
       vi.useRealTimers();

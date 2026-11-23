@@ -40,6 +40,11 @@ describe("CardView", () => {
     expect(html).toContain("密码箱 现在用不了");
     expect(html).not.toContain('disabled=""');
   });
+  it("disables plugin controls while the callback is in progress", () => {
+    const processing: CardRecord = { ...record, processing: true };
+    const html = renderToStaticMarkup(<CardView record={processing} fresh={false} itemId="item-card" />);
+    expect(html).toContain('disabled=""');
+  });
   it("renders a locked result with toast and field error state", () => {
     const done: CardRecord = {
       ...record,

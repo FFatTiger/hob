@@ -32,7 +32,7 @@ describe("send_card", () => {
       const unknown = await tool(hob).execute("call", { card: { body: { elements: [{ tag: "slider" }] } } }) as { content: { text: string }[]; isError?: boolean };
       expect(unknown).toMatchObject({ isError: true, content: [{ text: "卡片格式不对：卡片 body里的第 1 个组件的 tag「slider」不支持" }] });
       const password = await tool(hob).execute("call", { card: { body: { elements: [{ tag: "input", input_type: "password" }] } } }) as { content: { text: string }[]; isError?: boolean };
-      expect(password).toMatchObject({ isError: true, content: [{ text: "你发的卡片不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你" }] });
+      expect(password).toMatchObject({ isError: true, content: [{ text: "你发的卡片不能有 input_type 为 password 的输入框：密码这类值要交给插件的卡片，不经过你。" }] });
       expect(hob.runtime.store.cards()).toEqual([]);
     } finally { hob.close(); }
   });

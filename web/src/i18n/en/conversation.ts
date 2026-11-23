@@ -145,7 +145,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "当前页面": "Current page",
   "保存的网址": "Saved website",
   "对不上": "Doesn't match",
-  "登录页的网址和密码管理器里保存的网址不一致，可能是仿冒的页面。": "The login page URL doesn't match the URL saved in the password manager. It may be a phishing page.",
+  "登录页的网址和 {provider} 里保存的不一致，可能是仿冒的页面。": "The login page URL doesn't match what {provider} has saved. It may be a phishing page.",
   "网站": "Website",
   "账号": "Account",
   "不允许": "Don't allow",

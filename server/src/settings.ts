@@ -168,11 +168,12 @@ function normalizeModels(raw: unknown, base: ModelSettings): ModelSettings {
     };
   };
   const rawSuggest = input.suggest;
+  const suggestRef = rawSuggest && typeof rawSuggest === "object" && !Array.isArray(rawSuggest) && typeof (rawSuggest as Partial<ModelPick>).ref === "string"
+    ? (rawSuggest as Partial<ModelPick>).ref.trim()
+    : "";
   const suggest = rawSuggest === null
     ? null
-    : rawSuggest && typeof rawSuggest === "object" && !Array.isArray(rawSuggest)
-      ? (typeof (rawSuggest as Partial<ModelPick>).ref === "string" && (rawSuggest as Partial<ModelPick>).ref.trim() ? pick(rawSuggest, base.conversation) : undefined)
-      : rawSuggest === undefined ? base.suggest : base.suggest;
+    : suggestRef ? pick(rawSuggest, base.conversation) : rawSuggest === undefined ? base.suggest : undefined;
   const thinking = input.thinking === undefined ? undefined : normalizeThinking(input.thinking);
   return {
     roster,

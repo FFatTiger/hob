@@ -1,6 +1,45 @@
 // Hob 前后端共用的契约。改这里 = 两边一起改。说明见 docs/architecture.md。
 import type { SearchSettings } from "./search.ts";
 import type { Locale } from "./i18n.ts";
+export type {
+  Card,
+  CardActionResult,
+  CardBehavior,
+  CardButton,
+  CardButtonType,
+  CardChecker,
+  CardCollapsiblePanel,
+  CardColumn,
+  CardColumnSet,
+  CardDatePicker,
+  CardDateTimePicker,
+  CardDiv,
+  CardElement,
+  CardForm,
+  CardHeader,
+  CardImg,
+  CardInput,
+  CardInputType,
+  CardInteractiveContainer,
+  CardMarkdown,
+  CardMultiSelectStatic,
+  CardOwner,
+  CardOwnerAssistant,
+  CardOwnerPlugin,
+  CardOverflow,
+  CardOverflowOption,
+  CardRecord,
+  CardSelectOption,
+  CardSelectStatic,
+  CardTable,
+  CardTableColumn,
+  CardText,
+  CardTimePicker,
+  CardValidationError,
+  CardValidationMode,
+  CardValidationResult,
+  ValidatedCard,
+} from "./cards.ts";
 
 export type PluginServiceStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
 export interface PluginToolView {
@@ -649,6 +688,7 @@ export type Item = (
   | { kind: "image"; id: string; at: Iso; prompt: string; size?: string; startedAt: Iso; status: "pending" | "done" | "failed"; path?: string; error?: string }
   | { kind: "file"; id: string; at: Iso; path: string; name: string; meta?: string } // meta 如 "3200 字 · 4 张图"
   | { kind: "topic"; id: string; at: Iso; topicId: string } // 综合时间线里的话题卡：开了话题、立事项开的话题
+  | { kind: "card"; id: string; at: Iso; cardId: string } // 通用卡片，卡片正文由服务端按引用提供
 ) & {
   /** 这条开启新的一组，前端在它上面拉开间距：事件触发的新一轮回复，或任务直接发进对话的图片、提问卡 */
   lead?: true;

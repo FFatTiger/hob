@@ -107,6 +107,8 @@ export function groupLine(item: GroupItem, nameOf: (speaker: string) => string =
       return `${who}：（调用了 message_assistant）`;
     case "topic":
       return `${who}：（调用了 open_topic）`;
+    case "card":
+      return `${who}：（调用了 send_card）`;
     case "todos":
       return "";
   }

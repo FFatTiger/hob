@@ -780,6 +780,8 @@ export class GroupManager {
         const topic = this.store.group(item.topicId);
         return `${who}：创建了话题「${topic?.name ?? item.topicId}」`;
       }
+      case "card":
+        return `${who}：显示了一张卡片`;
       default:
         return "";
     }
@@ -797,6 +799,7 @@ export class GroupManager {
     const page = all.slice(start, end);
     const jobIds = new Set(page.flatMap((item) => (item.kind === "job" ? [item.jobId] : [])));
     const approvalIds = new Set(page.flatMap((item) => (item.kind === "question" ? [item.approvalId] : [])));
+    const cardIds = new Set(page.flatMap((item) => (item.kind === "card" ? [item.cardId] : [])));
     return {
       items: page,
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
@@ -804,6 +807,7 @@ export class GroupManager {
         const job = this.store.job(id);
         return job ? [job] : [];
       }),
+      cards: this.store.cards().filter((card) => cardIds.has(card.id)),
       hasMore: start > 0,
     };
   }

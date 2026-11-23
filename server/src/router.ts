@@ -13,6 +13,7 @@ import type {
   Assistant,
   AssistantSummary,
   Bootstrap,
+  CardRecord,
   Group,
   Iso,
   Item,
@@ -1142,6 +1143,19 @@ export class RouterManager {
     return full;
   }
 
+  async addCard(assistantId: string, record: CardRecord, groupId?: string): Promise<Item> {
+    const card: CardRecord = { ...record, ...(groupId ? { groupId } : {}) };
+    this.store.saveCard(card);
+    const item = await this.addItem(assistantId, { kind: "card", cardId: card.id }, groupId);
+    this.bus.emit({ type: "card", card });
+    return item;
+  }
+
+  updateCard(record: CardRecord): void {
+    this.store.saveCard(record);
+    this.bus.emit({ type: "card", card: record });
+  }
+
   async updateImage(
     assistantId: string,
     id: string,
@@ -1714,6 +1728,9 @@ export class RouterManager {
     const approvalIds = new Set(
       page.filter((item) => item.kind === "question").map((item) => (item as { approvalId: string }).approvalId),
     );
+    const cardIds = new Set(
+      page.filter((item) => item.kind === "card").map((item) => (item as { cardId: string }).cardId),
+    );
     const ids = new Set(page.filter((item) => item.kind === "delegation").map((item) => (item as { delegationId: string }).delegationId));
     const delegations = this.store.delegations().filter((item) => ids.has(item.id));
     for (const delegation of delegations) {
@@ -1726,6 +1743,7 @@ export class RouterManager {
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
       jobs: [...jobIds].flatMap((id) => { const job = this.store.job(id); return job ? [job] : []; }),
       drafts: this.store.drafts().filter((draft) => draftIds.has(draft.id)),
+      cards: this.store.cards().filter((card) => cardIds.has(card.id)),
       delegations,
       hasMore: start > 0,
     };

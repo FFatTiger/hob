@@ -1,6 +1,7 @@
 // Hob 前后端共用的契约。改这里 = 两边一起改。说明见 docs/architecture.md。
 import type { SearchSettings } from "./search.ts";
 import type { Locale } from "./i18n.ts";
+import type { CardRecord } from "./cards.ts";
 export type {
   Card,
   CardActionResult,
@@ -737,6 +738,7 @@ export interface ItemsPage {
   approvals: Approval[];
   jobs: Job[];
   drafts: Draft[];
+  cards?: CardRecord[];
   delegations?: Delegation[];
   hasMore: boolean;
 }
@@ -1036,6 +1038,7 @@ export type HobEvent =
   | { type: "router-activity"; assistantId: string; activity: RouterActivity | null }
   | { type: "activity"; jobId: string; line: ActivityLine; stats: Job["stats"] }
   | { type: "approval"; approval: Approval }
+  | { type: "card"; card: CardRecord }
   | { type: "draft"; draft: Draft }
   | { type: "routine"; routine: Routine }
   | { type: "routine_removed"; id: string }

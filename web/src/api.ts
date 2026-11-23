@@ -259,6 +259,7 @@ const EVENT_TYPES: HobEvent["type"][] = [
   "job_step",
   "activity",
   "approval",
+  "card",
   "draft",
   "routine",
   "routine_removed",

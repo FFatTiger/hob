@@ -8,6 +8,7 @@ import type {
   ConversationRef,
   AnswerApprovalBody,
   Approval,
+  CardRecord,
   Assistant,
   AssistantSummary,
   Bootstrap,
@@ -141,6 +142,7 @@ export interface State {
   routines: Routine[];
   approvals: Record<string, Approval>;
   drafts: Record<string, Draft>;
+  cards: Record<string, CardRecord>;
   settings: SettingsFile;
   locale: Locale;
   globalRules: { rules: Rule[] | null; error: string | null; busy: boolean };
@@ -307,6 +309,7 @@ function initial(): State {
     routines: [],
     approvals: {},
     drafts: {},
+    cards: {},
     settings: { revision: 0, settings: EMPTY_SETTINGS },
     locale: initialLocale,
     globalRules: { rules: null, error: null, busy: false },
@@ -1043,7 +1046,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [] });
+  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {} });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1072,6 +1075,7 @@ async function loadBootstrap(reconnect = false) {
       delegations: index(boot.delegations ?? []),
       routines: boot.routines,
       approvals: index(boot.approvals),
+      cards: {},
       settings: boot.settings,
       ...(boot.settings.settings.general.locale ? { locale: boot.settings.settings.general.locale } : {}),
       theme: boot.settings.settings.general.theme,
@@ -1223,6 +1227,9 @@ export function applyEvent(ev: HobEvent) {
       break;
     case "draft":
       set((s) => ({ drafts: { ...s.drafts, [ev.draft.id]: ev.draft } }));
+      break;
+    case "card":
+      set((s) => ({ cards: { ...s.cards, [ev.card.id]: ev.card } }));
       break;
     case "routine":
       set((s) => ({ routines: upsert(s.routines, ev.routine) }));
@@ -1602,6 +1609,7 @@ async function loadItems(id: string) {
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
       drafts: mergePage(s.drafts, page.drafts),
+      cards: mergePage(s.cards, page.cards ?? []),
       delegations: mergePage(s.delegations, page.delegations ?? []),
     }));
     for (const event of events) applyEvent(event);
@@ -1631,6 +1639,7 @@ export function loadOlderItems(id: string, retry = false): Promise<void> {
           items: { ...s.items, [id]: [...page.items.filter((item) => !known.has(item.id)), ...current] },
           itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
           jobs: { ...index(page.jobs), ...s.jobs }, approvals: { ...index(page.approvals), ...s.approvals },
+          cards: { ...index(page.cards ?? []), ...s.cards },
           drafts: { ...index(page.drafts), ...s.drafts }, delegations: { ...index(page.delegations ?? []), ...s.delegations },
         };
       });
@@ -1660,11 +1669,9 @@ async function loadGroupItems(id: string) {
     groupEvents.delete(id);
     clearFresh(); // 这一批是历史，不播入场
     set((s) => ({
-      groupItems: { ...s.groupItems, [id]: page.items },
-      groupGen: { ...s.groupGen, [id]: (s.groupGen[id] ?? 0) + 1 },
-      groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
+      cards: mergePage(s.cards, page.cards ?? []),
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {
@@ -1693,6 +1700,7 @@ export function loadOlderGroupItems(id: string, retry = false): Promise<void> { 
           groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
           jobs: { ...index(page.jobs), ...s.jobs },
           approvals: { ...index(page.approvals), ...s.approvals },
+          cards: { ...index(page.cards ?? []), ...s.cards },
         };
       });
     } catch (e) {

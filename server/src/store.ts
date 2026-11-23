@@ -6,6 +6,7 @@ import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
 import type {
   Approval,
+  CardRecord,
   Assistant,
   Delegation,
   Draft,
@@ -130,7 +131,7 @@ export class Store {
     for (const path of ["knowledge/entries.json", "knowledge/collections.json", "system/lore/config.json"]) readJson(join(this.home, path), null);
     for (const root of [join(this.home, "assistants"), archiveAssistantsDir(this.home)]) {
       if (existsSync(root)) for (const id of readdirSync(root)) {
-        for (const name of ["profile.json", "rules.json", "state.json", "approvals.json", "routines.json", "drafts.json", "delegations.json"]) {
+        for (const name of ["profile.json", "rules.json", "state.json", "approvals.json", "cards.json", "routines.json", "drafts.json", "delegations.json"]) {
           readJson(join(root, id, name), null);
         }
       }
@@ -138,14 +139,14 @@ export class Store {
     const archivedGroups = archiveGroupsDir(this.home);
     if (existsSync(archivedGroups)) for (const folder of readdirSync(archivedGroups)) {
       const dir = join(archivedGroups, folder);
-      for (const name of ["group.json", "rules.json", "state.json", "routines.json"]) readJson(join(dir, name), null);
+      for (const name of ["group.json", "rules.json", "state.json", "cards.json", "routines.json"]) readJson(join(dir, name), null);
       const topics = join(dir, "topics");
       if (existsSync(topics)) for (const topic of readdirSync(topics)) {
         for (const name of ["group.json", "state.json"]) readJson(join(topics, topic, name), null);
       }
     }
     for (const id of this.groupIds()) {
-      for (const name of ["group.json", "rules.json", "state.json", "routines.json"]) readJson(join(groupDir(this.home, id), name), null);
+      for (const name of ["group.json", "rules.json", "state.json", "cards.json", "routines.json"]) readJson(join(groupDir(this.home, id), name), null);
     }
   }
 
@@ -483,6 +484,49 @@ export class Store {
       const list = readJson<Routine[]>(file, []);
       const next = list.filter((r) => r.id !== id);
       if (next.length !== list.length) writeJsonAtomic(file, next);
+    }
+  }
+
+  // ---------- 通用卡片 ----------
+  private cardFiles(): string[] {
+    const assistants = this.recordFiles("cards.json", true);
+    const groups = this.groupIds().map((id) => join(groupDir(this.home, id), "cards.json"));
+    return [...new Set([...assistants, ...groups])];
+  }
+
+  private cardOwnerFile(card: CardRecord): string {
+    if (card.groupId && this.group(card.groupId)) return join(groupDir(this.home, card.groupId), "cards.json");
+    return this.ownerFile(card.owner.assistantId, "cards.json");
+  }
+
+  cards(): CardRecord[] {
+    const found = new Map<string, { item: StoredRecord<CardRecord>; modified: bigint }>();
+    for (const file of this.cardFiles()) for (const item of readJson<StoredRecord<CardRecord>[]>(file, [])) {
+      if (!item || typeof item.id !== "string") continue;
+      const modified = statSync(file, { bigint: true }).mtimeNs;
+      const old = found.get(item.id);
+      if (!old || (item._hobRevision ?? 0) > (old.item._hobRevision ?? 0) || ((item._hobRevision ?? 0) === (old.item._hobRevision ?? 0) && modified > old.modified)) found.set(item.id, { item, modified });
+    }
+    return [...found.values()].map(({ item }) => withoutRevision(item));
+  }
+
+  card(id: string): CardRecord | undefined {
+    return this.cards().find((item) => item.id === id);
+  }
+
+  saveCard(card: CardRecord): void {
+    const target = this.cardOwnerFile(card);
+    const files = [...new Set([...this.cardFiles(), target])];
+    const records = files.map((file) => ({ file, list: readJson<StoredRecord<CardRecord>[]>(file, []) }));
+    const revision = 1 + Math.max(0, ...records.flatMap(({ list }) => list.filter((item) => item.id === card.id).map((item) => item._hobRevision ?? 0)));
+    const owner = records.find(({ file }) => file === target)!;
+    const list = owner.list.filter((item) => item.id !== card.id);
+    list.push({ ...card, _hobRevision: revision });
+    writeJsonAtomic(target, list);
+    for (const { file, list: old } of records) {
+      if (file === target) continue;
+      const next = old.filter((item) => item.id !== card.id);
+      if (next.length !== old.length) writeJsonAtomic(file, next);
     }
   }
 

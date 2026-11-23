@@ -1669,6 +1669,9 @@ async function loadGroupItems(id: string) {
     groupEvents.delete(id);
     clearFresh(); // 这一批是历史，不播入场
     set((s) => ({
+      groupItems: { ...s.groupItems, [id]: page.items },
+      groupGen: { ...s.groupGen, [id]: (s.groupGen[id] ?? 0) + 1 },
+      groupPages: { ...s.groupPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
       cards: mergePage(s.cards, page.cards ?? []),

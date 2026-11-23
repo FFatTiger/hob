@@ -1716,7 +1716,11 @@ export async function loadProfile(id: string) {
 /* ---------------- 发消息 ---------------- */
 
 export function setText(text: string) {
-  set({ text });
+  set((s) => ({
+    text,
+    assistants: s.sel ? s.assistants.map((assistant) => assistant.id === s.sel ? { ...assistant, suggestions: undefined } : assistant) : s.assistants,
+    groups: s.gsel ? s.groups.map((group) => group.id === s.gsel ? { ...group, suggestions: undefined } : group) : s.groups,
+  }));
 }
 
 export function setQuote(quote: { itemId: string; text: string } | null) {
@@ -1824,10 +1828,10 @@ async function deliver(p: PendingMessage) {
   }
 }
 
-export async function send() {
+export async function send(textOverride?: string) {
   const groupId = state.gsel;
   const id = state.sel;
-  const text = state.text.trim();
+  const text = (textOverride ?? state.text).trim();
   // 只发图片 / 文件不写字也行（和 Telegram 一样）
   if ((!groupId && !id) || (!text && !state.attachments.length)) return;
   const key = groupId ? `group:${groupId}` : id!;
@@ -1842,7 +1846,15 @@ export async function send() {
     status: "sending",
   };
   markFresh([p.localId]);
-  set((s) => ({ text: "", quote: null, attachments: [], nonce: s.nonce + 1, pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] } }));
+  set((s) => ({
+    text: "",
+    quote: null,
+    attachments: [],
+    nonce: s.nonce + 1,
+    pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] },
+    assistants: groupId ? s.assistants : s.assistants.map((assistant) => assistant.id === id ? { ...assistant, suggestions: undefined } : assistant),
+    groups: groupId ? s.groups.map((group) => group.id === groupId ? { ...group, suggestions: undefined } : group) : s.groups,
+  }));
   await deliver(p);
 }
 

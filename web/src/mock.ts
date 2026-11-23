@@ -297,6 +297,7 @@ function buildDb(scene: SceneId): Db {
       last: { text: L("已交给任务处理，完成后通知你。", "Handed it to a job. I'll tell you when it's done."), at: at(0, 10, 5) },
       unread: 0,
       busy: true,
+      ...(scene === "h-hob" || scene === "mchat" || scene === "todo-chat" ? { suggestions: [L("把结果里的关键数字列给我", "List the key numbers from the result"), L("再做一份适合发给同事的版本", "Make a version I can send to my colleagues")] } : {}),
     },
     {
       id: "page",
@@ -1191,6 +1192,7 @@ cp now.txt "$seen"`,
       last: { at: at(0, 9, 27), speaker: "server", text: L("开始检查下载目录", "Started checking the downloads folder") },
       unread: 0,
       busy: ["server"],
+      ...(scene === "g-chat" || scene === "g-mobile" || scene === "g-dark" ? { suggestions: [L("先把下载目录的清理清单发我", "Send me the cleanup list for the downloads folder first"), L("让服务器继续检查剩下的旧快照", "Have Ops check the remaining old snapshots")] } : {}),
     },
     {
       id: "g-dev",
@@ -2366,6 +2368,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
             roster: models.roster ?? db.settings.settings.models.roster,
             conversation: models.conversation ?? db.settings.settings.models.conversation,
             work: models.work ?? db.settings.settings.models.work,
+            ...(models.suggest !== undefined ? { suggest: models.suggest } : db.settings.settings.models.suggest !== undefined ? { suggest: db.settings.settings.models.suggest } : {}),
             thinkingChoice: models.thinkingChoice ?? db.settings.settings.models.thinkingChoice,
             ...(models.thinking ?? db.settings.settings.models.thinking
               ? { thinking: models.thinking ?? db.settings.settings.models.thinking }

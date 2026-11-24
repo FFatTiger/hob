@@ -18,6 +18,9 @@ const DENY_ANY_FILE = /\.bak/i;
 const DENY_WORK_DIRS = /(^|[/\\])\.(ssh|gnupg|aws|git)([/\\]|$)/;
 const DENY_WORK_FILE = /^(\.env.*|id_[a-z0-9]+|.*\.(pem|key))$/i;
 
+/** 页面只读得到 Hob 自己的目录和任务工作目录；范围外的文件报这句。 */
+export const OUTSIDE_HOB = "只允许读 Hob 自己的文件";
+
 /** 预览面板最多拉 1 MB 文本。 */
 export const MAX_TEXT_BYTES = 1024 * 1024;
 
@@ -99,7 +102,7 @@ export function lookupFile(home: string, requested: string, workDirs: string[] =
   const inHome = path.startsWith(`${root}${sep}`);
   const work = inHome ? undefined : workRoots(root, workDirs).find((dir) => path.startsWith(`${dir}${sep}`));
   // 先说范围再说类型：范围外的目录报「不存在」，模型会以为路径写错了
-  if (!inHome && !work) return { ok: false, status: 403, error: "只允许读 Hob 自己的文件" };
+  if (!inHome && !work) return { ok: false, status: 403, error: OUTSIDE_HOB };
   if (!isFile) return { ok: false, status: 404, error: "这是目录，不是文件" };
   const relativePath = relative(inHome ? root : work!, path);
   if ((inHome && denied(root, path)) || DENY_WORK_DIRS.test(relativePath) || DENY_WORK_FILE.test(basename(path)) || DENY_ANY_FILE.test(basename(path))) {

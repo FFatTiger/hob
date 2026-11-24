@@ -2,12 +2,14 @@ import { t } from "../../shared/i18n.ts";
 import { Type } from "typebox";
 import { propArtSchema } from "./prop-art-schema.ts";
 import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { randomUUID } from "node:crypto";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
-import { lookupFile, isInPagesDir } from "./files.ts";
+import { lookupFile, isInPagesDir, OUTSIDE_HOB } from "./files.ts";
 import { resolveMovedPath } from "./layout.ts";
+import { assistantFilesDir } from "./config.ts";
 import {
   COLORS,
   COLOR_IDS,
@@ -829,8 +831,18 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       execute: async (_id, params: any) => {
         const requested = resolve(cwd, String(params.path));
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
-        const path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
+        let path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
+        // 页面只读得到 Hob 自己的目录和任务工作目录：范围外的文件复制一份进来再发，卡片和预览才打得开
+        const scope = lookupFile(runtime.home, path, store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []));
+        if (!scope.ok && scope.error !== OUTSIDE_HOB) return fail(`${scope.error}：${path}`);
+        if (!scope.ok) {
+          if (!statSync(path).isFile()) return fail(`这是目录，不是文件：${path}`);
+          const copy = join(assistantFilesDir(runtime.home, assistantId, "sent"), randomUUID().slice(0, 8), basename(path));
+          mkdirSync(dirname(copy), { recursive: true });
+          copyFileSync(path, copy);
+          path = copy;
+        }
         let name = basename(path);
         let meta = fileMeta(path);
         if (isInPagesDir(relative(runtime.home, resolve(path))) && extname(path).toLowerCase() === ".html") {

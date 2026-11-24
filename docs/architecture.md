@@ -188,7 +188,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 | `message_group(groupId, title, note, files?)` | 所有助手都能用：只把助手写的交接说明和显式文件交给一个群，在群里开话题并由群主接手，结论回到发起方对话 |
 | `open_topic(title? / topic?, note, files?)` | 群主在综合里开新话题或转到已有话题；只把助手写的交接说明和显式文件放进话题，本轮结束 |
 | `hand_back(text, reason)` | 仅非主助手：别人转来的事交回发起方；用户直接找你的事交回 Hob，由它转给合适的助手；本轮结束 |
-| `send_file(path)` | 把文件作为文件卡片发到对话；相对路径以助手工作目录为准 |
+| `send_file(path)` | 把文件作为文件卡片发到对话；相对路径以助手工作目录为准。页面只读得到 Hob 自己的目录和任务工作目录，范围外的文件先复制到 `assistants/<id>/files/sent/` 再发；密钥类文件照样拒绝 |
 | `generate_image(prompt, size?, refs?)` | 配置图像生成且助手能力开启时可直接生图，结果自动显示在对话 |
 | `show_page(title, summary, html)` | 助手写正文 HTML 片段，Hob 套上自带样式（亮暗跟随）和离线 CSP 存为单页，发页面卡后结束本轮；对话生成时通过实时事件展示草稿；通用设置可关闭 |
 | `web_search(query, depth?, max?)` / `web_fetch(url, raw?)` | 已启用联网搜索时可直接搜索或读取网页，搜索服务商按设置的优先级使用 |

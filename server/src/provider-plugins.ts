@@ -1158,7 +1158,7 @@ export class ProviderPluginManager {
     const doc = this.readDoc();
     const prov = doc.plugins[params.pluginId]?.providers[params.providerId];
     const hasCli = Boolean(prov?.cli);
-    // 插件要靠本机命令行运行、机器上还没有时，登录前先替用户装好（和 Magpie 一样，不让用户先去装再回来）
+    // 插件要靠本机命令行运行、机器上还没有时，登录前先替用户装好，不让用户先去装再回来
     if (hasCli) {
       const cli = await this.checkCli(params.pluginId, params.providerId);
       if (cli.declared && !cli.installed) await this.installCli(params.pluginId, params.providerId);

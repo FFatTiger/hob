@@ -2227,7 +2227,7 @@ function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNam
           </div>
         </Group>
       ) : (
-        <div className="group-card settings-card">
+        <div className="group-card madd-card">
           <label className="mfind">
             <Icon name="search" size={15} />
             <input value={query} placeholder={t("搜索名称或引用，如 claude")} onChange={(e) => setQuery(e.target.value)} />
@@ -2243,7 +2243,7 @@ function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNam
                   key={group.provider}
                   className="mgroup-disclosure"
                   label={<span className="provider-model-label"><BrandIcon size={28} brand={providerBrand(group.provider, providerName(group.provider), group.models)} /><span className="n">{providerName(group.provider) ?? group.provider}</span></span>}
-                  count={picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : group.models.length}
+                  count={picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : t("{n} 个模型", { n: group.models.length })}
                   open={open}
                   onToggle={() => toggleGroup(group.provider)}
                 >

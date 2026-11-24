@@ -4903,6 +4903,13 @@ a.lbl-aside {
   color: var(--text2);
 }
 .model-use-inline { padding: 0 16px 16px 32px; }
+/* 设置 → 添加模型：服务商、模型、用途说明三层左边各对齐一档，行间不画线 */
+.madd-card { padding: 0 var(--sidebar-inset) 4px; }
+.madd-card .mgroup-disclosure > .disclosure-row { padding: 0; background: transparent; }
+.madd-card .provider-model-label { padding: 10px 0; }
+.madd-card .madd { padding: 9px 0 9px 14px; }
+.madd-card .model-use-inline { padding: 0 0 6px 52px; }
+.madd-card .model-use-disclosure > .disclosure-row { min-height: 30px; padding: 0; background: transparent; color: var(--text2); font-size: 13px; }
 .model-use-warning { color: var(--accent); font-size: 12px; margin-left: 8px; }
 @media (max-width: 600px) {
   .model-use-inline { padding-left: 16px; }
@@ -5246,6 +5253,7 @@ button.screen,
 .disclosure.open > .disclosure-row .disclosure-arrow { transform: rotate(180deg); }
 @media (hover: hover) {
   .disclosure-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); }
+  .madd-card .disclosure-row:hover { background: transparent; }
 }
 .disclosure-row:disabled { cursor: default; opacity: .65; }
 

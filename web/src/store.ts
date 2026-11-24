@@ -1958,6 +1958,28 @@ export async function answerCard(cardId: string, action: import("../../shared/ca
   }
 }
 
+/** 登录卡上点「我自己登录」：同一张卡换成自己登录卡的样子，不先把它标成已答（卡还挂着等用户登完） */
+export async function switchLoginSelf(approvalId: string) {
+  try {
+    await api.answerApproval(approvalId, { self: true });
+    return true;
+  } catch (e) {
+    set({ notice: t("提交失败：{error}", { error: errText(e) }) });
+    return false;
+  }
+}
+
+/** 录入卡「保存并登录」：密码只在这次请求里经过；没存上时服务端回原因，卡不动，表单保持可填 */
+export async function saveLoginEntry(approvalId: string, input: { username: string; password: string; provider: string }) {
+  try {
+    await api.answerApproval(approvalId, { key: "B", ...input });
+    return true;
+  } catch (e) {
+    set({ notice: errText(e) });
+    return false;
+  }
+}
+
 export function openLoginDesktop(approvalId: string, assistantId: string) {
   set({ desktopLogin: { approvalId, assistantId } });
 }

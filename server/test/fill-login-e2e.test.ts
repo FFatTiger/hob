@@ -433,6 +433,19 @@ describeE2E("login / 新密码端到端（真 Chrome）", () => {
     expect(await inputs()).toMatchObject([{ name: "otp", value: "" }]);
   });
 
+  it("用户说要自己登录（self）：存了账号也直接出自己登录卡，不取密码、不填", async () => {
+    await goto("http://forum.example.net/login");
+    const secretCalls = fixtureCalls().filter((name) => name === "credentials_secret").length;
+    const result = await login({ site: "forum.example.net", self: true }, "用户要自己登录论坛");
+    expect(result.text).toBe(SELF("forum.example.net"));
+    expect(pending().at(-1)).toMatchObject({ title: "需要登录：forum.example.net", options: [{ key: "A", label: "已登录" }], login: { site: "forum.example.net" } });
+    expect(pending().at(-1)?.login?.fillLogin).toBeUndefined();
+    const { event } = await approve({ key: "A" });
+    expect(event).toBe("用户已在「forum.example.net」完成登录。");
+    expect(fixtureCalls().filter((name) => name === "credentials_secret").length).toBe(secretCalls);
+    expect((await inputs()).every((input) => input.value === "")).toBe(true);
+  });
+
   it("只有第三方登录按钮的页面：第一次回「没有登录框」，第二次出自己登录卡；不去点第三方按钮", async () => {
     await goto("http://chat.example.org/login");
     const first = await login({ site: "chat.example.org" }, "帮我看看聊天里有没有新消息");

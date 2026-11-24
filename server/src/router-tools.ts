@@ -556,12 +556,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
       name: "login",
       label: "登录",
       description: credentialsAvailable
-        ? "登录云桌面浏览器里当前打开的网站，先打开网站的登录页再调用。用户的密码管理器里存了这个网站的账号时，Hob 核对网址、请用户批准后，把账号和密码直接填进页面；没存的，请用户在卡片上填一次，存进密码管理器再填；页面要扫码、第三方账号或验证码这类只能用户本人完成的，请用户在云桌面里自己登录。密码不经过你。填好以后由你点登录按钮；分两步的登录页（先填用户名、点下一步才出密码框），点完下一步再调一次。site 写网站网址或名称，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在卡上选；reason 一句话写为什么要登录，显示在卡上。"
+        ? "登录云桌面浏览器里当前打开的网站，先打开网站的登录页再调用。用户的密码管理器里存了这个网站的账号时，Hob 核对网址、请用户批准后，把账号和密码直接填进页面；没存的，请用户在卡片上填一次，存进密码管理器再填；页面要扫码、第三方账号或验证码这类只能用户本人完成的，请用户在云桌面里自己登录。密码不经过你。填好以后由你点登录按钮；分两步的登录页（先填用户名、点下一步才出密码框），点完下一步再调一次。site 写网站网址或名称，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在卡上选；reason 一句话写为什么要登录，显示在卡上；self 填 true 时不填账号，直接请用户在云桌面里自己登录。"
         : "请用户在云桌面里登录一个网站：会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。site 写哪个网站，reason 一句话写为什么要登录。",
       parameters: Type.Object({
         site: Type.String({ description: "网站网址或名称" }),
         reason: Type.String({ description: "为什么要登录，一句话" }),
-        ...(credentialsAvailable ? { account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })) } : {}),
+        ...(credentialsAvailable ? { account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })), self: Type.Optional(Type.Boolean({ description: "用户要自己登录时填 true" })) } : {}),
       }),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const site = String(params.site ?? "").trim();
@@ -569,7 +569,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         const account = typeof params.account === "string" ? params.account.trim() : undefined;
         if (!site || !reason) return fail("site 和 reason 都要填写清楚。");
         try {
-          const prepared = await prepareLogin(runtime, assistantId, site, account);
+          const prepared = await prepareLogin(runtime, assistantId, site, account, params.self === true);
           if (prepared.kind === "message") return ok(prepared.text);
           if (prepared.kind === "failed") return fail(prepared.text);
           if (prepared.kind === "mismatch") {

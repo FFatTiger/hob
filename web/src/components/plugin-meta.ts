@@ -146,6 +146,11 @@ export function pluginServiceStatusOf(item: PluginView): PluginServiceStatus | u
   return item.services.map((service) => service.status).sort((a, b) => priority[a] - priority[b])[0];
 }
 
+/** 只能免登录启用的供应商（如公共免费模型）：没有账号可言，界面不出账号组，状态写「已启用」。 */
+export function keylessOnly(providers: { methods: { keyless?: boolean }[] }[]): boolean {
+  return providers.length > 0 && providers.every((p) => p.methods.length > 0 && p.methods.every((m) => m.keyless));
+}
+
 export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null {
   if (item.plugin.needsApproval) {
     return { tone: "needs_login", label: t("待确认"), rank: 0 };
@@ -157,7 +162,7 @@ export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null 
     const accounts = item.providers.flatMap((p) => p.accounts);
     const active = accounts.find((a) => a.active);
     if (active?.status === "logged_in") {
-      return { tone: "connected", label: t("已登录"), rank: 9 };
+      return { tone: "connected", label: keylessOnly(item.providers) ? t("已启用") : t("已登录"), rank: 9 };
     }
     if (active?.status === "expired" || accounts.some((a) => a.status === "expired")) {
       return { tone: "error", label: t("已过期"), rank: 2 };

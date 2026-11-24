@@ -35,7 +35,7 @@ import {
   useApp,
 } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
-import { formatContextWindow, permissionMeta, pluginPermissions, pluginReviewedVersion } from "./plugin-meta.ts";
+import { formatContextWindow, keylessOnly, permissionMeta, pluginPermissions, pluginReviewedVersion } from "./plugin-meta.ts";
 import { Seg } from "./SettingsParts.tsx";
 
 function localizedMethodLabel(method: PluginAuthMethodView): string {
@@ -126,19 +126,6 @@ function formatResetTime(resetsAt?: string, resetSecs?: number): string {
     return t("{mins} 分钟后重置", { mins });
   }
   return "";
-}
-
-function runtimeStatusView(host?: ProviderHostStatusView): { cls: string; label: string } {
-  if (!host || host.status === "stopped") {
-    return { cls: "", label: t("未启动（用到时自动启动）") };
-  }
-  if (host.status === "running") {
-    return { cls: "live", label: t("运行中") };
-  }
-  if (host.status === "starting") {
-    return { cls: "", label: t("启动中…") };
-  }
-  return { cls: "bad", label: t("宿主出错") };
 }
 
 function accountStatusBadge(status: PluginProviderAccountView["status"]): { cls: string; label: string } {
@@ -253,7 +240,7 @@ export function ProviderStatusStrip({
   if (active?.status === "logged_in") {
     tone = "ok";
     badgeCls = "connected";
-    badgeLabel = t("已登录");
+    badgeLabel = keylessOnly(providers) ? t("已启用") : t("已登录");
   } else if (active?.status === "expired" || accounts.some((a) => a.status === "expired")) {
     tone = "bad";
     badgeCls = "error";
@@ -275,7 +262,6 @@ export function ProviderStatusStrip({
   if (toolCount > 0) {
     summaryParts.push(t("{n} 个工具", { n: toolCount }));
   }
-  const runtime = runtimeStatusView(host);
   const detailError = providers.find((p) => p.error)?.error || (host?.status === "error" ? host.lastError : "");
 
   return (
@@ -286,11 +272,6 @@ export function ProviderStatusStrip({
           {badgeLabel}
         </span>
         {summaryParts.length ? <span className="plugin-connection-tools">{summaryParts.join(" · ")}</span> : null}
-        <span className="sp" />
-        <span className={`plugin-runtime${runtime.cls ? ` ${runtime.cls}` : ""}`}>
-          <span className="plugin-runtime-dot" />
-          {runtime.label}
-        </span>
       </div>
       {detailError ? <div className="plugin-connection-detail">{detailError}</div> : null}
     </section>
@@ -308,8 +289,7 @@ export function ProviderQuotaSection({
 }) {
   const active = provider.accounts.find((a) => a.active);
   const usage: PluginProviderUsageView | undefined = provider.usage;
-  if (!provider.usageSupported && !usage) return null;
-  if (!active && !usage) return null;
+  if (!usage || (!usage.error && !usage.windows.length && !usage.balance)) return null;
 
   return (
     <section className="plugin-section">
@@ -360,16 +340,14 @@ export function ProviderQuotaSection({
             );
           })}
         </div>
-      ) : usage?.balance ? (
+      ) : usage.balance ? (
         <div className="plugin-list">
           <div className="plugin-kv">
             <span className="k">{usage.plan || t("余量")}</span>
             <span className="v">{usage.balance}</span>
           </div>
         </div>
-      ) : (
-        <div className="plugin-note">{busy ? t("正在读取额度…") : t("点击右上角刷新查看当前账号额度。")}</div>
-      )}
+      ) : null}
     </section>
   );
 }
@@ -1371,7 +1349,7 @@ export function PluginProvidersSection({
           || reloginTarget?.providerId === provider.providerId
           || provider.accounts.length === 0
         );
-        const showAccounts = provider.accounts.length > 0;
+        const showAccounts = provider.accounts.length > 0 && !keylessOnly([provider]);
 
         return (
           <div key={provider.providerId}>

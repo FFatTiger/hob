@@ -32,6 +32,7 @@ import {
   ProviderModelsSection,
   ProviderQuotaSection,
   ProviderSignInCard,
+  ProviderStatusStrip,
 } from "./PluginProviders.tsx";
 import { PluginInstallView, PluginPreInstallDetail } from "./PluginMarketViews.tsx";
 
@@ -236,6 +237,24 @@ describe("额度异常、模型缓存回退、更新权限确认与安装视图"
     expect(html).toContain("服务端返回 429");
     expect(html).toContain("重试");
     expect(html).not.toContain("plugin-bar");
+  });
+
+  it("额度插件给不出（还没取到或取到是空的）时整组不显示；宿主起没起不显示", () => {
+    const account = { id: "a1", providerId: "demo", authType: "oauth" as const, displayName: "lin@example.com", status: "logged_in" as const, active: true, createdAt: nowIso, updatedAt: nowIso };
+    const empty = renderToStaticMarkup(<ProviderQuotaSection provider={baseProvider({ usageSupported: true, accounts: [account] })} onRefresh={() => {}} />);
+    expect(empty).toBe("");
+    const blank = renderToStaticMarkup(<ProviderQuotaSection provider={baseProvider({ usageSupported: true, accounts: [account], usage: { windows: [], fetchedAt: nowIso } })} onRefresh={() => {}} />);
+    expect(blank).toBe("");
+    const strip = renderToStaticMarkup(<ProviderStatusStrip providers={[baseProvider({ accounts: [account] })]} host={{ status: "stopped" } as never} toolCount={0} />);
+    expect(strip).toContain("已登录");
+    expect(strip).not.toMatch(/未启动|运行中/);
+  });
+
+  it("只能免登录启用的供应商：状态写「已启用」，不说已登录", () => {
+    const keyless = baseProvider({ methods: [{ index: 0, type: "api", label: "免费使用", keyless: true }], accounts: [{ id: "public", providerId: "demo", authType: "api", displayName: "Public", status: "logged_in", active: true, createdAt: nowIso, updatedAt: nowIso }] });
+    const strip = renderToStaticMarkup(<ProviderStatusStrip providers={[keyless]} toolCount={0} />);
+    expect(strip).toContain("已启用");
+    expect(strip).not.toContain("已登录");
   });
 
   it("模型拉取失败时保留上次缓存模型并显示失败原因", () => {

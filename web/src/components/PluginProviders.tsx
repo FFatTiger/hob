@@ -845,7 +845,7 @@ export function ProviderSignInCard({
   }
 
   // Active OAuth / Device / Web Poll / Loopback Paste / Code session
-  if (session) {
+  if (session && session.kind !== "api") {
     // Flow 1: Device code (07a) — NO divider between code & URL; BOTH copy buttons unified as hob-icon-btn!
     if (session.kind === "device_code") {
       return (

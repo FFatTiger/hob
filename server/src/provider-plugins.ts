@@ -1246,7 +1246,13 @@ export class ProviderPluginManager {
     const hostSession = session.hostSessionId;
     session.hostSessionId = undefined;
     try {
-      const res = await this.host.callback({ session: hostSession, ...(code !== undefined ? { code } : {}) }, session.controller.signal);
+      const res = await this.host.callback({
+        session: hostSession,
+        ...(code !== undefined ? { code } : {}),
+        pluginId: session.view.pluginId,
+        provider: session.view.providerId,
+        accountId: session.targetAccountId ?? "",
+      }, session.controller.signal);
       if (session.view.status === "cancelled" || session.view.status === "expired") {
         return { ...session.view };
       }

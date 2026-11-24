@@ -747,7 +747,7 @@ export class ProviderPluginHost {
     );
   }
 
-  callback(params: { session: string; code?: string }, signal?: AbortSignal) {
+  callback(params: { session: string; code?: string; pluginId?: string; provider?: string; accountId?: string }, signal?: AbortSignal) {
     return this.rpc<{ ok: boolean; error?: string; provider?: string; auth?: Record<string, unknown>; accountInfo?: { displayName?: string; hint?: string } }>(
       "callback",
       params as unknown as Record<string, unknown>,

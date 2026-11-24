@@ -2418,6 +2418,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     plugins: async () => clone({ plugins: pluginViews, migrationErrors: [] }),
     pluginCatalog: async () => clone({ sources: pluginSources, plugins: pluginCatalog.map(p => ({ ...p, source: p.source ?? "official", sourceName: p.sourceName ?? "Hob 官方", installed: pluginViews.some(v => v.plugin.id === p.id && v.plugin.source === (p.source ?? "official")) })) }),
+    refreshPluginSources: async () => ({ ok: true }),
     addPluginSource: async url => { const source = { id: `source-${pluginSources.length}`, url, name: url }; pluginSources.push(source); return clone(source); },
     deletePluginSource: async id => { const index = pluginSources.findIndex(source => source.id === id); if (index >= 0) pluginSources.splice(index, 1); return { ok: true as const }; },
     installPlugin: async id => { const p = makePlugin(id, "official"); pluginViews.push(p); return clone(p); },

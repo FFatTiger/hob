@@ -1,4 +1,5 @@
 .plugins .setnav .navrow { width: 100%; }
+.plugin-head-actions { display: flex; gap: 4px; }
 .plugin-market-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
 .plugin-source-filter { margin-top: 18px; flex-wrap: wrap; }
 .plugin-source-list { padding: 6px; background: var(--field); border-radius: 14px; }

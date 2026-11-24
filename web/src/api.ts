@@ -168,6 +168,7 @@ export interface HobApi {
   installPlugin(id: string, source?: string): Promise<PluginView>;
   addPluginSource(url: string): Promise<import("../../shared/types.ts").PluginSourceView>;
   deletePluginSource(id: string): Promise<{ ok: true }>;
+  refreshPluginSources(): Promise<{ ok: true }>;
   updatePlugin(id: string): Promise<PluginView>;
   patchPlugin(id: string, patch: PluginPatch): Promise<PluginView>;
   savePluginConfig(id: string, values: Record<string, unknown>): Promise<PluginView>;
@@ -341,6 +342,7 @@ export const realApi: HobApi = {
   installPlugin: (id, source) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/install`, json({ source })),
   addPluginSource: (url) => req<import("../../shared/types.ts").PluginSourceView>("/api/plugins/sources", json({ url })),
   deletePluginSource: (id) => req<{ ok: true }>(`/api/plugins/sources/${encodeURIComponent(id)}`, { method: "DELETE" }),
+  refreshPluginSources: () => req<{ ok: true }>("/api/plugins/sources/refresh", { method: "POST" }),
   updatePlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/update`, json({})),
   patchPlugin: (id, patch) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}`, json(patch, "PATCH")),
   savePluginConfig: (id, values) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/config`, json({ values }, "PUT")),

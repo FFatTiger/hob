@@ -422,6 +422,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json(await runtime.plugins.store.sources.add(body.url));
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
+  app.post("/api/plugins/sources/refresh", async c => {
+    const sources = runtime.plugins.store.sources;
+    // 每个源的失败已记在源上（市场页按源显示），这里不再整体报错
+    await Promise.allSettled(sources.list().map(source => sources.refresh(source.id)));
+    return c.json({ ok: true });
+  });
   app.delete("/api/plugins/sources/:id", c => {
     try { runtime.plugins.store.sources.remove(c.req.param("id")); return c.json({ ok: true }); }
     catch (error) { return c.json({ error: pluginError(error) }, 400); }

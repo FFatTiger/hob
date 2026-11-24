@@ -46,6 +46,7 @@ export const pluginsEn = {
   "{n} 个助手": { one: "{n} assistant", other: "{n} assistants" },
   "插件源": "Plugin sources",
   "添加插件源": "Add plugin source",
+  "检查更新": "Check for updates",
   "移除": "Remove",
   "移除「{name}」？已经装上的插件不受影响。": "Remove “{name}”? Installed plugins won't be affected.",
   "仓库地址或索引 JSON 地址": "Repository or index JSON URL",

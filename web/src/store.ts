@@ -763,6 +763,7 @@ export const loadPluginCatalog = () => api.pluginCatalog();
 export const installPlugin = (id: string, source?: string) => api.installPlugin(id, source);
 export const addPluginSource = (url: string) => api.addPluginSource(url);
 export const deletePluginSource = (id: string) => api.deletePluginSource(id);
+export const refreshPluginSources = () => api.refreshPluginSources();
 export const updatePlugin = (id: string) => api.updatePlugin(id);
 export const savePluginConfig = (id: string, values: Record<string, unknown>) => api.savePluginConfig(id, values);
 export const addPluginProfile = (id: string, name: string) => api.addPluginProfile(id, name);

@@ -4,7 +4,7 @@ import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginsView } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
-import { addCustomPlugin, addPluginSource, deletePluginSource, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
+import { addCustomPlugin, addPluginSource, deletePluginSource, refreshPluginSources, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
 import { DialogShell } from "./DialogShell.tsx";
 import { PluginDetail } from "./PluginDetail.tsx";
 import "./plugins.css";
@@ -231,6 +231,7 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
   const [marketDetail, setMarketDetail] = useState<PluginCatalogView["plugins"][number] | null>(null);
+  const [checking, setChecking] = useState(false);
   const refresh = async () => { const [nextView, nextCatalog] = await Promise.all([loadPlugins(), loadPluginCatalog()]); setView(nextView); setCatalog(nextCatalog); };
   const run = (action: () => Promise<unknown>) => {
     void (async () => { try { setError(""); await action(); await refresh(); } catch (errorValue) { setError(errorValue instanceof Error ? errorValue.message : String(errorValue)); } })();
@@ -264,7 +265,8 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   const shown = (catalog?.plugins ?? []).filter(item => (sourceFilter === "all" || item.source === sourceFilter)
     && (category === "all" || pluginCategories(item.manifest).includes(category))
     && words.every(word => [item.id, pluginName(item.manifest, item.id), pluginDescription(item.manifest, item.id), String(hobExtension(item.manifest).publisher ?? ""), ...pluginCategories(item.manifest).map(categoryName)].some(value => value.toLowerCase().includes(word))));
-  const plus = <button className="hob-icon-btn" title={t("添加插件源")} aria-label={t("添加插件源")} onClick={() => setSourceDialog(true)}><Icon name="plus" size={18} /></button>;
+  const check = <button className="hob-icon-btn" title={t("检查更新")} aria-label={t("检查更新")} disabled={checking} onClick={() => { setChecking(true); run(() => refreshPluginSources().finally(() => setChecking(false))); }}><Icon name={checking ? "spin" : "retry"} size={18} className={checking ? "spin" : undefined} /></button>;
+  const plus = <span className="plugin-head-actions">{check}<button className="hob-icon-btn" title={t("添加插件源")} aria-label={t("添加插件源")} onClick={() => setSourceDialog(true)}><Icon name="plus" size={18} /></button></span>;
   const landing = s.pluginPage === "market" || (s.pluginPage === "installed" && !narrow) ? <>
     {!narrow && <div className="plugin-market-heading"><div><PluginHeading title={t("市场")} description={t("装上插件，助手就能用它的工具。装好后在插件页填配置。")} /></div>{plus}</div>}
     {sources.filter(source => source.error).map(source => <div className="badline" key={source.id}>{source.updatedAt ? t("「{name}」没有更新：{error}（上次更新 {time}）", { name: sourceName(source), error: source.error!, time: fmtWhen(source.updatedAt) }) : t("「{name}」读取失败：{error}", { name: sourceName(source), error: source.error! })}</div>)}

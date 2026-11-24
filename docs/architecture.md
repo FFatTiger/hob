@@ -451,7 +451,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `search`：联网搜索服务商顺序、开关和服务地址，密钥手动填写并存入 `secrets.json` 的 `search:<name>`。搜索与抓取工具对 Router 和 Worker 可用。
   - `image`：`{ source: "off" }` / `{ source: "openai", baseUrl, model, size? }`，写入走 `PUT /api/image`。
   - `work`：`maxJobs`（1–8）、`jobStallMinutes`、`routerStallMinutes`。
-- 全局网络代理：设置 → 通用里的 `general.proxy` 只接受 `http://` 或 `https://`，可带用户名和密码；`general.noProxy` 使用标准 `NO_PROXY` 的逗号分隔主机列表。Hob 进程通过 undici 的全局 dispatcher 代理模型调用、插件远程连接、OAuth、联网搜索、网页抓取、图像生成、向量服务、市场索引和价格表请求，命中 `noProxy` 的地址直连；清空代理后恢复默认 dispatcher。设置修改后立即切换，插件服务会按现有重载流程重启。
+- 全局网络代理：设置 → 通用里的 `general.proxy` 只接受 `http://` 或 `https://`，可带用户名和密码；`general.noProxy` 使用标准 `NO_PROXY` 的逗号分隔主机列表。Hob 进程通过 undici 的全局 dispatcher 代理模型调用、插件远程连接、OAuth、联网搜索、网页抓取、图像生成、向量服务、市场索引、版本检查和价格表请求，命中 `noProxy` 的地址直连；清空代理后恢复默认 dispatcher。设置修改后立即切换，插件服务会按现有重载流程重启。
 - Hob 启动的本机插件进程、助手和任务的 bash、定时检查脚本都会收到 `HTTP_PROXY`、`HTTPS_PROXY`、`ALL_PROXY`、`NO_PROXY` 及对应小写变量；代理未设置时保留 Hob 继承的环境，不额外写入这些变量。邮箱插件用同一组环境变量连接 IMAP 和 SMTP，按 `NO_PROXY` 分别判断，旧 profile 里的 `PROXY` 值忽略。 `HOB_HOME/rules.json`，`GET /api/rules` 读取，`PUT /api/rules` 整表保存并推送 `rules` 事件；`ask` 表示执行前确认，`allow` 表示一律照做。
 - `GET /api/settings` 返回整份（带 revision）；`PUT /api/settings {revision, patch}` 按节合并，revision 不是当前的 → 409，前端重新拉取并提示。
 - 改完即生效：时区影响提示词里的“现在时间”和定时调度，并发和卡住判定下一轮/下一次检查就用新值。
@@ -489,13 +489,13 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 
 - 登录：`POST /api/login {password}` → HttpOnly cookie（签名随机 token，存内存 + `config.json` 里的 secret）。其余 `/api/*` 都要 cookie。
 - REST（详见 `shared/types.ts` 的 `Api` 注释）：
-  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、在跑和最近的任务、定时、未答审批、设置（带 revision）
+  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、在跑和最近的任务、定时、未答审批、设置（带 revision）、版本检查结果（`update`，有结果时返回）
   - `GET /api/settings` / `PUT /api/settings {revision, patch}` → 读 / 按节合并写设置
   - `GET /api/providers` → 已配的服务商、引擎自带的服务商目录、整份设置，以及每个已配置服务商的模型和思考档（`models`，键是服务商 id；内置服务商列出引擎目录里的全部模型）；`POST /api/providers/test` 测试连接（内置服务商发起少量模型调用，兼容接口访问模型列表，失败不保存配置）
   - `PUT /api/models/thinking {ref, levels}` → 存一个模型的自定义思考档（`null` = 恢复默认），返回新 revision 的整份设置和这个模型现在的思考档、`PUT /api/providers/:id`（新建或改，Key 可选留空沿用）、`DELETE /api/providers/:id`、`POST /api/providers/discover {api, baseUrl, apiKey?, id?}`（从兼容接口拉模型列表）、`GET /api/providers/import`（本机能导入的服务商，不带 Key）、`POST /api/providers/import {ids}`（导入所选，同 id 覆盖）
   - `GET /api/models`（可用模型 + 名单里哪些不可用）
   - `GET /api/usage`、`PUT /api/usage/price {revision, model, price}`（消耗，见下文“消耗”）
-  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录）
+  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录、版本检查结果；`main.ts` 启动时和每 6 小时查一次 npm 上 `hob-bot` 的 `latest`，只放内存，变化时同时推 `update` SSE 事件）
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
   - `POST /api/assistants/:id/messages {text, quote?, files?}`、`POST /api/assistants/:id/stop`、`POST /api/assistants/:id/read`

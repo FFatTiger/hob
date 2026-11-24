@@ -152,7 +152,8 @@ function CardMenuField({ element, value, onChange, disabled }: { element: any; v
 
 function CardDateControl({ element, value, onChange, disabled }: { element: any; value: unknown; onChange: (value: unknown) => void; disabled: boolean }) {
   const text = value === undefined ? "" : String(value);
-  return <span className="hc-date"><span>{formatDateValue(text)}</span><Icon name="cal" size={15} /><input aria-label={cardLabel(element)} className="hc-date-native" type="date" disabled={disabled} value={text} onChange={(event) => onChange(event.target.value)} /></span>;
+  // 透明的原生日期框盖住整格：电脑上点文字区只会聚焦，要点它看不见的日历小图标才弹出，所以点哪里都直接打开选择器
+  return <span className="hc-date"><span>{formatDateValue(text)}</span><Icon name="cal" size={15} /><input aria-label={cardLabel(element)} className="hc-date-native" type="date" disabled={disabled} value={text} onClick={(event) => { try { event.currentTarget.showPicker(); } catch { /* 不支持或不在用户操作里：退回浏览器默认 */ } }} onChange={(event) => onChange(event.target.value)} /></span>;
 }
 
 function CardTableValue({ value }: { value: unknown }) {

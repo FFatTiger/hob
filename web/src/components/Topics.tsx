@@ -12,6 +12,7 @@ import { JOB_STATUS } from "./status-meta.tsx";
 import { ownerGroup, topicFace, topicGroups, topicPreview } from "../topics.ts";
 import { GroupCluster, groupPreview } from "./Groups.tsx";
 import { todoStamp } from "./status-meta.tsx";
+import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 
 /** 群头部第二行：几个成员。 */
 export function membersLine(g: GroupSummary): string {
@@ -93,6 +94,7 @@ export function GroupSidebar({ groupId }: { groupId?: string }) {
   const [showAllClosed, setShowAllClosed] = useState(false);
   if (!g) return null;
   const groups = topicGroups(s.groups, g.id);
+  const updateVersion = availableVersion(s.update);
 
   return (
     <aside className="side gside">
@@ -124,7 +126,10 @@ export function GroupSidebar({ groupId }: { groupId?: string }) {
         </button>
         <button className="frow" onClick={openSettings}>
           <Icon name="gear" size={18} />
-          <span className="sp">{t("设置")}</span>
+          <span className="sp">
+            {t("设置")}
+            {updateVersion ? <UpdateDot version={updateVersion} /> : null}
+          </span>
         </button>
       </div>
       {creating ? <NewTopicDialog group={g} onClose={() => setCreating(false)} /> : null}

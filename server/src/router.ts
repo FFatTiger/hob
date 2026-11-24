@@ -1871,6 +1871,7 @@ export class RouterManager {
 
   bootstrap(): Bootstrap {
     const jobCutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
+    const update = this.runtime.update.status();
     return {
       assistants: this.store.assistants().map((assistant) => this.summary(assistant)),
       jobs: this.store
@@ -1880,6 +1881,7 @@ export class RouterManager {
       approvals: this.store.approvals().filter((approval) => approval.status === "pending" && approval.source !== "job"),
       delegations: this.store.delegations(),
       settings: this.runtime.settings.get(),
+      ...(update ? { update } : {}),
     };
   }
 

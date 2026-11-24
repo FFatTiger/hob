@@ -55,6 +55,7 @@ const I = {
   // 卡片里「生成密码」按钮上的骰子（效果图 252/1）
   dice: '<rect x="4" y="4" width="16" height="16" rx="3.5"/><path d="M9 9h.01M15 15h.01M15 9h.01M9 15h.01M12 12h.01"/>',
   mail: '<path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h13A2.5 2.5 0 0 1 21 6.5v11a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 17.5z"/><path d="m4 6 8 6 8-6"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12.5" rx="2.5"/><path d="M12 16.5V20M8 20h8"/>',
   server: '<rect x="3" y="4" width="18" height="6" rx="2"/><rect x="3" y="14" width="18" height="6" rx="2"/><path d="M7 7h.01M7 17h.01"/>',
   textSelect: '<path d="M9 4h6M9 20h6M12 4v16"/><path d="M4 9v6M20 9v6"/>',
   copy: '<rect x="9" y="9" width="11" height="11" rx="2.5"/><path d="M15 6.5V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h1.5"/>',

@@ -216,7 +216,7 @@ export function filterMemoryExtensions(
       const handlers = new Map(next.handlers);
       const wrapped = (handlers.get("before_agent_start") ?? []).map((handler) => async (event: any, ctx: any) => {
         const base = typeof event?.systemPrompt === "string" ? event.systemPrompt : undefined;
-        const out = await handler(event, ctx);
+        const out = await handler(event, ctx) as { systemPrompt?: unknown; [key: string]: unknown } | undefined;
         if (!out || typeof out.systemPrompt !== "string") return out;
         if (base !== undefined && out.systemPrompt.startsWith(base)) {
           return { ...out, systemPrompt: base + stabilizeMemorySnapshot(out.systemPrompt.slice(base.length)) };

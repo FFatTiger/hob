@@ -142,7 +142,7 @@ export interface PluginBadgeStatus {
 }
 
 export function pluginServiceStatusOf(item: PluginView): PluginServiceStatus | undefined {
-  const priority: Record<PluginServiceStatus, number> = { error: 0, needs_relogin: 1, needs_login: 2, pending_config: 3, connecting: 4, connected: 5 };
+  const priority: Record<PluginServiceStatus, number> = { error: 0, needs_relogin: 1, needs_login: 2, pending_config: 3, connecting: 4, idle: 5, connected: 6 };
   return item.services.map((service) => service.status).sort((a, b) => priority[a] - priority[b])[0];
 }
 
@@ -183,6 +183,7 @@ export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null 
   const labels: Record<PluginServiceStatus, string> = {
     pending_config: t("待配置"),
     connecting: t("连接中"),
+    idle: t("已连接"),
     connected: t("已连接"),
     needs_login: t("需要登录"),
     needs_relogin: t("需要重新登录"),
@@ -194,9 +195,11 @@ export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null 
     needs_relogin: 2,
     error: 3,
     connecting: 4,
+    idle: 9,
     connected: 9,
   };
-  return { tone: status, label: labels[status], rank: ranks[status] };
+  // 闲置停掉是内部省内存的事，和连着一样显示
+  return { tone: status === "idle" ? "connected" : status, label: labels[status], rank: ranks[status] };
 }
 
 export function formatContextWindow(tokens: number): string {

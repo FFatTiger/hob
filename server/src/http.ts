@@ -28,7 +28,7 @@ import type {
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
-import { answerApproval, answerCard, archiveAssistant, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
+import { answerApproval, answerCard, archiveAssistant, retirePluginCards, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -491,7 +491,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     try {
       staged = runtime.plugins.store.prepareProviderDirectory(id, true);
       await runtime.providerPlugins.installPluginProviders(id, staged);
-      runtime.plugins.store.install(id, true, false, undefined, staged);
+      const before = runtime.plugins.store.list().find(plugin => plugin.id === id)?.version;
+      if (runtime.plugins.store.install(id, true, false, undefined, staged).version !== before) retirePluginCards(runtime, id);
       await runtime.plugins.reload(id);
       await runtime.providerPlugins.onPluginStateChanged(id);
       return c.json(pluginView(id));

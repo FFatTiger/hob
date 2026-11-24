@@ -55,6 +55,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "「{name}」已归档，并移出此群": "“{name}” was archived and removed from this group.",
   "正在搜索知识库": "Searching the knowledge base",
   "{plugin} 现在用不了": "{plugin} is unavailable right now",
+  "{plugin} 更新了，这张卡是更新前出的，已作废。还需要的话，请助手重新发起。": "{plugin} was updated. This card came from the earlier version and no longer works. Ask the assistant to start again if you still need it.",
   "有 {count} 个组件 Hob 显示不了": "Hob can't display {count} components",
   "这张卡正在处理中": "This card is already being processed",
   "正在思考…": "Thinking…",

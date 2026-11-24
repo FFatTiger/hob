@@ -44,7 +44,7 @@ export type {
   ValidatedCard,
 } from "./cards.ts";
 
-export type PluginServiceStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
+export type PluginServiceStatus = "pending_config" | "connecting" | "idle" | "connected" | "needs_login" | "needs_relogin" | "error";
 export type PluginCredentialRole = "list" | "secret" | "generate" | "save" | "delete";
 export interface PluginToolView {
   name: string;

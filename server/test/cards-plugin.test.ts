@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { CardRecord } from "../../shared/types.ts";
 import { answerCard } from "../src/actions.ts";
+import { createApp } from "../src/http.ts";
 import { pluginToolDisplayNames, pluginToolsForAssistant } from "../src/plugin-host.ts";
 import { call, makeHob, seedPluginSource, text } from "./helpers.ts";
 
@@ -104,6 +105,37 @@ describe("plugin cards", () => {
     } finally {
       vi.useRealTimers();
       vi.restoreAllMocks();
+      await hob.runtime.plugins.close();
+      hob.close();
+    }
+  });
+
+  it("retires open cards a plugin raised before it was updated", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    seedPluginSource(hob.home);
+    try {
+      const host = hob.runtime.plugins;
+      const source = join(hob.home, "cache/plugin-sources/official/github");
+      const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+      writeFileSync(join(source, "mcp.json"), JSON.stringify({ mcpServers: { demo: { command: process.execPath, args: [fixture] } } }));
+      host.store.install("github");
+      const card = (id: string, pluginId: string, status: CardRecord["status"] = "open"): CardRecord => ({ id, owner: { type: "plugin", pluginId, assistantId: "hob" }, plugin: { service: "demo", callbackTool: "save_callback", pluginName: pluginId === "github" ? "GitHub" : "邮箱" }, card: { header: { title: "保存凭据" }, body: { elements: [{ tag: "input", name: "secret", min_length: 10 }] } }, status, createdAt: new Date().toISOString() });
+      for (const record of [card("c-old", "github"), card("c-done", "github", "done"), card("c-other", "email")]) hob.runtime.store.saveCard(record);
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+      const update = () => app.request("/api/plugins/github/update", { method: "POST", body: "{}", headers: { "content-type": "application/json", cookie } });
+
+      expect((await update()).status).toBe(200);
+      expect(hob.runtime.store.card("c-old")?.status).toBe("open");
+
+      const manifest = JSON.parse(readFileSync(join(source, "plugin.json"), "utf8"));
+      writeFileSync(join(source, "plugin.json"), JSON.stringify({ ...manifest, version: "1.0.1" }));
+      expect((await update()).status).toBe(200);
+      expect(hob.runtime.store.card("c-old")).toMatchObject({ status: "done", feedback: { unavailable: "GitHub 更新了，这张卡是更新前出的，已作废。还需要的话，请助手重新发起。" } });
+      expect(hob.runtime.store.card("c-done")?.feedback).toBeUndefined();
+      expect(hob.runtime.store.card("c-other")?.status).toBe("open");
+    } finally {
       await hob.runtime.plugins.close();
       hob.close();
     }

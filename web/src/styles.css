@@ -2203,17 +2203,17 @@ svg.i {
   align-items: center;
   gap: 10px;
 }
+/* 推荐提问：接在最后一条回复气泡下面，左对齐，放不下就换行 */
 .followup-strip {
+  align-self: flex-start;
   display: flex;
-  align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
-  min-width: 0;
-  overflow-x: auto;
-  padding: 2px 4px 4px 10px;
-  scrollbar-width: none;
+  max-width: 548px;
+  margin-top: 8px;
   animation: followup-in 180ms ease both;
 }
-.followup-strip::-webkit-scrollbar { display: none; }
+.followup-strip.in-group { margin-left: 40px; }
 .followup-chip {
   flex: none;
   max-width: 280px;

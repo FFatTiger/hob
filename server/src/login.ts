@@ -176,8 +176,8 @@ function entryProviders(runtime: HobRuntime, assistantId: string): LoginEntryApp
     .flatMap(({ pluginId, providerName }) => seen.has(pluginId) ? [] : (seen.add(pluginId), [{ provider: pluginId, providerName }]));
 }
 
-export async function prepareLogin(runtime: HobRuntime, assistantId: string, site: string, account?: string): Promise<LoginPreparation> {
-  if (!runtime.plugins.hasCredentialProvider(assistantId)) return { kind: "self", title: selfTitle(site) };
+export async function prepareLogin(runtime: HobRuntime, assistantId: string, site: string, account?: string, self = false): Promise<LoginPreparation> {
+  if (self || !runtime.plugins.hasCredentialProvider(assistantId)) return { kind: "self", title: selfTitle(site) };
   const info = await inspect(runtime, assistantId);
   // 验证码这类只能用户本人填的页面：存没存账号都请用户自己登录
   if (info.otpIndex !== undefined) return { kind: "self", title: selfTitle(site) };

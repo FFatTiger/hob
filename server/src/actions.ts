@@ -182,6 +182,16 @@ function pluginCard(value: unknown): { card?: CardRecord["card"]; unsupported?: 
   return { card, unsupported: validation.value.unsupportedCount };
 }
 
+/** 插件更新后，它更新前出的、还没处理的卡作废：卡片内容是出卡时旧版定下的，字段和回调可能已经变了。 */
+export function retirePluginCards(runtime: HobRuntime, pluginId: string): void {
+  for (const card of runtime.store.cards()) {
+    if (card.status !== "open" || card.processing || card.owner.type !== "plugin" || card.owner.pluginId !== pluginId) continue;
+    const next: CardRecord = { ...card, status: "done", feedback: { unavailable: t("{plugin} 更新了，这张卡是更新前出的，已作废。还需要的话，请助手重新发起。", { plugin: card.plugin?.pluginName ?? pluginId }) }, updatedAt: new Date().toISOString() };
+    runtime.store.saveCard(next);
+    runtime.bus.emit({ type: "card", card: next });
+  }
+}
+
 const pluginCardCalls = new WeakMap<HobRuntime, Set<string>>();
 
 async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: CardActionRequest): Promise<ActionResult> {
@@ -191,7 +201,7 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
   const installed = runtime.plugins.store.list().find((item) => item.id === pluginId);
   const service = runtime.plugins.states(pluginId).find((item) => item.name === plugin.service);
   const unavailable = t("{plugin} 现在用不了", { plugin: plugin.pluginName });
-  if (!installed?.enabled || !service || service.status !== "connected") {
+  if (!installed?.enabled || !service || !["connected", "idle", "connecting"].includes(service.status)) {
     const next = { ...record, feedback: { unavailable }, updatedAt: new Date().toISOString() };
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });

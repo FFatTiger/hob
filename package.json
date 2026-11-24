@@ -41,6 +41,8 @@
     "@juicesharp/rpiv-config": "2.15.0",
     "@juicesharp/rpiv-web-tools": "2.15.0",
     "@novnc/novnc": "^1.7.0",
+    "@simplewebauthn/browser": "^13.3.0",
+    "@simplewebauthn/server": "^13.3.3",
     "croner": "^9.0.0",
     "github-markdown-css": "^5.9.0",
     "hono": "^4.6.0",

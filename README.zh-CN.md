@@ -79,6 +79,8 @@ docker compose up -d
 
 密码只在第一次启动时需要，之后以哈希的形式存在数据目录里，改密码在 **设置 → 通用**。
 
+要使用通行密钥登录，请打开 `http://localhost:30148`，进入 **设置 → 通用 → 通行密钥**，输入当前密码添加密钥。下次可以在登录页选择 **使用通行密钥登录**。通过 HTTPS 部署时，把 `HOB_PASSKEY_ORIGIN` 设为浏览器访问的完整来源，包括非默认端口。通行密钥绑定主机名。本机请使用 `localhost`，并保留密码以便恢复访问和管理通行密钥。
+
 ## 部署
 
 Hob 是单个 Node 进程，数据全在 `HOB_HOME`（默认 `~/.hob`）。
@@ -99,6 +101,7 @@ Hob 是单个 Node 进程，数据全在 `HOB_HOME`（默认 `~/.hob`）。
 | `HOB_PORT` | `30148` | 端口 |
 | `HOB_HOST` | `127.0.0.1` | 监听地址 |
 | `HOB_PASSWORD` | — | 登录密码，只在第一次启动时需要 |
+| `HOB_PASSKEY_ORIGIN` | `http://localhost:<HOB_PORT>` | 浏览器使用的通行密钥来源。通过反向代理部署时填实际访问的 HTTPS 域名。 |
 | `HOB_DESKTOP_URL`、`HOB_DESKTOP_TOKEN` 或 `HOB_DESKTOP_TOKEN_FILE` | — | 由部署指定云桌面，地址和令牌都有时覆盖界面里的设置 |
 | `HOB_LOCAL_PI_DIR`、`HOB_LOCAL_LORE_HOME` | `~/.pi/agent`、`~/.lore` | 在设置里「从本机导入」时读取的目录 |
 

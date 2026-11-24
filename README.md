@@ -79,6 +79,8 @@ Open <http://127.0.0.1:30148>, sign in with that password, then:
 
 The password is only needed on the first start; it is stored as a hash in the data directory. Change it under **Settings → General**.
 
+To sign in with a passkey, open `http://localhost:30148` and go to **Settings → General → Passkeys**. Enter your current password to add a passkey, then choose **Sign in with a passkey** on the sign-in screen. For an HTTPS deployment, set `HOB_PASSKEY_ORIGIN` to the exact browser origin, including any non-default port. Passkeys are tied to a hostname. Use `localhost` for local passkeys, and keep your password for recovery and passkey management.
+
 ## Deploy
 
 Hob is a single Node process, and all of its data lives in `HOB_HOME` (`~/.hob` by default).
@@ -99,6 +101,7 @@ Startup options are environment variables (`host`, `port` and an initial `passwo
 | `HOB_PORT` | `30148` | HTTP port |
 | `HOB_HOST` | `127.0.0.1` | Listen address |
 | `HOB_PASSWORD` | — | Sign-in password, needed only on the first start |
+| `HOB_PASSKEY_ORIGIN` | `http://localhost:<HOB_PORT>` | Exact browser origin for passkeys. Use an HTTPS hostname for a reverse proxy. |
 | `HOB_DESKTOP_URL`, `HOB_DESKTOP_TOKEN` or `HOB_DESKTOP_TOKEN_FILE` | — | Cloud desktop set by the deployment; with both a URL and a token it overrides the UI setting |
 | `HOB_LOCAL_PI_DIR`, `HOB_LOCAL_LORE_HOME` | `~/.pi/agent`, `~/.lore` | Directories read when you import from this machine in settings |
 

@@ -7,6 +7,7 @@ services:
     restart: unless-stopped
     environment:
       HOB_PASSWORD: ${HOB_PASSWORD:-}
+      HOB_PASSKEY_ORIGIN: ${HOB_PASSKEY_ORIGIN:-}
       HOB_DESKTOP_URL: http://desktop:6080
       HOB_DESKTOP_TOKEN_FILE: /shared/desktop-token
       TZ: ${TZ:-UTC}

@@ -1,3 +1,7 @@
+import type {
+  AuthenticationResponseJSON, PublicKeyCredentialCreationOptionsJSON,
+  PublicKeyCredentialRequestOptionsJSON, RegistrationResponseJSON,
+} from "@simplewebauthn/browser";
 // 真实客户端：REST 路由见 docs/architecture.md，事件契约见 shared/types.ts。
 import { t } from "../../shared/i18n.ts";
 import type {
@@ -107,6 +111,13 @@ export interface EventHandlers {
   onDown(reason: string): void;
 }
 
+export interface PasskeyView {
+  id: string;
+  name: string;
+  createdAt: string;
+  rpId: string;
+}
+
 export interface HobApi {
   stars(): Promise<{ stars: StarredMessage[] }>;
   addStar(body: StarRequest): Promise<{ star: StarredMessage }>;
@@ -126,6 +137,13 @@ export interface HobApi {
   uploadKnowledge(collection: string, files: File[]): Promise<{ entries: KnowledgeEntry[] }>;
   me(): Promise<void>;
   login(password: string): Promise<void>;
+  passkeyStatus(): Promise<{ enabled: boolean; ready: boolean }>;
+  passkeys(): Promise<PasskeyView[]>;
+  passkeyRegistrationOptions(password: string, name: string): Promise<PublicKeyCredentialCreationOptionsJSON>;
+  registerPasskey(challenge: string, response: RegistrationResponseJSON): Promise<PasskeyView>;
+  removePasskey(id: string, password: string): Promise<void>;
+  passkeyLoginOptions(): Promise<PublicKeyCredentialRequestOptionsJSON>;
+  passkeyLogin(challenge: string, response: AuthenticationResponseJSON): Promise<void>;
   logout(): Promise<void>;
   bootstrap(): Promise<Bootstrap>;
   settings(): Promise<SettingsFile>;
@@ -294,6 +312,13 @@ export const realApi: HobApi = {
   },
   me: () => req<void>("/api/me"),
   login: (password) => req<void>("/api/login", json({ password })),
+  passkeyStatus: () => req("/api/passkeys/status", { method: "POST" }),
+  passkeys: () => req("/api/passkeys"),
+  passkeyRegistrationOptions: (password, name) => req("/api/passkeys/register/options", json({ password, name })),
+  registerPasskey: (challenge, response) => req("/api/passkeys/register/verify", json({ challenge, response })),
+  removePasskey: (id, password) => req("/api/passkeys/remove", json({ id, password })),
+  passkeyLoginOptions: () => req("/api/passkeys/login/options", { method: "POST" }),
+  passkeyLogin: (challenge, response) => req("/api/passkeys/login/verify", json({ challenge, response })),
   logout: () => req<void>("/api/logout", { method: "POST" }),
   bootstrap: () => req<Bootstrap>("/api/bootstrap"),
   settings: () => req<SettingsFile>("/api/settings"),

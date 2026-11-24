@@ -38,6 +38,7 @@ import type { SearchProviderName, SearchProviderSetting, SearchView } from "../.
 import type { SkillImportSource, SkillImportView, SkillsView, SkillView } from "../../../shared/skills.ts";
 import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
+import { PasskeySettings } from "./PasskeySettings.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
 import { t } from "../../../shared/i18n.ts";
@@ -565,6 +566,9 @@ function GeneralSection() {
           <PasswordSection onDone={setNotice} />
           {notice ? <div className="note">{notice}</div> : null}
         </div>
+      </Group>
+      <Group>
+        <PasskeySettings />
       </Group>
     </>
   );

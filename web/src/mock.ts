@@ -2151,6 +2151,13 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     uploadKnowledge: async (collection, files) => { const added = files.map((file, i): KnowledgeEntry => ({ id: `k-${Date.now()}-${i}`, origin: "upload", name: file.name, kind: "other", path: URL.createObjectURL(file), hash: `mock-${Date.now()}-${i}`, size: file.size, createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(), collections: [collection] })); entries.unshift(...added); emit({ type: "knowledge" }); return { entries: clone(added) }; },
     me: async () => {},
     login: async () => {},
+    passkeyStatus: async () => ({ enabled: false, ready: false }),
+    passkeys: async () => [],
+    passkeyRegistrationOptions: async () => { throw new ApiError(400, "预览模式不支持通行密钥。"); },
+    registerPasskey: async () => { throw new ApiError(400, "预览模式不支持通行密钥。"); },
+    removePasskey: async () => {},
+    passkeyLoginOptions: async () => { throw new ApiError(400, "预览模式不支持通行密钥。"); },
+    passkeyLogin: async () => {},
     logout: async () => {},
     bootstrap: async () => ({
       assistants: clone(db.assistants),

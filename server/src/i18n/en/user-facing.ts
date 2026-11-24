@@ -1,6 +1,15 @@
 import type { TranslationEntry } from "../../../../shared/i18n-en.ts";
 /** English translations for server text shown to users. */
 export const userFacingEn: Record<string, TranslationEntry> = {
+  "请通过配置的 HTTPS 地址或本机 localhost 使用通行密钥。": "Open Hob using the configured HTTPS address or localhost to use passkeys.",
+  "请输入 1 至 80 个字符的通行密钥名称。": "Enter a passkey name between 1 and 80 characters.",
+  "最多可添加 20 个通行密钥。": "You can add up to 20 passkeys.",
+  "通行密钥验证已失效，请重试。": "This passkey request has expired or is invalid. Try again.",
+  "无法注册通行密钥。": "Could not register the passkey.",
+  "通行密钥已存在或已达到数量上限。": "This passkey already exists or the passkey limit has been reached.",
+  "通行密钥不存在。": "Passkey not found.",
+  "该地址还没有已注册的通行密钥。": "No passkeys are registered for this address.",
+  "通行密钥验证失败。": "Passkey verification failed.",
   "这个源已经添加过了": "This source has already been added.",
   "这台机器没有装 git，可以改填索引 JSON 的地址": "Git is not installed on this machine. You can use an index JSON URL instead.",
   "已经装了来自「{source}」的 {name}，先卸载它再装这个": "{name} from “{source}” is already installed. Uninstall it before installing this one.",

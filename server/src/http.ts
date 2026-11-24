@@ -3,7 +3,7 @@ import { userError } from "./user-facing.ts";
 import { setLocale } from "../../shared/i18n.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { getCookie, setCookie } from "hono/cookie";
 import { streamSSE } from "hono/streaming";
 import { serveStatic } from "@hono/node-server/serve-static";
@@ -54,6 +54,7 @@ import { deleteSkill } from "./delete-skill.ts";
 import type { SkillImportSource } from "../../shared/skills.ts";
 import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
+import { mountPasskeys, publicPasskeyPaths } from "./passkeys.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -83,7 +84,7 @@ export function validCookie(config: HobRuntime["config"], value: string | undefi
   }
 }
 
-export function createApp(runtime: HobRuntime, options: { webDir?: string; home: string }): Hono {
+export function createApp(runtime: HobRuntime, options: { webDir?: string; home: string; port?: number }): Hono {
   const { store, bus, router, jobs, routines, config } = runtime;  const app = new Hono();
   app.use("*", async (c, next) => {
     await next();
@@ -98,9 +99,19 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   const workDirs = () => store.jobs().flatMap((job) => (job.cwd ? [job.cwd] : []));
 
   app.use("/api/*", async (c, next) => {
-    if (c.req.path === "/api/login") return next();
+    if (c.req.path === "/api/login" || (c.req.method === "POST" && publicPasskeyPaths.has(c.req.path))) return next();
     if (!validCookie(config, getCookie(c, COOKIE))) return c.json({ error: "未登录" }, 401);
     return next();
+  });
+
+  const signIn = (c: Context, secure: boolean) => {
+    setCookie(c, COOKIE, issueCookie(runtime.config), {
+      httpOnly: true, sameSite: "Lax", path: "/", maxAge: THIRTY_DAYS, secure,
+    });
+  };
+  mountPasskeys(app, {
+    home: options.home, port: options.port ?? config.port,
+    config: () => runtime.config, sessionCookie: COOKIE, signIn,
   });
 
   app.post("/api/login", async (c) => {
@@ -108,12 +119,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (!verifyPassword(runtime.config.passwordHash, body.password ?? "")) {
       return c.json({ error: "密码不正确" }, 401);
     }
-    setCookie(c, COOKIE, issueCookie(config), {
-      httpOnly: true,
-      sameSite: "Lax",
-      path: "/",
-      maxAge: THIRTY_DAYS,
-    });
+    signIn(c, false);
     return c.json({ ok: true });
   });
 

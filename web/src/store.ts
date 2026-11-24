@@ -1,5 +1,6 @@
 // 一个小的外部 store：bootstrap + 当前对话 + jobs/approvals/drafts 按 id 存，SSE 事件合并进来。
 import "./i18n/en/index.ts";
+import { startAuthentication, startRegistration } from "@simplewebauthn/browser";
 import { parseRoute, type SettingsSection } from "./route.ts";
 import { useRef, useSyncExternalStore } from "react";
 import { currentLocale, localeFromBrowser, setLocale as setSharedLocale, t, type Locale } from "../../shared/i18n.ts";
@@ -1018,15 +1019,37 @@ export async function start() {
   await loadBootstrap();
 }
 
-export async function login(password: string) {
+export const passkeyStatus = () => api.passkeyStatus();
+export const loadPasskeys = () => api.passkeys();
+export const removePasskey = (id: string, password: string) => api.removePasskey(id, password);
+
+export async function registerPasskey(password: string, name: string) {
+  const optionsJSON = await api.passkeyRegistrationOptions(password, name);
+  const response = await startRegistration({ optionsJSON });
+  return api.registerPasskey(optionsJSON.challenge, response);
+}
+
+export function login(password: string) {
+  return signIn(() => api.login(password), true);
+}
+
+export function loginWithPasskey() {
+  return signIn(async () => {
+    const optionsJSON = await api.passkeyLoginOptions();
+    const response = await startAuthentication({ optionsJSON });
+    await api.passkeyLogin(optionsJSON.challenge, response);
+  });
+}
+
+async function signIn(authenticate: () => Promise<void>, withPassword = false) {
   if (state.loggingIn) return;
   set({ loggingIn: true, error: null });
   try {
-    await api.login(password);
+    await authenticate();
   } catch (e) {
     set({
       loggingIn: false,
-      error: e instanceof ApiError && e.status === 401 ? t("密码不正确") : t("登录失败：{error}", { error: errText(e) }),
+      error: withPassword && e instanceof ApiError && e.status === 401 ? t("密码不正确") : t("登录失败：{error}", { error: errText(e) }),
     });
     return;
   }

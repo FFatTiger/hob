@@ -2,6 +2,12 @@ import type { TranslationEntry } from "../../../../shared/i18n-en.ts";
 
 /** English translations for settings and management pages. */
 export const settingsEn: Record<string, TranslationEntry> = {
+  "通行密钥": "Passkeys",
+  "通行密钥名称": "Passkey name",
+  "添加通行密钥": "Add passkey",
+  "使用通行密钥登录": "Sign in with a passkey",
+  "添加或移除通行密钥时，请输入当前登录密码。": "Enter your current password to add or remove a passkey.",
+  "添加通行密钥需要支持 WebAuthn 的浏览器，以及配置的 HTTPS 地址或本机 localhost。": "Adding a passkey requires WebAuthn and the configured HTTPS address or localhost.",
   "上下文 {size}": "Context {size}",
   "能看图": "Image input", "会推理": "Reasoning",
   "{n} 档思考": { one: "{n} thinking level", other: "{n} thinking levels" },

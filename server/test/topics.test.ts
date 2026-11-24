@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { describe, expect, it, vi } from "vitest";
 import type { Approval, Assistant, Group, GroupItem, GroupSummary, Job } from "../../shared/types.ts";
 import { createApp } from "../src/http.ts";
@@ -387,7 +388,47 @@ describe("close_topic：结论", () => {
       const topic = hob.runtime.groups.createTopic(group.id, "直接结束", "user");
       const result = await toolOf(hob, "close_topic", topic.id).execute("c", {});
       expect(isError(result)).toBe(false);
+      expect(result).toMatchObject({ terminate: true });
       expect(hob.runtime.store.group(topic.id)?.closedAt).toBeTruthy();
+    } finally { hob.close(); }
+  });
+
+  it("在综合里关闭指定话题时不终止当前回合", async () => {
+    const { hob, group } = setup();
+    try {
+      const topic = hob.runtime.groups.createTopic(group.id, "待关闭话题", "user");
+      const result = await toolOf(hob, "close_topic", group.id).execute("c", { topic: topic.id, note: "好了" });
+      expect(isError(result)).toBe(false);
+      expect((result as { terminate?: boolean }).terminate).not.toBe(true);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeTruthy();
+    } finally { hob.close(); }
+  });
+
+  it("话题内发完完整消息并调用 close_topic 后直接结束本轮并释放 busy 与 activity", async () => {
+    const { hob, group } = setup();
+    try {
+      const topic = hob.runtime.groups.createTopic(group.id, "收尾话题", "user");
+      hob.faux.setResponses([
+        fauxAssistantMessage(
+          [
+            { type: "text", text: "问题已经处理完，我现在关闭这个话题。" },
+            fauxToolCall("close_topic", { note: "已完成" }),
+          ],
+          { stopReason: "toolUse" },
+        ),
+        // 如果没有 terminate，引擎会再请求一轮模型并把这条发出来
+        text("不应该再有第二轮回复"),
+      ]);
+      await hob.runtime.groups.send(topic.id, { text: "请收尾并关闭话题" });
+      await hob.runtime.router.waitIdle("hob", 10_000, topic.id);
+
+      const summary = hob.runtime.groups.list().find((item) => item.id === topic.id)!;
+      expect(summary.closedAt).toBeTruthy();
+      expect(summary.closeNote).toBe("已完成");
+      expect(summary.busy).toEqual([]);
+      expect(summary.activity).toBeUndefined();
+      const assistantItems = hob.runtime.store.groupItems(topic.id).filter((item) => item.kind === "assistant");
+      expect(assistantItems.map((item) => item.text)).toEqual(["问题已经处理完，我现在关闭这个话题。"]);
     } finally { hob.close(); }
   });
 });

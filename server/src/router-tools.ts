@@ -1000,7 +1000,9 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         if (!topic || topic.parentId !== parentId) return fail(`「${targetId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
         try {
           const closed = runtime.groups.closeByOwner(topic.id, params.note);
-          return ok(`话题「${closed.name}」已关闭。`);
+          const message = `话题「${closed.name}」已关闭。`;
+          // 在话题内关闭当前话题时结束本轮，避免话题已关还继续发起下一轮模型请求。
+          return targetId === gid ? endTurn(message) : ok(message);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }

@@ -221,7 +221,7 @@ export function PluginDetail({ id }: { id: string }) {
       />
     ) : null}
 
-    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected")) ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
+    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
       {statusBlock}
       {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
       {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}

@@ -1006,6 +1006,15 @@ svg.i {
 }
 .frow .sp {
   flex: 1;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.update-arrow {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  flex: none;
 }
 
 /* avatars */
@@ -3006,6 +3015,14 @@ html:lang(en) .screen .v {
   place-items: center;
   color: var(--text2);
 }
+.me.has-update {
+  width: auto;
+  padding: 0 9px;
+  border-radius: 16px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
 .mpins {
   padding: 8px 10px 6px;
 }
@@ -4271,6 +4288,14 @@ button:not(:disabled):active {
 .setitem svg {
   color: var(--text3);
 }
+.setitem-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.setitem .update-arrow svg {
+  color: var(--accent);
+}
 /* 手机设置列表：一张圆角卡片，行间细线从文字左边开始，和系统设置一个画法 */
 .setpage.narrow .setbody {
   padding: 16px 16px 40px;
@@ -4528,6 +4553,17 @@ button:not(:disabled):active {
 .kvrow .k {
   flex: none;
   color: var(--text2);
+}
+.kvrow .k.update-available {
+  color: var(--accent);
+}
+.kvrow .k.update-status {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.kvrow .k.update-error {
+  color: var(--danger, #d93f2f);
 }
 .kvrow .v {
   min-width: 0;

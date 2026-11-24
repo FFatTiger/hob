@@ -2227,13 +2227,13 @@ function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNam
           </div>
         </Group>
       ) : (
-        <div className="group-card madd-card">
-          <label className="mfind">
+        <div className="madd-list">
+          <label className="mfind group-card">
             <Icon name="search" size={15} />
             <input value={query} placeholder={t("搜索名称或引用，如 claude")} onChange={(e) => setQuery(e.target.value)} />
           </label>
           {groups.length === 0 ? (
-            <Empty>{t("没有匹配的模型。")} </Empty>
+            <div className="group-card"><Empty>{t("没有匹配的模型。")} </Empty></div>
           ) : (
             groups.map((group) => {
               const open = searching || openGroups.includes(group.provider);
@@ -2259,7 +2259,7 @@ function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNam
                           title={locked ? t("默认模型不能在这里移除") : on ? t("从可用模型中移除") : t("加入可用模型")}
                           onClick={() => toggle(model)}
                         >
-                          <BrandIcon size={28} brand={modelBrand(model.id, model.name, model.provider, providerName(model.provider))} />
+                          <BrandIcon size={22} brand={modelBrand(model.id, model.name, model.provider, providerName(model.provider))} />
                           <span className="mname">{model.name}</span>
                           <CapIcons info={model} />
                           <Icon name={on ? "check" : "plus"} size={16} className="mtog" />

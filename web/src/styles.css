@@ -4903,13 +4903,21 @@ a.lbl-aside {
   color: var(--text2);
 }
 .model-use-inline { padding: 0 16px 16px 32px; }
-/* 设置 → 添加模型：服务商、模型、用途说明三层左边各对齐一档，行间不画线 */
-.madd-card { padding: 0 var(--sidebar-inset) 4px; }
-.madd-card .mgroup-disclosure > .disclosure-row { padding: 0; background: transparent; }
-.madd-card .provider-model-label { padding: 10px 0; }
-.madd-card .madd { padding: 9px 0 9px 14px; }
-.madd-card .model-use-inline { padding: 0 0 6px 52px; }
-.madd-card .model-use-disclosure > .disclosure-row { min-height: 30px; padding: 0; background: transparent; color: var(--text2); font-size: 13px; }
+/* 设置 → 添加模型：每个服务商一块灰底，服务商是这块的标题行，模型行在块里。
+   图标在同一条竖线上，服务商名、模型名、用途说明在另一条竖线上。 */
+.madd-list { display: flex; flex-direction: column; gap: 8px; }
+.madd-list > .mfind { padding: 0 var(--sidebar-inset); }
+.madd-list .mgroup-disclosure { border-radius: 10px; background: var(--field); }
+.madd-list .mgroup-disclosure > .disclosure-row { min-height: 52px; padding: 0 var(--sidebar-inset); }
+.madd-list .mgroup-disclosure > .disclosure-row .n { font-weight: 500; }
+.madd-list .mgroup-disclosure.open > .disclosure-row { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.madd-list .mgroup-disclosure > .expand > div { padding: 0 var(--sidebar-inset); }
+.madd-list .mgroup-disclosure.open { padding-bottom: 6px; }
+.madd-list .provider-model-label { padding: 0; }
+.madd-list .madd { padding: 8px 0; font-size: 14px; }
+.madd-list .madd .brand-icon { margin: 0 3px; }
+.madd-list .model-use-inline { padding: 0 0 6px 38px; }
+.madd-list .model-use-disclosure > .disclosure-row { min-height: 30px; padding: 0; background: transparent; color: var(--text2); font-size: 13px; }
 .model-use-warning { color: var(--accent); font-size: 12px; margin-left: 8px; }
 @media (max-width: 600px) {
   .model-use-inline { padding-left: 16px; }
@@ -5253,7 +5261,7 @@ button.screen,
 .disclosure.open > .disclosure-row .disclosure-arrow { transform: rotate(180deg); }
 @media (hover: hover) {
   .disclosure-row:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); }
-  .madd-card .disclosure-row:hover { background: transparent; }
+  .madd-list .model-use-disclosure > .disclosure-row:hover { background: transparent; }
 }
 .disclosure-row:disabled { cursor: default; opacity: .65; }
 

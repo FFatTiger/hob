@@ -185,6 +185,24 @@ export interface PluginProviderModelView {
   maxTokens: number;
   cost?: { input: number; output: number };
   free?: boolean;
+  /** 用户在插件页改过这个模型的参数（可以恢复插件给的） */
+  overridden?: boolean;
+  /** 思考档（插件页编辑思考档用，和设置 → 服务商里的一样） */
+  thinking?: ModelThinkingView;
+}
+
+/** 供应商插件里一个模型手动改的参数；没写的项用插件给的。 */
+export interface PluginModelOverride {
+  input?: ("text" | "image")[];
+  reasoning?: boolean;
+  contextWindow?: number;
+  maxTokens?: number;
+}
+
+/** PUT /api/plugins/:id/providers/:providerId/model：改一个模型的参数，override 为 null 恢复插件给的。 */
+export interface PluginModelOverridePatch {
+  modelId: string;
+  override: PluginModelOverride | null;
 }
 
 /** 供应商插件额度窗口（来自 Magpie 扩展 auth.usage）。 */

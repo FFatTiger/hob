@@ -33,20 +33,20 @@ import type {
   SettingsFile,
   SettingsPatch,
   ThinkingLevel,
-  ThinkingLevelMapSetting,
 } from "../../../shared/types.ts";
 import type { SearchProviderName, SearchProviderSetting, SearchView } from "../../../shared/search.ts";
 import type { Palette } from "../palette.ts";
 import type { SkillImportSource, SkillImportView, SkillsView, SkillView } from "../../../shared/skills.ts";
 import { Markdown } from "./Markdown.tsx";
 import { Disclosure } from "./Disclosure.tsx";
+import { ModelParamsEditor, ThinkingLevels } from "./ModelParams.tsx";
 const DesktopScreen = lazy(() => import("./DesktopView.tsx").then((module) => ({ default: module.DesktopView })) );
 import { SCORE_STAGES, contextText, guessModelScores, scoreLabel, scoreSummary } from "../../../shared/model-note.ts";
 import { currentLocale, t } from "../../../shared/i18n.ts";
 import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
-import { filterModels, fitThinking, groupByProvider, THINKING_ORDER, thinkingLevels } from "../model-list.ts";
+import { filterModels, fitThinking, groupByProvider, thinkingLevels } from "../model-list.ts";
 import { currentSubscription, pushSupported } from "../push.ts";
 import { fmtWhen } from "../util.ts";
 import { skillOriginText } from "../skill-origin.ts";
@@ -96,7 +96,6 @@ import {
   saveMemoryProvider,
   saveProvider,
   saveSettings,
-  saveThinking,
   sendTestPush,
   setLocale,
   setPalette,
@@ -757,139 +756,6 @@ function ThinkingPicker({
   );
 }
 
-/**
- * 一个模型的思考档：一行一个档（中文档名 + 发给服务商的字符 + 删除），底部添加档和恢复默认。
- * 存进 Hob 设置里这个模型的自定义档位，存完立即生效（下一轮对话 / 下一个任务就用新的字符）。
- */
-function ThinkingLevels({
-  modelRef,
-  info,
-  disabled,
-  onSaved,
-}: {
-  modelRef: string;
-  info: ModelThinkingView;
-  disabled: boolean;
-  onSaved: (thinking: ModelThinkingView, settings: SettingsFile) => void;
-}) {
-  type Row = { level: ThinkingLevel; text: string };
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState<Row[] | null>(null);
-  const [pick, setPick] = useState<ThinkingLevel | "">("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [saved, setSaved] = useState(false);
-  useEffect(() => {
-    if (!saved) return;
-    const timer = setTimeout(() => setSaved(false), 3000);
-    return () => clearTimeout(timer);
-  }, [saved]);
-  const rows = draft ?? info.levels;
-  const rest = THINKING_ORDER.filter((level) => !rows.some((row) => row.level === level));
-  const dirty = draft !== null;
-
-  const edit = (next: Row[]) => {
-    setDraft(next.slice().sort((a, b) => THINKING_ORDER.indexOf(a.level) - THINKING_ORDER.indexOf(b.level)));
-    setError(null);
-    setSaved(false);
-  };
-
-  const commit = async (levels: ThinkingLevelMapSetting | null) => {
-    setBusy(true);
-    setError(null);
-    const result = await saveThinking(modelRef, levels);
-    setBusy(false);
-    if (!result.ok) {
-      setDraft(null);
-      setError(result.error);
-      return;
-    }
-    setDraft(null);
-    setSaved(true);
-    onSaved(result.thinking, result.settings);
-  };
-
-  // 删掉的档写成 null：引擎按 null 认为这个模型没有这一档；没填的档写空串，交给服务商协议自己翻译
-  const save = (next: Row[] = rows) => {
-    const levels: ThinkingLevelMapSetting = {};
-    for (const level of THINKING_ORDER) {
-      const row = next.find((item) => item.level === level);
-      levels[level] = row ? row.text.trim() : null;
-    }
-    void commit(levels);
-  };
-
-  return (
-    <Disclosure
-      className="think-levels"
-      label={t("思考档")}
-      count={t("{n} 档{custom}", { n: rows.length, custom: info.custom ? t(" · 有自定义") : t(" · 默认") })}
-      open={open}
-      onToggle={() => setOpen((value) => !value)}
-      disabled={busy}
-    >
-      <div className="thinkrows">
-            {rows.map((row) => (
-              <div className="thinkrow" key={row.level}>
-                <span className="tname">{thinkingText(row.level)}</span>
-                <input
-                  className="ttext"
-                  value={row.text}
-                  placeholder={t("默认")}
-                  title={t("留空则按服务商协议的默认值发送")}
-                  onChange={(e) =>
-                    edit(
-                      rows.map((item) => (item.level === row.level ? { ...item, text: e.target.value } : item)),
-                    )
-                  }
-                  onBlur={() => { if (dirty) save(); }}
-                  onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                  disabled={busy || disabled}
-                />
-                {row.level === "off" ? (
-                  <span className="rremove still" title={t("「关闭」这一档不能删除")} aria-hidden />
-                ) : (
-                  <button
-                    className="rremove"
-                    title={t("删除「{level}」", { level: thinkingText(row.level) })}
-                    onClick={() => save(rows.filter((item) => item.level !== row.level))}
-                    disabled={busy || disabled}
-                  >
-                    <Icon name="close" size={13} />
-                  </button>
-                )}
-              </div>
-            ))}
-          </div>
-          <div className="ctl" style={{ gap: 8, flexWrap: "wrap", marginTop: 10 }}>
-            <Select value={pick} onChange={(value) => setPick(value as ThinkingLevel | "")} disabled={busy || disabled || !rest.length} aria-label={t("添加思考档")} options={[{ value: "", label: rest.length ? t("选择档位") : t("七个档位均已使用") }, ...rest.map((level) => ({ value: level, label: thinkingText(level) }))]} />
-            <button
-              className="hob-btn"
-              onClick={() => {
-                if (!pick) return;
-                save([...rows, { level: pick, text: "" }]);
-                setPick("");
-              }}
-              disabled={busy || disabled || !pick}
-            >
-              {t("添加思考档")}
-            </button>
-            <span className="sp" />
-            {info.custom ? (
-              <button className="hob-btn" onClick={() => void commit(null)} disabled={busy || disabled}>
-                {t("恢复默认")}
-              </button>
-            ) : null}
-          </div>
-          <div className="note">
-            {t("留空则按服务商协议的默认值发送；填写后按所填的值发送（例如 DeepSeek 的「中」填 high）。「关闭」这一档不能删除，其余档删除后不再出现在思考强度中。")}
-          </div>
-          {error ? <div className="badline">{error}</div> : null}
-      {saved ? <div className="okline">{t("已保存思考档")}</div> : null}
-    </Disclosure>
-  );
-}
-
 /** 模型能力：图片输入、推理用图标，上下文只写数字；悬停有完整说明。 */
 function CapIcons({ info }: { info: ModelInfo }) {
   const context = contextText(info.contextWindow);
@@ -928,7 +794,6 @@ function providerApiLabel(api: ProviderApi): string {
   }
 }
 
-const DEFAULT_CONTEXT = 128_000;
 
 /** 一个正在编辑的服务商（API Key 始终为空：留空则沿用已保存的 Key）。 */
 type ProviderDraft =
@@ -1621,11 +1486,7 @@ function ProviderForm({
         {rosterControl(model)}
       </div>
       {open ? <div className="provider-model-content">
-        {editable ? <>
-          <div className="mline"><span>{t("能看图")}</span><button className={`tog${model.input?.includes("image") ? "" : " off"}`} aria-label={t("能看图")} aria-pressed={Boolean(model.input?.includes("image"))} disabled={busy} onClick={() => editModel(model.id, { input: model.input?.includes("image") ? ["text"] : ["text", "image"] })} /></div>
-          <div className="mline"><span>{t("会推理")}</span><button className={`tog${model.reasoning ? "" : " off"}`} aria-label={t("会推理")} aria-pressed={Boolean(model.reasoning)} disabled={busy} onClick={() => editModel(model.id, { reasoning: !model.reasoning })} /></div>
-          <div className="mline"><span>{t("上下文窗口（token）")}</span><span className="field provider-model-ctx"><input type="number" min={1} defaultValue={model.contextWindow ?? DEFAULT_CONTEXT} key={`${model.id}:${model.contextWindow ?? DEFAULT_CONTEXT}`} aria-label={t("上下文窗口（token）")} onBlur={(event) => { const next = Number(event.target.value) || DEFAULT_CONTEXT; if (next !== (model.contextWindow ?? DEFAULT_CONTEXT)) editModel(model.id, { contextWindow: next }); }} onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} disabled={busy} /></span></div>
-        </> : <div className="note">{summary || t("暂无能力信息")}</div>}
+        {editable ? <ModelParamsEditor id={model.id} params={model} busy={busy} onEdit={(patch) => editModel(model.id, patch)} /> : <div className="note">{summary || t("暂无能力信息")}</div>}
         {model.reasoning ? info ? <ThinkingLevels modelRef={ref} info={info} disabled={busy} onSaved={onThinking} /> : <div className="note">{t("保存服务商后可以设置思考档。")}</div> : null}
         {isDefault ? <div className="note">{t("这是默认模型。要移除，请先在「默认模型」中更换。")}</div> : editable && draft.kind === "custom" ? confirmModel === model.id ? <div className="mline"><span>{t("确定从这个服务商移除这个模型？")}</span><span className="ctl"><button className="hob-btn" disabled={busy} onClick={() => setConfirmModel(null)}>{t("取消")}</button><button className="hob-btn hob-btn-danger" disabled={busy} onClick={() => { void saveModels(draft.models.filter((item) => item.id !== model.id)); setConfirmModel(null); }}>{t("确认移除")}</button></span></div> : <button className="provider-model-remove" disabled={busy} onClick={() => setConfirmModel(model.id)}>{t("从这个服务商移除这个模型")}</button> : null}
       </div> : null}

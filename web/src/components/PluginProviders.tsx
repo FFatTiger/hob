@@ -4,6 +4,7 @@ import type {
   PluginAuthMethodView,
   PluginAuthPromptView,
   PluginCliStatusView,
+  PluginModelOverride,
   PluginProviderAccountView,
   PluginProviderModelView,
   PluginProviderUsageView,
@@ -28,6 +29,7 @@ import {
   pollPluginSignIn,
   promptPluginAuth,
   refreshPluginModels,
+  setPluginModelOverride,
   setPluginActiveAccount,
   signInPluginApiKey,
   startPluginSignIn,
@@ -37,6 +39,7 @@ import {
 import { Disclosure } from "./Disclosure.tsx";
 import { formatContextWindow, keylessOnly, permissionMeta, pluginPermissions, pluginReviewedVersion } from "./plugin-meta.ts";
 import { Seg } from "./SettingsParts.tsx";
+import { ModelParamsEditor, ThinkingLevels } from "./ModelParams.tsx";
 
 function localizedMethodLabel(method: PluginAuthMethodView): string {
   const locale = currentLocale();
@@ -352,15 +355,82 @@ export function ProviderQuotaSection({
   );
 }
 
+/**
+ * 一个模型：一整行点开改参数，和设置 → 服务商里兼容接口的模型一样（能看图、会推理、上下文窗口、单次最多输出、思考档）。
+ * 插件没给或给得不对的参数在这里改；改过的可以恢复成插件给的。
+ */
+function PluginModelRow({
+  pluginId,
+  providerId,
+  model,
+  onProviders,
+  onChanged,
+}: {
+  pluginId: string;
+  providerId: string;
+  model: PluginProviderModelView;
+  onProviders: (providers: PluginProviderView[]) => void;
+  onChanged: () => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const save = async (override: PluginModelOverride | null) => {
+    setBusy(true);
+    setError(null);
+    try {
+      onProviders((await setPluginModelOverride(pluginId, providerId, { modelId: model.id, override })).providers);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className={`plugin-model-item${open ? " open" : ""}`}>
+      <button type="button" className="plugin-model" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+        <div className="plugin-model-main">
+          <div className="plugin-model-name">{model.name || model.id}</div>
+          <div className="plugin-model-sub">{modelThinkingSummary(model)}</div>
+        </div>
+        <span className="plugin-model-caps">
+          {model.input.includes("image") ? <Icon name="image" size={14} /> : null}
+          {model.reasoning ? <Icon name="bulb" size={14} /> : null}
+          {model.contextWindow > 0 ? <span>{formatContextWindow(model.contextWindow)}</span> : null}
+        </span>
+        <Icon name="down" size={14} className="disclosure-arrow" />
+      </button>
+      {open ? (
+        <div className="plugin-model-edit">
+          <ModelParamsEditor id={model.id} params={model} busy={busy} onEdit={(patch) => void save(patch)} />
+          {model.reasoning && model.thinking ? <ThinkingLevels modelRef={model.thinking.ref} info={model.thinking} disabled={busy} onSaved={onChanged} /> : null}
+          {model.overridden ? (
+            <button type="button" className="plugin-model-reset" disabled={busy} onClick={() => void save(null)}>
+              {t("恢复插件给的参数")}
+            </button>
+          ) : null}
+          {error ? <div className="badline">{error}</div> : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ProviderModelsSection({
+  pluginId,
   provider,
   busy,
   onRefresh,
+  onProviders,
+  onChanged,
   paused,
 }: {
+  pluginId: string;
   provider: PluginProviderView;
   busy?: boolean;
   onRefresh: () => void;
+  onProviders: (providers: PluginProviderView[]) => void;
+  onChanged: () => void;
   paused?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -410,17 +480,7 @@ export function ProviderModelsSection({
       {models.length > 0 ? (
         <div className="plugin-list">
           {shown.map((model) => (
-            <div className="plugin-model" key={model.id}>
-              <div className="plugin-model-main">
-                <div className="plugin-model-name">{model.name || model.id}</div>
-                <div className="plugin-model-sub">{modelThinkingSummary(model)}</div>
-              </div>
-              <span className="plugin-model-caps">
-                {model.input.includes("image") ? <Icon name="image" size={14} /> : null}
-                {model.reasoning ? <Icon name="bulb" size={14} /> : null}
-                {model.contextWindow > 0 ? <span>{formatContextWindow(model.contextWindow)}</span> : null}
-              </span>
-            </div>
+            <PluginModelRow key={model.id} pluginId={pluginId} providerId={provider.providerId} model={model} onProviders={onProviders} onChanged={onChanged} />
           ))}
           {models.length > 4 ? (
             <Disclosure
@@ -431,17 +491,7 @@ export function ProviderModelsSection({
               onToggle={() => setExpanded((v) => !v)}
             >
               {models.slice(2).map((model) => (
-                <div className="plugin-model" key={model.id}>
-                  <div className="plugin-model-main">
-                    <div className="plugin-model-name">{model.name || model.id}</div>
-                    <div className="plugin-model-sub">{modelThinkingSummary(model)}</div>
-                  </div>
-                  <span className="plugin-model-caps">
-                    {model.input.includes("image") ? <Icon name="image" size={14} /> : null}
-                    {model.reasoning ? <Icon name="bulb" size={14} /> : null}
-                    {model.contextWindow > 0 ? <span>{formatContextWindow(model.contextWindow)}</span> : null}
-                  </span>
-                </div>
+                <PluginModelRow key={model.id} pluginId={pluginId} providerId={provider.providerId} model={model} onProviders={onProviders} onChanged={onChanged} />
               ))}
             </Disclosure>
           ) : null}
@@ -1478,7 +1528,10 @@ export function PluginProvidersSection({
             ) : null}
 
             <ProviderModelsSection
+              pluginId={pluginId}
               provider={provider}
+              onProviders={setProviders}
+              onChanged={() => void onRefreshPlugin()}
               busy={busyKey === `models:${provider.providerId}`}
               paused={paused}
               onRefresh={() => void handleRefreshModels(provider)}

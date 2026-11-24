@@ -311,3 +311,18 @@
   .plugin-code-val { font-size: 18px; }
   .plugin-perm-row { flex-wrap: wrap; }
 }
+
+/* 供应商插件的模型：一整行点开改参数，编辑行和设置 → 服务商里的模型一样 */
+.plugin-model { width: 100%; text-align: left; background: transparent; color: inherit; cursor: pointer; }
+.plugin-model .disclosure-arrow { flex: none; }
+.plugin-model-item.open > .plugin-model .disclosure-arrow { transform: rotate(180deg); }
+@media (hover: hover) { .plugin-model:hover { background: color-mix(in srgb, var(--text) 4%, var(--field)); } }
+.plugin-model-edit { padding: 0 12px 10px; }
+.plugin-model-edit .mline { min-height: 42px; }
+.plugin-model-edit .field { background: var(--bg); }
+.plugin-model-edit .provider-model-ctx { width: 140px; margin-top: 0; }
+.plugin-model-edit .think-levels { background: transparent; padding: 0; }
+.plugin-model-edit .disclosure-row { background: transparent; padding-left: 0; padding-right: 0; }
+.plugin-model-edit .thinkrow .ttext { background: var(--bg); }
+.plugin-model-reset { display: block; margin-top: 6px; padding: 8px 0; background: transparent; color: var(--text2); font-size: 13.5px; text-align: left; }
+.plugin-model-reset:disabled { opacity: .4; cursor: default; }

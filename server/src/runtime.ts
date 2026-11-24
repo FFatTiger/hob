@@ -122,7 +122,10 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   });
   try { plugins.migrationErrors = plugins.store.migrateLegacy(); plugins.store.migrateEmailService(); plugins.migrationErrors.push(...plugins.store.migrateProfiles()); }
   catch (error) { plugins.migrationErrors = [error instanceof Error ? error.message : String(error)]; }
+  // models.dev 的价格和模型上限：消耗页算钱，供应商插件没给上下文/输出上限时也从这里补
+  const prices = new UsagePricesImpl({ home: options.home, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) });
   const providerPlugins = new ProviderPluginManager({
+    catalogLimits: (modelId) => prices.limitsOf(modelId),
     home: options.home,
     store: plugins.store,
     bus,
@@ -175,7 +178,8 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     home: options.home,
     store,
     settings,
-    prices: new UsagePricesImpl({ home: options.home, ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}) }),
+    prices,
+    onPricesLoaded: () => providers.apply(),
   });
   return runtime;
 }

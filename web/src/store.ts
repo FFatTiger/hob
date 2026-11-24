@@ -4,6 +4,7 @@ import { parseRoute, type SettingsSection } from "./route.ts";
 import { useRef, useSyncExternalStore } from "react";
 import { currentLocale, localeFromBrowser, setLocale as setSharedLocale, t, type Locale } from "../../shared/i18n.ts";
 import type {
+  PluginModelOverridePatch,
   StarredMessage,
   ConversationRef,
   AnswerApprovalBody,
@@ -799,6 +800,7 @@ export const loadPluginProviderHost = () => api.pluginProviderHost();
 export const approvePlugin = (id: string) => api.approvePlugin(id);
 export const loadPluginProviders = (id: string, load = false) => api.pluginProviders(id, load);
 export const refreshPluginModels = (id: string, providerId: string, accountId?: string) => api.refreshPluginModels(id, providerId, accountId);
+export const setPluginModelOverride = (id: string, providerId: string, body: PluginModelOverridePatch) => api.setPluginModelOverride(id, providerId, body);
 export const loadPluginProviderUsage = (id: string, providerId: string, accountId?: string) => api.pluginProviderUsage(id, providerId, accountId);
 export const setPluginActiveAccount = (id: string, providerId: string, accountId: string) => api.setPluginActiveAccount(id, providerId, accountId);
 export const deletePluginAccount = (id: string, providerId: string, accountId: string) => api.deletePluginAccount(id, providerId, accountId);

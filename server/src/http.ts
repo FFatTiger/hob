@@ -1,6 +1,6 @@
 import { createHmac, randomBytes, timingSafeEqual } from "node:crypto";
 import { userError } from "./user-facing.ts";
-import { setLocale } from "../../shared/i18n.ts";
+import { setLocale, t } from "../../shared/i18n.ts";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Hono } from "hono";
@@ -20,6 +20,7 @@ import type {
   FileMeta,
   JobStatus,
   ModelThinkingPatch,
+  PluginModelOverridePatch,
   ModelThinkingSaved,
   ModelsView,
   PushSubscriptionJson,
@@ -586,6 +587,18 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const accountId = typeof body.accountId === "string" && body.accountId ? body.accountId : undefined;
       const models = await runtime.providerPlugins.refreshModels(id, providerId, accountId);
       return c.json({ models, plugin: pluginView(id) });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  // 插件页：改供应商插件里一个模型的参数（能看图、会推理、上下文窗口、单次最多输出），override 为 null 恢复插件给的
+  app.put("/api/plugins/:id/providers/:providerId/model", async c => {
+    try {
+      const id = c.req.param("id");
+      const body = await c.req.json().catch(() => ({})) as Partial<PluginModelOverridePatch>;
+      const modelId = typeof body.modelId === "string" ? body.modelId.trim() : "";
+      if (!modelId) return c.json({ error: t("未指定模型。") }, 400);
+      const override = body.override && typeof body.override === "object" ? body.override : null;
+      await runtime.providerPlugins.setModelOverride(id, c.req.param("providerId"), modelId, override);
+      return c.json({ providers: runtime.providerPlugins.pluginProvidersView(id) });
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.get("/api/plugins/:id/providers/:providerId/usage", async c => {

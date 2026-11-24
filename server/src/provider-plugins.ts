@@ -5,8 +5,10 @@ import { randomUUID } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { ModelRuntime, ProviderConfig, ProviderModelConfig } from "@earendil-works/pi-coding-agent";
+import { t } from "../../shared/i18n.ts";
 import type {
   ModelThinkingView,
+  PluginModelOverride,
   PluginAuthMethodView,
   PluginAuthPromptView,
   PluginCliStatusView,
@@ -82,6 +84,8 @@ interface StoredProviderState {
   activeAccountId?: string;
   error?: string;
   accounts: Record<string, StoredProviderAccount>;
+  /** 用户在插件页改的模型参数，键是模型 id；换账号、刷新模型列表、更新插件都保留 */
+  modelOverrides?: Record<string, PluginModelOverride>;
 }
 
 interface StoredPluginState {
@@ -110,6 +114,8 @@ export interface ProviderPluginManagerOptions {
   proxy?: () => ProxyEnvironmentSettings;
   getThinkingSettings?: () => Record<string, ThinkingLevelMapSetting> | undefined;
   onProvidersChanged?: () => Promise<void>;
+  /** 公开模型目录（models.dev）里这个模型 id 的上下文窗口和单次最多输出；插件没给这两项时用它补 */
+  catalogLimits?: (modelId: string) => { context: number; output: number } | undefined;
   bunOptions?: Omit<BunRuntimeOptions, "home" | "proxy">;
   hostIdleMs?: number;
   hostScriptPath?: string;
@@ -220,6 +226,51 @@ export function pluginModelThinking(
   }
   levels.push("low", "medium", "high");
   return { levels, map };
+}
+
+/** 用户改的参数盖在插件给的模型上；关掉「会推理」时插件声明的思考档名一起不用。 */
+function withOverride(entry: HostModelEntry, o?: PluginModelOverride): HostModelEntry {
+  if (!o) return entry;
+  return {
+    ...entry,
+    ...(o.input ? { image: o.input.includes("image") } : {}),
+    ...(o.reasoning !== undefined ? { reasoning: o.reasoning, ...(o.reasoning ? {} : { variants: [] }) } : {}),
+    ...(o.contextWindow ? { context: o.contextWindow } : {}),
+    ...(o.maxTokens ? { output: o.maxTokens } : {}),
+  };
+}
+
+/** 接口传进来的参数只留认得的项；数字要正整数，不然照实说哪一项不对。 */
+function cleanOverride(o: PluginModelOverride): PluginModelOverride {
+  const out: PluginModelOverride = {};
+  if (Array.isArray(o.input)) out.input = o.input.includes("image") ? ["text", "image"] : ["text"];
+  if (typeof o.reasoning === "boolean") out.reasoning = o.reasoning;
+  if (o.contextWindow !== undefined) {
+    if (!Number.isInteger(o.contextWindow) || o.contextWindow <= 0) throw new Error(t("上下文窗口要填正整数。"));
+    out.contextWindow = o.contextWindow;
+  }
+  if (o.maxTokens !== undefined) {
+    if (!Number.isInteger(o.maxTokens) || o.maxTokens <= 0) throw new Error(t("单次最多输出要填正整数。"));
+    out.maxTokens = o.maxTokens;
+  }
+  return out;
+}
+
+function thinkingViewOf(hobProviderId: string, m: PluginProviderModelView, custom?: ThinkingLevelMapSetting): ModelThinkingView {
+  const thinking = pluginModelThinking({ id: m.id, reasoning: m.reasoning, variants: m.variants, api: m.api }, custom);
+  return {
+    ref: `${hobProviderId}/${m.id}`,
+    id: m.id,
+    name: m.name,
+    reasoning: m.reasoning,
+    input: m.input,
+    contextWindow: m.contextWindow,
+    levels: thinking.levels.map((level) => ({
+      level,
+      text: typeof thinking.map[level] === "string" ? thinking.map[level]! : "",
+    })),
+    custom: custom !== undefined,
+  };
 }
 
 function toModelView(
@@ -727,10 +778,16 @@ export class ProviderPluginManager {
         updatedAt: acc.updatedAt,
       }));
 
-      const models = (activeAccount?.rawModels ?? []).map((entry) =>
-        toModelView(providerId, entry, hobProviderId, customThinking),
-      );
-      const cachedModels = models.length ? models : (activeAccount?.models ?? []);
+      const overrides = prov.modelOverrides ?? {};
+      // 参数从低到高：插件给的 < 插件没给时按公开模型目录补的 < 用户在插件页改的
+      const models = (activeAccount?.rawModels ?? []).map((entry) => ({
+        ...toModelView(providerId, withOverride(this.withCatalog(entry), overrides[entry.id]), hobProviderId, customThinking),
+        ...(overrides[entry.id] ? { overridden: true } : {}),
+      }));
+      const cachedModels = (models.length ? models : (activeAccount?.models ?? [])).map((m) => ({
+        ...m,
+        thinking: thinkingViewOf(hobProviderId, m, customThinking?.[`${hobProviderId}/${m.id}`]),
+      }));
 
       const activeSignIn = [...this.activeSignIns.values()]
         .find((s) => s.view.pluginId === pluginId && s.view.providerId === providerId)?.view;
@@ -804,30 +861,46 @@ export class ProviderPluginManager {
           modelCount: view.models.length,
           ...(view.error || view.modelsError ? { error: view.error || view.modelsError } : {}),
         });
-        models[view.hobProviderId] = view.models.map((m) => {
-          const ref = `${view.hobProviderId}/${m.id}`;
-          const custom = customThinking?.[ref];
-          const thinking = pluginModelThinking(
-            { id: m.id, reasoning: m.reasoning, variants: m.variants, api: m.api },
-            custom,
-          );
-          return {
-            ref,
-            id: m.id,
-            name: m.name,
-            reasoning: m.reasoning,
-            input: m.input,
-            contextWindow: m.contextWindow,
-            levels: thinking.levels.map((level) => ({
-              level,
-              text: typeof thinking.map[level] === "string" ? thinking.map[level]! : "",
-            })),
-            custom: custom !== undefined,
-          };
-        });
+        models[view.hobProviderId] = view.models.map((m) =>
+          m.thinking ?? thinkingViewOf(view.hobProviderId, m, customThinking?.[`${view.hobProviderId}/${m.id}`]),
+        );
       }
     }
     return { summaries, models };
+  }
+
+  /** 插件没给上下文窗口 / 单次最多输出时，用公开模型目录里同 id 模型的补上；目录里也没有就留给默认值。 */
+  private withCatalog(entry: HostModelEntry): HostModelEntry {
+    if (entry.context > 0 && entry.output > 0) return entry;
+    const known = this.options.catalogLimits?.(entry.id);
+    if (!known) return entry;
+    return {
+      ...entry,
+      context: entry.context > 0 ? entry.context : known.context,
+      output: entry.output > 0 ? entry.output : known.output,
+    };
+  }
+
+  /**
+   * 插件页：改一个模型的参数。override 只带改的那几项，和之前改过的合在一起；null 恢复插件给的。
+   * 存完重新注册进引擎，下一轮对话就按新参数。
+   */
+  async setModelOverride(pluginId: string, providerId: string, modelId: string, override: PluginModelOverride | null): Promise<void> {
+    const doc = this.readDoc();
+    const prov = doc.plugins[pluginId]?.providers[providerId];
+    if (!prov) throw new Error(t("这个插件没有供应商 {provider}。", { provider: providerId }));
+    const known = Object.values(prov.accounts).some((acc) =>
+      (acc.rawModels ?? acc.models ?? []).some((m) => m.id === modelId),
+    );
+    if (!known) throw new Error(t("模型 {model} 不在这个供应商的模型列表里。", { model: modelId }));
+    const overrides = { ...prov.modelOverrides };
+    const next = override ? { ...overrides[modelId], ...cleanOverride(override) } : {};
+    if (Object.keys(next).length) overrides[modelId] = next;
+    else delete overrides[modelId];
+    prov.modelOverrides = Object.keys(overrides).length ? overrides : undefined;
+    this.writeDoc(doc);
+    await this.options.onProvidersChanged?.();
+    this.options.bus.emit({ type: "plugin-providers", pluginId, providerId });
   }
 
   /** 返回当前所有已注册的插件服务商 id（供 builtin 列表过滤）。 */

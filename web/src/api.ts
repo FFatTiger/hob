@@ -42,6 +42,7 @@ import type {
   MemoryConfig,
   MemoryProvider,
   ModelThinkingPatch,
+  PluginModelOverridePatch,
   ModelThinkingSaved,
   PluginAuthPromptView,
   PluginCliStatusView,
@@ -196,6 +197,7 @@ export interface HobApi {
   approvePlugin(id: string): Promise<PluginView>;
   pluginProviders(id: string, load?: boolean): Promise<{ providers: PluginProviderView[]; providerHost: ProviderHostStatusView }>;
   refreshPluginModels(id: string, providerId: string, accountId?: string): Promise<{ models: PluginProviderModelView[]; plugin: PluginView }>;
+  setPluginModelOverride(id: string, providerId: string, body: PluginModelOverridePatch): Promise<{ providers: PluginProviderView[] }>;
   pluginProviderUsage(id: string, providerId: string, accountId?: string): Promise<PluginProviderUsageView>;
   setPluginActiveAccount(id: string, providerId: string, accountId: string): Promise<PluginView>;
   deletePluginAccount(id: string, providerId: string, accountId: string): Promise<PluginView>;
@@ -388,6 +390,7 @@ export const realApi: HobApi = {
   approvePlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/approve`, json({})),
   pluginProviders: (id, load) => req<{ providers: PluginProviderView[]; providerHost: ProviderHostStatusView }>(`/api/plugins/${encodeURIComponent(id)}/providers${load ? "?load=1" : ""}`),
   refreshPluginModels: (id, providerId, accountId) => req<{ models: PluginProviderModelView[]; plugin: PluginView }>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/models/refresh`, json(accountId ? { accountId } : {})),
+  setPluginModelOverride: (id, providerId, body) => req<{ providers: PluginProviderView[] }>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/model`, json(body, "PUT")),
   pluginProviderUsage: (id, providerId, accountId) => req<PluginProviderUsageView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/usage${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ""}`),
   setPluginActiveAccount: (id, providerId, accountId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/accounts/active`, json({ accountId })),
   deletePluginAccount: (id, providerId, accountId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }),

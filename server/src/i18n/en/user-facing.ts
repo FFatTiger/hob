@@ -320,4 +320,8 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "「{name}」关闭了这个话题": "“{name}” closed this topic",
   "群内转交次数过多，已在此暂停。": "Too many handoffs in this group. Paused here.",  "回复失败：{error}。@{name} 发送一条消息即可重试。": "Reply failed: {error}. Ask @{name} to send a message to retry.",
   "服务已重启，本轮已中断。": "The service restarted, so this turn was interrupted.",
+  "上下文窗口要填正整数。": "Context window must be a positive whole number.",
+  "单次最多输出要填正整数。": "Max output must be a positive whole number.",
+  "这个插件没有供应商 {provider}。": "This plugin has no provider {provider}.",
+  "模型 {model} 不在这个供应商的模型列表里。": "Model {model} isn't in this provider's model list.",
 };

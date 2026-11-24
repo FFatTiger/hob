@@ -286,7 +286,7 @@ describe("额度异常、模型缓存回退、更新权限确认与安装视图"
         { id: "claude-sonnet-4.5", apiId: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", api: "anthropic-messages", reasoning: true, variants: ["low", "high"], thinkingLevels: ["off", "low", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 16_384 },
       ],
     });
-    const html = renderToStaticMarkup(<ProviderModelsSection provider={provider} onRefresh={() => {}} />);
+    const html = renderToStaticMarkup(<ProviderModelsSection pluginId="p" provider={provider} onRefresh={() => {}} onProviders={() => {}} onChanged={() => {}} />);
     expect(html).toContain("拉取模型列表失败");
     expect(html).toContain("连接 api.example.com 超时");
     expect(html).toContain("已保留上次成功获取的模型列表");

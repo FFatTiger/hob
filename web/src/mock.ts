@@ -1956,6 +1956,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     { id: "vault", version: "1.0.0", source: "builtin", sourceName: "Hob 自带", manifest: { name: "密码库", description: "Saves the usernames and passwords for your websites on this machine, encrypted. Assistants can see which logins you have and ask you to save new ones on a card, but never the passwords: when a site needs a login, Hob fills it into the page itself after you approve. The key is stored next to the vault in Hob's data folder, so anyone who can read that folder can read the vault.", extensions: { "com.hob.plugins": { publisher: "Hob", categories: ["productivity"] } } }, installed: false },
     { id: "calendar", version: "1.0.0", manifest: { name: "日历", description: "查看和安排日程。", extensions: { "com.hob.plugins": { categories: ["productivity"] } } }, installed: false },
   ];
+  const mockPluginModelOriginals = new Map<string, import("../../shared/types.ts").PluginProviderModelView>();
   const mockPlugin = (id: string): PluginView => {
     const found = pluginViews.find(p => p.plugin.id === id);
     if (!found) throw new Error(`插件 ${id} 未安装`);
@@ -2881,6 +2882,16 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const p = mockPlugin(id);
       const prov = p.providers?.find((item) => item.providerId === providerId);
       return clone({ models: prov?.models ?? [], plugin: p });
+    },
+    setPluginModelOverride: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const model = prov?.models.find((item) => item.id === body.modelId);
+      if (!prov || !model) throw new ApiError(400, `模型 ${body.modelId} 不在这个供应商的模型列表里。`);
+      const key = `${id}/${providerId}/${model.id}`;
+      if (!mockPluginModelOriginals.has(key)) mockPluginModelOriginals.set(key, clone(model));
+      Object.assign(model, body.override ? { ...body.override, overridden: true } : { ...mockPluginModelOriginals.get(key), overridden: false });
+      return clone({ providers: p.providers ?? [] });
     },
     pluginProviderUsage: async (id, providerId) => {
       const p = mockPlugin(id);

@@ -1095,6 +1095,79 @@ describe("provider plugins (issue 259)", () => {
     expect(cancel.status).toBe(200);
   });
 
+  it("fills missing model limits from the public catalog and lets the user override any model's params", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-prov-override-"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    const pi = new PiHost({ engineDir: join(home, "system", "engine") });
+    const config = loadConfig(home, { HOB_PASSWORD: "test-password" });
+    const catalog: Record<string, { context: number; output: number }> = {
+      "big-model": { context: 1_048_576, output: 65_536 },
+      "declared-model": { context: 1, output: 1 },
+    };
+    const runtime = createRuntime({
+      home,
+      config,
+      pi,
+      providerPlugins: { bunOptions: { bunPath: process.execPath }, catalogLimits: (id) => catalog[id] },
+    });
+    cleanups.push(async () => {
+      await runtime.providerPlugins.close();
+      await runtime.plugins.close();
+    });
+    writeFakeProviderPlugin({ home, pluginId: "fake-ovr", pkgName: "fake-ovr-pkg", vendorUrl: "http://127.0.0.1:9" });
+    const entry = (id: string, context: number, output: number) => ({ id, apiId: id, name: id, npm: "@ai-sdk/anthropic", url: "", context, output, reasoning: false, image: false, variants: [] });
+    const now = new Date().toISOString();
+    mkdirSync(join(home, "system"), { recursive: true });
+    writeFileSync(join(home, "system", "provider-plugins.json"), JSON.stringify({
+      plugins: {
+        "fake-ovr": {
+          providers: {
+            "fake-ovr": {
+              activeAccountId: "a1",
+              accounts: {
+                a1: {
+                  id: "a1", providerId: "fake-ovr", displayName: "x", authType: "api", status: "connected", createdAt: now, updatedAt: now,
+                  // 插件没给上限的、给了的、目录里没有的
+                  rawModels: [entry("big-model", 0, 0), entry("declared-model", 64_000, 4_096), entry("unknown-model", 0, 0)],
+                },
+              },
+            },
+          },
+        },
+      },
+    }));
+    const model = (id: string) => runtime.providerPlugins.pluginProvidersView("fake-ovr")[0].models.find((m) => m.id === id)!;
+
+    // 插件没给 → 按目录补；插件给了 → 用插件的；目录里也没有 → 默认值
+    expect(model("big-model")).toMatchObject({ contextWindow: 1_048_576, maxTokens: 65_536 });
+    expect(model("declared-model")).toMatchObject({ contextWindow: 64_000, maxTokens: 4_096 });
+    expect(model("unknown-model")).toMatchObject({ contextWindow: 128_000, maxTokens: 8_192 });
+
+    // 用户改的盖在最上面；每次只带改的那项，和之前改过的合在一起
+    await runtime.providerPlugins.setModelOverride("fake-ovr", "fake-ovr", "big-model", { maxTokens: 32_000 });
+    await runtime.providerPlugins.setModelOverride("fake-ovr", "fake-ovr", "big-model", { reasoning: true, input: ["text", "image"] });
+    expect(model("big-model")).toMatchObject({ contextWindow: 1_048_576, maxTokens: 32_000, reasoning: true, input: ["text", "image"], overridden: true });
+    expect(model("big-model").thinkingLevels).toEqual(["off", "low", "medium", "high"]);
+    expect(model("big-model").thinking?.ref).toBe("plugin-fake-ovr/big-model");
+
+    await expect(runtime.providerPlugins.setModelOverride("fake-ovr", "fake-ovr", "big-model", { contextWindow: -5 })).rejects.toThrow(/正整数/);
+    await expect(runtime.providerPlugins.setModelOverride("fake-ovr", "fake-ovr", "nope", { maxTokens: 10 })).rejects.toThrow(/不在这个供应商的模型列表里/);
+
+    // 走接口恢复插件给的
+    const app = createApp(runtime, { webDir: join(home, "no-web"), home });
+    const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test-password" }) });
+    const cookie = login.headers.get("set-cookie")!.split(";")[0];
+    const reset = await app.request("/api/plugins/fake-ovr/providers/fake-ovr/model", {
+      method: "PUT",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ modelId: "big-model", override: null }),
+    });
+    expect(reset.status).toBe(200);
+    const body = await reset.json() as { providers: { models: { id: string; maxTokens: number; reasoning: boolean; overridden?: boolean }[] }[] };
+    expect(body.providers[0].models.find((m) => m.id === "big-model")).toMatchObject({ maxTokens: 65_536, reasoning: false });
+    expect(body.providers[0].models.find((m) => m.id === "big-model")?.overridden).toBeUndefined();
+  });
+
   it("does not mix seeded pi models into a static provider model list", async () => {
     const home = mkdtempSync(join(tmpdir(), "hob-host-static-"));
     cleanups.push(() => rmSync(home, { recursive: true, force: true }));

@@ -21,7 +21,8 @@ interface RpcScope {
   accountId: string;
 }
 
-export const DEFAULT_HOST_IDLE_MS = 10 * 60 * 1000;
+/** 默认不因闲置停宿主：插件（如 agy-cli）把对话会话放在宿主进程里，停了下次就整段重发、缓存全丢。0 表示不停。 */
+export const DEFAULT_HOST_IDLE_MS = 0;
 
 export interface HostPluginLoadSpec {
   pluginId: string;

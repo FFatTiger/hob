@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { Icon } from "../icons.tsx";
 
-type Option = { value: string; label: string; disabled?: boolean; icon?: ReactNode };
+type Option = { value: string; label: string; meta?: string; disabled?: boolean; icon?: ReactNode };
 
 export function Select({ value, onChange, options, disabled, className, "aria-label": label }: {
   value: string; onChange: (value: string) => void; options: Option[]; disabled?: boolean; className?: string; "aria-label"?: string;
@@ -59,6 +59,6 @@ export function Select({ value, onChange, options, disabled, className, "aria-la
       else if (event.key === "End") { event.preventDefault(); move(-1, options.length); }
       else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(active); }
     }}><span className="select-value">{selected?.icon}<span>{selected?.label ?? ""}</span></span><Icon name="down" size={14} /></button>
-    {open && createPortal(<div ref={popup} className="amenu select-popup" style={position} role="listbox" aria-label={label} onScroll={(event) => event.stopPropagation()}>{options.map((option, index) => <button key={`${option.value}-${index}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={index === active ? "sel" : ""} onMouseEnter={() => !option.disabled && setActive(index)} onClick={() => choose(index)}><span className="select-value">{option.icon}<span>{option.label}</span></span>{option.value === value && <Icon name="check" size={15} />}</button>)}</div>, document.body)}
+    {open && createPortal(<div ref={popup} className="amenu select-popup" style={position} role="listbox" aria-label={label} onScroll={(event) => event.stopPropagation()}>{options.map((option, index) => <button key={`${option.value}-${index}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={index === active ? "sel" : ""} onMouseEnter={() => !option.disabled && setActive(index)} onClick={() => choose(index)}><span className="select-value">{option.icon}<span>{option.label}</span></span>{option.meta ? <span className="select-meta">{option.meta}</span> : null}{option.value === value && <Icon name="check" size={15} />}</button>)}</div>, document.body)}
   </>;
 }

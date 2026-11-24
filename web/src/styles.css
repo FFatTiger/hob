@@ -2,6 +2,7 @@
 
 :root { --sidebar-inset: 14px; }
 .brand-icon { display: inline-grid; place-items: center; flex: none; border-radius: 50%; background: color-mix(in srgb, var(--text) 7%, transparent); color: var(--text); }
+.brand-icon img { width: 58%; height: 58%; object-fit: contain; }
 /* 列表行：前置图标、可收缩正文、尾部操作。 */
 .list-row { display: flex; align-items: center; gap: 10px; width: 100%; min-height: 48px; padding: 10px var(--sidebar-inset); text-align: left; }
 .list-row :is(.main, .rmain, .history-content) { flex: 1; min-width: 0; }
@@ -4394,6 +4395,7 @@ button:not(:disabled):active {
 .select-trigger > span:first-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
 .select-value { display: inline-flex; align-items: center; gap: 8px; min-width: 0; }
 .select-value > span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.select-meta { margin-left: auto; padding-left: 12px; font-size: 12px; color: var(--text3); white-space: nowrap; flex: none; }
 .select-trigger > svg { flex: none; color: var(--text3); transition: transform var(--t-fast) var(--ease-out); }
 .select-trigger[aria-expanded="true"] > svg { transform: rotate(180deg); }
 .select-trigger:disabled { cursor: default; opacity: .55; }
@@ -4576,6 +4578,8 @@ button:not(:disabled):active {
 .setting-row { padding-left: 0; padding-right: 0; }
 .providers-list > * + *::before { display: none; }
 .providers-list .note { margin-top: 0; }
+.provider-status-ok { color: var(--ok); font-size: 12.5px; white-space: nowrap; }
+.provider-status-warn { color: var(--accent); font-size: 12.5px; white-space: nowrap; }
 .provider-heading { display: flex; align-items: center; gap: 12px; margin: 20px auto; }
 .provider-heading > .note { margin: 0; white-space: nowrap; }
 .provider-heading .rname { font-size: 18px; }

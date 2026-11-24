@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resolveTheme, statusSurface, updateManifest } from "../src/theme.ts";
+import { resolveTheme, statusSurface, updateManifest, updateStatusColor } from "../src/theme.ts";
 
 describe("主题和状态栏", () => {
   it.each([
@@ -26,6 +26,18 @@ describe("主题和状态栏", () => {
     expect(statusSurface({ ...main, panelStack: [{ kind: "file", full: true }] }, false)).toBe("bg");
     expect(statusSurface({ ...main, phase: "loading" }, true)).toBe("bg");
     expect(statusSurface({ ...main, phase: "loading" }, false)).toBe("side");
+  });
+
+  it("配色切换时状态栏取当前底色，不读过渡中的旧背景", () => {
+    const meta = { getAttribute: () => "#151113", setAttribute: vi.fn() };
+    const root = { style: { setProperty: vi.fn() } };
+    vi.stubGlobal("document", { documentElement: root, querySelector: () => meta });
+    vi.stubGlobal("getComputedStyle", () => ({
+      getPropertyValue: (name: string) => name === "--bg" ? "#121117" : "rgb(18, 17, 23)",
+      backgroundColor: "rgb(18, 17, 23)",
+    }));
+    updateStatusColor({ phase: "ready", page: "settings", sheet: false, panelStack: [] }, true);
+    expect(meta.setAttribute).toHaveBeenCalledWith("content", "#121117");
   });
 
   it("按深浅主题换 manifest：iOS 的启动屏和状态栏颜色只认它", () => {

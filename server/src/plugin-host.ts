@@ -115,6 +115,7 @@ export class PluginHost {
     }
     const { mcp, config } = files;
     if (!isObject(mcp.mcpServers)) throw new Error("mcpServers 必须是对象");
+    if (!Object.keys(mcp.mcpServers).length) return;
     const profileValues = plugin.profiles ? this.store.completeProfiles(id) : undefined;
     const missing = plugin.profiles
       ? (profileValues!.length ? [] : plugin.profiles.length ? [...new Set(plugin.profiles.flatMap(profile => this.store.profileMissing(id, profile.id)))] : Object.entries(config).filter(([, field]) => field.required).map(([key]) => key))

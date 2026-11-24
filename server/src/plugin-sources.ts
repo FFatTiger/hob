@@ -3,7 +3,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, resolve, sep } from "node:path";
 import { promisify } from "node:util";
-import { pluginConfig } from "./plugin-config.ts";
+import { pluginConfig, providerDeclarations } from "./plugin-config.ts";
 import { proxyEnvironment, type ProxyEnvironmentSettings } from "./network-proxy.ts";
 
 export const OFFICIAL_SOURCE = "official";
@@ -18,7 +18,7 @@ const json = (path: string): unknown => JSON.parse(readFileSync(path, "utf8"));
 const reason = (error: unknown) => error instanceof Error ? error.message : String(error);
 
 export interface PluginSource { id: string; url: string; name: string; updatedAt?: string; error?: string }
-export interface SourceEntry { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; error?: string }
+export interface SourceEntry { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; hasProviders?: boolean; error?: string }
 
 function safePath(value: unknown): string {
   if (typeof value !== "string" || !value || value.includes("\\") || isAbsolute(value) || value.split("/").some(part => !part || part === "." || part === "..") || /[?#\x00-\x1f]/.test(value)) throw new Error("插件源包含不安全的文件路径");
@@ -210,10 +210,13 @@ export class PluginSources {
           path = safePath(object(item) ? item.path : undefined);
           const dir = resolve(root, path);
           if (!dir.startsWith(root + sep)) throw new Error("插件路径无效");
-          const manifest = json(join(dir, "plugin.json")); const mcp = json(join(dir, "mcp.json"));
+          const manifest = json(join(dir, "plugin.json"));
+          const mcpPath = join(dir, "mcp.json");
+          const providers = providerDeclarations(manifest);
+          const mcp = existsSync(mcpPath) ? json(mcpPath) : providers.length > 0 ? { mcpServers: {} } : (() => { throw new Error("缺少 mcp.json"); })();
           if (!object(manifest) || typeof manifest.version !== "string" || !manifest.version) throw new Error("插件清单缺少版本");
           pluginConfig(manifest, mcp);
-          entries.push({ id, version: manifest.version, manifest, source: source.id, sourceName: source.name, path: dir });
+          entries.push({ id, version: manifest.version, manifest, source: source.id, sourceName: source.name, path: dir, ...(providers.length > 0 ? { hasProviders: true } : {}) });
         } catch (error) { entries.push({ id, version: "", manifest: {}, source: source.id, sourceName: source.name, path: "", error: reason(error) }); }
       }
     }

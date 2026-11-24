@@ -3915,8 +3915,11 @@ html:lang(en) .screen .v {
 .panel-resize::after { content: ""; position: absolute; top: 0; bottom: 0; left: 3px; width: 2px; background: transparent; transition: background var(--t-fast); }
 .panel-resize:hover::after, .panelwrap.resizing .panel-resize::after { background: var(--accent); }
 .desktop-focus { padding: 0; scrollbar-gutter: auto; }
-.desktop-focus .pbody { padding: 0; }
-.focus-desktop { padding: 0 16px; }
+.desktop-focus .pbody { padding: 0; min-height: 100%; display: flex; flex-direction: column; }
+/* 右栏展开看云桌面：标题行在顶上，屏幕和任务行在下面的空间里垂直居中 */
+.focus-desktop { flex: 1; display: flex; flex-direction: column; padding: 0 16px; }
+.focus-desktop .now-screen { margin-top: auto; }
+.focus-desktop::after { content: ""; margin-top: auto; }
 .focus-head { height: 56px; display: flex; align-items: center; gap: 8px; }
 .focus-head strong { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-head .sp { flex: 1; }

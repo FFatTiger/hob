@@ -10,14 +10,10 @@ export function availableVersion(update: UpdateCheck | null | undefined): string
   return update?.status === "available" ? update.latest : null;
 }
 
-/** 侧栏「设置」和设置导航「关于」右边的新版本小箭头。 */
-export function UpdateArrow({ version }: { version: string }) {
+/** 侧栏「设置」和设置导航「关于」上的新版本小圆点：和列表里「有新消息」的点一个画法。 */
+export function UpdateDot({ version }: { version: string }) {
   const label = t("有新版本 {version}", { version });
-  return (
-    <span className="update-arrow" title={label} role="img" aria-label={label}>
-      <Icon name="up" size={14} />
-    </span>
-  );
+  return <span className="update-dot" title={label} role="img" aria-label={label} />;
 }
 
 export function PageHead({ title, desc }: { title: string; desc: ReactNode }) {

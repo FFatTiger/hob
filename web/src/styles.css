@@ -1015,11 +1015,14 @@ svg.i {
   align-items: center;
   gap: 6px;
 }
-.update-arrow {
-  display: inline-flex;
-  align-items: center;
-  color: var(--accent);
+/* 有新版本：强调色小圆点，放在这一行最右边（手机设置入口上贴在图标右上角） */
+.update-dot {
   flex: none;
+  width: 8px;
+  height: 8px;
+  margin-left: auto;
+  border-radius: 50%;
+  background: var(--accent);
 }
 
 /* avatars */
@@ -3021,12 +3024,13 @@ html:lang(en) .screen .v {
   color: var(--text2);
 }
 .me.has-update {
-  width: auto;
-  padding: 0 9px;
-  border-radius: 16px;
-  display: inline-flex;
-  align-items: center;
-  gap: 3px;
+  position: relative;
+}
+.me .update-dot {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  box-shadow: 0 0 0 2px var(--bg);
 }
 .mpins {
   padding: 8px 10px 6px;
@@ -4297,9 +4301,6 @@ button:not(:disabled):active {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-.setitem .update-arrow svg {
-  color: var(--accent);
 }
 /* 手机设置列表：一张圆角卡片，行间细线从文字左边开始，和系统设置一个画法 */
 .setpage.narrow .setbody {

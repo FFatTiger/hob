@@ -12,7 +12,7 @@ import { JOB_STATUS } from "./status-meta.tsx";
 import { ownerGroup, topicFace, topicGroups, topicPreview } from "../topics.ts";
 import { GroupCluster, groupPreview } from "./Groups.tsx";
 import { todoStamp } from "./status-meta.tsx";
-import { UpdateArrow, availableVersion } from "./SettingsParts.tsx";
+import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 
 /** 群头部第二行：几个成员。 */
 export function membersLine(g: GroupSummary): string {
@@ -128,7 +128,7 @@ export function GroupSidebar({ groupId }: { groupId?: string }) {
           <Icon name="gear" size={18} />
           <span className="sp">
             {t("设置")}
-            {updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+            {updateVersion ? <UpdateDot version={updateVersion} /> : null}
           </span>
         </button>
       </div>

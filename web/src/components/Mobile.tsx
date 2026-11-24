@@ -10,7 +10,7 @@ import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
 import { Panel } from "./Panel.tsx";
 import { usePinDrag } from "./PinDrag.ts";
-import { UpdateArrow, availableVersion } from "./SettingsParts.tsx";
+import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 
 /** 手机首页只关心这几位：切页（mobile/sel/gsel）变了不重画这一大片。 */
 const pickList = (s: State) => ({
@@ -38,7 +38,7 @@ export const MobileList = memo(function MobileList() {
           onClick={openSettings}
         >
           <Icon name="user" size={17} />
-          {updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+          {updateVersion ? <UpdateDot version={updateVersion} /> : null}
         </button>
         <span className="sp" />
         {s.search ? (

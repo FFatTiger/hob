@@ -10,7 +10,7 @@ import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
 import { usePinDrag } from "./PinDrag.ts";
-import { UpdateArrow, availableVersion } from "./SettingsParts.tsx";
+import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 
 export function Sidebar() {
   const s = useApp();
@@ -65,7 +65,7 @@ export function Sidebar() {
           <Icon name="gear" size={18} />
           <span className="sp">
             {t("设置")}
-            {updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+            {updateVersion ? <UpdateDot version={updateVersion} /> : null}
           </span>
         </button>
       </div>

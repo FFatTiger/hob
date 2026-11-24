@@ -109,7 +109,7 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-import { PageHead, Group, PalettePicker, Seg, LinkRow, UpdateArrow, availableVersion } from "./SettingsParts.tsx";
+import { PageHead, Group, PalettePicker, Seg, LinkRow, UpdateDot, availableVersion } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
@@ -259,7 +259,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
             <button className="setitem" key={item.id} onClick={() => setSection(item.id)}>
               <span className="setitem-label">
                 {item.label}
-                {item.id === "about" && updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+                {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
               </span>
               <Icon name="chev" size={15} />
             </button>
@@ -288,7 +288,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
               onClick={() => setSection(item.id)}
             >
               {item.label}
-              {item.id === "about" && updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+              {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
             </button>
           ))}
           <span className="sp" />

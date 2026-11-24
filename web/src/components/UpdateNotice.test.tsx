@@ -71,50 +71,50 @@ describe("新版本小箭头提示", () => {
   it("左栏底部「设置」有新版本时带强调色小箭头和读屏说明，没有时不显示", () => {
     const plain = renderToStaticMarkup(<Sidebar />);
     expect(plain).toContain(">设置</span>");
-    expect(plain).not.toContain("update-arrow");
+    expect(plain).not.toContain("update-dot");
     expect(plain).not.toContain("有新版本");
 
     state.update = { status: "up-to-date", latest: "1.14.0" };
-    expect(renderToStaticMarkup(<Sidebar />)).not.toContain("update-arrow");
+    expect(renderToStaticMarkup(<Sidebar />)).not.toContain("update-dot");
 
     state.update = { status: "error", error: "请求超时" };
-    expect(renderToStaticMarkup(<Sidebar />)).not.toContain("update-arrow");
+    expect(renderToStaticMarkup(<Sidebar />)).not.toContain("update-dot");
 
     state.update = { status: "available", latest: "1.15.0" };
     const withUpdate = renderToStaticMarkup(<Sidebar />);
-    expect(withUpdate).toContain('class="update-arrow"');
+    expect(withUpdate).toContain('class="update-dot"');
     expect(withUpdate).toContain('title="有新版本 1.15.0"');
     expect(withUpdate).toContain('aria-label="有新版本 1.15.0"');
   });
 
   it("设置页桌面导航和手机列表中「关于」有新版本时带小箭头，没有时不显示", () => {
     const desktopPlain = renderToStaticMarkup(<SettingsPage narrow={false} leaving={false} />);
-    expect(desktopPlain).not.toContain("update-arrow");
+    expect(desktopPlain).not.toContain("update-dot");
 
     state.section = null;
     const mobilePlain = renderToStaticMarkup(<SettingsPage narrow leaving={false} />);
-    expect(mobilePlain).not.toContain("update-arrow");
+    expect(mobilePlain).not.toContain("update-dot");
 
     state.update = { status: "available", latest: "1.15.0" };
     state.section = "about";
     const desktopUpdate = renderToStaticMarkup(<SettingsPage narrow={false} leaving={false} />);
-    expect(desktopUpdate).toMatch(/关于<span class="update-arrow" title="有新版本 1\.15\.0" role="img" aria-label="有新版本 1\.15\.0">/);
+    expect(desktopUpdate).toMatch(/关于<span class="update-dot" title="有新版本 1\.15\.0" role="img" aria-label="有新版本 1\.15\.0">/);
 
     state.section = null;
     const mobileUpdate = renderToStaticMarkup(<SettingsPage narrow leaving={false} />);
-    expect(mobileUpdate).toMatch(/关于<span class="update-arrow" title="有新版本 1\.15\.0" role="img" aria-label="有新版本 1\.15\.0">/);
+    expect(mobileUpdate).toMatch(/关于<span class="update-dot" title="有新版本 1\.15\.0" role="img" aria-label="有新版本 1\.15\.0">/);
   });
 
   it("手机端首页设置入口有新版本时带小箭头，没有时保持原样", () => {
     const plain = renderToStaticMarkup(<MobileList />);
     expect(plain).toContain('class="me"');
     expect(plain).not.toContain("has-update");
-    expect(plain).not.toContain("update-arrow");
+    expect(plain).not.toContain("update-dot");
 
     state.update = { status: "available", latest: "1.15.0" };
     const withUpdate = renderToStaticMarkup(<MobileList />);
     expect(withUpdate).toContain('class="me has-update"');
-    expect(withUpdate).toContain('class="update-arrow"');
+    expect(withUpdate).toContain('class="update-dot"');
     expect(withUpdate).toContain('aria-label="有新版本 1.15.0"');
   });
 });

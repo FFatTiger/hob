@@ -211,7 +211,7 @@ export function PluginDetail({ id }: { id: string }) {
       </div> : null}
     </section> : null}
 
-    {loginData ? <PluginLogins id={id} data={loginData} canSave={item.credentialRoles?.includes("save") ?? false} canDelete={item.credentialRoles?.includes("delete") ?? false} reload={async () => { const value = await loadPluginLogins(id, loginData.service); setLoginData(value); }} /> : null}
+    {loginData ? <PluginLogins id={id} data={loginData} canSave={item.credentialRoles?.includes("save") ?? false} canDelete={item.credentialRoles?.includes("delete") ?? false} browse={item.plugin.source === "builtin"} reload={async () => { const value = await loadPluginLogins(id, loginData.service); setLoginData(value); }} /> : null}
 
     {item.autoLogins?.length ? <section className="plugin-section"><h2>{t("自动填写的网站")} <span className="plugin-state">{t("不用每次批准")}</span></h2><div className="plugin-list">{item.autoLogins.map((entry) => (
       <div className="plugin-tool" key={`${entry.host}:${entry.username}`}>

@@ -192,6 +192,7 @@
 .plugin-login-menu { position: fixed; z-index: 10; width: 150px; }
 .plugin-login-menu button.danger { color: var(--danger); }
 .plugin-import-preview { margin-top: 12px; padding: 12px; border-radius: 10px; background: var(--field); color: var(--text2); font-size: 13px; }
+.plugin-login-more { display: block; margin: 10px auto 0; }
 .plugin-empty-login { margin-top: 12px; padding: 16px; color: var(--text3); font-size: 13px; text-align: center; }
 .plugin-login-notice { position: fixed; z-index: 12; right: 20px; bottom: 20px; max-width: min(360px, calc(100vw - 40px)); padding: 9px 12px; border-radius: 9px; background: var(--text); color: var(--bg); font-size: 12px; box-shadow: 0 8px 24px var(--jump-shadow); }
 .plugin-login-loading { display: block; margin-top: 8px; color: var(--text3); font-size: 12px; }

@@ -4,7 +4,6 @@ import { t } from "../../../shared/i18n.ts";
 import { copyText } from "../clipboard.ts";
 import { Icon } from "../icons.tsx";
 import { deletePluginLogin, loadPluginLoginSecret, savePluginLogin } from "../store.ts";
-import { Disclosure } from "./Disclosure.tsx";
 import { useMenu } from "./use-menu.ts";
 
 export interface LoginData { service: string; logins: PluginLoginView[]; folders: string[] }
@@ -58,14 +57,15 @@ function duplicate(row: ImportRow, logins: PluginLoginView[]): boolean {
   return logins.some(login => login.name === row.name && login.username === row.username && login.uris.includes(row.uri));
 }
 
-export function PluginLogins({ id, data, canSave, canDelete, reload }: { id: string; data: LoginData; canSave: boolean; canDelete: boolean; reload: () => Promise<void> }) {
+/** browse：登录存在 Hob 自己这里（自带密码库），这页就是管理它们的地方，直接列出；存在外部密码管理器里的，用户在那边管理，这里只按搜索显示。 */
+export function PluginLogins({ id, data, canSave, canDelete, browse, reload }: { id: string; data: LoginData; canSave: boolean; canDelete: boolean; browse: boolean; reload: () => Promise<void> }) {
   const [query, setQuery] = useState("");
   const [edit, setEdit] = useState<LoginEdit | null>(null);
   const [secretId, setSecretId] = useState<string | null>(null);
   const [passwords, setPasswords] = useState<Record<string, string>>({});
   const [notice, setNotice] = useState("");
   const [imported, setImported] = useState<ImportRow[] | null>(null);
-  const [moreOpen, setMoreOpen] = useState(false);
+  const [limit, setLimit] = useState(20);
   const [importing, setImporting] = useState(false);
   const file = useRef<HTMLInputElement>(null);
   const menu = useMenu();
@@ -162,9 +162,10 @@ export function PluginLogins({ id, data, canSave, canDelete, reload }: { id: str
   const menuLogin = menu.menu ? data.logins.find(login => login.id === menu.menu?.id) : undefined;
   return <section className="plugin-section plugin-logins">
     <div className="plugin-login-status"><span className="plugin-login-status-text"><span className="plugin-login-status-dot" />{t("已开启")} <span className="plugin-login-count">· {t("{n} 个登录", { n: data.logins.length })}</span></span>{canSave ? <><input ref={file} className="plugin-file-input" type="file" accept=".csv,text/csv" onChange={event => { const selected = event.target.files?.[0]; event.target.value = ""; if (selected) void readFile(selected); }} /><button className="hob-btn plugin-login-import" type="button" onClick={() => file.current?.click()}>{t("从别处导入")}</button></> : null}</div>
-    <div className="plugin-login-heading"><h2>{t("已保存的登录 {n} 个", { n: filtered.length })}</h2><label className="plugin-login-search"><Icon name="search" size={15} /><input value={query} onChange={event => setQuery(event.target.value)} placeholder={t("搜索名称、用户名或网址")} /></label></div>
+    <div className="plugin-login-heading"><h2>{t("已保存的登录 {n} 个", { n: filtered.length })}</h2><label className="plugin-login-search"><Icon name="search" size={15} /><input value={query} onChange={event => { setQuery(event.target.value); setLimit(20); }} placeholder={t("搜索名称、用户名或网址")} /></label></div>
     {imported ? <div className="plugin-import-preview"><div>{t("认出 {n} 条，{m} 条已存在会跳过", { n: imported.length, m: imported.filter(row => duplicate(row, data.logins)).length })}</div><div className="plugin-actions"><button className="hob-btn hob-btn-primary" type="button" disabled={importing} onClick={() => void doImport()}>{t("确认导入")}</button><button className="hob-btn" type="button" disabled={importing} onClick={() => setImported(null)}>{t("取消")}</button></div></div> : null}
-    {filtered.length ? <div className="plugin-login-list">{filtered.slice(0, 20).map(row)}{filtered.length > 20 ? <Disclosure className="plugin-login-more" label={t("其余 {n} 个", { n: filtered.length - 20 })} count={filtered.length - 20} open={moreOpen} onToggle={() => setMoreOpen(value => !value)}>{filtered.slice(20).map(row)}</Disclosure> : null}</div> : <div className="plugin-empty-login">{query ? t("没有匹配的登录") : t("还没有保存的登录")}</div>}
+    {!browse && !query.trim() ? (data.logins.length ? <div className="plugin-empty-login">{t("输入名称、用户名或网址，查找要看的登录。")}</div> : <div className="plugin-empty-login">{t("还没有保存的登录")}</div>)
+      : filtered.length ? <><div className="plugin-login-list">{filtered.slice(0, limit).map(row)}</div>{filtered.length > limit ? <button className="hob-btn plugin-login-more" type="button" onClick={() => setLimit(value => value + 20)}>{t("再显示 {n} 个", { n: Math.min(20, filtered.length - limit) })}</button> : null}</> : <div className="plugin-empty-login">{query ? t("没有匹配的登录") : t("还没有保存的登录")}</div>}
     {notice ? <div className="plugin-login-notice" role="status">{notice}</div> : null}
     {menuLogin && <div className="plugin-login-menu plugin-menu" ref={menu.box}><button type="button" onClick={() => { menu.close(); void secret(menuLogin); }}>{t("显示密码")}</button><button type="button" onClick={() => { menu.close(); void secret(menuLogin, true); }}>{t("复制密码")}</button><button type="button" onClick={() => { menu.close(); void copyText(menuLogin.username).then(ok => showNotice(ok ? t("已复制用户名") : t("复制失败，请检查浏览器的剪贴板权限。"))); }}>{t("复制用户名")}</button>{canSave ? <button type="button" onClick={() => void beginEdit(menuLogin)}>{t("编辑")}</button> : null}{canDelete ? <button type="button" className="danger" onClick={() => void remove(menuLogin)}>{t("删除")}</button> : null}</div>}
     {secretId ? <span className="plugin-login-loading" aria-live="polite">{t("正在读取密码…")}</span> : null}

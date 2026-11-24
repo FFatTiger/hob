@@ -5,12 +5,22 @@ import { PluginLogins, parseLoginCsv } from "./PluginLogins.tsx";
 
 describe("password vault CSV import", () => {
   it("renders the enabled status, gray folder text, and import action", () => {
-    const html = renderToStaticMarkup(<PluginLogins id="vault" data={{ service: "vault", folders: ["工作"], logins: [{ id: "one", name: "Example", username: "user", uris: ["https://example.test"], folder: "工作", hasPassword: true, hasTotp: false }] }} canSave canDelete reload={async () => undefined} />);
+    const html = renderToStaticMarkup(<PluginLogins id="vault" data={{ service: "vault", folders: ["工作"], logins: [{ id: "one", name: "Example", username: "user", uris: ["https://example.test"], folder: "工作", hasPassword: true, hasTotp: false }] }} canSave canDelete browse reload={async () => undefined} />);
     expect(html).toContain("已开启");
     expect(html).toContain("1 个登录");
     expect(html).toContain("plugin-login-import");
     expect(html).toContain("plugin-login-folder");
     expect(html).not.toContain("name=\"folder\"");
+  });
+
+  it("lists Hob's own logins 20 at a time and shows an external manager's logins only when searched", () => {
+    const logins = Array.from({ length: 45 }, (_, i) => ({ id: `l${i}`, name: `站点${i}`, username: `user${i}`, uris: [`https://s${i}.example.test`], hasPassword: true, hasTotp: false }));
+    const own = renderToStaticMarkup(<PluginLogins id="vault" data={{ service: "vault", folders: [], logins }} canSave canDelete browse reload={async () => undefined} />);
+    expect(own.match(/plugin-login-row/g)).toHaveLength(20);
+    expect(own).toContain("再显示 20 个");
+    const external = renderToStaticMarkup(<PluginLogins id="bitwarden" data={{ service: "bitwarden", folders: [], logins }} canSave canDelete browse={false} reload={async () => undefined} />);
+    expect(external).not.toContain("plugin-login-row");
+    expect(external).toContain("45 个登录");
   });
 
   it("recognizes Bitwarden, Chrome, and 1Password headers in memory", () => {

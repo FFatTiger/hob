@@ -252,6 +252,8 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
   const desktop = useDesktopScreens();
   const screenId = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
   const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
+  // 配了云桌面、这个助手的屏幕还没开：留一栏，点开全屏看（打开时会启动屏幕），比如先替助手登录网站
+  const deskIdle = !desk && !!screenId && desktop.screens.some((entry) => entry.id === screenId && !entry.running);
   const currentPanel = s.panelStack.at(-1);
   const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
   useEffect(() => {
@@ -324,6 +326,7 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
           {job ? log("strip", wide ? t("缩小右栏") : t("在侧栏展开"), toggleNowWide) : null}
         </div>
       ) : null}
+      {deskIdle ? <button className="now-desk-off" onClick={() => setScreen("view")}><Icon name="panel" size={15} /><span>{t("云桌面")}</span><small>{t("未激活")}</small><Icon name="chev" size={14} /></button> : null}
       {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
       {desktop.error ? <div className="badline">{t("云桌面状态读取失败：{error}", { error: desktop.error })}</div> : null}
       {!desk ? <div className={`now-log${job ? " open" : ""}`} inert={!job}><div>{logPresence.mounted && job ? log("jd-open", t("打开任务详情"), () => openJob(job.id)) : logPresence.mounted ? log("jd-open", t("打开任务详情"), () => {}) : null}</div></div> : null}

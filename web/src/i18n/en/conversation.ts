@@ -234,6 +234,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "全屏": "Full screen",
   "全屏查看云桌面": "View cloud desktop full screen",
   "接管云桌面": "Take over cloud desktop",
+  "未激活": "Not active",
   "接管": "Take over",
   "云桌面状态读取失败：{error}": "Couldn't read cloud desktop status: {error}",
   "打开任务详情": "Open job details",

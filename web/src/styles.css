@@ -25,6 +25,11 @@
 .sidebar-card .screen, .sidebar-card .now-desk { margin-top: 12px; }
 .sidebar-card .screen:not(.strip) { height: 120px; width: 100%; text-align: left; }
 .sidebar-card .now-desk .screen.strip { height: auto; }
+/* 右栏：配了云桌面但这个助手的屏幕没开时的一栏，点开全屏（会启动屏幕） */
+.now-desk-off { display: flex; align-items: center; gap: 8px; width: 100%; margin-top: 12px; padding: 10px 12px; border-radius: 10px; background: var(--bg); color: var(--text); font-size: 13px; text-align: left; }
+.now-desk-off span { flex: 1; min-width: 0; }
+.now-desk-off small, .now-desk-off .i { color: var(--text3); font-size: 12px; }
+@media (hover: hover) { .now-desk-off:hover { background: color-mix(in srgb, var(--text) 6%, var(--bg)); } }
 .sidebar-card .caprow { margin-top: 8px; }
 .sidebar-card .cap { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-facts button, .sidebar-facts > div, .sidebar-delegation { display: flex; align-items: center; gap: 8px; width: 100%; text-align: left; padding: 8px 0 0; font-size: 12px; color: var(--text2); }

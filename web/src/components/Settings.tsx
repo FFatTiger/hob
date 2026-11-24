@@ -1905,7 +1905,7 @@ function modelUseState(entry: RosterEntry, info?: ModelInfo) {
 
 function ModelUseEditor({ entry, info, update, collapsible = false }: { entry: RosterEntry; info?: ModelInfo; update: (patch: Partial<RosterEntry>) => void; collapsible?: boolean }) {
   const initial = modelUseState(entry, info);
-  const [expanded, setExpanded] = useState(!collapsible || initial.unconfirmed);
+  const [expanded, setExpanded] = useState(!collapsible);
   const [scores, setScores] = useState(initial.scores);
   const [note, setNote] = useState(entry.note);
   // 拖动中只改本地，松手才保存；拖动时不让服务端回来的旧值把滑块拽回去（否则会来回闪）
@@ -2194,10 +2194,8 @@ function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNam
   const { models, setRoster, roles, update, feedback } = useModelSettings();
   const [query, setQuery] = useState("");
   const chosen = new Set(models.roster.map((entry) => entry.ref));
-  // 已经有模型加入的服务商一开始就展开，看得到选了哪些
-  const [openGroups, setOpenGroups] = useState<string[]>(() => [
-    ...new Set(view.models.filter((model) => chosen.has(model.ref)).map((model) => model.provider)),
-  ]);
+  // 服务商一开始都收起，用户点开哪个看哪个
+  const [openGroups, setOpenGroups] = useState<string[]>([]);
   const groups = groupByProvider(filterModels(view.models, query));
   const searching = query.trim().length > 0;
   const toggleGroup = (provider: string) =>

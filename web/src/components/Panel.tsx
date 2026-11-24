@@ -4,7 +4,7 @@ import { Select } from "./Select.tsx";
 import { DelayedText, Empty } from "./Empty.tsx";
 import { SaveMessage, useSaveMessage } from "./SaveMessage.tsx";
 import { DetailRow } from "./DetailRow.tsx";
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { useMenu } from "./use-menu.ts";
 import { skillUsage } from "../skill-usage.ts";
@@ -123,7 +123,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
         ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group ? (
           group.parentId ? <><GroupPanel g={s.groups.find((g) => g.id === group.parentId) ?? group} /><TopicClose topic={group} /></> : <GroupPanel g={group} />
         ) : (
-          <><PanelNow mobile={mobile} focus={focus} />{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails /> : null}</>
+          <PanelNow mobile={mobile} focus={focus}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails desktopRow={desktopRow} /> : null}</>}</PanelNow>
         )}
       </div>
     </aside>
@@ -239,7 +239,8 @@ function GroupPanel({ g }: { g: GroupSummary }) {
   );
 }
 
-function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
+/** children 拿到「云桌面 · 待机」那一行（屏幕没开时才有），放进下面定时任务那组；打开全屏仍由这里管。 */
+function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean; children?: (desktopRow: ReactNode) => ReactNode }) {
   const s = useApp();
   const aid = panelAssistant(s.panelStack, s.sel);
   const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
@@ -252,8 +253,9 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
   const desktop = useDesktopScreens();
   const screenId = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
   const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
-  // 配了云桌面、这个助手的屏幕还没开：留一栏，点开全屏看（打开时会启动屏幕），比如先替助手登录网站
+  // 配了云桌面、这个助手的屏幕还没开：定时任务那组里留一行，点开全屏看（打开时会启动屏幕），比如先替助手登录网站
   const deskIdle = !desk && !!screenId && desktop.screens.some((entry) => entry.id === screenId && !entry.running);
+  const desktopRow = deskIdle ? <button onClick={() => setScreen("view")}><Icon name="panel" size={15} /><span>{t("云桌面")}</span><small>{t("待机")}</small><b>›</b></button> : null;
   const currentPanel = s.panelStack.at(-1);
   const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
   useEffect(() => {
@@ -308,6 +310,7 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
   </div>;
 
   return (
+    <>
     <div className="group-card sidebar-card">
       {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
       {desk ? (
@@ -326,7 +329,6 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
           {job ? log("strip", wide ? t("缩小右栏") : t("在侧栏展开"), toggleNowWide) : null}
         </div>
       ) : null}
-      {deskIdle ? <button className="now-desk-off" onClick={() => setScreen("view")}><Icon name="panel" size={15} /><span>{t("云桌面")}</span><small>{t("未激活")}</small><Icon name="chev" size={14} /></button> : null}
       {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
       {desktop.error ? <div className="badline">{t("云桌面状态读取失败：{error}", { error: desktop.error })}</div> : null}
       {!desk ? <div className={`now-log${job ? " open" : ""}`} inert={!job}><div>{logPresence.mounted && job ? log("jd-open", t("打开任务详情"), () => openJob(job.id)) : logPresence.mounted ? log("jd-open", t("打开任务详情"), () => {}) : null}</div></div> : null}
@@ -341,6 +343,8 @@ function PanelNow({ mobile, focus }: { mobile: boolean; focus: boolean }) {
         return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation(aid, delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>{t("交给「{name}」", { name: target?.name ?? delegation.to })}</span><small><StatusTag meta={DELEGATION_STATUS[delegation.status]} /></small> ›</button>;
       })}
     </div>
+    {children?.(desktopRow)}
+    </>
   );
 }
 

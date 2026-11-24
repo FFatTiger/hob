@@ -4121,6 +4121,88 @@ button:not(:disabled):active {
   background: var(--field);
   font-weight: 500;
 }
+/* 设置页左侧栏：极简分组 + 单色线性图标（限定在 .settings-page，不影响知识库/插件/收藏） */
+.settings-page .setnav {
+  width: 228px;
+  padding: 0;
+  gap: 0;
+  background: var(--side);
+  border-right: 0;
+  min-height: 0;
+}
+.settings-page .setnav-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 14px 12px 8px 10px;
+}
+.settings-page .setnav-title {
+  font-size: 16px;
+  font-weight: 600;
+  color: var(--text);
+}
+.settings-page .setnav-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 6px 12px 20px;
+}
+.settings-page .setnav-group + .setnav-group {
+  margin-top: 18px;
+}
+.settings-page .setnav-group-title {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--text3);
+  padding: 0 10px 6px;
+}
+.settings-page .setnav-group-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.settings-page .setnav .navrow {
+  width: 100%;
+  gap: 9px;
+  height: 34px;
+  padding: 0 10px;
+  border-radius: 9px;
+  font-size: 14px;
+  color: var(--text2);
+  transition: background var(--t-fast) var(--ease-out), color var(--t-fast) var(--ease-out);
+}
+.settings-page .setnav .navrow-ic {
+  color: var(--text2);
+  opacity: 0.78;
+  transition: color var(--t-fast) var(--ease-out), opacity var(--t-fast) var(--ease-out);
+}
+.settings-page .setnav .navrow-label {
+  flex: 1;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@media (hover: hover) {
+  .settings-page .setnav .navrow:hover {
+    background: color-mix(in srgb, var(--sel) 65%, transparent);
+    color: var(--text);
+  }
+  .settings-page .setnav .navrow:hover .navrow-ic {
+    opacity: 1;
+  }
+}
+.settings-page .setnav .navrow.sel {
+  background: var(--sel);
+  color: var(--text);
+  font-weight: 500;
+}
+.settings-page .setnav .navrow.sel .navrow-ic {
+  color: var(--text);
+  opacity: 1;
+}
 .setmain {
   flex: 1;
   min-width: 0;
@@ -4302,34 +4384,53 @@ button:not(:disabled):active {
   align-items: center;
   gap: 6px;
 }
-/* 手机设置列表：一张圆角卡片，行间细线从文字左边开始，和系统设置一个画法 */
-.setpage.narrow .setbody {
-  padding: 16px 16px 40px;
+/* 手机设置列表：按组放在无边框浅灰圆角底块上，组外小号灰字标题，行间无分割线 */
+.settings-page.narrow .setbody {
+  padding: 14px 16px calc(36px + env(safe-area-inset-bottom, 0px));
 }
-.setpage.narrow .setbody > .setitem {
-  position: relative;
-  height: 48px;
-  padding: 0 14px 0 16px;
-  border-radius: 0;
+.settings-page.narrow .set-mgroup + .set-mgroup {
+  margin-top: 20px;
+}
+.settings-page.narrow .set-mgroup-title {
+  font-size: 12px;
+  line-height: 1.4;
+  font-weight: 400;
+  color: var(--text3);
+  padding: 0 12px 6px;
+}
+.settings-page.narrow .set-mgroup-card {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding: 4px;
+  border-radius: 12px;
   background: var(--field);
 }
-.setpage.narrow .setbody > .setitem:first-child {
-  border-radius: 12px 12px 0 0;
+.settings-page.narrow .set-mgroup-card .setitem {
+  justify-content: flex-start;
+  gap: 11px;
+  height: 46px;
+  padding: 0 10px 0 12px;
+  border-radius: 9px;
+  background: transparent;
 }
-.setpage.narrow .setbody > .setitem:last-child {
-  border-radius: 0 0 12px 12px;
-}
-.setpage.narrow .setbody > .setitem + .setitem::before {
-  content: "";
-  position: absolute;
-  left: 16px;
-  right: 0;
-  top: 0;
-  height: 1px;
-  background: var(--line);
-}
-.setpage.narrow .setbody > .setitem:active {
+.settings-page.narrow .set-mgroup-card .setitem:active {
   background: var(--sel);
+}
+@media (hover: hover) {
+  .settings-page.narrow .set-mgroup-card .setitem:hover {
+    background: var(--sel);
+  }
+}
+.settings-page.narrow .set-mgroup-card .setitem-ic {
+  color: var(--text2);
+}
+.settings-page.narrow .set-mgroup-card .setitem-label {
+  flex: 1;
+  min-width: 0;
+}
+.settings-page.narrow .set-mgroup-card .setitem-chev {
+  color: var(--text3);
 }
 /* 设置 → 通知：已订阅的设备一行（名称、时间、删除） */
 .dev {

@@ -62,4 +62,8 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "查看更新内容": "View release notes",
   "已是最新版本": "Up to date",
   "检查更新失败：{reason}": "Couldn't check for updates: {reason}",
+  "基础": "Basics",
+  "模型与能力": "Models & capabilities",
+  "工作空间": "Workspace",
+  "用量与关于": "Usage & about",
 };

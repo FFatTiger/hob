@@ -169,7 +169,21 @@ function AutoField({ value, placeholder, multiline, onSave }: { value: string; p
   return <div className="field">{multiline ? <textarea {...props} rows={3} /> : <input {...props} />}</div>;
 }
 
-const SECTION_IDS: SettingsSection[] = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "desktop", "work", "usage", "push", "about"];
+const SECTION_GROUPS: { id: "basics" | "capabilities" | "workspace" | "usage"; items: SettingsSection[] }[] = [
+  { id: "basics", items: ["general", "rules", "push"] },
+  { id: "capabilities", items: ["providers", "models", "memory", "image", "knowledge", "search"] },
+  { id: "workspace", items: ["skills", "desktop", "work"] },
+  { id: "usage", items: ["usage", "about"] },
+];
+
+function sectionGroupLabel(id: (typeof SECTION_GROUPS)[number]["id"]): string {
+  switch (id) {
+    case "basics": return t("基础");
+    case "capabilities": return t("模型与能力");
+    case "workspace": return t("工作空间");
+    case "usage": return t("用量与关于");
+  }
+}
 
 function sectionLabel(id: SettingsSection): string {
   switch (id) {
@@ -190,8 +204,31 @@ function sectionLabel(id: SettingsSection): string {
   }
 }
 
-function sectionItems(): { id: SettingsSection; label: string }[] {
-  return SECTION_IDS.map((id) => ({ id, label: sectionLabel(id) }));
+function sectionIcon(id: SettingsSection): IconName {
+  switch (id) {
+    case "general": return "gear";
+    case "rules": return "rule";
+    case "push": return "bell";
+    case "providers": return "server";
+    case "models": return "layers";
+    case "memory": return "mem";
+    case "image": return "image";
+    case "knowledge": return "archive";
+    case "search": return "globe";
+    case "skills": return "book";
+    case "desktop": return "monitor";
+    case "work": return "tasks";
+    case "usage": return "chart";
+    case "about": return "info";
+  }
+}
+
+function sectionGroups(): { id: string; label: string; items: { id: SettingsSection; label: string; icon: IconName }[] }[] {
+  return SECTION_GROUPS.map((group) => ({
+    id: group.id,
+    label: sectionGroupLabel(group.id),
+    items: group.items.map((id) => ({ id, label: sectionLabel(id), icon: sectionIcon(id) })),
+  }));
 }
 
 function themeItems(): { key: Theme; label: string }[] {
@@ -236,7 +273,8 @@ function maskProxy(value: string): string {
 
 export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: boolean }) {
   const s = useApp();
-  const sections = sectionItems();
+  const groups = sectionGroups();
+  const sections = groups.flatMap((group) => group.items);
   const current = s.section ?? (narrow ? null : "general");
   const updateVersion = availableVersion(s.update);
   // 换分栏、进出子页都从顶上看起
@@ -247,22 +285,30 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
 
   if (narrow && current === null) {
     return (
-      <div className={`setpage narrow${leaving ? " leaving" : ""}`}>
+      <div className={`setpage settings-page narrow${leaving ? " leaving" : ""}`}>
         <div className="sethead">
-          <button className="hob-icon-btn" title={t("返回")} onClick={closeSettings}>
+          <button type="button" className="hob-icon-btn" title={t("返回")} onClick={closeSettings}>
             <Icon name="left" size={17} />
           </button>
           <span className="t">{t("设置")}</span>
         </div>
         <div className="setbody">
-          {sections.map((item) => (
-            <button className="setitem" key={item.id} onClick={() => setSection(item.id)}>
-              <span className="setitem-label">
-                {item.label}
-                {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
-              </span>
-              <Icon name="chev" size={15} />
-            </button>
+          {groups.map((group) => (
+            <section className="set-mgroup" key={group.id}>
+              <div className="set-mgroup-title">{group.label}</div>
+              <div className="set-mgroup-card">
+                {group.items.map((item) => (
+                  <button type="button" className="setitem" key={item.id} onClick={() => setSection(item.id)}>
+                    <Icon name={item.icon} size={16} className="setitem-ic" />
+                    <span className="setitem-label">
+                      {item.label}
+                      {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
+                    </span>
+                    <Icon name="chev" size={15} className="setitem-chev" />
+                  </button>
+                ))}
+              </div>
+            </section>
           ))}
         </div>
       </div>
@@ -270,32 +316,53 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
   }
 
   return (
-    <div className={`setpage${narrow ? " narrow" : ""}${leaving ? " leaving" : ""}`}>
+    <div className={`setpage settings-page${narrow ? " narrow" : ""}${leaving ? " leaving" : ""}`}>
       {narrow ? (
         <div className="sethead">
-          <button className="hob-icon-btn" title={t("返回")} onClick={s.sub ? closeSub : () => setSection(null)}>
+          <button type="button" className="hob-icon-btn" title={t("返回")} onClick={s.sub ? closeSub : () => setSection(null)}>
             <Icon name="left" size={17} />
           </button>
           <span className="t">{s.sub?.title ?? sections.find((item) => item.id === current)?.label ?? t("设置")}</span>
         </div>
       ) : (
-        <div className="setnav">
-          <div className="setnavtitle">{t("设置")}</div>
-          {sections.map((item) => (
+        <nav className="setnav" aria-label={t("设置")}>
+          <div className="setnav-head">
             <button
-              key={item.id}
-              className={`navrow${current === item.id ? " sel" : ""}`}
-              onClick={() => setSection(item.id)}
+              type="button"
+              className="hob-icon-btn setnav-back"
+              title={t("返回 Hob")}
+              aria-label={t("返回 Hob")}
+              onClick={closeSettings}
             >
-              {item.label}
-              {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
+              <Icon name="left" size={17} />
             </button>
-          ))}
-          <span className="sp" />
-          <button className="navrow" onClick={closeSettings}>
-            {t("返回 Hob")}
-          </button>
-        </div>
+            <span className="setnav-title">{t("设置")}</span>
+          </div>
+          <div className="setnav-scroll">
+            {groups.map((group) => (
+              <div className="setnav-group" key={group.id}>
+                <div className="setnav-group-title">{group.label}</div>
+                <div className="setnav-group-list">
+                  {group.items.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      className={`navrow${current === item.id ? " sel" : ""}`}
+                      aria-current={current === item.id ? "page" : undefined}
+                      onClick={() => setSection(item.id)}
+                    >
+                      <Icon name={item.icon} size={16} className="navrow-ic" />
+                      <span className="navrow-label">
+                        {item.label}
+                        {item.id === "about" && updateVersion ? <UpdateDot version={updateVersion} /> : null}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </nav>
       )}
       <div className="setmain" ref={main}>
         {current === "rules" ? (

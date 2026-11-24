@@ -66,4 +66,11 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "模型与能力": "Models & capabilities",
   "工作空间": "Workspace",
   "用量与关于": "Usage & about",
+  "工作目录（可选）": "Work directory (optional)",
+  "如 /workspace/app，创建后不可修改": "e.g. /workspace/app (cannot be changed later)",
+  "跟随群（{path}）": "Follows group ({path})",
+  "跟随群": "Group",
+  "本话题": "This topic",
+  "创建时已绑定，不可修改。": "Bound at creation and cannot be changed.",
+  "创建时已绑定，群内及所有话题共用此目录，不可修改。": "Bound at creation. Shared by the group and all its topics, and cannot be changed.",
 };

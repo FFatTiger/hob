@@ -60,7 +60,7 @@ import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.0" };
 
-export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -147,6 +147,9 @@ export const SCENE_UI: Record<
   // 话题（票 152）：一个敏捷团队群、一个家用群
   topics: { sel: null, gsel: "g-topics", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "topics-plain": { sel: null, gsel: "g-home", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  // 工作目录绑定演示：群绑定 / 话题跟随 / 独立话题绑定 / 助手绑定
+  "workspace-cwd": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "workspace-cwd-dark": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: true, mobile: "chat" },
 };
 
 const uid = (() => {
@@ -1598,6 +1601,52 @@ cp now.txt "$seen"`,
         { kind: "note", id: "gt-9", at: at(0, 9, 52), icon: "split", text: "产品负责人开了话题「登录页加「记住我」」", speaker: "po" },
       ];
     }
+  }
+
+  if (scene === "workspace-cwd" || scene === "workspace-cwd-dark") {
+    const devGroup = groups.find((g) => g.id === "g-dev")!;
+    const homeGroup = groups.find((g) => g.id === "g-home")!;
+    devGroup.cwd = "/workspace/hob-app";
+    const devAssistant = assistants.find((a) => a.id === "dev");
+    if (devAssistant) devAssistant.cwd = "/workspace/hob-app/packages/web";
+    draft.cwd = "/workspace/ai-radar";
+
+    const tDevCwd: GroupSummary = {
+      id: "t-dev-cwd",
+      name: L("工作目录只读展示", "Read-only workspace cwd"),
+      purpose: devGroup.purpose,
+      ownerId: devGroup.ownerId,
+      members: [...devGroup.members],
+      createdAt: at(0, 9, 30),
+      parentId: devGroup.id,
+      createdBy: "po",
+      unread: 0,
+      busy: [],
+      last: { at: at(0, 9, 55), speaker: "dev", text: L("已按群目录 /workspace/hob-app 加载 AGENTS.md 并完成构建", "Loaded AGENTS.md from /workspace/hob-app and verified the build") },
+    };
+    const tHomeCwd: GroupSummary = {
+      id: "t-home-cwd",
+      name: L("NAS 自动备份脚本", "NAS backup scripts"),
+      purpose: homeGroup.purpose,
+      ownerId: homeGroup.ownerId,
+      members: [...homeGroup.members],
+      cwd: "/srv/home-nas/scripts",
+      createdAt: at(1, 14, 0),
+      parentId: homeGroup.id,
+      createdBy: "user",
+      unread: 0,
+      busy: [],
+      last: { at: at(1, 14, 20), speaker: "server", text: L("已绑定本话题目录 /srv/home-nas/scripts", "Bound to topic directory /srv/home-nas/scripts") },
+    };
+    groups.push(tDevCwd, tHomeCwd);
+    topicItems[tDevCwd.id] = [
+      { kind: "user", id: "wc-1", at: at(0, 9, 32), text: L("这个话题直接跟着群的工作目录跑，把前端构建和单测顺一遍。", "Run the frontend build and unit tests in the group workspace."), speaker: "user" },
+      { kind: "assistant", id: "wc-2", at: at(0, 9, 55), text: L("已在 /workspace/hob-app 自动加载 AGENTS.md，构建和前端测试都通过了。", "Loaded AGENTS.md in /workspace/hob-app; both build and tests passed."), speaker: "dev" },
+    ];
+    topicItems[tHomeCwd.id] = [
+      { kind: "user", id: "wc-3", at: at(1, 14, 5), text: L("帮我看下定时同步脚本为什么漏了隐藏目录。", "Check why the sync script skipped hidden folders."), speaker: "user" },
+      { kind: "assistant", id: "wc-4", at: at(1, 14, 20), text: L("在 /srv/home-nas/scripts 找到了 rsync 过滤规则问题，修好后重跑正常。", "Found the rsync filter rule issue in /srv/home-nas/scripts and verified the fix."), speaker: "server" },
+    ];
   }
 
   const cards: Record<string, CardRecord> = {};
@@ -3233,12 +3282,15 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!body.name.trim()) throw new ApiError(400, "群名不能为空。");
       if (members.length < 1) throw new ApiError(400, "群里至少要有一个助手。");
       if (!members.includes(body.ownerId)) throw new ApiError(400, "群主必须是群里的一员。");
+      const cwd = body.cwd?.trim();
+      if (cwd && !cwd.startsWith("/") && !cwd.startsWith("~")) throw new ApiError(400, "工作目录必须填写绝对路径（如 /workspace/app）。");
       const group: Group = {
-        id: `g-${Date.now().toString(36)}`,
+        id: uid("g-"),
         name: body.name.trim(),
         purpose: body.purpose.trim(),
         ownerId: body.ownerId,
         members,
+        ...(cwd ? { cwd } : {}),
         createdAt: new Date().toISOString(),
       };
       db.groups.push({ ...group, unread: 0, busy: [] });
@@ -3255,13 +3307,17 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const title = body.title.trim();
       if (!title) throw new ApiError(400, "话题名不能为空。");
       if (title.length > 40) throw new ApiError(400, "话题名最多 40 个字。");
+      const cwd = body.cwd?.trim();
+      if (cwd && group.cwd) throw new ApiError(400, `所属群已绑定工作目录（${group.cwd}），话题自动沿用群目录，不支持单独指定。`);
+      if (cwd && !cwd.startsWith("/") && !cwd.startsWith("~")) throw new ApiError(400, "工作目录必须填写绝对路径（如 /workspace/app）。");
       const now = new Date().toISOString();
       const topic: Group = {
-        id: `g-${Date.now().toString(36)}`,
+        id: uid("g-"),
         name: title,
         purpose: group.purpose,
         ownerId: group.ownerId,
         members: [...group.members],
+        ...(cwd ? { cwd } : {}),
         createdAt: now,
         parentId: group.id,
         createdBy: "user",

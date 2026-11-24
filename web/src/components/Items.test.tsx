@@ -1,12 +1,12 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { Approval, ApprovalQuestion, Item, JobStatus, SedimentStatus } from "../../../shared/types.ts";
+import type { Approval, ApprovalQuestion, Draft, Item, JobStatus, SedimentStatus } from "../../../shared/types.ts";
 import { ROUTINE_DUE_TEXT_LEGACY } from "../../../shared/routine-note.ts";
 
-const state = vi.hoisted(() => ({ sediment: undefined as SedimentStatus | undefined, status: "done" as JobStatus, statusReason: undefined as string | undefined, approvals: {} as Record<string, Approval> }));
+const state = vi.hoisted(() => ({ sediment: undefined as SedimentStatus | undefined, status: "done" as JobStatus, statusReason: undefined as string | undefined, approvals: {} as Record<string, Approval>, drafts: {} as Record<string, Draft> }));
 
 vi.mock("../store.ts", () => ({
-  useApp: () => ({ assistants: [], approvals: state.approvals, drafts: {}, delegations: {}, livePages: {}, sel: "hob", jobs: { "t-1": { id: "t-1", title: "测试任务", status: state.status, statusReason: state.statusReason, sediment: state.sediment, assistantId: "hob", createdAt: "2026-01-01T00:00:00Z", stats: { reads: 0, commands: 0, edits: 0 } } } }),
+  useApp: () => ({ assistants: [], approvals: state.approvals, drafts: state.drafts, delegations: {}, livePages: {}, sel: "hob", jobs: { "t-1": { id: "t-1", title: "测试任务", status: state.status, statusReason: state.statusReason, sediment: state.sediment, assistantId: "hob", createdAt: "2026-01-01T00:00:00Z", stats: { reads: 0, commands: 0, edits: 0 } } } }),
   photoUrl: (path: string) => path, fileUrl: (path: string) => path,
 }));
 vi.mock("./ImageGen.tsx", () => ({ ImageGenCard: ({ itemId }: { itemId: string }) => <div data-item-id={itemId}>生成的图片</div> }));
@@ -156,6 +156,38 @@ describe("对话卡片出处", () => {
     expect(html).toContain("旧文件.pdf");
     expect(html).toContain("12 KB");
     vi.unstubAllGlobals();
+  });
+
+  it("草稿卡仅在绑定了工作目录时只读展示，未绑定不渲染", () => {
+    vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
+    const at = "2026-01-01T00:00:00Z";
+    const base: Draft = {
+      id: "d-1",
+      assistantId: "hob",
+      status: "pending",
+      name: "前端助手",
+      sprite: "page",
+      duty: "负责前端开发",
+      dutyLong: "负责前端开发与单测",
+      routines: [],
+      routinesText: "",
+      askFirst: [],
+      createdAt: at,
+    };
+    try {
+      state.drafts = { "d-1": { ...base, cwd: "/workspace/hob-web" } };
+      const bound = renderToStaticMarkup(<ItemList items={[{ kind: "draft", id: "di-1", at, draftId: "d-1" }]} />);
+      expect(bound).toContain("工作目录");
+      expect(bound).toContain("/workspace/hob-web");
+      expect(bound).not.toContain("<input");
+
+      state.drafts = { "d-1": base };
+      const unbound = renderToStaticMarkup(<ItemList items={[{ kind: "draft", id: "di-2", at, draftId: "d-1" }]} />);
+      expect(unbound).not.toContain("工作目录");
+    } finally {
+      state.drafts = {};
+      vi.unstubAllGlobals();
+    }
   });
 });
 

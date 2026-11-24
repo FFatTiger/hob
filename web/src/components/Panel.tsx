@@ -121,7 +121,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
         ) : kind === "assistant" ? (
           <AssistantSettings key={panelAssistant(s.panelStack, s.sel)} />
         ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group ? (
-          group.parentId ? <><GroupPanel g={s.groups.find((g) => g.id === group.parentId) ?? group} /><TopicClose topic={group} /></> : <GroupPanel g={group} />
+          group.parentId ? <><GroupPanel g={s.groups.find((g) => g.id === group.parentId) ?? group} topic={group} /><TopicClose topic={group} /></> : <GroupPanel g={group} />
         ) : (
           <PanelNow mobile={mobile} focus={focus}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails desktopRow={desktopRow} /> : null}</>}</PanelNow>
         )}
@@ -134,7 +134,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
  * 右栏：群信息——群头像和名字、群主和人数、状态、负责什么、成员（空闲 / 在办几件）、添加成员、结束这个群。
  * 成员的「设为群主 / 移出群」在成员行右边的 ⋯ 里（手机上一直看得见，桌面上悬停才出现）。
  */
-function GroupPanel({ g }: { g: GroupSummary }) {
+function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
   const s = useApp();
   const members = membersOf(g, s.assistants);
   const owner = members.find((m) => m.id === g.ownerId);
@@ -167,6 +167,15 @@ function GroupPanel({ g }: { g: GroupSummary }) {
           <em className={busy.size ? "active" : ""}><span key={busy.size ? "busy" : "idle"}>{busy.size ? t("执行中") : t("空闲")}</span></em>
         </div>
         <div className="gpanel-origin"><small>{t("职责")}</small>{g.purpose || t("未填写")}</div>
+        {topic ? (
+          g.id !== topic.id && g.cwd ? (
+            <div className="gpanel-origin"><small>{t("工作目录")} · {t("跟随群")}</small>{g.cwd}</div>
+          ) : topic.cwd ? (
+            <div className="gpanel-origin"><small>{t("工作目录")} · {t("本话题")}</small>{topic.cwd}</div>
+          ) : null
+        ) : g.cwd ? (
+          <div className="gpanel-origin"><small>{t("工作目录")}</small>{g.cwd}</div>
+        ) : null}
       </div>
 
       <PanelRootDetails groupId={g.id} part="info" />
@@ -313,6 +322,9 @@ function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean
     <>
     <div className="group-card sidebar-card">
       {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
+      {!assistant?.primary && assistant?.cwd ? (
+        <div className="gpanel-origin"><small>{t("工作目录")}</small>{assistant.cwd}</div>
+      ) : null}
       {desk ? (
         <div className="now-desk">
           <div className="now-screen">
@@ -361,6 +373,13 @@ function GroupSettings({ id }: { id: string }) {
     <div className="pgroup"><div className="bigav"><GroupCluster g={group} assistants={s.assistants} size={64} /></div>
       <div className="sech"><span>{t("基本信息")}</span></div><div className="group-card sidebar-card-group">
       {([ ["name", t("群名")], ["purpose", t("职责")] ] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><PanelText value={group[key] ?? ""} multiline={key === "purpose"} save={(value) => save({ [key]: value })} /></div>)}
+      {group.cwd ? (
+        <>
+          <div className="lbl">{t("工作目录")}</div>
+          <div className="field ro" title={group.cwd}>{group.cwd}</div>
+          <div className="note">{t("创建时已绑定，群内及所有话题共用此目录，不可修改。")}</div>
+        </>
+      ) : null}
       </div></div>
     <div className="pgroup"><div className="sech"><span>{t("模型")}</span></div>
     <div className="group-card sidebar-card-group">{([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => <div key={key}><div className="lbl">{label}</div><Select aria-label={label} value={group.models?.[key]?.ref ?? ""} onChange={(ref) => { const model = view?.models.find((item) => item.ref === ref); void save({ models: { [key]: ref ? { ref, thinking: fitThinking(model, settings.roster.find((entry) => entry.ref === ref)?.thinking ?? settings[key].thinking) } : null } }); }} options={[{ value: "", label: t("跟随各成员") }, ...rosterOptions(settings.roster, group.models?.[key]?.ref, (ref) => view?.models.find((item) => item.ref === ref)?.name ?? ref).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} /></div>)}
@@ -1077,6 +1096,14 @@ function AssistantSettings() {
 
         <div className="lbl">{t("补充提示词")}</div>
         <PanelText multiline long value={a.instructions ?? ""} placeholder={t("写给这个助手的话：性格、说话方式、工作方法、格式要求……都可以。会原样接进它的提示词。")} save={(instructions) => feedback.save({ instructions })} />
+
+        {!a.primary && a.cwd ? (
+          <>
+            <div className="lbl">{t("工作目录")}</div>
+            <div className="field ro" title={a.cwd}>{a.cwd}</div>
+            <div className="note">{t("创建时已绑定，不可修改。")}</div>
+          </>
+        ) : null}
 
         </div>
       </div>

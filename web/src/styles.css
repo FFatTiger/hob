@@ -2454,6 +2454,7 @@ svg.i {
   border-top: 1px solid var(--line);
   font-size: 14px;
   line-height: 1.5;
+  overflow-wrap: anywhere;
 }
 .kv .k {
   width: 5.5em; /* 最长的标签「执行前确认」一行放下 */
@@ -4661,6 +4662,7 @@ button:not(:disabled):active {
 /* 只读的值：和输入框同一个框，字色压一档，看得出不能改 */
 .field.ro {
   color: var(--text2);
+  overflow-wrap: anywhere;
 }
 /* 只读的键值：一张卡片，左边名称右边值（关于页） */
 .kvcard {
@@ -7190,6 +7192,7 @@ button.screen,
   font-size: 12.5px;
   color: var(--text2);
   line-height: 1.55;
+  overflow-wrap: anywhere;
 }
 .gpanel-origin small {
   display: block;

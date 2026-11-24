@@ -373,6 +373,12 @@ function DraftCard({ draft }: { draft: Draft }) {
           <span className="k">{t("职责")}</span>
           <span>{draft.dutyLong}</span>
         </div>
+        {draft.cwd ? (
+          <div className="kv">
+            <span className="k">{t("工作目录")}</span>
+            <span>{draft.cwd}</span>
+          </div>
+        ) : null}
         {draft.instructions ? <Disclosure className="draft-instructions-disclosure" label={t("补充提示词")} count={draft.instructions.split("\n").length} open={showInstructions} onToggle={() => setShowInstructions(value => !value)}><div className="draft-instructions">{draft.instructions}</div></Disclosure> : null}
         <div className={`expand${created ? "" : " open"}`} inert={Boolean(created)}>
           <div>

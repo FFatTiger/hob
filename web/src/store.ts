@@ -203,7 +203,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["cards-demo", "login-cards", "plugin-demo", "provider-demo", "provider-install-progress", "provider-install-done", "provider-errors", "provider-login-device", "provider-login-web", "provider-login-paste", "provider-login-apikey", "provider-login-cli", "provider-update-confirm", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["cards-demo", "login-cards", "plugin-demo", "provider-demo", "provider-install-progress", "provider-install-done", "provider-errors", "provider-login-device", "provider-login-web", "provider-login-paste", "provider-login-apikey", "provider-login-cli", "provider-update-confirm", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain", "workspace-cwd", "workspace-cwd-dark"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -1511,9 +1511,16 @@ function dropGroupPrefs(id: string) {
 }
 
 /** 建群：建好直接进这个群。 */
-export async function createGroup(body: { name: string; purpose: string; ownerId: string; members: string[] }): Promise<string | null> {
+export async function createGroup(body: { name: string; purpose: string; ownerId: string; members: string[]; cwd?: string }): Promise<string | null> {
   try {
-    const group = await api.createGroup(body);
+    const cwd = body.cwd?.trim();
+    const group = await api.createGroup({
+      name: body.name,
+      purpose: body.purpose,
+      ownerId: body.ownerId,
+      members: body.members,
+      ...(cwd ? { cwd } : {}),
+    });
     set((s) => ({ groups: upsert(s.groups, { ...group, unread: 0, busy: [] }) }));
     await selectGroup(group.id);
     return null;
@@ -1541,9 +1548,10 @@ export async function patchGroupMemberModels(groupId: string, assistantId: strin
 }
 
 /** 开一个话题：建好直接进这个话题。 */
-export async function openTopic(groupId: string, title: string): Promise<string | null> {
+export async function openTopic(groupId: string, title: string, cwd?: string): Promise<string | null> {
   try {
-    const topic = await api.createTopic(groupId, { title });
+    const trimmedCwd = cwd?.trim();
+    const topic = await api.createTopic(groupId, { title, ...(trimmedCwd ? { cwd: trimmedCwd } : {}) });
     set((s) => ({ groups: upsert(s.groups, { ...topic, unread: 0, busy: [] }) }));
     await selectGroup(topic.id);
     return null;

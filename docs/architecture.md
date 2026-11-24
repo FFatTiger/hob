@@ -331,6 +331,50 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 `PluginHost` 在进程内管理每个已启用服务的连接和状态，助手单聊、群会话和任务共享连接，工具均从 `pluginToolsForAssistant` 按助手范围取得。助手还可用 `search_plugins` 查询插件市场及已安装的自定义插件：未安装、停用或未分配、缺配置或连接失败、已连接分别报告对应状态；后台任务没有此工具。工具名由插件 id 和服务工具名组成；插件超过 10 个工具时按需搜索（tool_search），否则直接提供；不给用户选。服务报错返回原因，结果经 pi-mcp 限制大小。设置变化重连服务并释放空闲会话，忙的会话在本轮后释放。OAuth 发现授权服务器，令牌保存在密钥文件，浏览器的 Origin 决定回调地址；需要重新授权时显示状态。旧 `/api/mcp*` 接口由 `/api/plugins*` 取代。
 
+## 带模型的插件
+
+带模型的插件把「模型供应商」作为插件的一种贡献能力（兼容 OpenCode V1 函数式供应商插件及 Magpie 扩展），而不是单独的插件类型：同一个插件可以只带工具（`mcp.json`）、只带模型（`providers`），或两样都带，共用插件目录、配置和状态。
+
+- **清单与元数据**：在 `plugin.json` 的 `extensions["com.hob.plugins"]` 下声明 `providers: [{ package, version, integrity, export?, defaultConfig? }]`（`integrity` 为 `sha512-…` SRI），同时可声明 `maintainer`、`sourceUrl`、`riskNotice`、`permissions`（如 `network`、`subprocess`、`local-auth`、`bun-runtime`）及 `categories`（带 `providers` 的插件在目录里自动带上 `providers` 分类和 `hasProviders: true`）。
+- **权限变化重确认**：安装时记住已批准的清单能力（`approvedPermissions`、`approvedProviders`）；更新插件后若新增了权限或变更了供应商包名，自动停用插件并置 `needsApproval: true`、`capabilityChanges`，在用户调用 `POST /api/plugins/:id/approve` 确认前禁止启用。
+- **按需下载 Bun 与包校验（`server/src/bun-runtime.ts`）**：首次安装带模型的插件时，按平台下载固定版本 Bun（`BUN_VERSION = 1.4.2`）到 `HOB_HOME/runtime/bun/<version>/bin/bun`，内置官方 `SHASUMS256.txt` 的 SHA-256 哈希，校验通过后再解压；没装这类插件时不下载。随后用该 Bun 在 `HOB_HOME/plugins/<id>/providers-runtime/` 下按固定版本安装 npm 包（`--ignore-scripts`），从 npm registry 下载对应 tarball 核对 `integrity`（SHA-512），不通过就回滚并报错。安装期间通过 SSE 推送 `plugin-install` 进度事件。
+- **共享 Bun 宿主进程（`server/src/provider-plugin-host.ts`、`server/src/provider-host.mjs`）**：所有启用的带模型插件共用一个 Bun 子进程，通过 stdio 上的行分隔 JSON-RPC 通信（请求/响应、流式 chunk、abort、反向回调）。首次用到才启动，无活跃请求且闲置 10 分钟自动退出（可通过 `HOB_PROVIDER_HOST_IDLE_MS` 覆盖），崩溃后标记 `crashed` 并在下次使用时自动重启。宿主子进程环境变量清掉 Hob 自身的密钥和 `HOB_PASSWORD`，只传每个插件自己的 `HOB_HOME/plugin-data/<id>`；插件代码仍以当前系统用户身份运行，不是沙箱隔离。
+- **兼容面（OpenCode V1 + Magpie 扩展）**：支持插件导出的 `config`、`auth`（`methods`、`prompts`、`loader` 返回的 `baseURL`/`apiKey`/`headers`/`fetch`、`refresh`/`refreshLead`、`usage`、`single`、`cli`、`icon`、`keyless`）、`provider.models`、`chat.headers`；向插件提供 `client`（`auth.set`）、`directory`、`worktree`、`serverUrl` 和 `Bun`。
+- **内部代理端点与模型注册（`server/src/provider-plugins.ts`）**：`ProviderPluginManager` 启动一个只监听 `127.0.0.1` 随机端口的 HTTP 服务，每次启动生成 32 字节随机令牌，拒绝缺少或错误 `Authorization: Bearer <token>` 及非本机来源的请求。每个已启用且有在用账号的插件供应商以 `plugin-<pluginId>`（单供应商）或 `plugin-<pluginId>-<providerId>` 注册进 pi 的 `ModelRegistry`（OpenAI Chat / OpenAI Responses / Anthropic Messages 三种协议），请求指向内部端点 `http://127.0.0.1:<port>/p/<pluginId>/<providerId>/*`，流式响应原样透传，浏览器/助手中止时一路 abort 到插件的 `fetch`；请求前按 `refreshLead` 自动刷新快过期的 OAuth 令牌，刷新失败标为 `expired`。
+- **思考档映射**：插件模型声明的 `variants` 键（`minimal` / `low` / `medium` / `high` / `xhigh` / `max`）映射为 Hob 的思考档，与 `off` 组合；插件未声明 `variants` 时默认不提供思考档（仍可在模型思考档设置里自定义）。
+- **凭据、多账号与模型缓存**：
+  - 账号元数据、当前在用账号（`activeAccountId`）和按账号缓存的模型列表保存在 `HOB_HOME/system/provider-plugins.json`；拉取模型失败保留上次成功的模型列表并在 `modelsError` 写原因，不以空数组冒充成功。
+  - 账号凭据（API Key 或 OAuth `access`/`refresh`/`expires`）按 `plugin:<pluginId>:provider:<providerId>:account:<accountId>` 存在 `HOB_HOME/system/secrets.json`（0600），不进日志、SSE 事件、对话或其它文件，只在需要时经内存传给宿主。
+  - 一个供应商默认支持多账号登录并切换「在用」账号；插件声明 `single: true` 时覆盖唯一账号。
+- **五种登录流程**：
+  1. **填密钥 / 免登录**（`api` / `keyless`）：按需执行 `prompts`，提交后保存账号并拉取模型；`keyless` 免输入密钥。
+  2. **设备码**（`device_code`）：从插件 `instructions` 提取用户码，前端展示网址与验证码，后台持续执行 `callback` 直到成功/取消/过期。
+  3. **服务端轮询**（`server_poll`）：前端打开插件给出的授权网址，宿主后台轮询厂商接口直到成功。
+  4. **本机回调粘贴**（`loopback_paste`）：检测授权链接里的 `localhost` / `127.0.0.1` 回调端口，浏览器与 Hob 不在同一台机器时，用户把浏览器最终停住的地址粘贴给服务端；服务端严格校验协议为 `http:`、主机为本机 loopback、端口属于本次登录会话允许的端口，在本机以 `redirect: "manual"` 单次回放 GET（绝不跟随跨主机跳转），拒绝一切其他地址。
+  5. **本机客户端**（`local_cli`）：通过插件 `auth.cli` 检测跑 Hob 这台机器上 CLI 是否安装，支持触发插件自带的 `install()` 或展示手动安装说明。
+- **HTTP 接口（均需登录 cookie；契约类型见 `shared/types.ts`）**：
+  - `GET /api/plugins` → 除已有字段外，每个 `PluginView` 带 `hasProviders`、`providers`（清单项）、`providerStates`（`PluginProviderStateView[]`）、`maintainer`、`sourceUrl`、`riskNotice`、`permissions`、`needsApproval`、`capabilityChanges`；顶层额外返回 `providerHost: ProviderHostStatusView`。
+  - `GET /api/providers` → 除 `providers` / `catalog` / `settings` / `models` 外，额外返回 `pluginProviders: PluginProviderSummary[]`，供设置 → 服务商页展示「来自插件 XXX」并跳回插件页；已登录插件的模型照常出现在 `models` 和 `GET /api/models`。
+  - `GET /api/plugins/provider-host` → 返回 `ProviderHostStatusView`（`status`: `stopped | starting | running | crashed`，`bunVersion`、`bunInstalled`、`pid?`、`error?`、`idleMs`）。
+  - `POST /api/plugins/:id/approve` → 确认更新后的权限/包变更并重新启用插件，返回 `PluginView`。
+  - `GET /api/plugins/:id/providers?load=1` → 返回 `{ providers: PluginProviderStateView[], providerHost }`；默认返回缓存状态，带 `load=1` 按需启动宿主加载插件元信息和登录方法。
+  - `POST /api/plugins/:id/providers/:providerId/models/refresh` `{ accountId? }` → 刷新指定（或在用）账号的模型列表，返回 `{ models, plugin }`。
+  - `GET /api/plugins/:id/providers/:providerId/usage?accountId=` → 返回 `PluginProviderUsageView`（`plan?`、`windows[]`、`error?`；拿不到时返回 `error`，不伪造 0）。
+  - `POST /api/plugins/:id/providers/:providerId/accounts/active` `{ accountId }` → 切换在用账号并同步引擎，返回 `PluginView`。
+  - `DELETE /api/plugins/:id/providers/:providerId/accounts/:accountId` → 删除账号及对应 secrets 并同步引擎，返回 `PluginView`。
+  - `POST /api/plugins/:id/providers/:providerId/auth/prompt` `{ methodIndex, inputs?, validateKey?, validateValue? }` → 取下一步交互表单（返回 `{ prompt }`）或校验字段（返回 `{ error }`）。
+  - `POST /api/plugins/:id/providers/:providerId/auth/api-key` `{ methodIndex, key?, inputs?, accountId? }` → 填密钥或 `keyless` 启用，返回 `{ accountId, models, modelsError?, plugin }`。
+  - `POST /api/plugins/:id/providers/:providerId/auth/start` `{ methodIndex, inputs?, accountId? }` → 启动 OAuth/设备码/本机回调/CLI 登录会话，返回 `PluginSignInSessionView`（含 `sessionId`、`kind`、`status`、`url?`、`userCode?`、`instructions?`、`allowPaste?`）。
+  - `GET /api/plugins/:id/providers/:providerId/auth/session/:sessionId` → 查询登录会话当前状态（`PluginSignInSessionView`）。
+  - `POST /api/plugins/:id/providers/:providerId/auth/paste` `{ sessionId, url }` → 提交 loopback 回调地址回放，返回 `{ ok: true, session }`。
+  - `POST /api/plugins/:id/providers/:providerId/auth/code` `{ sessionId, code }` → 提交手工授权码，返回 `PluginSignInSessionView`。
+  - `POST /api/plugins/:id/providers/:providerId/auth/cancel` `{ sessionId }` → 取消登录会话，返回 `PluginSignInSessionView`。
+  - `GET /api/plugins/:id/providers/:providerId/cli` → 检测本机 CLI 安装状态，返回 `PluginCliStatusView`。
+  - `POST /api/plugins/:id/providers/:providerId/cli/install` → 调用插件 `cli.install()` 安装本机 CLI，返回 `PluginCliStatusView`。
+- **SSE 实时事件（`HobEvent`）**：
+  - `{ type: "plugin-install", pluginId, stage, detail?, bytes?, totalBytes?, bunVersion?, packageName? }`：`stage` 依次为 `downloading_bun`、`verifying_bun`、`extracting_bun`、`installing_package`、`verifying_package`、`done`、`error`。
+  - `{ type: "plugin-providers", pluginId?, providerId?, host?, signIn? }`：宿主状态变化、登录会话推进/完成/失败/取消、账号或模型变更时广播，前端据此刷新插件详情、登录弹窗或宿主状态行。
+
 ## 从本机导入（可选）
 
 用户主动点才导入；只读来源文件，绝不写回、不改它们的权限和时间戳。任何接口都不返回 Key / Token 明文。来源目录是启动时记下的 `HOB_LOCAL_PI_DIR` / `HOB_LOCAL_LORE_HOME`。

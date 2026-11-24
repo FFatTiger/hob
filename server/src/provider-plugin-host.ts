@@ -149,7 +149,9 @@ export class ProviderPluginHost {
   constructor(private readonly options: ProviderPluginHostOptions) {}
 
   get idleMs(): number {
-    return this.options.idleMs ?? DEFAULT_HOST_IDLE_MS;
+    if (this.options.idleMs !== undefined) return this.options.idleMs;
+    const raw = Number(process.env.HOB_PROVIDER_HOST_IDLE_MS);
+    return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_HOST_IDLE_MS;
   }
 
   get pid(): number | undefined {

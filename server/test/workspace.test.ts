@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, relative, resolve } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,11 +7,13 @@ import type { Assistant } from "../../shared/types.ts";
 import { createFromDraft, updateAssistant } from "../src/actions.ts";
 import { assistantWorkDir } from "../src/config.ts";
 import { createApp } from "../src/http.ts";
-import { lookupFile } from "../src/files.ts";
+import { checkSensitivePath, lookupFile } from "../src/files.ts";
+import { buildSystemPrompt } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { saveSkillDirectory } from "../src/save-skill.ts";
 import { writablePath } from "../src/write-protection.ts";
 import {
+  CWD_BOUND_LOCKED,
   WORKSPACE_AGENTS_MAX_CHARS,
   allowedWorkspaceDirs,
   loadWorkspaceAgentsFile,
@@ -236,6 +238,26 @@ describe("继承链与不可变边界", () => {
         expect(res.status).toBe(400);
         expect(await res.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
       }
+      // PATCH 同时携带 rule 与 cwd 也返回 400 且不落规则
+      const patchRuleAndCwd = await app.request(`/api/assistants/${created.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ rule: { text: "禁止偷偷改目录", mode: "ask" }, cwd: dirB }),
+      });
+      expect(patchRuleAndCwd.status).toBe(400);
+      expect(await patchRuleAndCwd.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+      expect(hob.runtime.store.rules(created.id)).toHaveLength(0);
+
+      // 主助手 PATCH 同时携带 rule 与 cwd 返回主助手禁止错误且不落规则
+      const patchPrimaryRuleAndCwd = await app.request("/api/assistants/hob", {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ rule: { text: "主助手规则", mode: "ask" }, cwd: dirB }),
+      });
+      expect(patchPrimaryRuleAndCwd.status).toBe(400);
+      expect(await patchPrimaryRuleAndCwd.json()).toEqual({ error: "主助手不支持设置工作目录。" });
+      expect(hob.runtime.store.rules("hob")).toHaveLength(0);
+
       expect(hob.runtime.store.assistant(created.id)?.cwd).toBe(dirA);
 
       // createFromDraft 也会复验草稿中的 cwd（若创建前目录被删则 400）
@@ -289,7 +311,7 @@ describe("继承链与不可变边界", () => {
       const lockedGroup = await createGroupRes.json() as { id: string; cwd?: string };
       expect(lockedGroup.cwd).toBe(groupDirPath);
 
-      // PATCH 群 cwd 返回 400（单独传或连同 models 传均拦截且不改 models）
+      // PATCH 群 cwd 返回 400（单独传或连同 rule 传均拦截且不落规则）
       const patchGroup = await app.request(`/api/groups/${lockedGroup.id}`, {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
@@ -297,6 +319,15 @@ describe("继承链与不可变边界", () => {
       });
       expect(patchGroup.status).toBe(400);
       expect(await patchGroup.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+
+      const patchGroupRuleAndCwd = await app.request(`/api/groups/${lockedGroup.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ rule: { text: "群规则", mode: "ask" }, cwd: otherDir }),
+      });
+      expect(patchGroupRuleAndCwd.status).toBe(400);
+      expect(await patchGroupRuleAndCwd.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+      expect(hob.runtime.store.groupRules(lockedGroup.id)).toHaveLength(0);
 
       // 群已设 cwd：创建话题不传或空串自动沿用，且话题自身 group.json 不重复落盘 cwd
       const topicFollowRes = await app.request(`/api/groups/${lockedGroup.id}/topics`, {
@@ -397,13 +428,15 @@ describe("继承链与不可变边界", () => {
     }
   });
 
-  it("start_job 继承规则：显式 cwd 优先，未传继承 bound（含群内指派成员），未绑定严格落 jobs/<id>/work", async () => {
+  it("start_job 继承与锁定规则：已绑定成员不可被 explicitCwd 覆写，未绑定才允许显式 cwd 且未传严格落 jobs/<id>/work", async () => {
     const hob = makeHob({}, { memory: "off" });
     const astDir = makeTempDir("hob-ws-job-ast-");
     const groupDirPath = makeTempDir("hob-ws-job-grp-");
     const explicitDir = makeTempDir("hob-ws-job-exp-");
     const subDir = join(groupDirPath, "packages");
     mkdirSync(subDir, { recursive: true });
+    const linkToAst = join(makeTempDir("hob-ws-job-link-"), "same-ast");
+    symlinkSync(astDir, linkToAst);
     try {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue(true);
       const dev = addAssistant(hob, "dev", { name: "开发", cwd: astDir });
@@ -429,6 +462,8 @@ describe("继承链与不可变边界", () => {
         call("report", { outcome: "done", result: "4" }),
         call("report", { outcome: "done", result: "5" }),
         call("report", { outcome: "done", result: "6" }),
+        call("report", { outcome: "done", result: "7" }),
+        call("report", { outcome: "done", result: "8" }),
       ]);
 
       // 1. 未绑定主助手：严格落在 jobs/<id>/work，绝不落到 assistants/hob/work
@@ -455,13 +490,23 @@ describe("继承链与不可变边界", () => {
       const jFreeDev = hob.runtime.store.jobs().find((j) => j.title === "自由群指派开发")!;
       expect(jFreeDev.cwd).toBe(astDir);
 
-      // 5. 未绑定会话允许显式传入 cwd；底层 jobs.start 也支持显式绝对目录
+      // 5. 未绑定会话给未绑定成员允许显式传入 cwd；已绑定成员传不同 explicitCwd 明确拒绝，传相同目录（含等价软链）则沿用 bound
       await startInFree.execute("c4", { title: "未绑定显式目录", note: "只看子目录", cwd: subDir });
       const jSub = hob.runtime.store.jobs().find((j) => j.title === "未绑定显式目录")!;
       expect(jSub.cwd).toBe(subDir);
 
-      const jExplicit = await hob.runtime.jobs.start(dev.id, { title: "显式绝对目录", instruction: "在另一目录工作", cwd: explicitDir });
-      expect(jExplicit.cwd).toBe(explicitDir);
+      const jPlainExplicit = await hob.runtime.jobs.start(plain.id, { title: "未绑定成员显式绝对目录", instruction: "在另一目录工作", cwd: explicitDir });
+      expect(jPlainExplicit.cwd).toBe(explicitDir);
+
+      await expect(
+        hob.runtime.jobs.start(dev.id, { title: "企图覆写绑定助手", instruction: "换目录", cwd: explicitDir }),
+      ).rejects.toThrow(CWD_BOUND_LOCKED);
+      await expect(
+        hob.runtime.jobs.start(plain.id, { title: "企图覆写绑定群", instruction: "换目录", groupId: lockedGroup.id, cwd: explicitDir }),
+      ).rejects.toThrow(CWD_BOUND_LOCKED);
+
+      const jSameAsBound = await hob.runtime.jobs.start(dev.id, { title: "传与绑定等价软链", instruction: "同目录", cwd: linkToAst });
+      expect(jSameAsBound.cwd).toBe(astDir);
 
       await hob.runtime.jobs.waitIdle();
     } finally {
@@ -796,7 +841,7 @@ describe("AGENTS.md 自动加载与 Prompt Cache 稳定性", () => {
       await hob.runtime.jobs.start(dev.id, { title: "主目录任务", instruction: "在继承目录执行" });
       await hob.runtime.jobs.waitIdle(10_000);
 
-      await hob.runtime.jobs.start(dev.id, { title: "Worktree 任务", instruction: "在独立 worktree 执行", cwd: worktreeRepo });
+      await hob.runtime.jobs.start("hob", { title: "Worktree 任务", instruction: "在独立 worktree 执行", cwd: worktreeRepo });
       await hob.runtime.jobs.waitIdle(10_000);
 
       expect(workerSystems).toHaveLength(2);
@@ -1031,6 +1076,188 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       expect(freeOpenRes.isError).not.toBe(true);
       const createdFreeTopic = hob.runtime.groups.topicsOf(freeGroup.id).find((t) => t.name === "自由新话题")!;
       expect(createdFreeTopic.cwd).toBe(otherDir);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("send_file 无条件拦截工作目录外敏感文件与目录内软链逃逸敏感文件，绝不复制到 files/sent/", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    const boundDir = makeTempDir("hob-ws-send-bound-");
+    const outsideDir = makeTempDir("hob-ws-send-out-");
+    try {
+      const dev = addAssistant(hob, "dev", { name: "开发", cwd: boundDir });
+      const devTools = buildRouterTools(hob.runtime, dev.id, undefined, boundDir);
+      const sendFile = devTools.find((t) => t.name === "send_file")!;
+
+      // 构造外部敏感文件（.env、id_rsa、.aws/credentials、.ssh/config、.git/config、.bak）
+      const extEnv = join(outsideDir, ".env");
+      const extKey = join(outsideDir, "id_rsa");
+      const extAwsDir = join(outsideDir, ".aws");
+      const extSshDir = join(outsideDir, ".ssh");
+      const extGitDir = join(outsideDir, ".git");
+      mkdirSync(extAwsDir, { recursive: true });
+      mkdirSync(extSshDir, { recursive: true });
+      mkdirSync(extGitDir, { recursive: true });
+      const extAwsCreds = join(extAwsDir, "credentials");
+      const extSshConfig = join(extSshDir, "config");
+      const extGitConfig = join(extGitDir, "config");
+      const extBak = join(outsideDir, "dump.sql.bak");
+      writeFileSync(extEnv, "API_KEY=secret");
+      writeFileSync(extKey, "PRIVATE KEY");
+      writeFileSync(extAwsCreds, "[default]\naws_secret_access_key=xxx");
+      writeFileSync(extSshConfig, "Host prod\nIdentityFile ~/.ssh/id_rsa");
+      writeFileSync(extGitConfig, "[core]\nrepositoryformatversion = 0");
+      writeFileSync(extBak, "secret backup");
+
+      // HOB_HOME/system/secrets.json
+      const hobSecret = join(hob.home, "system", "secrets.json");
+      mkdirSync(join(hob.home, "system"), { recursive: true });
+      writeFileSync(hobSecret, '{"token":"top-secret"}');
+
+      // 1. 绑定目录内软链指向外部 .env / id_rsa / .ssh/config / HOB_HOME/system/secrets.json
+      symlinkSync(extEnv, join(boundDir, "report-env.txt"));
+      symlinkSync(extKey, join(boundDir, "report-key.txt"));
+      symlinkSync(extSshConfig, join(boundDir, "report-ssh.txt"));
+      symlinkSync(hobSecret, join(boundDir, "report-hob.txt"));
+
+      const sentDir = join(hob.home, "assistants", dev.id, "files", "sent");
+      for (const rel of ["report-env.txt", "report-key.txt", "report-ssh.txt", "report-hob.txt"]) {
+        const res = await sendFile.execute(`sym-${rel}`, { path: rel });
+        expect(res.isError, rel).toBe(true);
+        expect((res.content[0] as { text: string }).text, rel).toContain("这个文件不对页面开放");
+      }
+
+      // 2. 直接对绑定目录外的敏感路径调用 send_file
+      for (const abs of [extAwsCreds, extSshConfig, extGitConfig, extEnv, extKey, extBak, hobSecret]) {
+        const res = await sendFile.execute(`abs-${abs}`, { path: abs });
+        expect(res.isError, abs).toBe(true);
+        expect((res.content[0] as { text: string }).text, abs).toContain("这个文件不对页面开放");
+      }
+
+      // 核验 files/sent/ 未产生任何复制文件，也未发出任何 file item
+      expect(existsSync(sentDir) ? readdirSync(sentDir) : []).toHaveLength(0);
+      expect(hob.runtime.router.items(dev.id).items.filter((item) => item.kind === "file")).toHaveLength(0);
+
+      // checkSensitivePath 直接单测：普通文件放行，敏感文件拒绝
+      const normalFile = join(outsideDir, "notes.txt");
+      writeFileSync(normalFile, "hello");
+      expect(checkSensitivePath(normalFile, hob.home)).toBeUndefined();
+      expect(checkSensitivePath(extAwsCreds, hob.home)).toBe("这个文件不对页面开放");
+      expect(checkSensitivePath(join(boundDir, "report-key.txt"), hob.home)).toBe("这个文件不对页面开放");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("未绑群/话题跨成员指派 4 种组合与系统提示词区分：仅说话人自身绑定时保留 start_job.cwd 且不覆写已绑定执行者", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    const dirA = makeTempDir("hob-ws-cross-a-");
+    const dirC = makeTempDir("hob-ws-cross-c-");
+    const otherDir = makeTempDir("hob-ws-cross-other-");
+    const grpDir = makeTempDir("hob-ws-cross-grp-");
+    try {
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue(true);
+
+      const memberA = addAssistant(hob, "dev-a", { name: "开发A", cwd: dirA });
+      const memberB = addAssistant(hob, "writer-b", { name: "写手B" });
+      const memberC = addAssistant(hob, "ops-c", { name: "运维C", cwd: dirC });
+      const freeGroup = hob.runtime.groups.create({
+        name: "自由协作群",
+        purpose: "跨成员协作",
+        ownerId: memberA.id,
+        members: [memberA.id, memberB.id, memberC.id],
+      });
+      const freeTopic = hob.runtime.groups.createTopic(freeGroup.id, "临时话题", memberA.id);
+      const lockedGroup = hob.runtime.groups.create({
+        name: "固定项目群",
+        purpose: "项目维护",
+        ownerId: memberA.id,
+        members: [memberA.id, memberB.id],
+        cwd: grpDir,
+      });
+
+      // 1. 未绑群 & 未绑话题里，说话人 A 自己绑定了 cwd：start_job 保留 cwd 参数（不隐藏）
+      const startAInFreeGroup = buildRouterTools(hob.runtime, memberA.id, freeGroup.id, dirA).find((t) => t.name === "start_job")!;
+      const startAInFreeTopic = buildRouterTools(hob.runtime, memberA.id, freeTopic.id, dirA).find((t) => t.name === "start_job")!;
+      const startBInFreeGroup = buildRouterTools(hob.runtime, memberB.id, freeGroup.id, assistantWorkDir(hob.home, memberB.id)).find((t) => t.name === "start_job")!;
+      expect("cwd" in startAInFreeGroup.parameters.properties).toBe(true);
+      expect("cwd" in startAInFreeTopic.parameters.properties).toBe(true);
+      expect("cwd" in startBInFreeGroup.parameters.properties).toBe(true);
+
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "1" }),
+        call("report", { outcome: "done", result: "2" }),
+        call("report", { outcome: "done", result: "3" }),
+        call("report", { outcome: "done", result: "4" }),
+        call("report", { outcome: "done", result: "5" }),
+        call("report", { outcome: "done", result: "6" }),
+      ]);
+
+      // 组合 1：已绑定 A 指派给自己（不传 cwd → dirA；传不同 cwd → 拒绝）
+      const aSelfOk = await startAInFreeGroup.execute("x1", { title: "A派自己默认", note: "执行" });
+      expect(aSelfOk.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "A派自己默认")?.cwd).toBe(dirA);
+
+      const aSelfOverride = await startAInFreeGroup.execute("x2", { title: "A派自己换目录", note: "执行", cwd: otherDir });
+      expect(aSelfOverride.isError).toBe(true);
+      expect((aSelfOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
+
+      // 组合 2：已绑定 A 指派给未绑定 B（不传 cwd → jobs/<id>/work；传显式 cwd → otherDir）
+      const aToBDefault = await startAInFreeGroup.execute("x3", { title: "A派B默认", note: "执行", assistantId: memberB.id });
+      expect(aToBDefault.isError).not.toBe(true);
+      const jobAToBDefault = hob.runtime.store.jobs().find((j) => j.title === "A派B默认")!;
+      expect(jobAToBDefault.cwd).toBe(join(hob.home, "assistants", memberB.id, "jobs", jobAToBDefault.id, "work"));
+
+      const aToBExplicit = await startAInFreeGroup.execute("x4", { title: "A派B显式目录", note: "执行", assistantId: memberB.id, cwd: otherDir });
+      expect(aToBExplicit.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "A派B显式目录")?.cwd).toBe(otherDir);
+
+      // 组合 3：已绑定 A 指派给已绑定 C（不传 cwd → dirC；传不同 cwd → 拒绝）
+      const aToCOk = await startAInFreeGroup.execute("x5", { title: "A派C默认", note: "执行", assistantId: memberC.id });
+      expect(aToCOk.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "A派C默认")?.cwd).toBe(dirC);
+
+      const aToCOverride = await startAInFreeGroup.execute("x6", { title: "A派C换目录", note: "执行", assistantId: memberC.id, cwd: otherDir });
+      expect(aToCOverride.isError).toBe(true);
+      expect((aToCOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
+
+      // 组合 4：未绑定 B 指派给已绑定 A（不传 cwd → dirA；传不同 cwd → 拒绝；传相同 dirA → 成功）
+      const bToAOk = await startBInFreeGroup.execute("x7", { title: "B派A默认", note: "执行", assistantId: memberA.id });
+      expect(bToAOk.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "B派A默认")?.cwd).toBe(dirA);
+
+      const bToAOverride = await startBInFreeGroup.execute("x8", { title: "B派A换目录", note: "执行", assistantId: memberA.id, cwd: otherDir });
+      expect(bToAOverride.isError).toBe(true);
+      expect((bToAOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
+
+      const bToASame = await startBInFreeGroup.execute("x9", { title: "B派A同目录", note: "执行", assistantId: memberA.id, cwd: dirA });
+      expect(bToASame.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "B派A同目录")?.cwd).toBe(dirA);
+
+      await hob.runtime.jobs.waitIdle();
+
+      // 2. 提示词精确对应：未绑群仅助手自身绑定 vs 单聊 / 群绑定
+      const basePromptOpts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+      const freeGroupPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
+        ...basePromptOpts,
+        group: freeGroup,
+        workspace: { cwd: dirA, source: "assistant" },
+      });
+      expect(freeGroupPrompt).toContain(`当前工作目录：${dirA}（来源：你的设置）。命令、文件读写和你自己执行的任务都在这个目录进行。`);
+
+      const dmPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
+        ...basePromptOpts,
+        workspace: { cwd: dirA, source: "assistant" },
+      });
+      expect(dmPrompt).toContain(`当前工作目录：${dirA}（来源：你的设置）。命令、文件读写和派出的任务都在这个目录进行。`);
+
+      const lockedGroupPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
+        ...basePromptOpts,
+        group: lockedGroup,
+        workspace: { cwd: grpDir, source: "group" },
+      });
+      expect(lockedGroupPrompt).toContain(`当前工作目录：${grpDir}（来源：本群）。命令、文件读写和派出的任务都在这个目录进行。`);
     } finally {
       hob.close();
     }

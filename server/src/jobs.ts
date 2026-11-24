@@ -44,7 +44,7 @@ import { searchTools } from "./search.ts";
 import { pauseToolTimeoutForUser } from "./tool-timeout.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
-import { loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_BOUND_LOCKED, loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const ACTIVITY_LIMIT = 200;
@@ -330,9 +330,19 @@ export class JobManager {
       }
     }
     const explicitCwd = normalizeWorkspaceCwdInput(input.cwd);
-    const inheritedCwd = explicitCwd ? undefined : resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId).bound;
-    const targetCwd = explicitCwd ?? inheritedCwd;
-    const validatedCwd = targetCwd ? validateJobCwd(this.runtime.home, targetCwd) : undefined;
+    const boundCwd = resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId).bound;
+    let validatedCwd: string | undefined;
+    if (boundCwd) {
+      validatedCwd = validateJobCwd(this.runtime.home, boundCwd);
+      if (explicitCwd) {
+        const validatedExplicit = validateJobCwd(this.runtime.home, explicitCwd);
+        if (realpathSync(validatedExplicit) !== realpathSync(validatedCwd)) {
+          throw new Error(CWD_BOUND_LOCKED);
+        }
+      }
+    } else if (explicitCwd) {
+      validatedCwd = validateJobCwd(this.runtime.home, explicitCwd);
+    }
     await this.runtime.models.get();
     signal?.throwIfAborted();
     const requested =

@@ -36,7 +36,7 @@ import { claudeStatus } from "./claude-status.ts";
 import { checkDesktopUrl } from "./desktop.ts";
 import { desktopProfile, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
-import { allowedWorkspaceDirs, CWD_IMMUTABLE } from "./workspace.ts";
+import { allowedWorkspaceDirs, CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN } from "./workspace.ts";
 import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
 import { pluginToolName } from "./plugin-host.ts";
@@ -1254,6 +1254,9 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const assistant = store.assistant(id);
     if (!assistant) return c.json({ error: "助手不存在" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as Partial<Assistant> & { rule?: { id?: unknown; text?: unknown; mode?: unknown } };
+    if (body.cwd !== undefined) {
+      return c.json({ error: assistant.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE }, 400);
+    }
     if (body.rule !== undefined) {
       const edit = body.rule;
       if (!edit || typeof edit !== "object" || (edit.id !== undefined && (typeof edit.id !== "string" || !edit.id))) return c.json({ error: "规则无效。" }, 400);
@@ -1359,6 +1362,9 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const id = c.req.param("id");
     if (!store.group(id)) return c.json({ error: "群不存在" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    if (body.cwd !== undefined) {
+      return c.json({ error: CWD_IMMUTABLE }, 400);
+    }
     if (body.rule !== undefined) {
       const edit = body.rule as { id?: unknown; text?: unknown; mode?: unknown };
       if (!edit || typeof edit !== "object" || (edit.id !== undefined && (typeof edit.id !== "string" || !edit.id))) return c.json({ error: "规则无效。" }, 400);
@@ -1377,9 +1383,6 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json({ ok: true, rule });
     }
     try {
-      if (body.cwd !== undefined) {
-        return c.json({ error: CWD_IMMUTABLE }, 400);
-      }
       if (body.models !== undefined) {
         const { models, ...rest } = body;
         await runtime.groups.updateModels(id, models);

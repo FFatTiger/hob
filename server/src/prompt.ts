@@ -160,7 +160,8 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   }
   if (settings.workspace) {
     const sourceLabel = settings.workspace.source === "topic" ? "本话题" : settings.workspace.source === "group" ? "本群" : "你的设置";
-    lines.push(`当前工作目录：${settings.workspace.cwd}（来源：${sourceLabel}）。命令、文件读写和派出的任务都在这个目录进行。`);
+    const taskScope = group && settings.workspace.source === "assistant" ? "和你自己执行的任务" : "和派出的任务";
+    lines.push(`当前工作目录：${settings.workspace.cwd}（来源：${sourceLabel}）。命令、文件读写${taskScope}都在这个目录进行。`);
   } else if (settings.workspaceWarning) {
     lines.push(`注意：配置的工作目录「${settings.workspaceWarning}」当前不存在或不可访问，本轮已临时回落到默认目录，请核实该目录是否已被移动或删除。`);
   }

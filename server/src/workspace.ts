@@ -9,6 +9,7 @@ export const WORKSPACE_AGENTS_MAX_CHARS = 32_000;
 
 export const PRIMARY_CWD_FORBIDDEN = "主助手不支持设置工作目录。";
 export const CWD_IMMUTABLE = "工作目录仅支持在创建时绑定，创建后不可修改。";
+export const CWD_BOUND_LOCKED = "当前工作目录已绑定，不能指定其他目录。";
 export const topicCwdLockedByGroup = (path: string) =>
   `所属群已绑定工作目录（${path}），话题自动沿用群目录，不支持单独指定。`;
 

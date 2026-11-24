@@ -7,7 +7,7 @@ import { randomUUID } from "node:crypto";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
-import { lookupFile, isInPagesDir, OUTSIDE_HOB } from "./files.ts";
+import { checkSensitivePath, lookupFile, isInPagesDir, OUTSIDE_HOB } from "./files.ts";
 import { resolveMovedPath } from "./layout.ts";
 import { assistantFilesDir, assistantWorkDir } from "./config.ts";
 import {
@@ -178,7 +178,7 @@ export function buildRouterTools(
 ): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
   const resolvedWorkspace = resolveWorkspaceCwd(store, runtime.home, assistantId, groupId);
-  const hasBoundWorkspace = Boolean(resolvedWorkspace.bound);
+  const hideStartJobCwd = Boolean(resolvedWorkspace.bound) && (!groupId || resolvedWorkspace.source !== "assistant");
   const currentGroup = groupId ? store.group(groupId) : undefined;
   const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
   const groupHasBoundCwd = Boolean(parentGroup?.cwd);
@@ -424,7 +424,7 @@ export function buildRouterTools(
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
         note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
-        ...(hasBoundWorkspace ? {} : {
+        ...(hideStartJobCwd ? {} : {
           cwd: Type.Optional(
             Type.String({
               description:
@@ -454,7 +454,7 @@ export function buildRouterTools(
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
-          const rawCwd = hasBoundWorkspace ? undefined : normalizeWorkspaceCwdInput(params.cwd);
+          const rawCwd = hideStartJobCwd ? undefined : normalizeWorkspaceCwdInput(params.cwd);
           const explicitCwd = rawCwd ? resolve(cwd, rawCwd) : undefined;
           const job = await jobs.start(assignee.id, {
             title: String(params.title),
@@ -849,6 +849,8 @@ export function buildRouterTools(
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
         let path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
+        const sensitive = checkSensitivePath(path, runtime.home);
+        if (sensitive) return fail(`${sensitive}：${path}`);
         // 页面只读得到 Hob 自己的目录和任务工作目录：外部目录（含绑定的项目目录）文件复制一份进 files/sent/ 再发，同时拦截敏感文件
         const homeScope = lookupFile(runtime.home, path, []);
         if (!homeScope.ok && homeScope.error !== OUTSIDE_HOB) return fail(`${homeScope.error}：${path}`);

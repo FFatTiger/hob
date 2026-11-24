@@ -329,6 +329,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "返回的版本号无效": "Invalid version in response",
   "主助手不支持设置工作目录。": "The primary assistant does not support a work directory.",
   "工作目录仅支持在创建时绑定，创建后不可修改。": "Work directory can only be set at creation and cannot be changed afterward.",
+  "当前工作目录已绑定，不能指定其他目录。": "This workspace already has a bound working directory and cannot use a different one.",
   "所属群已绑定工作目录（{path}），话题自动沿用群目录，不支持单独指定。": "This group already has a work directory ({path}). Topics inherit it automatically and cannot set a different one.",
   "工作目录必须是路径文字。": "Work directory must be a path string.",
   "工作目录必须填写绝对路径（如 /workspace/app）。": "Work directory must be an absolute path (for example, /workspace/app).",

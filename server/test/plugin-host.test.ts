@@ -5,17 +5,17 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { PluginHost, pluginToolsForAssistant } from "../src/plugin-host.ts";
-import { call, makeHob as makeBaseHob, seedPluginSource, text } from "./helpers.ts";
+import { call, makeHob as makeBaseHob, seedPluginSource, text, waitFor } from "./helpers.ts";
 const makeHob = () => { const hob = makeBaseHob(); seedPluginSource(hob.home); return hob; };
 
 const homes: string[] = [];
 const hosts: PluginHost[] = [];
 afterEach(async () => { await Promise.all(hosts.splice(0).map(host => host.close())); for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true }); });
-function host(): PluginHost {
+function host(idleMs?: number): PluginHost {
   const home = mkdtempSync(join(tmpdir(), "hob-plugin-host-"));
   homes.push(home);
   seedPluginSource(home);
-  const instance = new PluginHost(home); hosts.push(instance); return instance;
+  const instance = new PluginHost(home, undefined, idleMs); hosts.push(instance); return instance;
 }
 describe("shared plugin connections", () => {
   it("reports missing configuration, connects, shares calls and closes on disable", async () => {
@@ -42,6 +42,52 @@ describe("shared plugin connections", () => {
     await instance.reload("github");
     expect(instance.states("github")).toEqual([]);
   });
+  it("stops idle stdio services, keeps their tools, and starts them for the next call", async () => {
+    const instance = host(30);
+    const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+    instance.store.addCustom("sample", { command: process.execPath, args: [fixture], env: { HOB_MCP_SLOW: "1" } });
+    await instance.start();
+    expect(instance.states("sample")[0]).toMatchObject({ status: "connected" });
+    const firstPid = String((await instance.call("sample", "sample", "instance", {})).content?.[0]?.text);
+    await waitFor(() => instance.states("sample")[0]?.status === "idle");
+    expect(instance.states("sample")[0]?.tools.map(tool => tool.name)).toContain("echo");
+    expect(pluginToolsForAssistant(instance, "hob").map(tool => tool.name)).toContain("sample_echo");
+    expect((await instance.call("sample", "sample", "echo", { message: "woke" })).content).toEqual([{ type: "text", text: "echo: woke" }]);
+    const secondPid = String((await instance.call("sample", "sample", "instance", {})).content?.[0]?.text);
+    expect(secondPid).not.toBe(firstPid);
+    expect(instance.states("sample")[0]?.status).toBe("connected");
+  });
+
+  it("wakes idle services without rebuilding sessions and reports why a wake-up failed", async () => {
+    const instance = host(30);
+    const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+    const flag = join(instance.store.home, "fail-next-start");
+    instance.store.addCustom("sample", { command: "/bin/sh", args: ["-c", `if [ -e "${flag}" ]; then echo 解锁失败 >&2; exit 1; fi; exec "${process.execPath}" "${fixture}"`] });
+    await instance.start();
+    let changes = 0;
+    instance.onToolsChanged = () => { changes++; };
+    await waitFor(() => instance.states("sample")[0]?.status === "idle");
+    expect((await instance.call("sample", "sample", "echo", { message: "a" })).content).toEqual([{ type: "text", text: "echo: a" }]);
+    expect(changes).toBe(0);
+    await waitFor(() => instance.states("sample")[0]?.status === "idle");
+    writeFileSync(flag, "");
+    await expect(instance.call("sample", "sample", "echo", { message: "b" })).rejects.toThrow(/解锁失败/);
+    expect(instance.states("sample")[0]?.status).toBe("error");
+  });
+
+  it("keeps stdio services with keepAlive running", async () => {
+    const instance = host(30);
+    const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+    instance.store.addCustom("sample", { command: process.execPath, args: [fixture] });
+    const manifestPath = join(instance.store.home, "plugins/sample/plugin.json");
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.extensions = { "com.hob.plugins": { keepAlive: true } };
+    writeFileSync(manifestPath, JSON.stringify(manifest));
+    await instance.start();
+    await new Promise(resolve => setTimeout(resolve, 80));
+    expect(instance.states("sample")[0]?.status).toBe("connected");
+  });
+
   it("migrates and resolves legacy secret commands only when connecting", async () => {
     const instance = host();
     const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));

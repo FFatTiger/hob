@@ -18,7 +18,7 @@ export function pluginDescription(manifest: Record<string, unknown>, id: string)
 }
 
 export function pluginStatus(status: PluginServiceStatus) {
-  return ({ pending_config: t("待配置"), connecting: t("连接中"), connected: t("已连接"), needs_login: t("需要登录"), needs_relogin: t("需要重新登录"), error: t("出错") })[status];
+  return ({ pending_config: t("待配置"), connecting: t("连接中"), idle: t("未启动（用到时自动启动）"), connected: t("运行中"), needs_login: t("需要登录"), needs_relogin: t("需要重新登录"), error: t("出错") })[status];
 }
 
 export function PluginStatus({ status }: { status: PluginServiceStatus }) {
@@ -30,7 +30,7 @@ function CredentialStatus() {
 }
 
 function pluginServiceStatus(item: PluginsView["plugins"][number]): PluginServiceStatus | undefined {
-  const priority: Record<PluginServiceStatus, number> = { error: 0, needs_relogin: 1, needs_login: 2, pending_config: 3, connecting: 4, connected: 5 };
+  const priority: Record<PluginServiceStatus, number> = { error: 0, needs_relogin: 1, needs_login: 2, pending_config: 3, connecting: 4, idle: 5, connected: 6 };
   return item.services.map(service => service.status).sort((a, b) => priority[a] - priority[b])[0];
 }
 
@@ -38,7 +38,7 @@ function pluginServiceStatus(item: PluginsView["plugins"][number]): PluginServic
 function sortInstalled(plugins: PluginsView["plugins"]) {
   const rank = (item: PluginsView["plugins"][number]) => {
     if (!item.plugin.enabled) return 5;
-    return ({ pending_config: 0, needs_login: 1, needs_relogin: 2, error: 3, connecting: 4, connected: 9 } as Record<PluginServiceStatus, number>)[pluginServiceStatus(item) ?? "connected"];
+    return ({ pending_config: 0, needs_login: 1, needs_relogin: 2, error: 3, connecting: 4, idle: 8, connected: 9 } as Record<PluginServiceStatus, number>)[pluginServiceStatus(item) ?? "connected"];
   };
   return [...plugins].sort((a, b) => rank(a) - rank(b));
 }

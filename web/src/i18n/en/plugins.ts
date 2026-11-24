@@ -64,6 +64,8 @@ export const pluginsEn = {
   "安装": "Install",
   "连接": "Connect",
   "已连接": "Connected",
+  "运行中": "Running",
+  "未启动（用到时自动启动）": "Not started (starts when used)",
   "待配置": "Setup required",
   "连接中": "Connecting",
   "需要登录": "Sign in required",

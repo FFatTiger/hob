@@ -149,7 +149,6 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "第 {index} 个定时任务「{name}」：{reason}": "Schedule {index}, “{name}”: {reason}",
   "未登录": "You are not logged in.",
   "需要登录：{site}": "Sign in to {site}",
-  "请你登录": "Ask you to sign in",
   "密码不正确": "Incorrect password.",
   "规则格式无效，文字不能为空": "Invalid rule format. The text cannot be empty.",
   "缺 revision": "Missing revision.",

@@ -39,11 +39,13 @@ import {
   openJob,
   replyJob,
   retryDelegation,
+  saveLoginEntry,
   select,
   selectGroup,
   setNotice,
   setQuote,
   setText,
+  switchLoginSelf,
   toggleStar,
   stopJob,
   useApp,
@@ -458,7 +460,18 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
 function QuestionCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
   if (approval.login?.fillNewPassword) return <FillNewPasswordCard approval={approval} fresh={fresh} />;
   if (approval.login?.fillLogin) return <FillLoginCard approval={approval} fresh={fresh} />;
+  if (approval.login?.entry) return <LoginEntryCard approval={approval} fresh={fresh} />;
   return approval.login ? <LoginCard approval={approval} fresh={fresh} /> : approval.questions?.length ? <MultiQuestionCard approval={approval} fresh={fresh} /> : <SingleQuestionCard approval={approval} fresh={fresh} />;
+}
+
+/** 批准卡、录入卡上点了「我自己登录」：同一张卡换成自己登录卡的样子（标题换成「需要登录：网站」，reason 照旧），还挂着等用户登完 */
+function SelfLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  return <LoginCard approval={{ ...approval, title: t("需要登录：{site}", { site: approval.login!.site }) }} fresh={fresh} />;
+}
+
+/** 「我自己登录」的文字按钮：放按钮行最左边，右边仍是原来的按钮 */
+function SelfLoginButton({ approvalId }: { approvalId: string }) {
+  return <button className="hob-btn hob-btn-ghost qfill-self" onClick={() => void switchLoginSelf(approvalId)}>{t("我自己登录")}</button>;
 }
 
 function passwordCharacterText(characters: string[]): string {
@@ -494,10 +507,12 @@ function FillNewPasswordCard({ approval, fresh }: { approval: Approval; fresh: b
 
 function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
   const fill = approval.login!.fillLogin!;
+  // 先调完所有 hook 再按状态换成自己登录卡：同一张卡点了「我自己登录」会就地换样子，hook 数不能变
   const [selected, setSelected] = useState(fill.chosenId ?? (fill.candidates.length === 1 ? `${fill.candidates[0]!.provider}:${fill.candidates[0]!.id}` : ""));
+  if (approval.status === "pending" && fill.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
   const chosen = fill.candidates.find((candidate) => `${candidate.provider}:${candidate.id}` === (fill.chosenId ?? selected)) ?? fill.candidates[0];
   const pending = approval.status === "pending" && fill.state !== "mismatch";
-  const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.state === "filled" ? fill.result : undefined;
+  const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.state === "self" ? t("已选择自己登录") : fill.state === "filled" ? fill.result : undefined;
   const providerNames = [...new Set(fill.candidates.map((candidate) => candidate.providerName))].join(t("、"));
   const savedHosts = [...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((uri) => { try { return new URL(uri).hostname; } catch { return uri; } })))];
   return (
@@ -517,11 +532,11 @@ function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean
         <>
           <div className="qfill-group">
             <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span>{pending ? <span className="qfill-ok"><Icon name="check" size={13} />{t("和保存的网址一致")}</span> : null}</div>
-            {chosen ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
+            {chosen && !(pending && fill.candidates.length > 1) ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
           </div>
           {pending && fill.candidates.length > 1 ? <div className="opts qfill-options">{fill.candidates.map((candidate) => { const id = `${candidate.provider}:${candidate.id}`; return <button className={`opt${selected === id ? " chosen" : ""}`} key={id} onClick={() => setSelected(id)}><span className="key">{candidate.username.slice(0, 1).toUpperCase()}</span><span className="olabel">{candidate.username}{candidate.folder ? ` · ${candidate.folder}` : ""}</span>{selected === id ? <span className="ck"><Icon name="check" size={16} /></span> : null}</button>; })}</div> : null}
           {status ? <div className={`qfill-result${fill.state === "failed" ? " bad" : ""}`}>{fill.state === "failed" ? null : <Icon name="check" size={15} />}{status}</div> : null}
-          {pending ? <div className="qfoot qacts"><button className="hob-btn" onClick={() => void answer(approval.id, { key: "A", ...(selected ? { candidateId: selected } : {}) })}>{t("不允许")}</button><button className="hob-btn" disabled={!selected} onClick={() => void answer(approval.id, { key: "B", candidateId: selected })}>{t("这次允许")}</button><button className="hob-btn hob-btn-primary" disabled={!selected} onClick={() => void answer(approval.id, { key: "C", candidateId: selected })}>{t("这个网站以后都允许")}</button></div> : null}
+          {pending ? <div className="qfoot qacts"><SelfLoginButton approvalId={approval.id} /><button className="hob-btn" onClick={() => void answer(approval.id, { key: "A", ...(selected ? { candidateId: selected } : {}) })}>{t("不允许")}</button><button className="hob-btn" disabled={!selected} onClick={() => void answer(approval.id, { key: "B", candidateId: selected })}>{t("这次允许")}</button><button className="hob-btn hob-btn-primary" disabled={!selected} onClick={() => void answer(approval.id, { key: "C", candidateId: selected })}>{t("这个网站以后都允许")}</button></div> : null}
         </>
       )}
     </div>
@@ -543,6 +558,54 @@ function LoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) 
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/** 录入卡：密码管理器里没有这个网站的账号，用户在卡上填一次，Hob 存进密码管理器再填进页面。密码只在提交的那一次请求里经过。 */
+function LoginEntryCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
+  const entry = approval.login!.entry!;
+  const [provider, setProvider] = useState(entry.provider ?? entry.providers[0]?.provider ?? "");
+  const [username, setUsername] = useState(entry.account ?? "");
+  const [password, setPassword] = useState("");
+  const [show, setShow] = useState(false);
+  const [busy, setBusy] = useState(false);
+  if (approval.status === "pending" && entry.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
+  const pending = approval.status === "pending";
+  const providerName = entry.providers.find((item) => item.provider === provider)?.providerName ?? entry.providers[0]?.providerName ?? "";
+  const savedName = entry.providers.find((item) => item.provider === entry.provider)?.providerName ?? providerName;
+  const account = entry.username ?? entry.account;
+  const status = entry.state === "rejected" ? t("没有登录") : entry.state === "self" ? t("已选择自己登录") : entry.state === "failed" ? t("已存进{provider}，但没有填上：{reason}", { provider: savedName, reason: entry.result ?? "" }) : entry.state === "filled" ? (entry.twoStep ? t("已存进{provider}，已填好用户名", { provider: savedName }) : t("已存进{provider}并填好", { provider: savedName })) : undefined;
+  const ready = username.trim() !== "" && password !== "" && provider !== "";
+  const submit = async () => {
+    if (!ready || busy) return;
+    setBusy(true);
+    const ok = await saveLoginEntry(approval.id, { username: username.trim(), password, provider });
+    setBusy(false);
+    // 没存上（服务端回了原因）：表单保持可填；存上了卡片会自己收起
+    if (!ok) return;
+    setPassword("");
+  };
+  return (
+    <div className={`b q qfill${fresh ? " enter" : ""}`}>
+      <div className="qfill-source"><Icon name="key" size={16} />{t("Hob · 填写登录")}</div>
+      <div className="qt">{approval.title}</div>
+      {pending ? <div className="qs">{t("密码管理器里还没有这个网站的账号。在这里填一次，Hob 存进{provider}再填进登录页，助手看不到。", { provider: providerName })}</div> : null}
+      <div className="qfill-group">
+        <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{entry.host}</span></div>
+        {pending ? (
+          <>
+            <form className="qfill-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
+              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-user-${approval.id}`}>{t("用户名")}</label><span className="qfill-inputwrap"><input id={`entry-user-${approval.id}`} className="qfill-input" placeholder={t("用户名或邮箱")} value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></span></div>
+              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-pass-${approval.id}`}>{t("密码")}</label><span className="qfill-inputwrap"><input id={`entry-pass-${approval.id}`} className="qfill-input" placeholder={t("这个网站的密码")} type={show ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" /><button type="button" className="qfill-toggle" aria-label={show ? t("隐藏密码") : t("显示密码")} title={show ? t("隐藏密码") : t("显示密码")} onClick={() => setShow(!show)}><Icon name={show ? "eyeoff" : "eye"} size={15} /></button></span></div>
+              {entry.providers.length > 1 ? <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-provider-${approval.id}`}>{t("存到")}</label><span className="qfill-selectwrap"><select id={`entry-provider-${approval.id}`} className="qfill-select" value={provider} onChange={(event) => setProvider(event.target.value)}>{entry.providers.map((item) => <option key={item.provider} value={item.provider}>{item.providerName}</option>)}</select><Icon name="down" size={13} /></span></div> : null}
+            </form>
+          </>
+        ) : account ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{account}</span><span className="qfill-provider">{savedName}</span></div> : null}
+      </div>
+      {entry.error ? <div className="qfill-entry-error">{entry.error}</div> : null}
+      {status ? <div className={`qfill-result${entry.state === "failed" ? " bad" : ""}`}>{["filled", "self"].includes(entry.state ?? "") ? <Icon name="check" size={15} /> : null}{status}</div> : null}
+      {pending ? <div className="qfoot qacts"><SelfLoginButton approvalId={approval.id} /><button className="hob-btn" onClick={() => void answer(approval.id, { key: "A" })}>{t("不登录")}</button><button className="hob-btn hob-btn-primary" disabled={!ready || busy} onClick={() => void submit()}>{t("保存并登录")}</button></div> : null}
     </div>
   );
 }

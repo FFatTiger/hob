@@ -2,7 +2,7 @@ import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { ApprovalOption } from "../../shared/types.ts";
 import { generateImage } from "./image.ts";
-import { candidateId, fillCandidate, prepareFillLogin } from "./login.ts";
+import { loginCard, prepareLogin } from "./login.ts";
 import { prepareFillNewPassword } from "./new-password.ts";
 import type { HobRuntime } from "./runtime.ts";
 
@@ -113,61 +113,31 @@ export function registerAskTool(runtime: HobRuntime, jobId: string, sediment = f
   };
 }
 
-/** Worker 的登录交接：先把等待交给助手，由助手决定是否向用户出 ask_login 卡。 */
-export function registerAskLoginTool(runtime: HobRuntime, jobId: string, sediment = false): ToolDefinition<any, any> {
+/** Worker 的登录工具：Hob 看过页面和密码管理器以后决定出哪张卡，卡片和答复走 ask_user 的路（交给助手，由助手请用户办）。凭据只在 Hob 内存和当前页面之间经过。 */
+export function registerLoginTool(runtime: HobRuntime, jobId: string, sediment = false, credentials = false): ToolDefinition<any, any> {
   return {
-    name: "ask_login",
-    label: "请用户登录",
-    description: "请用户在桌面上登录一个网站：碰到登录页、两步验证、验证码这类只能用户本人完成的步骤时用。会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。",
+    name: "login",
+    label: "登录",
+    description: credentials
+      ? "登录云桌面浏览器里当前打开的网站，先打开网站的登录页再调用。用户的密码管理器里存了这个网站的账号时，Hob 核对网址、请用户批准后，把账号和密码直接填进页面；没存的，请用户在卡片上填一次，存进密码管理器再填；页面要扫码、第三方账号或验证码这类只能用户本人完成的，请用户在云桌面里自己登录。密码不经过你。填好以后由你点登录按钮；分两步的登录页（先填用户名、点下一步才出密码框），点完下一步再调一次。site 写网站网址或名称，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在卡上选；reason 一句话写为什么要登录，显示在卡上。"
+      : "请用户在云桌面里登录一个网站：会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。site 写哪个网站，reason 一句话写为什么要登录。",
     parameters: Type.Object({
-      site: Type.String({ description: "哪个网站" }),
+      site: Type.String({ description: "网站网址或名称" }),
       reason: Type.String({ description: "为什么要登录，一句话" }),
+      ...(credentials ? { account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })) } : {}),
     }),
     execute: async (_id, params: any, signal) => {
       if (sediment) return ok("沉淀时无需询问：把登录这一步写进技能，交给助手处理。");
       const site = String(params.site ?? "").trim();
       const reason = String(params.reason ?? "").trim();
-      if (!site || !reason) return { content: [{ type: "text" as const, text: "site 和 reason 都要填写清楚。" }], details: undefined, isError: true };
-      const answer = await runtime.jobs.askQuestion(jobId, {
-        title: `需要登录：${site}`,
-        detail: reason,
-        options: [{ key: "A", label: "已登录" }],
-        recommended: "A",
-        login: { site, reason },
-      }, ...(signal ? [signal] as const : []));
-      return ok(answer);
-    },
-  };
-}
-
-/** Worker 的填写登录工具：凭据只在 Hob 内存和当前页面之间经过。 */
-export function registerFillLoginTool(runtime: HobRuntime, jobId: string, sediment = false): ToolDefinition<any, any> {
-  return {
-    name: "fill_login",
-    label: "填写登录",
-    description: "把用户密码管理器里存的账号和密码，填进云桌面浏览器当前页面的登录表单，密码不经过你。Hob 先核对当前页面的网址和保存的网址是否一致，再请用户批准（用户设了这个网站自动填写的，直接填）。site 写你要登录的网站，网址或名称都行，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在批准卡上选。填好以后由你点登录按钮。",
-    parameters: Type.Object({ site: Type.String({ description: "网站网址或名称" }), account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })) }),
-    execute: async (_id, params: any, signal) => {
-      if (sediment) return ok("沉淀时无需询问：把登录这一步写进技能，交给助手处理。");
-      const site = String(params.site ?? "").trim();
       const account = typeof params.account === "string" ? params.account.trim() : undefined;
-      if (!site) return { content: [{ type: "text" as const, text: "site 要填写网站网址或名称。" }], details: undefined, isError: true };
+      if (!site || !reason) return { content: [{ type: "text" as const, text: "site 和 reason 都要填写清楚。" }], details: undefined, isError: true };
       try {
-        const prepared = await prepareFillLogin(runtime, runtime.store.job(jobId)?.assistantId ?? "", site, account);
+        const prepared = await prepareLogin(runtime, runtime.store.job(jobId)?.assistantId ?? "", site, account);
         if (prepared.kind === "message" || prepared.kind === "mismatch") return ok(prepared.text);
-        if (prepared.approval.chosenId) {
-          const candidate = prepared.approval.candidates.find((item) => candidateId(item) === prepared.approval.chosenId);
-          if (!candidate) return { content: [{ type: "text" as const, text: "没有找到要填写的账号。" }], details: undefined, isError: true };
-          try { return ok((await fillCandidate(runtime, runtime.store.job(jobId)?.assistantId ?? "", candidate, prepared.approval.host)).text); }
-          catch (error) { return { content: [{ type: "text" as const, text: `没有填写：${error instanceof Error ? error.message : String(error)}` }], details: undefined, isError: true }; }
-        }
-        const answer = await runtime.jobs.askQuestion(jobId, {
-          title: prepared.title,
-          detail: prepared.detail,
-          options: [{ key: "A", label: "不允许" }, { key: "B", label: "这次允许" }, { key: "C", label: "这个网站以后都允许", always: true }],
-          login: { site, reason: prepared.detail, fillLogin: prepared.approval },
-        }, signal);
-        return ok(answer);
+        if (prepared.kind === "failed") return { content: [{ type: "text" as const, text: prepared.text }], details: undefined, isError: true };
+        const card = loginCard(prepared, site, reason);
+        return ok(await runtime.jobs.askQuestion(jobId, { title: card.title, ...(card.detail ? { detail: card.detail } : {}), options: card.options, login: card.login }, signal));
       } catch (error) {
         return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true };
       }

@@ -21,7 +21,7 @@ import {
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
 import type { Approval, ApprovalQuestion, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
-import { candidateId, fillCandidate, prepareFillLogin } from "./login.ts";
+import { loginCard, prepareLogin } from "./login.ts";
 import { prepareFillNewPassword } from "./new-password.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
@@ -290,7 +290,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
     detectImageMimeType: async (path) => IMAGE_TYPES[extname(checkFile(path)).toLowerCase()],
   } }) as unknown as Tool;
   delete (read as { promptSnippet?: unknown }).promptSnippet; // 用了自定义系统提示词，引擎自带的这段不进提示词
-  const fillLoginAvailable = (() => {
+  const credentialsAvailable = (() => {
     const desktop = runtime.desktop.view();
     return desktop.enabled && Boolean(desktop.url && desktop.tokenConfigured) && runtime.plugins.hasCredentialProvider(assistantId);
   })();
@@ -552,52 +552,51 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           : ok("卡片已显示给用户。");
       },
     },
-    ...(fillLoginAvailable ? [{
-      name: "fill_login",
-      label: "填写登录",
-      description: "把用户密码管理器里存的账号和密码，填进云桌面浏览器当前页面的登录表单，密码不经过你。Hob 先核对当前页面的网址和保存的网址是否一致，再请用户批准（用户设了这个网站自动填写的，直接填）。site 写你要登录的网站，网址或名称都行，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在批准卡上选。填好以后由你点登录按钮。",
+    {
+      name: "login",
+      label: "登录",
+      description: credentialsAvailable
+        ? "登录云桌面浏览器里当前打开的网站，先打开网站的登录页再调用。用户的密码管理器里存了这个网站的账号时，Hob 核对网址、请用户批准后，把账号和密码直接填进页面；没存的，请用户在卡片上填一次，存进密码管理器再填；页面要扫码、第三方账号或验证码这类只能用户本人完成的，请用户在云桌面里自己登录。密码不经过你。填好以后由你点登录按钮；分两步的登录页（先填用户名、点下一步才出密码框），点完下一步再调一次。site 写网站网址或名称，比如 forum.example.net 或「Example 论坛」；同一个网站存了几个账号时，account 写要用的用户名或邮箱，不确定就不填，用户在卡上选；reason 一句话写为什么要登录，显示在卡上。"
+        : "请用户在云桌面里登录一个网站：会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。site 写哪个网站，reason 一句话写为什么要登录。",
       parameters: Type.Object({
         site: Type.String({ description: "网站网址或名称" }),
-        account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })),
+        reason: Type.String({ description: "为什么要登录，一句话" }),
+        ...(credentialsAvailable ? { account: Type.Optional(Type.String({ description: "用户名或邮箱，不确定就不填" })) } : {}),
       }),
       execute: async (_id: string, params: any, signal?: AbortSignal) => {
         const site = String(params.site ?? "").trim();
+        const reason = String(params.reason ?? "").trim();
         const account = typeof params.account === "string" ? params.account.trim() : undefined;
-        if (!site) return fail("site 要填写网站网址或名称。");
+        if (!site || !reason) return fail("site 和 reason 都要填写清楚。");
         try {
-          const prepared = await prepareFillLogin(runtime, assistantId, site, account);
+          const prepared = await prepareLogin(runtime, assistantId, site, account);
           if (prepared.kind === "message") return ok(prepared.text);
+          if (prepared.kind === "failed") return fail(prepared.text);
           if (prepared.kind === "mismatch") {
             const approval: Approval = {
               id: newId("q-"), assistantId, title: "没有填写密码", detail: prepared.text, options: [], status: "answered", source: "router",
-              ...(groupId ? { groupId } : {}), login: { site, reason: prepared.text, fillLogin: prepared.approval }, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
+              ...(groupId ? { groupId } : {}), login: { site, reason, fillLogin: prepared.approval }, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
             };
             store.saveApproval(approval);
             await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
             bus.emit({ type: "approval", approval });
             return ok(prepared.text);
           }
-          if (prepared.approval.chosenId) {
-            const chosen = prepared.approval.candidates.find((candidate) => candidateId(candidate) === prepared.approval.chosenId);
-            if (!chosen) return fail("没有找到要填写的账号。");
-            try { return ok((await fillCandidate(runtime, assistantId, chosen, prepared.approval.host)).text); }
-            catch (error) { return fail(`没有填写：${error instanceof Error ? error.message : String(error)}`); }
-          }
+          const card = loginCard(prepared, site, reason);
           const approval: Approval = {
-            id: newId("q-"), assistantId, title: prepared.title, detail: prepared.detail,
-            options: [{ key: "A", label: "不允许" }, { key: "B", label: "这次允许" }, { key: "C", label: "这个网站以后都允许", always: true }],
-            status: "pending", source: "router", ...(groupId ? { groupId } : {}), login: { site, reason: prepared.detail, fillLogin: prepared.approval }, createdAt: new Date().toISOString(),
+            id: newId("q-"), assistantId, title: card.title, ...(card.detail ? { detail: card.detail } : {}),
+            options: card.options, status: "pending", source: "router", ...(groupId ? { groupId } : {}), login: card.login, createdAt: new Date().toISOString(),
           };
           store.saveApproval(approval);
           const delegationId = router.currentDelegation(assistantId, groupId);
           if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
           await presentApproval(approval, signal);
-          return endTurn(`已请用户批准在 ${prepared.approval.host} 填写登录，这一轮先到这里；用户批准后 Hob 会填好并告诉你。`);
+          return endTurn(card.endTurn);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
       },
-    }] : []),
+    },
     ...(fillNewPasswordAvailable ? [{
       name: "fill_new_password",
       label: "生成并填写新密码",
@@ -632,37 +631,6 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         }
       },
     }] : []),
-    {
-      name: "ask_login",
-      label: "请用户登录",
-      description: "请用户在桌面上登录一个网站：碰到登录页、两步验证、验证码这类只能用户本人完成的步骤时用。会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。",
-      parameters: Type.Object({
-        site: Type.String({ description: "哪个网站" }),
-        reason: Type.String({ description: "为什么要登录，一句话" }),
-      }),
-      execute: async (_id, params: any, signal) => {
-        const site = String(params.site ?? "").trim();
-        const reason = String(params.reason ?? "").trim();
-        if (!site || !reason) return fail("site 和 reason 都要填写清楚。");
-        const approval: Approval = {
-          id: newId("q-"),
-          assistantId,
-          title: t("需要登录：{site}", { site }),
-          detail: reason,
-          options: [{ key: "A", label: "已登录" }],
-          recommended: "A",
-          status: "pending",
-          source: "router",
-          ...(groupId ? { groupId } : {}),
-          login: { site, reason },
-          createdAt: new Date().toISOString(),
-        };
-        store.saveApproval(approval);
-        if (groupId) runtime.groups.publish(groupId);
-        await presentApproval(approval, signal);
-        return endTurn("已请用户登录，等用户完成后继续。");
-      },
-    },
     {
       name: "ask_user",
       label: "询问用户",

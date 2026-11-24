@@ -4,11 +4,10 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { credentialCandidates, hostsMatch } from "../src/login.ts";
-import { hostsMatch } from "../src/login.ts";
 import { readLoginAuto, saveLoginAuto } from "../src/login-auto.ts";
 import { makeHob } from "./helpers.ts";
 
-describe("fill_login safety boundaries", () => {
+describe("login safety boundaries", () => {
   it("only accepts the saved host or one of its subdomains", () => {
     expect(hostsMatch("login.example.net", "example.net")).toBe(true);
     expect(hostsMatch("example.net", "login.example.net")).toBe(false);
@@ -26,10 +25,14 @@ describe("fill_login safety boundaries", () => {
     } finally { hob.close(); }
   });
 
-  it("does not expose fill_login when the desktop or credential provider is unavailable", () => {
+  it("login 没有凭据提供者时只请用户自己登录：没有 account 参数，说明是那一段短话", () => {
     const hob = makeHob();
     try {
-      expect(buildRouterTools(hob.runtime, "hob").some((tool) => tool.name === "fill_login")).toBe(false);
+      const tool = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "login")!;
+      expect(tool).toBeDefined();
+      expect(tool.parameters.properties).toEqual({ site: expect.anything(), reason: expect.anything() });
+      expect(tool.description).toBe("请用户在云桌面里登录一个网站：会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。site 写哪个网站，reason 一句话写为什么要登录。");
+      expect(buildRouterTools(hob.runtime, "hob").some((tool) => tool.name === "login")).toBe(true);
     } finally { hob.close(); }
   });
 

@@ -195,7 +195,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["cards-demo", "plugin-demo", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
+const SCENES: SceneId[] = ["cards-demo", "login-cards", "plugin-demo", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -1986,6 +1986,28 @@ export async function answerCard(cardId: string, action: import("../../shared/ca
     return true;
   } catch (e) {
     set({ notice: t("提交失败：{error}", { error: errText(e) }) });
+    return false;
+  }
+}
+
+/** 登录卡上点「我自己登录」：同一张卡换成自己登录卡的样子，不先把它标成已答（卡还挂着等用户登完） */
+export async function switchLoginSelf(approvalId: string) {
+  try {
+    await api.answerApproval(approvalId, { self: true });
+    return true;
+  } catch (e) {
+    set({ notice: t("提交失败：{error}", { error: errText(e) }) });
+    return false;
+  }
+}
+
+/** 录入卡「保存并登录」：密码只在这次请求里经过；没存上时服务端回原因，卡不动，表单保持可填 */
+export async function saveLoginEntry(approvalId: string, input: { username: string; password: string; provider: string }) {
+  try {
+    await api.answerApproval(approvalId, { key: "B", ...input });
+    return true;
+  } catch (e) {
+    set({ notice: errText(e) });
     return false;
   }
 }

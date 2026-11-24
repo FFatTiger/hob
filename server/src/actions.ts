@@ -1,6 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
-import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft } from "../../shared/types.ts";
+import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft, LoginEntryApproval } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -9,7 +9,7 @@ import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
-import { candidateId, fillCandidate, rememberAutoLogin } from "./login.ts";
+import { candidateId, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
 import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
 
 export interface ActionResult {
@@ -304,13 +304,51 @@ export async function answerCard(runtime: HobRuntime, cardId: string, input: Car
   return { status: 200, body: { card: answered } };
 }
 
+/** 登录卡的答案记下以后：推给界面；任务里问的叫醒任务，其余回到助手（转交回合回到目标助手，群里回到群会话）。 */
+async function settleLoginAnswer(runtime: HobRuntime, approval: Approval, answered: Approval, reply: string): Promise<void> {
+  const { store, bus, router, jobs } = runtime;
+  store.saveApproval(answered);
+  if (answered.groupId) runtime.groups.publish(answered.groupId);
+  const delegation = approval.source === "job" ? undefined : store.delegations().find((item) => item.approvalIds?.includes(approval.id));
+  const delegationId = delegation && runtime.delegations.resume(delegation.id) ? delegation.id : undefined;
+  bus.emit({ type: "approval", approval: answered });
+  if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, reply);
+  else await routeAnswer(runtime, approval, reply, delegationId);
+}
+
+/** 用户在卡上点「我自己登录」：同一张卡换成自己登录卡的样子，还挂着等用户登完，不回模型。 */
+function switchLoginToSelf(runtime: HobRuntime, approval: Approval): ActionResult {
+  const { store, bus } = runtime;
+  const login = approval.login!;
+  if (!login.fillLogin && !login.entry) return { status: 400, body: { error: "这张卡没有「我自己登录」" } };
+  const switched: Approval = {
+    ...approval,
+    login: {
+      ...login,
+      ...(login.fillLogin ? { fillLogin: { ...login.fillLogin, state: "self" } } : {}),
+      ...(login.entry ? { entry: { ...login.entry, state: "self" } } : {}),
+    },
+  };
+  store.saveApproval(switched);
+  if (switched.groupId) runtime.groups.publish(switched.groupId);
+  bus.emit({ type: "approval", approval: switched });
+  return { status: 200, body: { approval: switched } };
+}
+
 /** 填登录批准卡的答案：凭据只在这次 CDP 操作里取用，不进入审批记录。 */
 async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, input: AnswerApprovalBody): Promise<ActionResult> {
-  const { store, bus, router, jobs } = runtime;
+  const { store } = runtime;
   const fill = approval.login?.fillLogin;
   if (!fill) return { status: 400, body: { error: "登录批准卡数据不完整" } };
   const option = input.key ? approval.options.find((item) => item.key === input.key) : undefined;
   if (!option) return { status: 400, body: { error: "没有这个选项" } };
+  // 换成自己登录卡以后，用户点的是「已登录」（选项 A）
+  if (fill.state === "self") {
+    if (option.key !== "A") return { status: 400, body: { error: "这张卡在等用户自己登录" } };
+    const answered: Approval = { ...approval, status: "answered", chosen: option.key, answeredAt: new Date().toISOString() };
+    await settleLoginAnswer(runtime, approval, answered, `用户已在「${approval.login!.site}」完成登录。`);
+    return { status: 200, body: { approval: answered } };
+  }
   const selectedId = input.candidateId || fill.chosenId || (fill.candidates.length === 1 ? candidateId(fill.candidates[0]!) : undefined);
   const candidate = selectedId ? fill.candidates.find((item) => candidateId(item) === selectedId) : undefined;
   if (option.key !== "A" && !candidate) return { status: 400, body: { error: "请选择要填写的账号" } };
@@ -325,7 +363,7 @@ async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, 
       nextFill = { ...nextFill, state: "filled", result: result.kind === "username" ? `已填好用户名 ${result.username}` : option.key === "C" ? "已登录 · 以后都允许" : "已登录 · 这次允许" };
       if (option.key === "C") rememberAutoLogin(runtime, candidate!, fill.host);
       reply = result.kind === "username"
-        ? `用户允许了在 ${fill.host} 登录，Hob 已填好用户名 ${result.username}，点下一步后再调一次 fill_login 填密码。`
+        ? `用户允许了在 ${fill.host} 登录，Hob 已填好用户名 ${result.username}，点下一步后再调一次 login 填密码。`
         : `用户允许了在 ${fill.host} 登录，Hob 已填好 ${result.username} 的账号和密码，接下来点登录按钮。`;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -334,13 +372,79 @@ async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, 
     }
   }
   const answered: Approval = { ...approval, status: "answered", chosen: option.key, login: { ...approval.login!, fillLogin: nextFill }, answeredAt: new Date().toISOString() };
-  store.saveApproval(answered);
-  if (answered.groupId) runtime.groups.publish(answered.groupId);
-  const delegation = approval.source === "job" ? undefined : store.delegations().find((item) => item.approvalIds?.includes(approval.id));
-  const delegationId = delegation && runtime.delegations.resume(delegation.id) ? delegation.id : undefined;
-  bus.emit({ type: "approval", approval: answered });
-  if (approval.source === "job" && approval.jobId) jobs.resolveAsk(answered, reply);
-  else await routeAnswer(runtime, approval, reply, delegationId);
+  await settleLoginAnswer(runtime, approval, answered, reply);
+  return { status: 200, body: { approval: answered } };
+}
+
+/** 录入卡的「保存并登录」：密码只在这一次请求、提供者的 save 和 CDP 填写之间经过，不进审批记录、事件、日志和回给模型的文字。 */
+async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval, input: AnswerApprovalBody): Promise<ActionResult> {
+  const { store } = runtime;
+  const entry = approval.login?.entry;
+  if (!entry) return { status: 400, body: { error: "登录录入卡数据不完整" } };
+  const option = input.key ? approval.options.find((item) => item.key === input.key) : undefined;
+  if (!option) return { status: 400, body: { error: "没有这个选项" } };
+  const site = approval.login!.site;
+  if (entry.state === "self") {
+    if (option.key !== "A") return { status: 400, body: { error: "这张卡在等用户自己登录" } };
+    const answered: Approval = { ...approval, status: "answered", chosen: option.key, answeredAt: new Date().toISOString() };
+    await settleLoginAnswer(runtime, approval, answered, `用户已在「${site}」完成登录。`);
+    return { status: 200, body: { approval: answered } };
+  }
+  let reply: string;
+  let next: LoginEntryApproval;
+  if (option.key === "A") {
+    const withoutError = { ...entry };
+    delete withoutError.error;
+    next = { ...withoutError, state: "rejected", result: "没有登录" };
+    reply = `用户没有登录 ${entry.host}。`;
+  } else {
+    const username = typeof input.username === "string" ? input.username.trim() : "";
+    const password = typeof input.password === "string" ? input.password : "";
+    if (!username || !password) return { status: 400, body: { error: "用户名和密码都要填。" } };
+    const chosen = entry.providers.find((item) => item.provider === (input.provider ?? entry.providers[0]?.provider));
+    const provider = chosen && runtime.plugins.credentialProviders(approval.assistantId, "save").find((item) => item.pluginId === chosen.provider);
+    if (!chosen || !provider) {
+      const message = `${chosen?.providerName ?? "密码管理器"} 的凭据保存工具现在不可用。`;
+      const failed: Approval = { ...approval, login: { ...approval.login!, entry: { ...entry, error: message } } };
+      store.saveApproval(failed);
+      if (failed.groupId) runtime.groups.publish(failed.groupId);
+      runtime.bus.emit({ type: "approval", approval: failed });
+      return { status: 400, body: { error: message } };
+    }
+    // 存进密码管理器的名称用助手写的网站名（去掉「」这类引号），网址用当前主机
+    const name = site.trim().replace(/^[「『"'“]+|[」』"'”]+$/g, "") || entry.host;
+    const uris = [`https://${entry.host}`];
+    let savedId: string;
+    try {
+      const saved = await runtime.plugins.callCredential(provider, { name, uris, username, password });
+      savedId = typeof saved.id === "string" ? saved.id : "";
+      if (!savedId) throw new Error("密码管理器没有返回已保存条目的 id。");
+    } catch (error) {
+      // 没存上：卡上写原因，表单保持可填，不回模型；密码先脱敏再存给界面
+      const message = `${provider.providerName} 没有保存：${hideSecrets(error, [password])}`;
+      const failed: Approval = { ...approval, login: { ...approval.login!, entry: { ...entry, error: message } } };
+      store.saveApproval(failed);
+      if (failed.groupId) runtime.groups.publish(failed.groupId);
+      runtime.bus.emit({ type: "approval", approval: failed });
+      return { status: 400, body: { error: message } };
+    }
+    const candidate = { provider: provider.pluginId, providerName: provider.providerName, id: savedId, uris };
+    try {
+      const result = await fillLoginPage(runtime, approval.assistantId, candidate, entry.host, async () => ({ username, password }));
+      const withoutError = { ...entry };
+      delete withoutError.error;
+      next = { ...withoutError, provider: provider.pluginId, username, twoStep: result.kind === "username", state: "filled", result: result.kind === "username" ? "已填好用户名" : "已填好" };
+      reply = result.kind === "username"
+        ? `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好用户名 ${username}，点下一步后再调一次 login 填密码。`
+        : `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好 ${username} 的账号和密码，接下来点登录按钮。`;
+    } catch (error) {
+      const reason = hideSecrets(error, [password]);
+      next = { ...entry, provider: provider.pluginId, username, state: "failed", result: reason };
+      reply = `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，但没有填上：${reason}`;
+    }
+  }
+  const answered: Approval = { ...approval, status: "answered", chosen: option.key, login: { ...approval.login!, entry: next }, answeredAt: new Date().toISOString() };
+  await settleLoginAnswer(runtime, approval, answered, reply);
   return { status: 200, body: { approval: answered } };
 }
 
@@ -392,8 +496,10 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   const approval = store.approval(approvalId);
   if (!approval) return { status: 404, body: { error: "审批不存在" } };
   if (approval.status !== "pending") return { status: 409, body: { error: "这个审批已答复" } };
+  if (input.self && approval.login) return switchLoginToSelf(runtime, approval);
   if (approval.login?.fillNewPassword) return answerFillNewPasswordApproval(runtime, approval, input);
   if (approval.login?.fillLogin) return answerFillLoginApproval(runtime, approval, input);
+  if (approval.login?.entry) return answerLoginEntryApproval(runtime, approval, input);
   const questions = approval.questions?.length ? approval.questions : undefined;
   // 多问题卡：每个问题都要答（选了选项或自己写了一句都算），补充说明可有可无
   let answers: ApprovalAnswer[] = [];

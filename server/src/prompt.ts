@@ -210,7 +210,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   lines.push("需要用户一次定好几件事、或者要给用户看一张表时，可以用 send_card 发卡片：要填的几项放进一个表单，比一问一答省事；只是二选一、三选一，用 ask_user 就够了。用户要交给你密码、密钥这类值时，看手上有没有插件的工具能出卡片让用户直接填（比如密码管理插件的保存登录信息），有就用它，让这些值不经过聊天。");
   if (settings.abilities?.exec !== false) lines.push(SCRIPT_TOOLS_LINE);
   if (settings.desktopEnabled) lines.push(settings.credentialsEnabled
-    ? "需要登录的网站：用户的密码管理器里存了这个网站的账号时，打开登录页后调 fill_login，Hob 会核对网址、请用户批准，再把账号和密码直接填进页面，你看不到密码；填好后你点登录按钮。注册新账号或修改密码时用 fill_new_password。密码管理器里没有、或者用户想自己来，就请用户在云桌面里登录。用户要交给你密码时，请他存进密码管理器或在云桌面里自己填，密码就不会经过聊天。"
+    ? "需要登录的网站：打开登录页后调 login。密码管理器里存了账号的，Hob 核对网址、请用户批准后直接填进页面；没存的，Hob 请用户在卡片上填一次、存好再填；只能用户本人完成的（扫码、第三方账号、验证码），Hob 请用户在云桌面里自己登录。你看不到密码；填好后你点登录按钮。注册新账号或修改密码时用 fill_new_password。用户说要自己登录的，请他在云桌面里登录就好。用户要交给你密码时，请他在 login 的卡片上填，或者在云桌面里自己填，密码就不会经过聊天。"
     : "网页上的事用 playwright-cli 命令做，你和任务用的是同一个云桌面浏览器，用户看得到、能接手。云桌面是另一台机器，局域网和外网都通，但打不开这台机器上只监听 127.0.0.1 的服务。需要登录的网站，请用户在云桌面里自己登录，账号和密码是用户的；登录一次以后会一直保持。");
   if (settings.searchEnabled) lines.push("需要最新的信息，或者要核实一个说法，用 web_search 查，用到的结论附上来源。");
   if (settings.imageEnabled) lines.push("用户需要图片，用 generate_image 生成，生成后会显示在对话里。");
@@ -291,7 +291,7 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
   }
   lines.push(`技能在回顾的时候存：做完以后，「${name}」会看情况让你回顾这次的做法，到时再写。`);
   if (settings.desktopEnabled) lines.push(`网页上的事用 playwright-cli 命令做，它操作的是云桌面的浏览器，用户看得到、能接手，登录也一直保持。云桌面是另一台机器，局域网和外网都通，但打不开这台机器上只监听 127.0.0.1 的服务。`, settings.credentialsEnabled
-    ? "需要登录的网站：用户的密码管理器里存了这个网站的账号时，打开登录页后调 fill_login，Hob 会核对网址、请用户批准，再把账号和密码直接填进页面，你看不到密码；填好后你点登录按钮。注册新账号或修改密码时用 fill_new_password。密码管理器里没有、或者用户想自己来，就请用户在云桌面里登录。用户要交给你密码时，请他存进密码管理器或在云桌面里自己填，密码就不会经过聊天。"
+    ? "需要登录的网站：打开登录页后调 login。密码管理器里存了账号的，Hob 核对网址、请用户批准后直接填进页面；没存的，Hob 请用户在卡片上填一次、存好再填；只能用户本人完成的（扫码、第三方账号、验证码），Hob 请用户在云桌面里自己登录。你看不到密码；填好后你点登录按钮。注册新账号或修改密码时用 fill_new_password。用户说要自己登录的，请他在云桌面里登录就好。用户要交给你密码时，请他在 login 的卡片上填，或者在云桌面里自己填，密码就不会经过聊天。"
     : `需要登录的网站，用 ask_user 告诉「${name}」要登录哪个网站，它会请用户在云桌面里登录；账号和密码是用户的，登录一次以后会一直保持。`);
   if (settings.knowledgeNames?.length) lines.push(`能查的知识库：${settings.knowledgeNames.join("、")}。问到可能写在这些库里的内容，先用 search_knowledge 查；用到的内容照抄出处链接，库里没有就直说没有。`);
   if (settings.abilities) {

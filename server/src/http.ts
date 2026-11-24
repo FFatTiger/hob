@@ -1271,14 +1271,18 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.post("/api/approvals/:id", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as AnswerApprovalBody;
-    // 多问题卡只带 answers（没写补充说明）也算答了
-    if (body.key === undefined && body.text === undefined && body.candidateId === undefined && body.folder === undefined && !body.answers?.length) return c.json({ error: "缺答案：key、text、answers 至少给一个" }, 400);
+    // 多问题卡只带 answers（没写补充说明）也算答了；登录卡的「我自己登录」单独一个标记
+    if (body.key === undefined && body.text === undefined && body.candidateId === undefined && body.folder === undefined && !body.self && !body.answers?.length) return c.json({ error: "缺答案：key、text、answers 至少给一个" }, 400);
     const result = await answerApproval(runtime, c.req.param("id"), {
       ...(body.key !== undefined ? { key: body.key } : {}),
       ...(body.candidateId !== undefined ? { candidateId: body.candidateId } : {}),
       ...(body.folder !== undefined ? { folder: body.folder } : {}),
       ...(body.text !== undefined ? { text: body.text } : {}),
       ...(body.answers?.length ? { answers: body.answers } : {}),
+      ...(body.self ? { self: true } : {}),
+      ...(typeof body.username === "string" ? { username: body.username } : {}),
+      ...(typeof body.password === "string" ? { password: body.password } : {}),
+      ...(typeof body.provider === "string" ? { provider: body.provider } : {}),
     });
     return c.json(result.body as Record<string, unknown>, result.status as 200);
   });

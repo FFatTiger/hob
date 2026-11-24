@@ -185,7 +185,7 @@ describe("工具限时和任务看门狗", () => {
 
   it.each([
     ["ask_user", { title: "选择整理方式", options: [{ label: "按日期" }, { label: "按主题" }] }],
-    ["ask_login", { site: "虚构档案站", reason: "查看目录" }],
+    ["login", { site: "虚构档案站", reason: "查看目录" }],
   ])("%s 在卡片等待时超时，会结束待答状态", async (name, args) => {
     const hob = makeHob();
     hob.runtime.router.stallOverrideMs = 150;
@@ -212,7 +212,7 @@ describe("工具限时和任务看门狗", () => {
 
   it.each([
     ["ask_user", { title: "采用哪个方案", options: [{ label: "甲" }, { label: "乙" }] }],
-    ["ask_login", { site: "虚构资料站", reason: "查看目录" }],
+    ["login", { site: "虚构资料站", reason: "查看目录" }],
   ])("任务 %s 等待答复超过时限后仍可继续", async (name, args) => {
     const hob = makeHob();
     hob.runtime.jobs.stallOverrideMs = 250;

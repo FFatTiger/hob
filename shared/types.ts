@@ -689,8 +689,28 @@ export interface FillLoginApproval {
   currentHost?: string;
   candidates: FillLoginCandidate[];
   chosenId?: string;
-  state?: "pending" | "filled" | "rejected" | "mismatch" | "failed";
+  /** self：用户在卡上点了「我自己登录」，卡换成「自己登录」卡的样子，等用户登完 */
+  state?: "pending" | "filled" | "rejected" | "mismatch" | "failed" | "self";
   result?: string;
+}
+export interface LoginEntryProvider {
+  provider: string;
+  providerName: string;
+}
+/** 登录录入卡：密码管理器里没有这个网站的账号，用户在卡上填一次，Hob 存进密码管理器再填进页面。密码不进这张记录。 */
+export interface LoginEntryApproval {
+  host: string;
+  account?: string; // 预填的用户名（助手给的 account）
+  providers: LoginEntryProvider[]; // 带 save 角色的提供者，第一个是默认（自带密码库）
+  provider?: string; // 用户选的提供者 id
+  username?: string; // 提交后记下的用户名，收起后显示
+  /** self：用户在卡上点了「我自己登录」 */
+  state?: "pending" | "filled" | "rejected" | "failed" | "self";
+  /** 保存失败时只在当前卡片上显示一次，重试成功后清掉；不包含密码。 */
+  error?: string;
+  /** 录入卡存好后是否只填了用户名，下一步再调用 login 填密码 */
+  twoStep?: boolean;
+  result?: string; // 收起后那一行：填写失败的原因
 }
 
 export interface Approval {
@@ -713,7 +733,7 @@ export interface Approval {
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
-  login?: { site: string; reason: string; fillLogin?: FillLoginApproval; fillNewPassword?: FillNewPasswordApproval }; // ask_login 或填登录的交接信息
+  login?: { site: string; reason: string; fillLogin?: FillLoginApproval; entry?: LoginEntryApproval; fillNewPassword?: FillNewPasswordApproval }; // login 工具的交接信息：自己登录卡、批准卡、录入卡，或新密码批准卡
   createdAt: Iso;
   answeredAt?: Iso;
 }
@@ -1124,4 +1144,10 @@ export interface AnswerApprovalBody {
   text?: string;
   /** 多问题卡：每个问题的答案，和 questions 一一对应 */
   answers?: ApprovalAnswer[];
+  /** 登录卡：用户点了「我自己登录」，卡就地换成自己登录卡的样子，这一轮不回模型 */
+  self?: boolean;
+  /** 登录录入卡「保存并登录」：用户填的用户名、密码和存到哪个提供者。密码只在这一次请求里经过 */
+  username?: string;
+  password?: string;
+  provider?: string;
 }

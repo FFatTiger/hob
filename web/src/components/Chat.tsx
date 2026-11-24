@@ -368,13 +368,19 @@ function chatKey(sel: string | null, gen: number | undefined): string {
 
 function ConversationBody({ className, scrollRef, onScroll, state, scrollId, think, stick, mobile = false }: { className: string; scrollRef: React.RefObject<HTMLDivElement | null>; onScroll: React.UIEventHandler<HTMLDivElement>; state: ReturnType<typeof conversationState>; scrollId: string | null; think: ReturnType<typeof useLeave>; stick: { atBottom: boolean; toBottom: () => void }; mobile?: boolean }) {
   const { g, a, items, empty, busy } = state;
-  const assistants = useApp().assistants;
+  const s = useApp();
+  const assistants = s.assistants;
+  const suggestions = think.mounted ? undefined : g?.suggestions ?? a?.suggestions;
   return <>
     <div className={className} ref={scrollRef} onScroll={onScroll}><div className={`col${empty ? " mid" : ""}`}>
       {g?.parentId ? <div className="topic-open-line">{openLine(g, assistants)}</div> : null}
       <OlderStatus id={scrollId} group={Boolean(g)} />
       {empty ? (g ? <EmptyGroup g={g} /> : a ? <EmptyChat a={a} /> : null) : g ? <GroupItemList g={g} items={items as GroupItem[]} /> : <ItemList items={items} />}
       {think.mounted && g ? <GroupThinking g={g} /> : think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+      <FollowUpStrip items={suggestions} group={Boolean(g)} prefix={groupSuggestionPrefix(g, items, assistants)} onPick={(text) => {
+        if (s.text.length > 0) setText(text);
+        else void send(text);
+      }} />
     </div></div>
     <JumpToBottom show={!stick.atBottom} busy={busy} onClick={stick.toBottom} />
   </>;
@@ -405,16 +411,17 @@ export function Chat() {
         ) : null}
       </div>
       <ConversationBody className="msgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} />
-      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} suggestions={g?.suggestions ?? a?.suggestions} suggestionPrefix={groupSuggestionPrefix(g, items, s.assistants)} />}
+      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} />}
     </main>
   );
 }
 
-function FollowUpStrip({ items, prefix, onPick }: { items?: string[]; prefix?: string; onPick: (text: string) => void }) {
+/** 推荐提问：接在最后一条回复气泡下面（群里和气泡一样缩进到头像右边）。 */
+function FollowUpStrip({ items, group, prefix, onPick }: { items?: string[]; group?: boolean; prefix?: string; onPick: (text: string) => void }) {
   const leave = useLeave(Boolean(items?.length), 180);
   if (!leave.mounted) return null;
   return (
-    <div className={`followup-strip${leave.leaving ? " leaving" : ""}`} role="list" aria-label={t("推荐提问")}>
+    <div className={`followup-strip${group ? " in-group" : ""}${leave.leaving ? " leaving" : ""}`} role="list" aria-label={t("推荐提问")}>
       {(items ?? []).map((item) => <button className="followup-chip" key={item} role="listitem" onClick={() => onPick(`${prefix ?? ""}${item}`)}>{item}</button>)}
     </div>
   );
@@ -428,8 +435,8 @@ function groupSuggestionPrefix(g: GroupSummary | undefined, items: Item[], assis
   return member ? `@${member.name} ` : "";
 }
 
-/** 输入框上方的待办、推荐提问和附件都在这里排成一列。 */
-export function Composer({ variant = "desktop", todos, jobs, suggestions, suggestionPrefix = "" }: { variant?: "desktop"; todos?: TodoItem[]; jobs?: RunningJob[]; suggestions?: string[]; suggestionPrefix?: string } | { variant: "mobile"; todos?: TodoItem[]; jobs?: RunningJob[]; suggestions?: string[]; suggestionPrefix?: string }) {
+/** 输入框上方的待办和附件都在这里排成一列。 */
+export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desktop"; todos?: TodoItem[]; jobs?: RunningJob[] } | { variant: "mobile"; todos?: TodoItem[]; jobs?: RunningJob[] }) {
   const s = useApp();
   const a = s.assistants.find((x) => x.id === s.sel);
   const g = groupById(s, s.gsel);
@@ -507,10 +514,6 @@ export function Composer({ variant = "desktop", todos, jobs, suggestions, sugges
   const body = (
     <div className={variant === "mobile" ? "mcomp" : "comp"} ref={compRef} onPaste={onPaste}>
       <TodoStrip items={todos} jobs={jobs} busy={g ? g.busy.length > 0 : Boolean(a?.busy)} />
-      <FollowUpStrip items={suggestions} prefix={suggestionPrefix} onPick={(text) => {
-        if (s.text.length > 0) setText(text);
-        else void send(text);
-      }} />
       {quote.mounted ? (
         <div className={`comp-quote${quote.leaving ? " leaving" : ""}`}>
           <div className="quote">{s.quote?.text}</div>
@@ -657,7 +660,7 @@ export function ChatPage() {
         </button>
       </div>
       <ConversationBody className="mmsgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} mobile />
-      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer variant="mobile" todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} suggestions={g?.suggestions ?? a?.suggestions} suggestionPrefix={groupSuggestionPrefix(g, items, s.assistants)} />}
+      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer variant="mobile" todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} />}
     </>
   );
 }

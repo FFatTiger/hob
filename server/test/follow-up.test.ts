@@ -60,6 +60,8 @@ describe("follow-up suggestion history", () => {
 describe("follow-up suggestion output", () => {
   it("takes the first JSON array and applies the shared filters", () => {
     expect(parseSuggestions('说明 ["  看看结果 ", "看看结果", "", 3, "这是一段超过四十个字的推荐提问，它应该被代码过滤掉而不是显示给用户"]')).toEqual([]);
+    // 按显示宽度限长：12 个汉字刚好能过，13 个不行；英文按字母算，五个词左右
+    expect(parseSuggestions('["十二个汉字刚好能够放得下", "十三个汉字就已经是放不下了", "Send me the file", "Make a version I can send to my colleagues"]')).toEqual(["十二个汉字刚好能够放得下", "Send me the file"]);
     expect(parseSuggestions("没有数组")).toEqual([]);
     expect(parseSuggestions('["保留"] 之后还有文字')).toEqual(["保留"]);
   });

@@ -6,6 +6,8 @@ import type { GroupItem } from "../../shared/types.ts";
 /** 给推荐提问模型的固定系统提示词。 */
 export const FOLLOW_UP_SYSTEM_PROMPT = `你在给一段对话想「用户接下来可能会说的话」。这些话会显示在输入框上方，用户点一下就原样发给助手，所以每一句都要是用户自己会说的话：用用户的口吻，简短，具体到这段对话里的事，发出去以后助手能直接接着做。
 
+每一句是按钮上的一个短语，扫一眼就看完：只说一件事，几个词就够，像「换成每周跑一次」。推荐的用处是省掉用户打字；写成带好几个要求的长句，用户读它的工夫已经够自己打一句了，就不会去点。想说的细节多，挑最可能的那一个方向，细节留给助手接着问，或者用户自己补。
+
 好的建议来自对话里自然的下一步：助手做完了一件事，用户可能想看看结果、改一处、接着做下一步；助手给了几个方案，用户可能选其中一个；助手说明了做不到的地方，用户可能想换个做法。
 
 有时候不给更好：助手刚问了用户一个问题、正在等回答；事情已经办完、没有自然的下一步；对话只是寒暄或道谢。这时返回空列表。给不出真正有用的，就少给或者不给，不凑数。
@@ -164,6 +166,16 @@ function assistantText(message: AssistantMessage): string {
   return contentText(message.content, false).trim();
 }
 
+/** 一条推荐最宽多少：中文按两个单位、英文字母按一个算，大约 12 个汉字或四五个英文词，按钮上一眼看完。 */
+export const MAX_SUGGESTION_WIDTH = 24;
+
+/** 显示宽度：中日韩文字和全角符号算 2，其余算 1。 */
+export function displayWidth(text: string): number {
+  let width = 0;
+  for (const char of text) width += char.codePointAt(0)! >= 0x2e80 ? 2 : 1;
+  return width;
+}
+
 /** 从回复里取第一个合法 JSON 数组，并按代码约束清理。 */
 export function parseSuggestions(text: string): string[] {
   const start = text.indexOf("[");
@@ -193,7 +205,7 @@ export function parseSuggestions(text: string): string[] {
   if (!Array.isArray(parsed) || parsed.some((value) => typeof value !== "string")) return [];
   const seen = new Set<string>();
   return parsed.map((value) => value.trim()).filter((value) => {
-    if (!value || [...value].length > 40 || seen.has(value)) return false;
+    if (!value || displayWidth(value) > MAX_SUGGESTION_WIDTH || seen.has(value)) return false;
     seen.add(value);
     return true;
   }).slice(0, 3);

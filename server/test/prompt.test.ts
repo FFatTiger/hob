@@ -234,6 +234,9 @@ describe("系统提示词", () => {
       expect(prompt).toContain("技能是做某一类事的做法。要做的事对得上哪份，先读它的 SKILL.md 再执行，照着做能少走弯路。技能里有写错或过时的地方，按实际情况做对，并在 result 里写明是哪份技能、哪里不对，「Hob」会安排把技能改对。");
       expect(prompt).toContain("网页上的事用 playwright-cli 命令做，它操作的是云桌面的浏览器，用户看得到、能接手，登录也一直保持。云桌面是另一台机器，局域网和外网都通，但打不开这台机器上只监听 127.0.0.1 的服务。");
       expect(prompt).toContain("需要登录的网站，用 ask_user 告诉「Hob」要登录哪个网站");
+      const credentialsPrompt = "需要登录的网站：打开登录页后调 login，登录的每一步都交给它。密码管理器里存了账号的，Hob 核对网址、请用户批准后直接填进页面；没存的，Hob 请用户在卡片上填一次、存好再填。扫码、第三方账号、短信或邮箱验证码这类只能用户本人完成的，也调 login：Hob 会出一张卡，用户点卡上的按钮打开云桌面登完，再点「已登录」，你就会收到消息接着做；只在聊天里请用户去登，用户登完还得回来再告诉你一次。你看不到密码；填好后你点登录按钮。注册新账号或修改密码时用 fill_new_password。用户说要自己登录的，请他在云桌面里登录就好。用户要交给你密码时，请他在 login 的卡片上填，或者在云桌面里自己填，密码就不会经过聊天。";
+      expect(buildSystemPrompt(hob.runtime.store, "hob", { ...options, desktopEnabled: true, credentialsEnabled: true })).toContain(credentialsPrompt);
+      expect(buildWorkerPrompt(hob.runtime.store, job.id, { ...options, desktopEnabled: true, credentialsEnabled: true })).toContain(credentialsPrompt);
     } finally { hob.close(); }
   });
 

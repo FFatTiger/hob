@@ -333,7 +333,7 @@ export class BunRuntime {
 
   /**
    * 用 Bun 安装一个插件声明的全部供应商包到插件目录下的 providers-runtime/。
-   * 下载精确版本 tarball → 校验 sha512 integrity → 用 bun add --ignore-scripts 安装并核对版本号。
+   * 下载精确版本 tarball → 校验 sha512 integrity → 按插件目录中的 Bun 锁文件冻结安装并核对版本号。
    */
   async installPackages(
     pluginDir: string,
@@ -349,9 +349,10 @@ export class BunRuntime {
       const staging = join(pluginDir, `providers-runtime.${randomUUID()}.tmp`);
       const target = providerRuntimeDir(pluginDir);
       const backup = `${target}.${randomUUID()}.bak`;
+      const manifestPath = join(pluginDir, "package.json");
+      const lockPath = join(pluginDir, "bun.lock");
       mkdirSync(tempWork, { recursive: true });
       mkdirSync(staging, { recursive: true });
-      writeFileSync(join(staging, "package.json"), `${JSON.stringify({ name: "hob-plugin-providers", private: true }, null, 2)}\n`);
 
       try {
         const localTarballs: { spec: PluginProviderSpec; file: string }[] = [];
@@ -371,27 +372,45 @@ export class BunRuntime {
           localTarballs.push({ spec, file: tgzPath });
         }
 
+        if (!existsSync(manifestPath) || !existsSync(lockPath)) {
+          throw new Error("带模型插件缺少 package.json 或 bun.lock，拒绝安装");
+        }
+        const packageManifest = JSON.parse(readFileSync(manifestPath, "utf8")) as { dependencies?: Record<string, unknown> };
+        const dependencies = packageManifest.dependencies;
+        if (!dependencies || typeof dependencies !== "object" || Array.isArray(dependencies)) {
+          throw new Error("带模型插件的 package.json 缺少 dependencies");
+        }
+        const expected = new Map(specs.map((spec) => [spec.package, spec.tarball ?? spec.version]));
+        const actualKeys = Object.keys(dependencies).sort();
+        const expectedKeys = [...expected.keys()].sort();
+        if (JSON.stringify(actualKeys) !== JSON.stringify(expectedKeys) || actualKeys.some((name) => dependencies[name] !== expected.get(name))) {
+          throw new Error("package.json 的供应商清单与 plugin.json 不一致，拒绝安装");
+        }
+        writeFileSync(join(staging, "package.json"), readFileSync(manifestPath));
+        writeFileSync(join(staging, "bun.lock"), readFileSync(lockPath));
+
         const env = sanitizedBunEnv(this.proxySettings);
         // 优先让 bun cache 留在 HOB_HOME/cache/bun 里，不污染用户全局缓存
         env.BUN_INSTALL_CACHE_DIR = join(this.options.home, "cache", "bun");
         mkdirSync(env.BUN_INSTALL_CACHE_DIR, { recursive: true });
 
-        for (const { spec, file } of localTarballs) {
+        for (const { spec } of localTarballs) {
           onProgress?.({ stage: "installing_package", package: spec.package, message: `正在安装 ${spec.package}@${spec.version}…` });
-          try {
-            await execFileAsync(bun, ["add", "--ignore-scripts", "--no-progress", file], {
-              cwd: staging,
-              env,
-              timeout: BUN_INSTALL_TIMEOUT_MS,
-              maxBuffer: 4 * 1024 * 1024,
-            });
-          } catch (error) {
-            const err = error as { stderr?: string; message?: string };
-            const detail = err.stderr?.trim() || err.message || String(error);
-            throw new Error(`安装 ${spec.package}@${spec.version} 失败：${detail.slice(0, 600)}`);
-          }
+        }
+        try {
+          await execFileAsync(bun, ["install", "--frozen-lockfile", "--ignore-scripts", "--no-progress"], {
+            cwd: staging,
+            env,
+            timeout: BUN_INSTALL_TIMEOUT_MS,
+            maxBuffer: 4 * 1024 * 1024,
+          });
+        } catch (error) {
+          const err = error as { stderr?: string; message?: string };
+          const detail = err.stderr?.trim() || err.message || String(error);
+          throw new Error(`按锁文件安装供应商包失败：${detail.slice(0, 600)}`);
+        }
 
-          // 核对安装后的包名与版本
+        for (const { spec } of localTarballs) {
           const pkgJsonPath = join(staging, "node_modules", ...spec.package.split("/"), "package.json");
           if (!existsSync(pkgJsonPath)) {
             throw new Error(`安装 ${spec.package}@${spec.version} 后找不到 package.json`);

@@ -20,6 +20,14 @@ console.info = writeErr;
 console.warn = writeErr;
 console.debug = () => {};
 
+// 插件可访问 process.stdout，但它不能再把协议行写进 Hob 的协议通道。
+process.stdout.write = ((chunk, encoding, callback) => {
+  try {
+    process.stderr.write(chunk, encoding, callback);
+  } catch { /* ignore plugin logging failures */ }
+  return true;
+});
+
 // 防止单个插件内部未捕获的后台 Promise 拒绝把共享宿主进程整进程带崩
 process.on("unhandledRejection", (reason) => {
   writeErr("unhandledRejection:", reason);
@@ -80,8 +88,9 @@ function send(msg) {
 
 // ---- 作用域与状态 ----------------------------------------------------------
 
-/** @type {AsyncLocalStorage<{ pluginId: string, provider: string, accountId: string, auth: any }>} */
+/** @type {AsyncLocalStorage<{ pluginId: string, provider: string, accountId: string, auth: any, rpcId: string }>} */
 const scopeStorage = new AsyncLocalStorage();
+const requestStorage = new AsyncLocalStorage();
 
 // pluginId -> { pluginId, dataDir, packages: [{ package, dir }], hooks: [{ spec, dir, hooks }], providers: Map<providerId, ProviderEntry>, error? }
 const pluginRegistry = new Map();
@@ -207,7 +216,7 @@ function makeClient(pluginId, getConfigSnapshot) {
             const cacheKey = `${ctx.pluginId}\0${ctx.provider}\0${ctx.accountId}`;
             loaderCache.delete(cacheKey);
             send({
-              event: "auth_update",
+              requestId: ctx.rpcId,
               pluginId: ctx.pluginId,
               provider: ctx.provider,
               accountId: ctx.accountId,
@@ -452,7 +461,7 @@ function getProvider(pluginId, providerId) {
 }
 
 function runInScope(pluginId, providerId, accountId, auth, fn) {
-  const store = { pluginId, provider: providerId, accountId: accountId || "", auth: clone(auth) };
+  const store = { pluginId, provider: providerId, accountId: accountId || "", auth: clone(auth), rpcId: requestStorage.getStore() || "" };
   return scopeStorage.run(store, fn);
 }
 
@@ -478,7 +487,7 @@ async function resolveLoaderOptions(p, accountId, auth, seedProvider) {
       npm: p.config?.npm ?? "",
       api: p.config?.api ?? "",
       options: p.config?.options ?? {},
-      models: { ...(seedProvider?.models ?? {}), ...(p.config?.models ?? {}) },
+      models: { ...(p.config?.models ?? {}) },
     });
     opts = (await p.auth.loader(async () => clone(scopeStorage.getStore()?.auth ?? auth), providerArg)) ?? {};
   }
@@ -618,7 +627,7 @@ const handlers = {
       models: { ...seedModels, ...(p.config?.models ?? {}) },
     });
     if (typeof p.modelsHook !== "function") {
-      return { models: normalizeModelsRecord(providerArg.models, p.config), dynamic: false };
+      return { models: normalizeModelsRecord(p.config?.models ?? {}, p.config), dynamic: false };
     }
     const raw = await runInScope(params.pluginId, params.provider, params.accountId, params.auth, () =>
       bounded(
@@ -999,7 +1008,7 @@ rl.on("line", (line) => {
   pending++;
 
   if (msg.method === "fetch") {
-    handleFetch(id, msg.params ?? {}, ctl.signal)
+    requestStorage.run(id, () => handleFetch(id, msg.params ?? {}, ctl.signal))
       .catch((error) => {
         const signIn = error && typeof error === "object" && ["expired", "kept", "renewed"].includes(error.signIn) ? error.signIn : undefined;
         return send({
@@ -1026,7 +1035,7 @@ rl.on("line", (line) => {
     return;
   }
 
-  Promise.resolve()
+  requestStorage.run(id, () => Promise.resolve()
     .then(() => handler(msg.params ?? {}, ctl.signal))
     .then(
       (result) => send({ id, result }),
@@ -1044,7 +1053,7 @@ rl.on("line", (line) => {
     .finally(() => {
       inflight.delete(id);
       done();
-    });
+    }));
 });
 
 rl.on("close", () => {

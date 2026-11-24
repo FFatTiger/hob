@@ -268,7 +268,7 @@ export interface PluginInstallProgress {
 }
 
 export interface PluginView {
-  plugin: { id: string; version: string; source: string; sourceName?: string; enabled: boolean; assistants?: string[]; tools: Record<string, { enabled?: boolean }>; config: Record<string, unknown>; profiles?: { id: string; name: string; config: Record<string, unknown> }[]; needsApproval?: boolean; capabilityChanges?: string[] };
+  plugin: { id: string; version: string; source: string; sourceName?: string; enabled: boolean; assistants?: string[]; tools: Record<string, { enabled?: boolean }>; config: Record<string, unknown>; profiles?: { id: string; name: string; config: Record<string, unknown> }[]; needsApproval?: boolean; capabilityChanges?: string[]; updateError?: string };
   manifest: Record<string, unknown>;
   config: Record<string, Record<string, unknown>>;
   profiles?: PluginProfileView[];

@@ -86,6 +86,9 @@ export function computeUpstreamUrl(params: {
   }
 
   if (restPath.startsWith("/v1/")) {
+    if (protocol === "anthropic-messages" && !base.endsWith("/v1")) {
+      return `${base}${restPath}`;
+    }
     return `${base}${restPath.slice("/v1".length)}`;
   }
   return `${base}${restPath.startsWith("/") ? restPath : `/${restPath}`}`;
@@ -303,8 +306,9 @@ export class ProviderPluginProxy {
       const status = error instanceof HostRpcError && error.signIn === "expired" ? 401 : 502;
       if (!res.headersSent) {
         jsonError(res, status, message);
-      } else if (!res.writableEnded) {
-        res.end();
+      } else if (!res.writableEnded && !res.destroyed) {
+        const reason = error instanceof Error ? error : new Error(String(error));
+        res.destroy(reason);
       }
     } finally {
       req.off("aborted", abort);

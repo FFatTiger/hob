@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
-import { pluginConfig, resolvePluginMcp, validatePluginValues } from "../src/plugin-config.ts";
+import { pluginConfig, providerDeclarations, resolvePluginMcp, validatePluginValues } from "../src/plugin-config.ts";
 
 describe("plugin configuration", () => {
   it("validates the bundled plugin manifests and MCP templates", () => {
@@ -44,6 +44,12 @@ describe("plugin configuration", () => {
     expect(() => pluginConfig(manifest, { mcpServers: { mail: { env: { ADDRESS: "${user_config.EMAIL_ADDRESS}" } } } })).toThrow("支持多个 profile 的插件用 ${hob.profiles} 读配置，不用 ${user_config.EMAIL_ADDRESS}");
     expect(() => pluginConfig({ extensions: { "com.hob.plugins": { profiles: {} } } }, { mcpServers: { mail: { url: "https://example.test", oauth: {} } } })).toThrow("支持多个 profile 的插件暂时不能用 OAuth 登录");
   });
+  it("requires provider versions to be valid semver", () => {
+    const base = { package: "demo", integrity: "sha512-abc=" };
+    expect(() => providerDeclarations({ extensions: { "com.hob.plugins": { providers: [{ ...base, version: "../../evil" }] } } })).toThrow(/semver/);
+    expect(providerDeclarations({ extensions: { "com.hob.plugins": { providers: [{ ...base, version: "1.2.3-beta.1" }] } } })).toHaveLength(1);
+  });
+
   it("validates false and zero as values, constraints, choices and multiple values", () => {
     const config = pluginConfig({ userConfig: { FLAG: { type: "boolean", required: true }, N: { type: "number", min: 0, max: 2 }, CHOICE: { type: "string", options: ["a", "b"], multiple: true } } }, { mcpServers: {} });
     expect(validatePluginValues(config, { FLAG: false, N: 0, CHOICE: ["a", "b"] })).toEqual([]);

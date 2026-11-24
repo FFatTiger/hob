@@ -26,9 +26,9 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       store.saveJob({ id: "t", assistantId: "hob", title: "测试", instruction: "", status: "done", createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       const options = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const routerSource = section("## 一、助手的系统提示词\n\n```\n", "\n```\n");
-      const core = strip(`用户读回复时${routerSource.split("用户读回复时")[1]!.split("## 技能")[0]}`).trim();
+      const core = strip(`你的回复显示在聊天气泡里${routerSource.split("你的回复显示在聊天气泡里")[1]!.split("## 技能")[0]}`).trim();
       const router = buildSystemPrompt(store, "hob", options);
-      expect(router.slice(router.indexOf("用户读回复时"), router.indexOf("## 技能")).trim()).toBe(core);
+      expect(router.slice(router.indexOf("你的回复显示在聊天气泡里"), router.indexOf("## 技能")).trim()).toBe(core);
       const workerSource = section("## 二、任务的系统提示词\n\n```\n", "\n```\n");
       // 定稿写的是没指定 cwd 的那句；指定了 cwd 的说法见 prompt.test.ts
       const workerCore = workerSource.split("技能是做某一类事的做法。要做的事对得上哪份")[0]!.trim().replaceAll("{助手}", "Hob").replace("{目录}", homedir());

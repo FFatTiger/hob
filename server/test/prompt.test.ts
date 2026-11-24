@@ -382,8 +382,8 @@ describe("界面语言", () => {
     try {
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", { timezone, aboutYou, locale: "en", memory: "off" });
-      expect(prompt).toContain("所以先给结论，用规范的书面英文。");
-      expect(prompt).not.toContain("用规范的书面中文");
+      expect(prompt).toContain("像一个同事在聊天里跟人说事：用规范的英文，");
+      expect(prompt).not.toContain("用规范的中文");
       expect(prompt).toContain("\n\n用户用的是英文界面，读的也是英文：回复，以及任务标题、规则、定时任务的名字、卡片上的问题和选项这些用户会看到的文字，都用英文写。\n\n## 你和任务");
     } finally {
       hob.close();
@@ -413,7 +413,7 @@ describe("界面语言", () => {
       const { timezone, aboutYou } = hob.runtime.settings.settings.general;
       const settings = { timezone, aboutYou, memory: "off" as const };
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
-      expect(prompt).toContain("所以先给结论，用规范的书面中文。");
+      expect(prompt).toContain("像一个同事在聊天里跟人说事：用规范的中文，");
       expect(prompt).not.toContain("用户用的是英文界面");
       expect(buildWorkerPrompt(hob.runtime.store, "t-zh", settings)).not.toContain("用户读英文");
       expect(saveSkillTool(hob.runtime, "hob", undefined, hob.home).parameters.properties.from.description).toContain("title: <中文名，如「每周周报」>");
@@ -430,7 +430,7 @@ describe("界面语言", () => {
       const settings = { timezone: "Asia/Shanghai", aboutYou, locale: "en" as const, memory: "off" as const };
       const prompt = buildSystemPrompt(hob.runtime.store, "hob", settings);
       expect(prompt).toContain("- 语言：中文");
-      expect(prompt).toContain("所以先给结论，用规范的书面中文。");
+      expect(prompt).toContain("像一个同事在聊天里跟人说事：用规范的中文，");
       expect(prompt).not.toContain("用户用的是英文界面");
       expect(buildWorkerPrompt(hob.runtime.store, "t-diy", settings)).not.toContain("用户读英文");
     } finally {
@@ -445,15 +445,15 @@ describe("界面语言", () => {
       hob.faux.setResponses([text("好")]);
       await hob.runtime.router.send("hob", { text: "你好" });
       await hob.runtime.router.waitIdle("hob");
-      expect(state.session!.systemPrompt).toContain("用规范的书面中文。");
+      expect(state.session!.systemPrompt).toContain("用规范的中文，");
 
       hob.runtime.settings.patch(hob.runtime.settings.get().revision, { general: { locale: "en" } });
       hob.faux.setResponses([text("Hello")]);
       await hob.runtime.router.send("hob", { text: "Hello" });
       await hob.runtime.router.waitIdle("hob");
-      expect(state.session!.systemPrompt).toContain("用规范的书面英文。");
+      expect(state.session!.systemPrompt).toContain("用规范的英文，");
       expect(state.session!.systemPrompt).toContain("用户用的是英文界面，读的也是英文：");
-      expect(state.session!.systemPrompt).not.toContain("用规范的书面中文。");
+      expect(state.session!.systemPrompt).not.toContain("用规范的中文，");
     } finally {
       hob.close();
     }

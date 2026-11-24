@@ -36,6 +36,8 @@ import type {
   MemoryConfig,
   MemoryProvider,
   PageLive,
+  PluginInstallProgress,
+  PluginSignInSessionView,
   ModelThinkingView,
   Profile,
   ProviderImportView,
@@ -150,6 +152,9 @@ export interface State {
   page: "main" | "settings" | "knowledge" | "plugins" | "stars";
   pluginId: string | null;
   pluginPage: PluginPage;
+  pluginInstall: Record<string, PluginInstallProgress>;
+  pluginProviderTick: number;
+  pluginSignIn: Record<string, PluginSignInSessionView>;
   knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
@@ -320,6 +325,9 @@ function initial(): State {
     page: "main",
     pluginId: null,
     pluginPage: "installed",
+    pluginInstall: {},
+    pluginProviderTick: 0,
+    pluginSignIn: {},
     knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], collectionsLoaded: false, hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
@@ -787,6 +795,30 @@ export const deletePluginLogin = (id: string, loginId: string, service?: string)
 export const addCustomPlugin = (id: string, server: Record<string, unknown>) => api.addCustomPlugin(id, server);
 export const patchPlugin = (id: string, patch: import("../../shared/types.ts").PluginPatch) => api.patchPlugin(id, patch);
 export const deletePlugin = (id: string) => api.deletePlugin(id);
+export const loadPluginProviderHost = () => api.pluginProviderHost();
+export const approvePlugin = (id: string) => api.approvePlugin(id);
+export const loadPluginProviders = (id: string, load = false) => api.pluginProviders(id, load);
+export const refreshPluginModels = (id: string, providerId: string, accountId?: string) => api.refreshPluginModels(id, providerId, accountId);
+export const loadPluginProviderUsage = (id: string, providerId: string, accountId?: string) => api.pluginProviderUsage(id, providerId, accountId);
+export const setPluginActiveAccount = (id: string, providerId: string, accountId: string) => api.setPluginActiveAccount(id, providerId, accountId);
+export const deletePluginAccount = (id: string, providerId: string, accountId: string) => api.deletePluginAccount(id, providerId, accountId);
+export const promptPluginAuth = (id: string, providerId: string, body: Parameters<typeof api.pluginAuthPrompt>[2]) => api.pluginAuthPrompt(id, providerId, body);
+export const signInPluginApiKey = (id: string, providerId: string, body: Parameters<typeof api.pluginAuthApiKey>[2]) => api.pluginAuthApiKey(id, providerId, body);
+export const startPluginSignIn = (id: string, providerId: string, body: Parameters<typeof api.pluginAuthStart>[2]) => api.pluginAuthStart(id, providerId, body);
+export const pollPluginSignIn = (id: string, providerId: string, sessionId: string) => api.pluginAuthSession(id, providerId, sessionId);
+export const pastePluginSignIn = (id: string, providerId: string, body: { sessionId: string; url: string }) => api.pluginAuthPaste(id, providerId, body);
+export const submitPluginSignInCode = (id: string, providerId: string, body: { sessionId: string; code: string }) => api.pluginAuthCode(id, providerId, body);
+export const cancelPluginSignIn = (id: string, providerId: string, sessionId: string) => api.pluginAuthCancel(id, providerId, sessionId);
+export const checkPluginProviderCli = (id: string, providerId: string) => api.pluginProviderCli(id, providerId);
+export const installPluginProviderCli = (id: string, providerId: string) => api.installPluginProviderCli(id, providerId);
+export function clearPluginInstallProgress(pluginId: string) {
+  set((s) => {
+    if (!s.pluginInstall[pluginId]) return {};
+    const next = { ...s.pluginInstall };
+    delete next[pluginId];
+    return { pluginInstall: next };
+  });
+}
 export const loadSearch = () => api.search();
 export const testSearch = (name: string, baseUrl?: string, apiKey?: string) => api.testSearch(name, baseUrl, apiKey);
 export async function saveSearch(providers: SearchSettings, keys?: Record<string, string>) {
@@ -1344,6 +1376,19 @@ export function applyEvent(ev: HobEvent) {
       break;
     case "profile":
       void loadProfile(ev.assistantId);
+      break;
+    case "plugin-install": {
+      const { type: _type, ...progress } = ev;
+      set((s) => ({ pluginInstall: { ...s.pluginInstall, [progress.pluginId]: progress } }));
+      break;
+    }
+    case "plugin-providers":
+      set((s) => ({
+        pluginProviderTick: s.pluginProviderTick + 1,
+        ...(ev.signIn
+          ? { pluginSignIn: { ...s.pluginSignIn, [`${ev.signIn.pluginId}:${ev.signIn.providerId}`]: ev.signIn } }
+          : {}),
+      }));
       break;
   }
 }

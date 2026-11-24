@@ -2454,6 +2454,164 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     pluginLoginSecret: async (_id, loginId) => ({ username: mockVaultLogins.find(login => login.id === loginId)?.username ?? "", password: "mock-vault-secret" }),
     savePluginLogin: async (id, body) => { const p = mockPlugin(id); if (id === "vault") { const existing = mockVaultLogins.find(login => login.id === body.id); if (existing) Object.assign(existing, { name: body.name, username: body.username, uris: body.uris, folder: body.folder }); else mockVaultLogins.push({ id: body.id ?? `vault-${mockVaultLogins.length + 1}`, name: body.name, username: body.username, uris: body.uris, ...(body.folder ? { folder: body.folder } : {}), hasPassword: true, hasTotp: false }); } return { id: body.id ?? `mock-${p.plugin.id}` }; },
     deletePluginLogin: async (_id, loginId) => { const index = mockVaultLogins.findIndex(login => login.id === loginId); if (index >= 0) mockVaultLogins.splice(index, 1); return { ok: true as const }; },
+    pluginProviderHost: async () => clone({ status: "running" as const, bunVersion: "1.4.2", bunInstalled: true, pid: 41234, idleMs: 600_000 }),
+    approvePlugin: async (id) => {
+      const p = mockPlugin(id);
+      p.plugin.needsApproval = false;
+      p.plugin.capabilityChanges = undefined;
+      p.plugin.enabled = true;
+      return clone(p);
+    },
+    pluginProviders: async (id) => {
+      const p = mockPlugin(id);
+      return clone({
+        providers: p.providers ?? [],
+        providerHost: p.providerHost ?? { status: "running" as const, bunVersion: "1.4.2", bunInstalled: true, pid: 41234, idleMs: 600_000 },
+      });
+    },
+    refreshPluginModels: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone({ models: prov?.models ?? [], plugin: p });
+    },
+    pluginProviderUsage: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone(prov?.usage ?? { windows: [], error: "演示模式暂无实时额度数据。", fetchedAt: new Date().toISOString() });
+    },
+    setPluginActiveAccount: async (id, providerId, accountId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov) {
+        prov.activeAccountId = accountId;
+        for (const acc of prov.accounts) acc.active = acc.id === accountId;
+      }
+      return clone(p);
+    },
+    deletePluginAccount: async (id, providerId, accountId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov) {
+        prov.accounts = prov.accounts.filter((acc) => acc.id !== accountId);
+        if (prov.activeAccountId === accountId) {
+          prov.activeAccountId = prov.accounts[0]?.id;
+          if (prov.accounts[0]) prov.accounts[0].active = true;
+        }
+      }
+      return clone(p);
+    },
+    pluginAuthPrompt: async () => ({ prompt: null }),
+    pluginAuthApiKey: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const accountId = body.accountId ?? `acc-${Date.now()}`;
+      if (prov) {
+        for (const acc of prov.accounts) acc.active = false;
+        const existing = prov.accounts.find((acc) => acc.id === accountId);
+        if (existing) {
+          existing.active = true;
+          existing.status = "logged_in";
+          existing.lastError = undefined;
+          existing.updatedAt = nowIso;
+          if (body.displayName?.trim()) existing.displayName = body.displayName.trim();
+        } else {
+          prov.accounts.push({
+            id: accountId,
+            providerId,
+            displayName: body.displayName?.trim() || "个人账号",
+            authType: "api",
+            active: true,
+            status: "logged_in",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        }
+        prov.activeAccountId = accountId;
+        prov.signIn = undefined;
+      }
+      return clone({ accountId, models: prov?.models ?? [], plugin: p });
+    },
+    pluginAuthStart: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+      const session = {
+        sessionId: `mock-signin-${Date.now()}`,
+        pluginId: id,
+        providerId,
+        methodIndex: body.methodIndex,
+        kind: (prov?.cli?.declared ? "local_cli" : id === "chatgpt" ? "loopback_paste" : id === "zcode" ? "server_poll" : "device_code") as import("../../shared/types.ts").PluginSignInKind,
+        status: "waiting" as const,
+        url: id === "chatgpt" ? "https://auth.example.com/oauth/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback" : "https://example.com/login/device",
+        ...(id === "copilot" ? { userCode: "ABCD-1234" } : {}),
+        ...(id === "chatgpt" ? { loopbackPasteAllowed: true } : {}),
+        ...(prov?.cli?.declared ? { localCliNote: "这是运行 Hob 的那台机器上的登录，不是你当前使用的设备。" } : {}),
+        createdAt: nowIso,
+        expiresAt,
+      };
+      if (prov) prov.signIn = session;
+      return clone(session);
+    },
+    pluginAuthSession: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov?.signIn) return clone(prov.signIn);
+      const nowIso = new Date().toISOString();
+      return { sessionId: "none", pluginId: id, providerId, methodIndex: 0, kind: "device_code", status: "cancelled", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthPaste: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+\//.test(body.url.trim())) {
+        throw new Error("只接受本次登录发出的本机回调地址（127.0.0.1），其他地址已拒绝。");
+      }
+      if (prov) {
+        const accountId = `acc-${Date.now()}`;
+        for (const acc of prov.accounts) acc.active = false;
+        prov.accounts.push({ id: accountId, providerId, displayName: "user@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Plus", createdAt: nowIso, updatedAt: nowIso });
+        prov.activeAccountId = accountId;
+        prov.signIn = { ...(prov.signIn ?? { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "loopback_paste" as const, createdAt: nowIso, expiresAt: nowIso }), status: "completed" as const, accountId };
+        return clone(prov.signIn);
+      }
+      return { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "loopback_paste", status: "completed", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthCode: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      if (prov) {
+        const accountId = `acc-${Date.now()}`;
+        for (const acc of prov.accounts) acc.active = false;
+        prov.accounts.push({ id: accountId, providerId, displayName: "user@example.com", authType: "oauth", active: true, status: "logged_in", createdAt: nowIso, updatedAt: nowIso });
+        prov.activeAccountId = accountId;
+        prov.signIn = { ...(prov.signIn ?? { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "code" as const, createdAt: nowIso, expiresAt: nowIso }), status: "completed" as const, accountId };
+        return clone(prov.signIn);
+      }
+      return { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "code", status: "completed", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthCancel: async (id, providerId, sessionId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const cancelled = { ...(prov?.signIn ?? { sessionId, pluginId: id, providerId, methodIndex: 0, kind: "device_code" as const, createdAt: nowIso, expiresAt: nowIso }), status: "cancelled" as const };
+      if (prov) prov.signIn = undefined;
+      return clone(cancelled);
+    },
+    pluginProviderCli: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone(prov?.cli ?? { declared: false });
+    },
+    installPluginProviderCli: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const next = { declared: true, name: prov?.cli?.name ?? "agy CLI", installed: true, installing: false };
+      if (prov) prov.cli = next;
+      return clone(next);
+    },
     search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");

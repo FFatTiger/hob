@@ -1100,6 +1100,7 @@ export class ProviderPluginManager {
     providerId: string;
     methodIndex: number;
     key?: string;
+    displayName?: string;
     inputs?: Record<string, string>;
     accountId?: string;
   }): Promise<{ account: StoredProviderAccount; models: PluginProviderModelView[]; modelsError?: string }> {
@@ -1121,7 +1122,7 @@ export class ProviderPluginManager {
       providerId: targetProvider,
       auth: result.auth,
       targetAccountId: params.accountId,
-      displayName: result.accountInfo?.displayName,
+      displayName: params.displayName?.trim() || result.accountInfo?.displayName,
       hint: result.accountInfo?.hint,
     });
     let models: PluginProviderModelView[] = [];

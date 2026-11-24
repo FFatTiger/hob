@@ -639,7 +639,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     try {
       const id = c.req.param("id");
       const providerId = c.req.param("providerId");
-      const body = await c.req.json().catch(() => null) as { methodIndex?: unknown; key?: unknown; inputs?: unknown; accountId?: unknown } | null;
+      const body = await c.req.json().catch(() => null) as { methodIndex?: unknown; key?: unknown; displayName?: unknown; inputs?: unknown; accountId?: unknown } | null;
       if (typeof body?.methodIndex !== "number" || !Number.isInteger(body.methodIndex) || body.methodIndex < 0) throw new Error("methodIndex 无效");
       const inputs = body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs)
         ? Object.fromEntries(Object.entries(body.inputs as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
@@ -649,6 +649,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
         providerId,
         methodIndex: body.methodIndex,
         key: typeof body.key === "string" ? body.key : undefined,
+        displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : undefined,
         inputs,
         accountId: typeof body.accountId === "string" && body.accountId ? body.accountId : undefined,
       });

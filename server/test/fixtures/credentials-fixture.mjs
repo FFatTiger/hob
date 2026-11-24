@@ -1,12 +1,14 @@
 // 假的密码管理插件（stdio MCP）：带 list / secret / generate / save 四个凭据角色工具，密码库是一个 JSON 文件。
 // 做法和 bitwarden 插件的 server.mjs 一样：列表只给概况，密码只在 secret / save 这一次调用的结果里经过。
 // 环境变量：HOB_FAKE_VAULT 密码库 JSON（{ folders, items }，格式同 bitwarden/test/fixtures/fake-bw.mjs）；
-// HOB_FAKE_FAIL=secret|generate|save 让那一步报错（测失败路径）；HOB_FAKE_LOG 把每次调用的工具名记一行（测「没有取过密码」）。
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+// HOB_FAKE_FAIL=secret|generate|save 让那一步报错（测失败路径），HOB_FAKE_FAIL_FILE 指向一个文件时每次调用都读它、以文件内容为准（跑着的时候切换）；
+// HOB_FAKE_LOG 把每次调用的工具名记一行（测「没有取过密码」）。
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 
 const vaultPath = process.env.HOB_FAKE_VAULT;
 if (!vaultPath) throw new Error("HOB_FAKE_VAULT 未配置");
-const failAt = process.env.HOB_FAKE_FAIL ?? "";
+const failFile = process.env.HOB_FAKE_FAIL_FILE ?? "";
+const failAt = () => (failFile && existsSync(failFile) ? readFileSync(failFile, "utf8").trim() : process.env.HOB_FAKE_FAIL ?? "");
 const logPath = process.env.HOB_FAKE_LOG ?? "";
 const load = () => JSON.parse(readFileSync(vaultPath, "utf8"));
 const write = (message) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -35,17 +37,17 @@ function call(name, args) {
     return empty({ logins: vault.items.filter((item) => item.type === 1).map((item) => ({ id: String(item.id), name: item.name, username: item.login.username, uris: (item.login.uris ?? []).map((entry) => (typeof entry === "string" ? entry : entry.uri)), ...(item.folderId ? { folder: vault.folders.find((folder) => folder.id === item.folderId)?.name } : {}) })) });
   }
   if (name === "credentials_secret") {
-    if (failAt === "secret") return { content: [{ type: "text", text: "密码库锁着" }], isError: true };
+    if (failAt() === "secret") return { content: [{ type: "text", text: "密码库锁着" }], isError: true };
     const item = vault.items.find((entry) => String(entry.id) === args.id);
     if (!item) return { content: [{ type: "text", text: "没有这个登录" }], isError: true };
     return empty({ username: item.login.username, password: item.login.password });
   }
   if (name === "credentials_generate") {
-    if (failAt === "generate") return { content: [{ type: "text", text: "生成器不可用" }], isError: true };
+    if (failAt() === "generate") return { content: [{ type: "text", text: "生成器不可用" }], isError: true };
     return empty({ password: generate(args) });
   }
   if (name === "credentials_save") {
-    if (failAt === "save") return { content: [{ type: "text", text: "密码库拒绝保存" }], isError: true };
+    if (failAt() === "save") return { content: [{ type: "text", text: "密码库拒绝保存" }], isError: true };
     const existing = args.id ? vault.items.find((entry) => String(entry.id) === args.id) : undefined;
     let folderId = existing?.folderId;
     if (args.folder !== undefined) {

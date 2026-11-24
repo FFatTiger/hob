@@ -8,7 +8,7 @@ import { hostsMatch } from "../src/login.ts";
 import { readLoginAuto, saveLoginAuto } from "../src/login-auto.ts";
 import { makeHob } from "./helpers.ts";
 
-describe("fill_login safety boundaries", () => {
+describe("login safety boundaries", () => {
   it("only accepts the saved host or one of its subdomains", () => {
     expect(hostsMatch("login.example.net", "example.net")).toBe(true);
     expect(hostsMatch("example.net", "login.example.net")).toBe(false);

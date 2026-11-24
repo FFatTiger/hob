@@ -1,4 +1,4 @@
-// 假网站：登录、两步登录、注册、改密码、仿冒登录页，给填写登录的端到端测试用。
+// 假网站：登录、两步登录、注册、改密码、仿冒登录页、只有第三方登录按钮的页、验证码页，给填写登录的端到端测试用。
 // 每个站点只显示「收到的值对不对」，不回显密码；收到的值留在内存里，由 startFakeSites() 的返回值交给测试核对。
 // 用法：node fake-sites.mjs --port 31882   或 import { startFakeSites } 后 await startFakeSites({ expected })。
 import { createServer } from "node:http";
@@ -107,6 +107,75 @@ export async function startFakeSites({ port = 0, host = "127.0.0.1", expected = 
       if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 百科 · 登录", form("/login", [["用户名", `<input type="text" name="name" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
       if (url.pathname === "/login" && req.method === "POST") { record("login", { username: body.name, usernameOk: false, passwordOk: false, passwordLength: body.password?.length ?? 0 }); return send(200, page("Example 百科 · 登录", "<p>登录失败。</p>")); }
       return send(200, page("Example 百科", "<p><a href=\"/login\">登录</a></p>"));
+    }
+
+    // ---------- mail.example.org：密码库里没有账号的站，收下任何账号（测录入卡存好再填） ----------
+    if (site === "mail.example.org") {
+      const want = expected.mail ?? {};
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 邮箱 · 登录", form("/login", [["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
+      if (url.pathname === "/login" && req.method === "POST") {
+        const usernameOk = !want.username || body.email === want.username;
+        const passwordOk = !want.password || body.password === want.password;
+        record("login", { username: body.email, usernameOk, passwordOk, passwordLength: body.password?.length ?? 0 });
+        if (usernameOk && passwordOk) { const id = `m${++sessionCounter}`; sessions.set(id, body.email); return send(302, "", { "set-cookie": `session=${id}; Path=/`, location: "/inbox" }); }
+        return send(200, page("Example 邮箱 · 登录", `<p>登录失败：</p><ul><li>用户名 ${mark(usernameOk)}</li><li>密码 ${mark(passwordOk)}</li></ul><p><a href="/login">重试</a></p>`));
+      }
+      if (url.pathname === "/inbox") {
+        if (!sessions.has(cookies.session ?? "")) return send(302, "", { location: "/login" });
+        return send(200, page("Example 邮箱 · 收件箱", `<p>欢迎，${sessions.get(cookies.session)}。</p><p>未读：3 封</p>`));
+      }
+      return send(200, page("Example 邮箱", "<p><a href=\"/login\">登录</a></p>"));
+    }
+
+    // ---------- notes.example.org：密码库里没有账号的站，一步登录，收下任何账号 ----------
+    if (site === "notes.example.org") {
+      const want = expected.notes ?? {};
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 笔记 · 登录", form("/login", [["用户名", `<input type="text" name="user" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
+      if (url.pathname === "/login" && req.method === "POST") {
+        const usernameOk = !want.username || body.user === want.username;
+        const passwordOk = !want.password || body.password === want.password;
+        record("login", { username: body.user, usernameOk, passwordOk, passwordLength: body.password?.length ?? 0 });
+        return send(200, page("Example 笔记", `<p>${usernameOk && passwordOk ? "登录成功" : "登录失败"}。</p>`));
+      }
+      return send(200, page("Example 笔记", "<p><a href=\"/login\">登录</a></p>"));
+    }
+
+    // ---------- cloud.example.org：密码库里没有账号的站，一步登录，收下任何账号 ----------
+    if (site === "cloud.example.org") {
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 网盘 · 登录", form("/login", [["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
+      if (url.pathname === "/login" && req.method === "POST") { record("login", { username: body.email, usernameOk: true, passwordOk: true, passwordLength: body.password?.length ?? 0 }); return send(200, page("Example 网盘 · 文件", "<p>最近上传：假期照片.zip</p>")); }
+      return send(200, page("Example 网盘", "<p><a href=\"/login\">登录</a></p>"));
+    }
+
+    // ---------- chat.example.org：只能用第三方账号登录的页面（没有账号密码框） ----------
+    if (site === "chat.example.org") {
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 聊天 · 登录", `<p>用以下账号继续：</p><p><a href="/oauth?q=Provider" id="oauth">使用 Provider 账号登录</a></p>`));
+      if (url.pathname === "/oauth") { record("oauth", { provider: url.searchParams.get("q") ?? "" }); return send(200, page("Example 聊天 · 授权", "<p>正在跳转到 Provider 授权…</p>")); }
+      return send(302, "", { location: "/login" });
+    }
+
+    // ---------- club.example.org：两步登录（先用户名，下一步再密码），密码库里没有账号（测录入卡的两步登录） ----------
+    if (site === "club.example.org") {
+      const want = expected.club ?? {};
+      if (url.pathname === "/" && req.method === "GET") return send(200, page("Example 读书会 · 登录", form("/step2", [["昵称", `<input type="text" name="nick" autocomplete="username" required>`]], "下一步")));
+      if (url.pathname === "/step2" && req.method === "POST") { const id = `c${++sessionCounter}`; sessions.set(id, body.nick); return send(200, page("Example 读书会 · 登录", form("/step3", [["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])), { "set-cookie": `step=${id}; Path=/` }); }
+      if (url.pathname === "/step3" && req.method === "POST") {
+        const username = sessions.get(cookies.step ?? "") ?? "";
+        const usernameOk = !want.username || username === want.username;
+        const passwordOk = !want.password || body.password === want.password;
+        record("login", { username, usernameOk, passwordOk, passwordLength: body.password?.length ?? 0 });
+        if (usernameOk && passwordOk) return send(200, page("Example 读书会 · 首页", `<p>欢迎，${username}。本周共读：《植物的记忆》</p>`));
+        return send(200, page("Example 读书会 · 登录", "<p>登录失败。</p>"));
+      }
+      return send(302, "", { location: "/" });
+    }
+
+    // ---------- bank.example.org：登录以后出验证码页（只有验证码框） ----------
+    if (site === "bank.example.org") {
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 银行 · 登录", form("/verify", [["用户名", `<input type="text" name="user" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]], "下一步")));
+      if (url.pathname === "/verify" && req.method === "POST") { const id = `b${++sessionCounter}`; sessions.set(id, body.user); return send(200, page("Example 银行 · 验证码", form("/verify", [["短信验证码", `<input type="text" name="otp" autocomplete="one-time-code" required>`]], "验证")), { "set-cookie": "step=" + id + "; Path=/" }); }
+      if (url.pathname === "/verify" && req.method === "GET") return send(200, page("Example 银行 · 验证码", form("/verify", [["短信验证码", `<input type="text" name="otp" autocomplete="one-time-code" required>`]], "验证")));
+      return send(302, "", { location: "/login" });
     }
     return send(404, page("没有这个站点", `<p>${site}${url.pathname}</p>`));
   });

@@ -252,7 +252,9 @@
 .plugin-acct-sub { font-size: 12px; color: var(--text2); margin-top: 2px; line-height: 1.45; }
 .plugin-pill { flex: none; font-size: 11px; line-height: 1; padding: 3px 7px; border-radius: 999px; background: var(--bg); color: var(--text); font-weight: 500; }
 .plugin-acct-end { display: inline-flex; align-items: center; gap: 8px; flex: none; position: relative; }
-.plugin-btn-white { background: var(--bg); }
+.hob-btn.plugin-btn-white { background: var(--bg); }
+.plugin-section a.hob-btn { text-decoration: none; }
+.plugin-section a.hob-btn-primary { color: var(--bg); }
 .plugin-acct-menu { position: absolute; right: 0; top: calc(100% + 6px); z-index: 10; min-width: 152px; }
 .plugin-acct-menu button.danger { color: var(--danger); }
 
@@ -306,7 +308,7 @@
 
 @media (max-width: 767px) {
   .plugin-acct { flex-wrap: wrap; }
-  .plugin-acct-end { width: 100%; justify-content: space-between; padding-top: 4px; }
+  .plugin-acct-end.needs-action { width: 100%; justify-content: space-between; padding-top: 4px; }
   .plugin-kv { flex-direction: column; align-items: flex-start; gap: 3px; }
   .plugin-kv .v { text-align: left; white-space: normal; word-break: break-word; }
   .plugin-step-top { flex-direction: column; gap: 2px; }

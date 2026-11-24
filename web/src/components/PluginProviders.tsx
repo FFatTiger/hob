@@ -1400,7 +1400,7 @@ export function PluginProvidersSection({
                           </div>
                           {subParts.length ? <div className="plugin-acct-sub">{subParts.join(" · ")}</div> : null}
                         </div>
-                        <div className="plugin-acct-end" onPointerDown={(e) => e.stopPropagation()}>
+                        <div className={`plugin-acct-end${!paused && account.status !== "logged_in" ? " needs-action" : ""}`} onPointerDown={(e) => e.stopPropagation()}>
                           {paused ? (
                             <span className="plugin-state disabled"><span className="plugin-state-dot" />{t("已暂停")}</span>
                           ) : (

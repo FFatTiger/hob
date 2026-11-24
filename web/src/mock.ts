@@ -2160,7 +2160,9 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       installed: false,
     },
   ];
-  pluginCatalog.unshift(...providerCatalogItems);
+  if (isProviderScene) {
+    pluginCatalog.unshift(...providerCatalogItems);
+  }
 
   const copilotPlugin: PluginView = {
     plugin: {
@@ -2186,7 +2188,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         methods: [{ index: 0, type: "oauth", label: "设备码登录" }],
         accounts: scene === "provider-login-device"
           ? []
-          : scene === "provider-update-confirm"
+          : scene === "provider-update-confirm" || scene === "provider-errors"
             ? [{ id: "acc-1", providerId: "github-copilot", displayName: "lin@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Pro", createdAt: twoHoursAgo, updatedAt: tenMinAgo }]
             : [
                 { id: "acc-1", providerId: "github-copilot", displayName: "lin@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Pro", createdAt: twoHoursAgo, updatedAt: tenMinAgo },
@@ -2373,6 +2375,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     ? [
         { id: "plugin-copilot", pluginId: "copilot", pluginName: "Copilot", providerId: "github-copilot", name: "Copilot", enabled: true, loggedIn: true, activeAccount: "lin@example.com", modelCount: 6 },
         { id: "plugin-zen-free", pluginId: "zen-free", pluginName: "Zen Free", providerId: "zen-free", name: "Zen Free", enabled: true, loggedIn: true, activeAccount: "public", modelCount: 4 },
+        { id: "plugin-zcode", pluginId: "zcode", pluginName: "ZCode", providerId: "zcode", name: "ZCode", enabled: true, loggedIn: true, activeAccount: "lin@example.com", modelCount: 3 },
         { id: "plugin-chatgpt", pluginId: "chatgpt", pluginName: "ChatGPT 订阅", providerId: "openai-codex", name: "ChatGPT 订阅", enabled: true, loggedIn: false, modelCount: 5, error: "需要重新登录" },
       ]
     : [];

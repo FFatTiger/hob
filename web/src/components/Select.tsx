@@ -25,7 +25,8 @@ export function Select({ value, onChange, options, disabled, className, "aria-la
     // 选项的字和按钮上的字左边对齐：减去按钮内边距，补上列表外框和选项的内边距
     const inset = parseFloat(getComputedStyle(trigger.current).paddingLeft) || 0;
     const shift = (parseFloat(getComputedStyle(popup.current).paddingLeft) || 0) + (popup.current.clientLeft || 0) + (parseFloat(getComputedStyle(popup.current.querySelector('[role="option"]') ?? popup.current).paddingLeft) || 0) - inset;
-    const width = Math.min(window.innerWidth - 16, Math.max(rect.width + shift * 2, popup.current.offsetWidth));
+    const hasMeta = options.some((option) => Boolean(option.meta));
+    const width = Math.min(window.innerWidth - 16, Math.max(rect.width + shift * 2, popup.current.offsetWidth, hasMeta ? 280 : 0));
     const height = Math.min(popup.current.scrollHeight, window.innerHeight - 16);
     const below = window.innerHeight - rect.bottom - 8;
     const above = rect.top - 8;

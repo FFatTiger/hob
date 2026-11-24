@@ -7,6 +7,7 @@ import {
   filterMemoryExtensions,
   PiHost,
   bundledPluginEntry,
+  stabilizeMemorySnapshot,
 } from "../src/pi.ts";
 import {
   isPlainHttpAllowedHost,
@@ -185,6 +186,42 @@ describe("插件加载", () => {
   it("捆绑插件的入口来自包 manifest", () => {
     expect(bundledPluginEntry("pi-memory")).toMatch(/node_modules\/pi-memory\/index\.ts$/);
     expect(bundledPluginEntry("@local/lore-pi-extension")).toMatch(/lore-pi-extension\/index\.ts$/);
+  });
+
+  it("本地记忆快照去掉原因和时间戳，保留指引和记忆正文里的条目时间标记", async () => {
+    const body = [
+      "The following memory files have been loaded.",
+      "",
+      "## MEMORY.md (long-term)",
+      "<!-- 2026-11-24 06:02:18 [01a20d38] -->",
+      "User prefers tea.",
+    ].join("\n");
+    const first = `base prompt\n\n## Memory\n(Snapshot before_agent_start at 2026-11-24 06:02:19. Use memory_read / memory_search for the authoritative latest state; recent writes may also be visible in tool-call history.)\n${body}`;
+    const second = `base prompt\n\n## Memory\n(Snapshot long_term_write at 2026-11-24 09:45:01. Use memory_read / memory_search for the authoritative latest state; recent writes may also be visible in tool-call history.)\n${body}`;
+    expect(stabilizeMemorySnapshot(first)).toBe(stabilizeMemorySnapshot(second));
+    expect(stabilizeMemorySnapshot(first)).toContain("(Use memory_read / memory_search for the authoritative latest state; recent writes may also be visible in tool-call history.)");
+    expect(stabilizeMemorySnapshot(first)).toContain("<!-- 2026-11-24 06:02:18 [01a20d38] -->");
+    expect(stabilizeMemorySnapshot(first)).not.toContain("Snapshot before_agent_start");
+    expect(stabilizeMemorySnapshot(first)).not.toContain("06:02:19");
+
+    // 经 filterMemoryExtensions 包装后，before_agent_start 返回的 systemPrompt 同样稳定且不改动 base
+    const result = {
+      extensions: [{
+        path: "/x/pi-memory",
+        tools: new Map([["memory_write", {}]]),
+        handlers: new Map([["before_agent_start", [
+          async (event: { systemPrompt: string }) => ({
+            systemPrompt: `${event.systemPrompt}\n\n## Memory\n(Snapshot session_start at 2026-11-24 10:11:12. Use memory_read / memory_search for the authoritative latest state; recent writes may also be visible in tool-call history.)\n${body}`,
+          }),
+        ]]]),
+      }],
+      errors: [],
+      runtime: {},
+    } as unknown as Parameters<typeof filterMemoryExtensions>[0];
+    const filtered = filterMemoryExtensions(result, "local");
+    const handler = filtered.extensions[0].handlers.get("before_agent_start")![0];
+    const out = await handler({ systemPrompt: "base prompt" }, {} as never) as { systemPrompt: string };
+    expect(out.systemPrompt).toBe(stabilizeMemorySnapshot(first));
   });
 });
 

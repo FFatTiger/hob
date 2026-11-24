@@ -171,12 +171,20 @@ function emptyLoader(systemPrompt: () => string): ResourceLoader {
   };
 }
 
+const MEMORY_SNAPSHOT_HEADER = /(\n\n## Memory\n\()Snapshot [^\n.]* at \d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\. /;
+
+/** 去掉 pi-memory 注入头里会变的快照原因和秒级时间戳，保留后面的指引和记忆正文。 */
+export function stabilizeMemorySnapshot(text: string): string {
+  return text.replace(MEMORY_SNAPSHOT_HEADER, "$1");
+}
+
 /**
- * 记忆插件互斥断言 + 本地记忆的工具修剪。只看捆绑插件（additionalExtensionPaths）：
+ * 记忆插件互斥断言 + 本地记忆的工具修剪与快照去抖。只看捆绑插件（additionalExtensionPaths）：
  * 内联工厂（MCP、按需搜索）不是记忆插件，直接放行。
  *
  * 一次只加载一家的插件：万一哪天两条路径同时挂上，这里立刻报错，而不是把用户的记忆
- * 分裂成两份。pi-memory 没带 qmd，`memory_search` 只会报错，所以在注册前就去掉。
+ * 分裂成两份。pi-memory 没带 qmd，`memory_search` 只会报错，所以在注册前就去掉；
+ * 它在 before_agent_start 里拼的快照行带原因和秒级时间，重开会话会改写 system，这里一并去掉。
  */
 export function filterMemoryExtensions(
   result: LoadExtensionsResult,
@@ -198,10 +206,27 @@ export function filterMemoryExtensions(
     throw new Error(`记忆插件与当前记忆来源不一致：期望 ${provider}，实际 ${loaded ?? "无"}。`);
   }
   const extensions = bundled.map((extension) => {
-    if (!extension.tools?.has("memory_search")) return extension;
-    const tools = new Map(extension.tools);
-    tools.delete("memory_search");
-    return { ...extension, tools };
+    let next = extension;
+    if (next.tools?.has("memory_search")) {
+      const tools = new Map(next.tools);
+      tools.delete("memory_search");
+      next = { ...next, tools };
+    }
+    if (provider === "local" && next.handlers?.has("before_agent_start")) {
+      const handlers = new Map(next.handlers);
+      const wrapped = (handlers.get("before_agent_start") ?? []).map((handler) => async (event: any, ctx: any) => {
+        const base = typeof event?.systemPrompt === "string" ? event.systemPrompt : undefined;
+        const out = await handler(event, ctx);
+        if (!out || typeof out.systemPrompt !== "string") return out;
+        if (base !== undefined && out.systemPrompt.startsWith(base)) {
+          return { ...out, systemPrompt: base + stabilizeMemorySnapshot(out.systemPrompt.slice(base.length)) };
+        }
+        return { ...out, systemPrompt: stabilizeMemorySnapshot(out.systemPrompt) };
+      });
+      handlers.set("before_agent_start", wrapped);
+      next = { ...next, handlers };
+    }
+    return next;
   });
   return { ...result, extensions: [...result.extensions.filter(isInline), ...extensions] };
 }

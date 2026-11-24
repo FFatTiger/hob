@@ -5,9 +5,6 @@ import type { Locale } from "../../shared/i18n.ts";
 import type { Store } from "./store.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { memoryPromptLines } from "./memory.ts";
-import { monthDayClockText } from "./time.ts";
-import { readTodos, todoProgress } from "./todos.ts";
-import { groupTodosPath } from "./config.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
 
 export interface PromptModel { name: string; ref: string; note: string; thinking: ThinkingLevel; levels?: ThinkingLevel[]; isDefault: boolean }
@@ -87,26 +84,20 @@ export const PROJECT_RECALL_LINE = "用户提的事和以前的话题有关，�
 export const TODOS_LINE = "一件事要分好几步、要过一阵才完成，用 update_todos 列一份待办，开始一项、完成一项就更新：用户不用来问，在界面上就看得到做到哪儿了。同一条消息里同时交代几件互不依赖、要分别交给后台任务的事，也把每个后台任务列成一项，等各自结果回来再更新；只交给一个后台任务、任务回来就直接交付的事，通常不用单独列待办，除非任务结果回来后还要继续分几步。只是各自一两步就能直接答完、没有后台任务的零散小事，不用列。一两步就完成的事，不用列。每轮开头会带上手上这份待办；新的事和它无关、它又不再做了，传空列表清掉，或者直接换成新的一份。待办记的是你自己这一路要做的步骤。交给后台任务的一步，就是你这份里的一项，任务结束、你查看过结果再勾掉。";
 
 /** 话题时间线上最后一条能被左栏预览的条目时间（和 GroupSummary.last 取同一类条目）。 */
-function lastLineAt(store: Store, gid: string): string | undefined {
-  const items = store
-    .groupItems(gid)
-    .filter((item) => (item.kind === "assistant" ? item.text.trim().length > 0 : item.kind === "user" || item.kind === "note"));
-  return items.at(-1)?.at;
-}
-
 /**
- * 综合里群主的话题清单：进行中的全部 + 最近关闭的 5 个，新的在前。
- * 每个只写进行中或已关闭，有待办的后面加「待办 k/n」。没有话题就不出这一节。
+ * 综合里群主的话题清单：进行中的全部 + 最近关闭的 5 个（按关闭时间取），按创建时间倒序（新的在前）。
+ * 每行只写名称、id 与进行中或已关闭，不带最后发言时间和待办进度，只有开、关、改名时才变。没有话题就不出这一节。
  */
-export function topicSection(store: Store, topics: Group[], timezone: string): string {
-  const rows = topics.map((topic) => ({ topic, at: lastLineAt(store, topic.id) ?? topic.createdAt }));
-  const open = rows.filter((row) => !row.topic.closedAt);
-  const closed = rows.filter((row) => row.topic.closedAt).sort((a, b) => b.at.localeCompare(a.at)).slice(0, 5);
+export function topicSection(topics: Group[]): string {
+  const byCreatedDesc = (a: Group, b: Group) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
+  const open = topics.filter((topic) => !topic.closedAt);
+  const closed = topics
+    .filter((topic) => topic.closedAt)
+    .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? "") || byCreatedDesc(a, b))
+    .slice(0, 5);
   const lines = ["## 这个群的话题"];
-  for (const { topic, at } of [...open, ...closed].sort((a, b) => b.at.localeCompare(a.at))) {
-    const { done, total } = todoProgress(readTodos(groupTodosPath(store.home, topic.id)));
-    const state = [topic.closedAt ? "已关闭" : "进行中", ...(total ? [`待办 ${done}/${total}`] : [])].join(" · ");
-    lines.push(`- 「${topic.name}」（${topic.id}）· ${state} · ${monthDayClockText(timezone, new Date(at))}`);
+  for (const topic of [...open, ...closed].sort(byCreatedDesc)) {
+    lines.push(`- 「${topic.name}」（${topic.id}）· ${topic.closedAt ? "已关闭" : "进行中"}`);
   }
   lines.push(PROJECT_RECALL_LINE);
   return lines.join("\n");
@@ -260,7 +251,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   // 群主的综合只列话题。
   if (group && group.ownerId === assistantId) {
     const topics = group.parentId ? [] : store.groups().filter((topic) => topic.parentId === group.id);
-    if (topics.length) lines.push("", topicSection(store, topics, settings.timezone));
+    if (topics.length) lines.push("", topicSection(topics));
   }
   return lines.join("\n");
 }

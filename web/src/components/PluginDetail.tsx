@@ -83,7 +83,8 @@ export function PluginDetail({ id }: { id: string }) {
     setConfigOpen(current => current || (found.missing.length > 0 && !found.profiles));
   };
   useEffect(() => {
-    setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false);
+    // 换一个插件时上一个插件的报错一起清掉，不然会挂到别的插件页上
+    setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false); setError("");
     void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
   useEffect(() => {

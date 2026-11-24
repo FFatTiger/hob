@@ -215,13 +215,8 @@ export function filterMemoryExtensions(
     if (provider === "local" && next.handlers?.has("before_agent_start")) {
       const handlers = new Map(next.handlers);
       const wrapped = (handlers.get("before_agent_start") ?? []).map((handler) => async (event: any, ctx: any) => {
-        const base = typeof event?.systemPrompt === "string" ? event.systemPrompt : undefined;
         const out = await handler(event, ctx) as { systemPrompt?: unknown; [key: string]: unknown } | undefined;
-        if (!out || typeof out.systemPrompt !== "string") return out;
-        if (base !== undefined && out.systemPrompt.startsWith(base)) {
-          return { ...out, systemPrompt: base + stabilizeMemorySnapshot(out.systemPrompt.slice(base.length)) };
-        }
-        return { ...out, systemPrompt: stabilizeMemorySnapshot(out.systemPrompt) };
+        return out && typeof out.systemPrompt === "string" ? { ...out, systemPrompt: stabilizeMemorySnapshot(out.systemPrompt) } : out;
       });
       handlers.set("before_agent_start", wrapped);
       next = { ...next, handlers };

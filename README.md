@@ -44,12 +44,13 @@ Hob works in a mobile browser and can be added to the home screen as an app. Pus
 
 ## Also included
 
-- **Models**: built-in providers such as Anthropic, OpenAI, Google, DeepSeek and OpenRouter only need an API key; any OpenAI- or Anthropic-compatible endpoint works too. npm and source installs can also use your local Claude Code subscription.
+- **Models**: built-in providers such as Anthropic, OpenAI, Google, DeepSeek and OpenRouter only need an API key; any OpenAI- or Anthropic-compatible endpoint works too. npm and source installs can also use your local Claude Code subscription. Provider plugins from the market let you use subscriptions or accounts you already have, such as Copilot, ChatGPT, the GLM Coding Plan and Antigravity (compatible with OpenCode provider plugins; unofficial integrations).
 - **Knowledge bases**: organize and preview files, bind them to assistants and follow citations back to the source; with an embedding model you get hybrid search, including PDF text.
 - **Web search**: SearXNG, Exa, Tavily, Brave, Serper, Jina, Firecrawl, Perplexity, You.com and Ollama.
-- **Plugins**: install plugins from the market to give assistants and jobs new tools, starting with GitHub, Gmail and an IMAP/SMTP mailbox. Each plugin gets a settings page, sign-in when the service needs it, per-tool switches and a choice of which assistants may use it. Any MCP server can be added as a custom plugin, and you can add your own plugin source by forking [hob-plugins](https://github.com/FFatTiger/hob-plugins).
+- **Plugins**: install plugins from the market to give assistants and jobs new tools, starting with GitHub, Gmail, an IMAP/SMTP mailbox, Cloudflare and Bitwarden. Each plugin gets a settings page, sign-in when the service needs it, per-tool switches and a choice of which assistants may use it. Any MCP server can be added as a custom plugin, and you can add your own plugin source by forking [hob-plugins](https://github.com/FFatTiger/hob-plugins).
 - **Memory**: stored locally or in [Lore](https://github.com/FFatTiger/lore).
 - **Pages and images**: assistants can present comparisons and research as pages in the side panel, and generate or edit images through an OpenAI-compatible image API.
+- **Passwords**: a built-in local vault, or Bitwarden. When a site needs a login, Hob checks the address and, once you approve, fills the username and password into the cloud desktop page itself, so the password never passes through the assistant. A site you have not saved yet takes one entry on a card.
 - **Cloud desktop** (optional): a browser for each assistant; a site you sign in to in one is signed in for all of them. You can watch or take over.
 - **Favorites and chat search**: favorite a message to keep a result or an address at hand, search every conversation from the sidebar, and let assistants look up past chats themselves.
 - **Usage**: requests, tokens and estimated cost by model and by assistant.

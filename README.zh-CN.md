@@ -44,10 +44,11 @@
 
 ## 还能接上这些
 
-- **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅。
+- **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅。也可以从插件市场装「供应商」插件，用 Copilot、ChatGPT 订阅、GLM 编程套餐、Antigravity 这类已有的订阅或账号当模型（兼容 OpenCode 的供应商插件，属于非官方接入）。
 - **知识库**：整理和预览文件，绑定给助手，引用能跳回原文；配了向量模型可以混合检索，PDF 也能建索引。
 - **联网搜索**：SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama。
-- **插件**：从市场安装插件，助手和任务就多了一批工具，目前有 GitHub、Gmail 和支持 IMAP/SMTP 的邮箱。每个插件有自己的配置页，需要登录的服务可以直接登录，工具可以逐个开关，也能选给哪些助手用。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
+- **插件**：从市场安装插件，助手和任务就多了一批工具，目前有 GitHub、Gmail、支持 IMAP/SMTP 的邮箱、Cloudflare 和 Bitwarden。每个插件有自己的配置页，需要登录的服务可以直接登录，工具可以逐个开关，也能选给哪些助手用。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
+- **密码**：自带一个本机密码库，也能接 Bitwarden。网站要登录时，Hob 核对网址、你批准后直接把账号密码填进云桌面的登录页，密码不经过助手；没存过的网站在卡片上填一次就存下。
 - **记忆**：存在本地，或者接入 [Lore](https://github.com/FFatTiger/lore)。
 - **页面和图片**：助手可以把对比、调研做成网页在侧栏打开；配上 OpenAI 兼容的图像接口就能画图和改图。
 - **云桌面**（可选）：每个助手一个浏览器，在一个里登录的网站，其他助手的浏览器里也是登录的；你可以在旁边看，也可以接管。

@@ -58,6 +58,23 @@ describe("shared plugin connections", () => {
     expect(instance.states("sample")[0]?.status).toBe("connected");
   });
 
+  it("wakes idle services without rebuilding sessions and reports why a wake-up failed", async () => {
+    const instance = host(30);
+    const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));
+    const flag = join(instance.store.home, "fail-next-start");
+    instance.store.addCustom("sample", { command: "/bin/sh", args: ["-c", `if [ -e "${flag}" ]; then echo 解锁失败 >&2; exit 1; fi; exec "${process.execPath}" "${fixture}"`] });
+    await instance.start();
+    let changes = 0;
+    instance.onToolsChanged = () => { changes++; };
+    await waitFor(() => instance.states("sample")[0]?.status === "idle");
+    expect((await instance.call("sample", "sample", "echo", { message: "a" })).content).toEqual([{ type: "text", text: "echo: a" }]);
+    expect(changes).toBe(0);
+    await waitFor(() => instance.states("sample")[0]?.status === "idle");
+    writeFileSync(flag, "");
+    await expect(instance.call("sample", "sample", "echo", { message: "b" })).rejects.toThrow(/解锁失败/);
+    expect(instance.states("sample")[0]?.status).toBe("error");
+  });
+
   it("keeps stdio services with keepAlive running", async () => {
     const instance = host(30);
     const fixture = fileURLToPath(new URL("./fixtures/mcp-fixture.mjs", import.meta.url));

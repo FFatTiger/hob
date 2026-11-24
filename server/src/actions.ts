@@ -191,7 +191,7 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
   const installed = runtime.plugins.store.list().find((item) => item.id === pluginId);
   const service = runtime.plugins.states(pluginId).find((item) => item.name === plugin.service);
   const unavailable = t("{plugin} 现在用不了", { plugin: plugin.pluginName });
-  if (!installed?.enabled || !service || service.status !== "connected") {
+  if (!installed?.enabled || !service || !["connected", "idle", "connecting"].includes(service.status)) {
     const next = { ...record, feedback: { unavailable }, updatedAt: new Date().toISOString() };
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });

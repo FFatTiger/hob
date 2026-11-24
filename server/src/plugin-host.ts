@@ -82,7 +82,7 @@ export class PluginHost {
     if (!plugin?.enabled) return [];
     const providers: CredentialProvider[] = [];
     for (const state of this.connections.values()) {
-      if (state.state.pluginId !== plugin.id || !["connected", "idle"].includes(state.state.status)) continue;
+      if (state.state.pluginId !== plugin.id || !["connected", "idle", "connecting"].includes(state.state.status)) continue;
       for (const tool of state.state.tools) {
         const meta = isObject(tool._meta) ? tool._meta : undefined;
         const value = meta?.["hob/credentials"];
@@ -207,7 +207,6 @@ export class PluginHost {
     connection.closing = client.close().catch(() => {}).finally(() => {
       if (connection.closing) connection.closing = undefined;
     });
-    this.onToolsChanged?.();
     await connection.closing;
   }
   private async connect(connection: Connection, raw: unknown): Promise<void> {
@@ -220,6 +219,8 @@ export class PluginHost {
   private async connectOnce(connection: Connection, raw: unknown): Promise<void> {
     if (connection.stopped || this.closed) return;
     const state = connection.state;
+    // 闲置后重新拉起：工具列表照旧时不算工具变化
+    const wake = state.status === "idle" ? JSON.stringify(state.tools) : undefined;
     state.status = "connecting"; delete state.error;
     const parsed = validateMcpServerConfig(state.name, raw);
     if (parsed.kind === "invalid") { state.status = "error"; state.error = this.redact(state.pluginId, parsed.error); this.scheduleRetry(connection, raw); return; }
@@ -252,7 +253,7 @@ export class PluginHost {
       // 有的服务不登录也能列出工具（如 Gmail），没登录就不算连上：工具留着给插件页看，不交给助手
       if (state.oauth?.declared && !hadCredentials) { state.status = "needs_login"; state.error = undefined; if (connection.client === client) connection.client = undefined; await client.close().catch(() => {}); }
       else { state.status = "connected"; this.armIdle(connection); }
-      this.onToolsChanged?.();
+      if (wake === undefined || state.status !== "connected" || JSON.stringify(tools) !== wake) this.onToolsChanged?.();
     } catch (error) {
       if (connection.stopped || this.closed) return;
       const authError = error instanceof McpOAuthAuthorizationRequiredError || error instanceof McpAuthRequiredError || (error instanceof McpHttpError && (error.status === 401 || error.status === 403));
@@ -398,7 +399,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
   const used = new Set(reservedNames);
   for (const plugin of host.store.list()) {
     if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
-    const states = host.states(plugin.id).filter(state => ["connected", "idle"].includes(state.status));
+    const states = host.states(plugin.id).filter(state => ["connected", "idle", "connecting"].includes(state.status));
     const visibleStates = states.map((state) => ({ ...state, tools: state.tools.filter(visibleToModel) }));
     const count = visibleStates.reduce((n, state) => n + state.tools.length, 0);
     for (const state of visibleStates) {

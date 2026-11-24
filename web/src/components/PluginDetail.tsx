@@ -48,7 +48,7 @@ function countTools(item: PluginView) {
 }
 
 function statusTone(status: PluginServiceStatus): "warn" | "bad" | "ok" {
-  if (status === "connected") return "ok";
+  if (status === "connected" || status === "idle") return "ok";
   if (status === "error") return "bad";
   return "warn";
 }
@@ -86,12 +86,12 @@ export function PluginDetail({ id }: { id: string }) {
   }, [id]);
   useEffect(() => {
     const hasList = Boolean(item?.credentialRoles?.includes("list"));
-    const service = hasList ? item?.services.find(candidate => candidate.status === "connected")?.name : undefined;
+    const service = hasList ? item?.services.find(candidate => candidate.status === "connected" || candidate.status === "idle")?.name : undefined;
     if (!service) { setLoginData(null); return; }
     let active = true;
     void loadPluginLogins(id, service).then(value => { if (active) setLoginData(value); }).catch(error => { if (active) setError(error instanceof Error ? error.message : String(error)); });
     return () => { active = false; };
-  }, [id, item?.credentialRoles?.includes("list"), item?.services.find(candidate => candidate.status === "connected")?.name]);
+  }, [id, item?.credentialRoles?.includes("list"), item?.services.find(candidate => candidate.status === "connected" || candidate.status === "idle")?.name]);
   useEffect(() => {
     const profile = item?.profiles?.find(candidate => candidate.id === profileId);
     if (profile) setProfileName(profile.name);
@@ -185,7 +185,7 @@ export function PluginDetail({ id }: { id: string }) {
       {typeof field.description === "string" && <Description text={field.description} />}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
-  const statusBlock = serviceStatus === "connected" ? <div className="plugin-connection-top"><PluginStatus status="connected" /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
+  const statusBlock = serviceStatus === "connected" || serviceStatus === "idle" ? <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
     : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{serviceStatus === "error" ? <button className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void refresh()}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
 
   const assistantSection = <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>;

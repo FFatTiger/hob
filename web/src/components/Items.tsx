@@ -507,8 +507,9 @@ function FillNewPasswordCard({ approval, fresh }: { approval: Approval; fresh: b
 
 function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
   const fill = approval.login!.fillLogin!;
-  if (approval.status === "pending" && fill.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
+  // 先调完所有 hook 再按状态换成自己登录卡：同一张卡点了「我自己登录」会就地换样子，hook 数不能变
   const [selected, setSelected] = useState(fill.chosenId ?? (fill.candidates.length === 1 ? `${fill.candidates[0]!.provider}:${fill.candidates[0]!.id}` : ""));
+  if (approval.status === "pending" && fill.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
   const chosen = fill.candidates.find((candidate) => `${candidate.provider}:${candidate.id}` === (fill.chosenId ?? selected)) ?? fill.candidates[0];
   const pending = approval.status === "pending" && fill.state !== "mismatch";
   const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.state === "self" ? t("已选择自己登录") : fill.state === "filled" ? fill.result : undefined;
@@ -531,7 +532,7 @@ function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean
         <>
           <div className="qfill-group">
             <div className="qfill-row"><span className="qfill-label">{t("网站")}</span><span className="qfill-value">{fill.host}</span>{pending ? <span className="qfill-ok"><Icon name="check" size={13} />{t("和保存的网址一致")}</span> : null}</div>
-            {chosen ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
+            {chosen && !(pending && fill.candidates.length > 1) ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{chosen.username}</span><span className="qfill-provider">{chosen.providerName}{chosen.folder ? ` · ${chosen.folder}` : ""}</span></div> : null}
           </div>
           {pending && fill.candidates.length > 1 ? <div className="opts qfill-options">{fill.candidates.map((candidate) => { const id = `${candidate.provider}:${candidate.id}`; return <button className={`opt${selected === id ? " chosen" : ""}`} key={id} onClick={() => setSelected(id)}><span className="key">{candidate.username.slice(0, 1).toUpperCase()}</span><span className="olabel">{candidate.username}{candidate.folder ? ` · ${candidate.folder}` : ""}</span>{selected === id ? <span className="ck"><Icon name="check" size={16} /></span> : null}</button>; })}</div> : null}
           {status ? <div className={`qfill-result${fill.state === "failed" ? " bad" : ""}`}>{fill.state === "failed" ? null : <Icon name="check" size={15} />}{status}</div> : null}
@@ -564,12 +565,12 @@ function LoginCard({ approval, fresh }: { approval: Approval; fresh: boolean }) 
 /** 录入卡：密码管理器里没有这个网站的账号，用户在卡上填一次，Hob 存进密码管理器再填进页面。密码只在提交的那一次请求里经过。 */
 function LoginEntryCard({ approval, fresh }: { approval: Approval; fresh: boolean }) {
   const entry = approval.login!.entry!;
-  if (approval.status === "pending" && entry.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
   const [provider, setProvider] = useState(entry.provider ?? entry.providers[0]?.provider ?? "");
   const [username, setUsername] = useState(entry.account ?? "");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
   const [busy, setBusy] = useState(false);
+  if (approval.status === "pending" && entry.state === "self") return <SelfLoginCard approval={approval} fresh={fresh} />;
   const pending = approval.status === "pending";
   const providerName = entry.providers.find((item) => item.provider === provider)?.providerName ?? entry.providers[0]?.providerName ?? "";
   const savedName = entry.providers.find((item) => item.provider === entry.provider)?.providerName ?? providerName;
@@ -595,8 +596,8 @@ function LoginEntryCard({ approval, fresh }: { approval: Approval; fresh: boolea
         {pending ? (
           <>
             <form className="qfill-form" onSubmit={(event) => { event.preventDefault(); void submit(); }}>
-              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-user-${approval.id}`}>{t("用户名")}</label><span className="qfill-inputwrap"><input id={`entry-user-${approval.id}`} className="qfill-input" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></span></div>
-              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-pass-${approval.id}`}>{t("密码")}</label><span className="qfill-inputwrap"><input id={`entry-pass-${approval.id}`} className="qfill-input" type={show ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" /><button type="button" className="qfill-toggle" aria-label={show ? t("隐藏密码") : t("显示密码")} title={show ? t("隐藏密码") : t("显示密码")} onClick={() => setShow(!show)}><Icon name={show ? "eyeoff" : "eye"} size={15} /></button></span></div>
+              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-user-${approval.id}`}>{t("用户名")}</label><span className="qfill-inputwrap"><input id={`entry-user-${approval.id}`} className="qfill-input" placeholder={t("用户名或邮箱")} value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" autoCapitalize="none" spellCheck={false} /></span></div>
+              <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-pass-${approval.id}`}>{t("密码")}</label><span className="qfill-inputwrap"><input id={`entry-pass-${approval.id}`} className="qfill-input" placeholder={t("这个网站的密码")} type={show ? "text" : "password"} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" /><button type="button" className="qfill-toggle" aria-label={show ? t("隐藏密码") : t("显示密码")} title={show ? t("隐藏密码") : t("显示密码")} onClick={() => setShow(!show)}><Icon name={show ? "eyeoff" : "eye"} size={15} /></button></span></div>
               {entry.providers.length > 1 ? <div className="qfill-row"><label className="qfill-label" htmlFor={`entry-provider-${approval.id}`}>{t("存到")}</label><span className="qfill-selectwrap"><select id={`entry-provider-${approval.id}`} className="qfill-select" value={provider} onChange={(event) => setProvider(event.target.value)}>{entry.providers.map((item) => <option key={item.provider} value={item.provider}>{item.providerName}</option>)}</select><Icon name="down" size={13} /></span></div> : null}
             </form>
           </>

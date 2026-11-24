@@ -155,6 +155,8 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "去登录": "Sign in",
   "需要登录：{site}": "Sign in to {site}",
   "我自己登录": "I'll sign in myself",
+  "用户名或邮箱": "Username or email",
+  "这个网站的密码": "Password for this site",
   "不登录": "Don't sign in",
   "保存并登录": "Save and sign in",
   "显示密码": "Show password",

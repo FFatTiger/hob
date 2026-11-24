@@ -57,7 +57,7 @@ import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "cards-demo" | "plugin-demo" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -65,6 +65,7 @@ export const SCENE_UI: Record<
   { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
 > = {
   "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "login-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   vault: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "vault-empty": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
@@ -947,6 +948,21 @@ cp now.txt "$seen"`,
     if (status === "waiting") approvals["ap-delegation"] = { id: "ap-delegation", assistantId: "server", title: "清理旧日志吗？", detail: "将清理七天前的日志。", options: [{ key: "A", label: "清理旧日志" }, { key: "B", label: "暂不清理" }], recommended: "A", status: "pending", source: "job", jobId: "t-delegated", createdAt: minsAgo(2) };
     items.hob = [{ kind: "user", id: "d-user", at: minsAgo(7), text: "检查一下服务器的磁盘和服务状态。" }, { kind: "delegation", id: "d-card", at: minsAgo(6), delegationId: delegation.id }];
     items.server = [{ kind: "user", id: "d-forward", at: minsAgo(6), text: delegation.text, from: { assistantId: "hob", name: "Hob", delegationId: delegation.id } }, { kind: "job", id: "d-job", at: minsAgo(5), jobId: "t-delegated" }, ...(status === "waiting" ? [{ kind: "question" as const, id: "d-question", at: minsAgo(2), approvalId: "ap-delegation" }] : [])];
+  }
+
+  if (scene === "login-cards") {
+    // 票 257 的三张登录卡：两个候选账号的批准卡、两个提供者的录入卡、自己登录卡；卡上点「我自己登录」会就地换样子
+    const candidate = (provider: string, providerName: string, id: string, username: string, folder?: string) => ({ provider, providerName, id, name: "Example 论坛", username, uris: ["https://forum.example.net"], ...(folder ? { folder } : {}) });
+    const base = { assistantId: "hob", options: [{ key: "A" as const, label: "不允许" }, { key: "B" as const, label: "这次允许" }, { key: "C" as const, label: "这个网站以后都允许", always: true }], status: "pending" as const, source: "router" as const, createdAt: minsAgo(3) };
+    approvals["ap-login-approve"] = { ...base, id: "ap-login-approve", title: "在 forum.example.net 登录", detail: "Hob 从 密码库、Bitwarden 取出密码，直接填进登录页，助手看不到。", login: { site: "Example 论坛", reason: "查看新私信", fillLogin: { host: "forum.example.net", state: "pending", candidates: [candidate("vault", "密码库", "v1", "lin@example.com"), candidate("bitwarden", "Bitwarden", "b1", "reader@example.net", "读书账号")] } } };
+    approvals["ap-login-entry"] = { ...base, id: "ap-login-entry", title: "在 wiki.example.org 登录", detail: "密码管理器里还没有这个网站的账号。在这里填一次，Hob 存进密码库再填进登录页，助手看不到。", options: [{ key: "A", label: "不登录" }, { key: "B", label: "保存并登录" }], login: { site: "Example 百科", reason: "查看收藏", entry: { host: "wiki.example.org", state: "pending", providers: [{ provider: "vault", providerName: "密码库" }, { provider: "bitwarden", providerName: "Bitwarden" }] } } };
+    approvals["ap-login-self"] = { ...base, id: "ap-login-self", title: "需要登录：chat.example.org", detail: "这个网站只能用第三方账号登录", options: [{ key: "A", label: "已登录" }], recommended: "A", login: { site: "chat.example.org", reason: "这个网站只能用第三方账号登录" } };
+    items.hob = [
+      { kind: "user", id: "lc-1", at: minsAgo(5), text: "去 Example 论坛看看有没有新私信" },
+      { kind: "question", id: "lc-2", at: minsAgo(4), approvalId: "ap-login-approve" },
+      { kind: "question", id: "lc-3", at: minsAgo(3), approvalId: "ap-login-entry" },
+      { kind: "question", id: "lc-4", at: minsAgo(2), approvalId: "ap-login-self" },
+    ];
   }
 
   if (scene.startsWith("h-")) {
@@ -2868,6 +2884,12 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     answerApproval: async (approvalId, answer) => {
       const ap = db.approvals[approvalId];
       if (!ap || ap.status !== "pending") return;
+      if (answer.self && ap.login) {
+        if (ap.login.fillLogin) ap.login.fillLogin.state = "self";
+        if (ap.login.entry) ap.login.entry.state = "self";
+        emit({ type: "approval", approval: clone(ap) });
+        return;
+      }
       ap.status = "answered";
       if (ap.questions?.length) {
         ap.answers = answer.answers ?? [];

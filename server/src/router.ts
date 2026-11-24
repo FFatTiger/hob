@@ -94,7 +94,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  */
 const GROUP_TOOL_NAMES = new Set([
   "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
-  "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "fill_login", "fill_new_password",
+  "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "login", "fill_new_password",
   "open_topic", "close_topic",
 ]);
 

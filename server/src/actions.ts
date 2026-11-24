@@ -378,6 +378,7 @@ async function answerFillLoginApproval(runtime: HobRuntime, approval: Approval, 
 
 /** 录入卡的「保存并登录」：密码只在这一次请求、提供者的 save 和 CDP 填写之间经过，不进审批记录、事件、日志和回给模型的文字。 */
 async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval, input: AnswerApprovalBody): Promise<ActionResult> {
+  const { store } = runtime;
   const entry = approval.login?.entry;
   if (!entry) return { status: 400, body: { error: "登录录入卡数据不完整" } };
   const option = input.key ? approval.options.find((item) => item.key === input.key) : undefined;
@@ -408,7 +409,7 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
       store.saveApproval(failed);
       if (failed.groupId) runtime.groups.publish(failed.groupId);
       runtime.bus.emit({ type: "approval", approval: failed });
-      return { status: 400, body: { error: message, approval: failed } };
+      return { status: 400, body: { error: message } };
     }
     // 存进密码管理器的名称用助手写的网站名（去掉「」这类引号），网址用当前主机
     const name = site.trim().replace(/^[「『"'“]+|[」』"'”]+$/g, "") || entry.host;
@@ -425,14 +426,14 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
       store.saveApproval(failed);
       if (failed.groupId) runtime.groups.publish(failed.groupId);
       runtime.bus.emit({ type: "approval", approval: failed });
-      return { status: 400, body: { error: message, approval: failed } };
+      return { status: 400, body: { error: message } };
     }
     const candidate = { provider: provider.pluginId, providerName: provider.providerName, id: savedId, uris };
     try {
       const result = await fillLoginPage(runtime, approval.assistantId, candidate, entry.host, async () => ({ username, password }));
       const withoutError = { ...entry };
       delete withoutError.error;
-      next = { ...withoutError, provider: provider.pluginId, username, state: "filled", result: result.kind === "username" ? "已填好用户名" : "已填好" };
+      next = { ...withoutError, provider: provider.pluginId, username, twoStep: result.kind === "username", state: "filled", result: result.kind === "username" ? "已填好用户名" : "已填好" };
       reply = result.kind === "username"
         ? `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好用户名 ${username}，点下一步后再调一次 login 填密码。`
         : `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好 ${username} 的账号和密码，接下来点登录按钮。`;

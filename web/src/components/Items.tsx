@@ -574,7 +574,7 @@ function LoginEntryCard({ approval, fresh }: { approval: Approval; fresh: boolea
   const providerName = entry.providers.find((item) => item.provider === provider)?.providerName ?? entry.providers[0]?.providerName ?? "";
   const savedName = entry.providers.find((item) => item.provider === entry.provider)?.providerName ?? providerName;
   const account = entry.username ?? entry.account;
-  const status = entry.state === "rejected" ? t("没有登录") : entry.state === "self" ? t("已选择自己登录") : entry.state === "failed" ? t("已存进{provider}，但没有填上：{reason}", { provider: savedName, reason: entry.result ?? "" }) : entry.state === "filled" ? (entry.result === "已填好用户名" ? t("已存进{provider}，已填好用户名", { provider: savedName }) : t("已存进{provider}并填好", { provider: savedName })) : undefined;
+  const status = entry.state === "rejected" ? t("没有登录") : entry.state === "self" ? t("已选择自己登录") : entry.state === "failed" ? t("已存进{provider}，但没有填上：{reason}", { provider: savedName, reason: entry.result ?? "" }) : entry.state === "filled" ? (entry.twoStep ? t("已存进{provider}，已填好用户名", { provider: savedName }) : t("已存进{provider}并填好", { provider: savedName })) : undefined;
   const ready = username.trim() !== "" && password !== "" && provider !== "";
   const submit = async () => {
     if (!ready || busy) return;

@@ -708,6 +708,8 @@ export interface LoginEntryApproval {
   state?: "pending" | "filled" | "rejected" | "failed" | "self";
   /** 保存失败时只在当前卡片上显示一次，重试成功后清掉；不包含密码。 */
   error?: string;
+  /** 录入卡存好后是否只填了用户名，下一步再调用 login 填密码 */
+  twoStep?: boolean;
   result?: string; // 收起后那一行：填写失败的原因
 }
 

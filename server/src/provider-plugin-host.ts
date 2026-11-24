@@ -665,10 +665,12 @@ export class ProviderPluginHost {
       this.stopping = false;
       this.setStatus("stopped");
     })();
-    this.stopPromise = task.finally(() => {
-      if (this.stopPromise === task) this.stopPromise = undefined;
+    // 存的是 finally 之后的那个 promise，清理时要和它比，否则第一次停完以后 stopPromise 一直留着，后面的 stop() 都直接返回、不再停进程
+    const stopped: Promise<void> = task.finally(() => {
+      if (this.stopPromise === stopped) this.stopPromise = undefined;
     });
-    return this.stopPromise;
+    this.stopPromise = stopped;
+    return stopped;
   }
 
   async close(): Promise<void> {

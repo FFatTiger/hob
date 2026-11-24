@@ -17,6 +17,7 @@ import {
 import { loadConfig } from "../src/config.ts";
 import { createApp } from "../src/http.ts";
 import { PiHost } from "../src/pi.ts";
+import { ProviderPluginHost, type HostPluginLoadSpec } from "../src/provider-plugin-host.ts";
 import {
   extractLoopbackPorts,
   pluginModelThinking,
@@ -1014,5 +1015,29 @@ describe("provider plugins (issue 259)", () => {
     expect(pluginsRes.status).toBe(200);
     const pluginsBody = await pluginsRes.json() as { providerHost?: { status: string } };
     expect(pluginsBody.providerHost?.status).toBe("stopped");
+  });
+
+  it("stops the previous shared host every time the plugin set changes, so only one host process is left", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-host-restart-"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    const specs: HostPluginLoadSpec[] = [];
+    const host = new ProviderPluginHost({ home, bun: new BunRuntime({ home, bunPath: process.execPath }), getPlugins: () => specs });
+    cleanups.push(() => host.stop());
+    const alive = (pid: number) => { try { process.kill(pid, 0); return true; } catch { return false; } };
+    const pids: number[] = [];
+    for (const id of ["a", "b", "c"]) {
+      const dir = join(home, "plugins", id, "providers-runtime", "node_modules", `fake-${id}`);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: `fake-${id}`, version: "1.0.0", type: "module", main: "./index.mjs" }));
+      writeFileSync(join(dir, "index.mjs"), "export async function P() { return {}; }\n");
+      specs.push({ pluginId: id, dataDir: join(home, "plugin-data", id), packages: [{ package: `fake-${id}`, dir }] });
+      await host.syncIfRunning();
+      await host.ensureStarted();
+      pids.push(host.statusView().pid!);
+    }
+    expect(new Set(pids).size).toBe(3);
+    expect(pids.map(alive)).toEqual([false, false, true]);
+    await host.stop();
+    expect(alive(pids[2]!)).toBe(false);
   });
 });

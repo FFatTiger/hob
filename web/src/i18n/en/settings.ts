@@ -57,6 +57,5 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "配色": "Color theme", "海盐": "Sea salt", "森林": "Forest", "暮紫": "Dusk", "玫瑰": "Rose", "深色和浅色各有一套颜色，配色不影响深浅；选了只存在这台设备的浏览器里，不跟着账号同步。": "Dark and light each have their own colors, and the color theme does not change which one you get. Your choice is saved in this browser only.",
   "智能 {smart}% · 成本 {cost}% · 速度 {speed}%": "Intelligence {smart}% · Cost {cost}% · Speed {speed}%",
   "来自插件 {plugin}": "From plugin {plugin}",
-  "已启用": "Enabled",
   "来自插件的服务商点击后前往对应插件页管理账号与模型；从本机导入会只读本机配置并一次性复制到 Hob。": "Click a plugin provider to manage its accounts and models on its plugin page. Local import reads your local configuration once without changing the source.",
 };

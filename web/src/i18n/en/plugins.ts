@@ -74,7 +74,6 @@ export const pluginsEn = {
   "会改动": "Makes changes",
   "连接常用工具，让助手在工作中使用。": "Connect tools for your assistants to use.",
   "连接自定义工具服务。": "Connect your own tool service.",
-  "装上插件，助手就能用它的工具。装好后在插件页填配置。": "Install plugins for your assistants to use. Configure them after installation.",
   "添加自定义 MCP": "Add custom MCP",
   "每行请填写名称=值": "Enter name=value on each line",
   "连接方式": "Connection type",

@@ -1879,8 +1879,9 @@ function ModelsSection() {
   const [providerNames, setProviderNames] = useState<Record<string, string>>({});
   useEffect(() => {
     void loadModels().then(setView);
-    void loadProviders().then((pv) => {
-      if (!pv) return;
+    void loadProviders().then((res) => {
+      if (!res.ok) return;
+      const pv = res.view;
       const names: Record<string, string> = {};
       for (const b of pv.builtin) names[b.id] = b.name;
       for (const p of pv.providers) if (p.kind === "custom" && p.name) names[p.id] = p.name;

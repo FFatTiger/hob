@@ -81,15 +81,15 @@ export async function pageInfo(page: Page): Promise<PageInfo> {
   const url = page.url();
   const host = hostOf(url);
   if (!host) throw new Error(`当前页面（${url}）没有网站地址。先打开登录页再调 login。`);
-  const inputs = await page.locator("input").evaluateAll((elements) => elements.flatMap((element, index) => {
+  const inputs = await page.locator("input").evaluateAll((elements) => elements.flatMap((element) => {
     const input = element as HTMLInputElement;
     const style = window.getComputedStyle(input);
     if (input.type === "hidden" || input.disabled || style.display === "none" || style.visibility === "hidden" || input.getClientRects().length === 0) return [];
-    return [{ index, type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), id: input.id.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value }];
-  }));
+    return [{ type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), id: input.id.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value }];
+  }).map((input, index) => ({ ...input, index })));
   const password = inputs.find((input) => input.type === "password" && input.autocomplete === "current-password") ?? inputs.find((input) => input.type === "password");
   const passwordIndex = password?.index;
-  const usernameCandidates = inputs.filter((input) => input.type === "email" || input.autocomplete === "username" || /user|email|login|account/i.test(`${input.name} ${input.type}`));
+  const usernameCandidates = inputs.filter((input) => input.type === "email" || input.autocomplete === "username" || /user|email|login|account/i.test(`${input.name} ${input.id} ${input.type}`));
   const before = inputs.filter((input) => input.type === "text" || input.type === "email").filter((input) => passwordIndex === undefined || input.index < passwordIndex);
   const username = usernameCandidates.find((input) => input.autocomplete === "username" || input.type === "email") ?? usernameCandidates.at(-1) ?? before.at(-1);
   // 验证码框：浏览器标了 one-time-code，或者 name/id 叫 otp、totp、2fa、mfa、verification、code（页面上没有密码框时才算）
@@ -203,13 +203,13 @@ export async function prepareLogin(runtime: HobRuntime, assistantId: string, sit
     return { kind: "approval", approval: { host: info.host, candidates: matched, state: "pending" }, title: `在 ${info.host} 登录`, detail: approvalDetail(matched) };
   }
   // 密码管理器里没有这个网站：有能填的框、又有能存的提供者，就请用户在卡上填一次
-  if (hasFields) {
-    const providers = entryProviders(runtime, assistantId);
-    if (providers.length) return { kind: "entry", approval: { host: info.host, ...(account ? { account } : {}), providers, state: "pending" }, title: `在 ${info.host} 登录`, detail: entryDetail(providers[0]!.providerName) };
-    return { kind: "self", title: selfTitle(site) };
+  const providers = entryProviders(runtime, assistantId);
+  if (hasFields && providers.length) {
+    return { kind: "entry", approval: { host: info.host, ...(account ? { account } : {}), providers, state: "pending" }, title: `在 ${info.host} 登录`, detail: entryDetail(providers[0]!.providerName) };
   }
-  // 没有框：第一次让助手先打开登录表单；10 分钟内又来（助手看过页面，确认只能用别的方式登录）就请用户自己登录
-  return noFieldsAgain(runtime, assistantId, info.host) ? { kind: "self", title: selfTitle(site) } : { kind: "message", text: noFieldsText(info) };
+  // 没有框：第一次让助手先打开登录表单；10 分钟内又来（助手看过页面，确认只能用别的方式登录）就请用户自己登录；没有能存的提供者时直接请用户自己登录
+  if (!hasFields) return providers.length && !noFieldsAgain(runtime, assistantId, info.host) ? { kind: "message", text: noFieldsText(info) } : { kind: "self", title: selfTitle(site) };
+  return { kind: "self", title: selfTitle(site) };
 }
 
 export function entryDetail(providerName: string): string {

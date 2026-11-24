@@ -1450,6 +1450,7 @@ svg.i {
 .qfill-bad, .qfill-result.bad { color: var(--danger); }
 .qfill-options { margin-top: 8px; }
 .qfill-hint { color: var(--text3); font-size: 12.5px; line-height: 1.55; margin-top: 10px; }
+.qfill-entry-error { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 10%, var(--card)); color: var(--danger); font-size: 13px; }
 .qfill-result { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text2); font-size: 14px; }
 .qfill-result svg { flex: none; }
 .qfill .qacts .hob-btn:not(.hob-btn-primary) { background: var(--card); }

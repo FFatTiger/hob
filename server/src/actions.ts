@@ -392,7 +392,9 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
   let reply: string;
   let next: LoginEntryApproval;
   if (option.key === "A") {
-    next = { ...entry, state: "rejected", result: "没有登录" };
+    const withoutError = { ...entry };
+    delete withoutError.error;
+    next = { ...withoutError, state: "rejected", result: "没有登录" };
     reply = `用户没有登录 ${entry.host}。`;
   } else {
     const username = typeof input.username === "string" ? input.username.trim() : "";
@@ -400,7 +402,14 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
     if (!username || !password) return { status: 400, body: { error: "用户名和密码都要填。" } };
     const chosen = entry.providers.find((item) => item.provider === (input.provider ?? entry.providers[0]?.provider));
     const provider = chosen && runtime.plugins.credentialProviders(approval.assistantId, "save").find((item) => item.pluginId === chosen.provider);
-    if (!chosen || !provider) return { status: 400, body: { error: `${chosen?.providerName ?? "密码管理器"} 的凭据保存工具现在不可用。` } };
+    if (!chosen || !provider) {
+      const message = `${chosen?.providerName ?? "密码管理器"} 的凭据保存工具现在不可用。`;
+      const failed: Approval = { ...approval, login: { ...approval.login!, entry: { ...entry, error: message } } };
+      store.saveApproval(failed);
+      if (failed.groupId) runtime.groups.publish(failed.groupId);
+      runtime.bus.emit({ type: "approval", approval: failed });
+      return { status: 400, body: { error: message, approval: failed } };
+    }
     // 存进密码管理器的名称用助手写的网站名（去掉「」这类引号），网址用当前主机
     const name = site.trim().replace(/^[「『"'“]+|[」』"'”]+$/g, "") || entry.host;
     const uris = [`https://${entry.host}`];
@@ -410,13 +419,20 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
       savedId = typeof saved.id === "string" ? saved.id : "";
       if (!savedId) throw new Error("密码管理器没有返回已保存条目的 id。");
     } catch (error) {
-      // 没存上：卡上写原因，表单保持可填，不回模型
-      return { status: 400, body: { error: `${provider.providerName} 没有保存：${hideSecrets(error, [password])}` } };
+      // 没存上：卡上写原因，表单保持可填，不回模型；密码先脱敏再存给界面
+      const message = `${provider.providerName} 没有保存：${hideSecrets(error, [password])}`;
+      const failed: Approval = { ...approval, login: { ...approval.login!, entry: { ...entry, error: message } } };
+      store.saveApproval(failed);
+      if (failed.groupId) runtime.groups.publish(failed.groupId);
+      runtime.bus.emit({ type: "approval", approval: failed });
+      return { status: 400, body: { error: message, approval: failed } };
     }
     const candidate = { provider: provider.pluginId, providerName: provider.providerName, id: savedId, uris };
     try {
       const result = await fillLoginPage(runtime, approval.assistantId, candidate, entry.host, async () => ({ username, password }));
-      next = { ...entry, provider: provider.pluginId, username, state: "filled", result: result.kind === "username" ? "已填好用户名" : "已填好" };
+      const withoutError = { ...entry };
+      delete withoutError.error;
+      next = { ...withoutError, provider: provider.pluginId, username, state: "filled", result: result.kind === "username" ? "已填好用户名" : "已填好" };
       reply = result.kind === "username"
         ? `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好用户名 ${username}，点下一步后再调一次 login 填密码。`
         : `用户在卡片上填了 ${entry.host} 的账号，Hob 已存进${provider.providerName}，并填好 ${username} 的账号和密码，接下来点登录按钮。`;

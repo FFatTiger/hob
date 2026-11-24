@@ -350,7 +350,7 @@ describeE2E("login / 新密码端到端（真 Chrome）", () => {
     const failed = await answerApproval(hob.runtime, approval.id, { key: "B", username: "mailer@example.org", password: PASSWORDS.mail });
     expect(failed.status).toBe(400);
     expect(failed.body).toEqual({ error: "测试密码库 没有保存：密码库拒绝保存" });
-    expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "pending", login: { entry: { state: "pending" } } });
+    expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "pending", login: { entry: { state: "pending", error: "测试密码库 没有保存：密码库拒绝保存" } } });
     expect(await inputs()).toMatchObject([{ value: "" }, { value: "" }]);
     await new Promise((resolve) => setTimeout(resolve, 300));
     expect(logs.length).toBe(before);

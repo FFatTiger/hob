@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { credentialCandidates, hostsMatch } from "../src/login.ts";
-import { hostsMatch } from "../src/login.ts";
 import { readLoginAuto, saveLoginAuto } from "../src/login-auto.ts";
 import { makeHob } from "./helpers.ts";
 
@@ -33,7 +32,7 @@ describe("login safety boundaries", () => {
       expect(tool).toBeDefined();
       expect(tool.parameters.properties).toEqual({ site: expect.anything(), reason: expect.anything() });
       expect(tool.description).toBe("请用户在云桌面里登录一个网站：会出一张卡，用户登录完会告诉你；登录信息所有助手共用，登一次就行。site 写哪个网站，reason 一句话写为什么要登录。");
-      expect(buildRouterTools(hob.runtime, "hob").some((tool) => ["ask_login", "fill_login"].includes(tool.name))).toBe(false);
+      expect(buildRouterTools(hob.runtime, "hob").some((tool) => tool.name === "login")).toBe(true);
     } finally { hob.close(); }
   });
 

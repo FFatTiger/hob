@@ -602,6 +602,7 @@ function LoginEntryCard({ approval, fresh }: { approval: Approval; fresh: boolea
           </>
         ) : account ? <div className="qfill-row"><span className="qfill-label">{t("账号")}</span><span className="qfill-value">{account}</span><span className="qfill-provider">{savedName}</span></div> : null}
       </div>
+      {entry.error ? <div className="qfill-entry-error">{entry.error}</div> : null}
       {status ? <div className={`qfill-result${entry.state === "failed" ? " bad" : ""}`}>{["filled", "self"].includes(entry.state ?? "") ? <Icon name="check" size={15} /> : null}{status}</div> : null}
       {pending ? <div className="qfoot qacts"><SelfLoginButton approvalId={approval.id} /><button className="hob-btn" onClick={() => void answer(approval.id, { key: "A" })}>{t("不登录")}</button><button className="hob-btn hob-btn-primary" disabled={!ready || busy} onClick={() => void submit()}>{t("保存并登录")}</button></div> : null}
     </div>

@@ -706,6 +706,8 @@ export interface LoginEntryApproval {
   username?: string; // 提交后记下的用户名，收起后显示
   /** self：用户在卡上点了「我自己登录」 */
   state?: "pending" | "filled" | "rejected" | "failed" | "self";
+  /** 保存失败时只在当前卡片上显示一次，重试成功后清掉；不包含密码。 */
+  error?: string;
   result?: string; // 收起后那一行：填写失败的原因
 }
 

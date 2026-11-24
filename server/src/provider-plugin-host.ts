@@ -1,7 +1,8 @@
 // 共享 Bun 供应商插件宿主进程管理器：按需启动、闲置 10 分钟自动停、崩溃下次再起、stdio NDJSON 通信。
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { join } from "node:path";
+import { tmpdir } from "node:os";
 import { createInterface } from "node:readline";
 import { fileURLToPath } from "node:url";
 import type {
@@ -11,16 +12,21 @@ import type {
   ProviderHostStatus,
   ProviderHostStatusView,
 } from "../../shared/types.ts";
-import { systemDir } from "./config.ts";
 import { BunRuntime, sanitizedBunEnv } from "./bun-runtime.ts";
 import type { ProxyEnvironmentSettings } from "./network-proxy.ts";
+
+interface RpcScope {
+  pluginId: string;
+  providerId: string;
+  accountId: string;
+}
 
 export const DEFAULT_HOST_IDLE_MS = 10 * 60 * 1000;
 
 export interface HostPluginLoadSpec {
   pluginId: string;
   dataDir: string;
-  packages: { package: string; dir: string }[];
+  packages: { package: string; dir: string; version?: string }[];
   userConfig?: { provider?: Record<string, unknown> };
 }
 
@@ -83,6 +89,7 @@ export interface HostFetchResponse {
 }
 
 export interface HostAuthUpdateEvent {
+  requestId: string;
   pluginId: string;
   provider: string;
   accountId: string;
@@ -107,9 +114,11 @@ export interface ProviderPluginHostOptions {
 interface PendingRpc {
   resolve: (value: unknown) => void;
   reject: (error: Error) => void;
+  scope?: RpcScope;
 }
 
 interface StreamingFetch {
+  scope?: RpcScope;
   headResolved: boolean;
   resolveHead: (head: { status: number; headers: Record<string, string> }) => void;
   rejectHead: (error: Error) => void;
@@ -142,6 +151,7 @@ export class ProviderPluginHost {
   private activeCalls = 0;
   private activeSignIns = 0;
   private idleTimer?: NodeJS.Timeout;
+  private idleWaiters = new Set<() => void>();
   private stopping = false;
   private closed = false;
   private stderrLines: string[] = [];
@@ -206,6 +216,33 @@ export class ProviderPluginHost {
     this.idleTimer.unref();
   }
 
+  private activityReleased(): void {
+    if (this.activeCalls === 0 && this.activeSignIns === 0) {
+      const waiters = [...this.idleWaiters];
+      this.idleWaiters.clear();
+      for (const resolve of waiters) resolve();
+    }
+    this.scheduleIdleCheck();
+  }
+
+  private waitForIdle(): Promise<void> {
+    if (this.activeCalls === 0 && this.activeSignIns === 0) return Promise.resolve();
+    return new Promise((resolve) => this.idleWaiters.add(resolve));
+  }
+
+  private rpcScope(params: Record<string, unknown>): RpcScope | undefined {
+    if (typeof params.pluginId !== "string" || typeof params.provider !== "string") return undefined;
+    return {
+      pluginId: params.pluginId,
+      providerId: params.provider,
+      accountId: typeof params.accountId === "string" ? params.accountId : "",
+    };
+  }
+
+  private scopeMatches(scope: RpcScope | undefined, event: { pluginId: string; provider: string; accountId: string }): boolean {
+    return Boolean(scope && scope.pluginId === event.pluginId && scope.providerId === event.provider && scope.accountId === event.accountId);
+  }
+
   /** 标记一个等待中的登录会话占用宿主，防止登录中途闲置停机。 */
   holdSignIn(): () => void {
     this.activeSignIns++;
@@ -215,7 +252,7 @@ export class ProviderPluginHost {
       if (released) return;
       released = true;
       this.activeSignIns = Math.max(0, this.activeSignIns - 1);
-      this.scheduleIdleCheck();
+      this.activityReleased();
     };
   }
 
@@ -223,7 +260,7 @@ export class ProviderPluginHost {
     return JSON.stringify(plugins.map((p) => ({
       id: p.pluginId,
       dataDir: p.dataDir,
-      pkgs: p.packages,
+      pkgs: p.packages.map((pkg) => ({ package: pkg.package, dir: pkg.dir, version: pkg.version ?? "" })),
       cfg: p.userConfig ?? null,
     })));
   }
@@ -248,15 +285,10 @@ export class ProviderPluginHost {
     }
 
     if (this.child && !this.stopping && this.status === "running" && this.loadedFingerprint !== fp) {
-      // 插件列表变了：如果当前没有正在进行的请求，重启宿主清掉旧模块内存；否则直接 init 刷新
-      if (this.activeCalls === 0 && this.activeSignIns === 0) {
+      // 插件集合或版本变了：先等正在进行的请求和登录结束，再停掉旧进程，避免在同一进程里 import 新旧版本。
+      await this.waitForIdle();
+      if (this.child && !this.stopping && this.loadedFingerprint !== fp) {
         await this.stop();
-      } else {
-        const res = await this.rawRpc<{ plugins: HostLoadedPlugin[] }>("init", { plugins: desired });
-        this.loadedFingerprint = fp;
-        this.loadedSnapshot = res.plugins;
-        this.options.onLoaded?.(res.plugins);
-        return res.plugins;
       }
     }
 
@@ -281,8 +313,8 @@ export class ProviderPluginHost {
       throw error;
     }
 
-    const hostCwd = join(systemDir(this.options.home), "provider-host");
-    mkdirSync(hostCwd, { recursive: true });
+    const hostCwd = mkdtempSync(join(tmpdir(), "hob-provider-host-"));
+    const cleanupHostCwd = () => rmSync(hostCwd, { recursive: true, force: true });
     const script = this.options.hostScriptPath ?? fileURLToPath(new URL("./provider-host.mjs", import.meta.url));
     const env = sanitizedBunEnv(this.options.proxy?.() ?? { proxy: "", noProxy: "" });
 
@@ -309,11 +341,13 @@ export class ProviderPluginHost {
 
     child.on("error", (error) => {
       if (this.child !== child) return;
+      cleanupHostCwd();
       this.handleExit(`宿主进程启动失败：${error.message}`);
     });
 
     child.on("exit", (code, signal) => {
       if (this.child !== child) return;
+      cleanupHostCwd();
       if (this.stopping || this.closed) {
         this.child = null;
         this.loadedFingerprint = "";
@@ -379,12 +413,16 @@ export class ProviderPluginHost {
     // 主动事件（无 id）
     if (!id && typeof msg.event === "string") {
       if (msg.event === "auth_update" && msg.auth && typeof msg.auth === "object") {
-        this.options.onAuthUpdate?.({
+        const requestId = typeof msg.requestId === "string" ? msg.requestId : "";
+        const event = {
+          requestId,
           pluginId: String(msg.pluginId ?? ""),
           provider: String(msg.provider ?? ""),
           accountId: String(msg.accountId ?? ""),
-          auth: msg.auth as Record<string, unknown>,
-        });
+        };
+        const scope = this.pending.get(requestId)?.scope ?? this.fetches.get(requestId)?.scope;
+        if (!requestId || !this.scopeMatches(scope, event)) return;
+        this.options.onAuthUpdate?.({ ...event, auth: msg.auth as Record<string, unknown> });
       }
       return;
     }
@@ -460,6 +498,7 @@ export class ProviderPluginHost {
 
   private rawRpc<T>(method: string, params: Record<string, unknown>, signal?: AbortSignal): Promise<T> {
     const id = String(this.nextId++);
+    const scope = this.rpcScope(params);
     return new Promise<T>((resolve, reject) => {
       if (signal?.aborted) {
         reject(new Error("操作已取消"));
@@ -470,6 +509,7 @@ export class ProviderPluginHost {
       };
       signal?.addEventListener("abort", onAbort, { once: true });
       this.pending.set(id, {
+        scope,
         resolve: (value) => {
           signal?.removeEventListener("abort", onAbort);
           resolve(value as T);
@@ -498,7 +538,7 @@ export class ProviderPluginHost {
       return await this.rawRpc<T>(method, params, signal);
     } finally {
       this.activeCalls = Math.max(0, this.activeCalls - 1);
-      this.scheduleIdleCheck();
+      this.activityReleased();
     }
   }
 
@@ -514,7 +554,7 @@ export class ProviderPluginHost {
       if (callReleased) return;
       callReleased = true;
       this.activeCalls = Math.max(0, this.activeCalls - 1);
-      this.scheduleIdleCheck();
+      this.activityReleased();
     };
 
     const onAbort = () => {
@@ -549,6 +589,7 @@ export class ProviderPluginHost {
     });
 
     const record: StreamingFetch = {
+      scope: this.rpcScope(params as unknown as Record<string, unknown>),
       headResolved: false,
       resolveHead,
       rejectHead,
@@ -615,11 +656,9 @@ export class ProviderPluginHost {
     }
     const fp = this.fingerprint(desired);
     if (fp === this.loadedFingerprint) return;
-    if (this.activeCalls === 0 && this.activeSignIns === 0) {
-      await this.stop();
-    } else {
-      await this.ensureStarted();
-    }
+    await this.waitForIdle();
+    if (this.child && this.loadedFingerprint !== fp) await this.stop();
+    if (this.options.getPlugins().length) await this.ensureStarted();
   }
 
   /** 主动停止 Bun 宿主进程（闲置超时或 Hob 退出时调用）。 */
@@ -708,7 +747,7 @@ export class ProviderPluginHost {
     );
   }
 
-  callback(params: { session: string; code?: string }, signal?: AbortSignal) {
+  callback(params: { session: string; code?: string; pluginId?: string; provider?: string; accountId?: string }, signal?: AbortSignal) {
     return this.rpc<{ ok: boolean; error?: string; provider?: string; auth?: Record<string, unknown>; accountInfo?: { displayName?: string; hint?: string } }>(
       "callback",
       params as unknown as Record<string, unknown>,

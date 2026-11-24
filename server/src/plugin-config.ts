@@ -1,3 +1,4 @@
+import { isSemver } from "../../shared/plugin-version.ts";
 import type { PluginProviderSpec } from "../../shared/types.ts";
 
 export type PluginConfigValue = string | number | boolean | (string | number | boolean)[];
@@ -46,7 +47,7 @@ export function providerDeclarations(manifest: unknown): PluginProviderSpec[] {
     const version = typeof item.version === "string" ? item.version.trim() : "";
     const integrity = typeof item.integrity === "string" ? item.integrity.trim() : "";
     if (!pkg || !PKG_NAME.test(pkg)) throw new Error(`providers.package 无效：${pkg || "(空)"}`);
-    if (!version || /\s/.test(version)) throw new Error(`providers.version 无效：${pkg}`);
+    if (!isSemver(version)) throw new Error(`providers.version 必须是 semver：${pkg}`);
     if (!INTEGRITY.test(integrity)) throw new Error(`providers.integrity 必须是 sha512-... 格式：${pkg}`);
     if (seen.has(pkg)) throw new Error(`providers 中存在重复的包：${pkg}`);
     seen.add(pkg);

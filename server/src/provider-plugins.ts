@@ -122,9 +122,10 @@ function isObject(v: unknown): v is Record<string, unknown> {
 /** 生成插件供应商在 Hob/引擎中的唯一服务商 id（避免与内置 openai / github-copilot 冲突）。 */
 export function hobProviderIdFor(pluginId: string, providerId: string, providerCount: number): string {
   const cleanPlugin = pluginId.toLowerCase().replace(/[^a-z0-9._-]/g, "-");
-  if (providerCount <= 1) return `plugin-${cleanPlugin}`;
   const cleanProvider = providerId.toLowerCase().replace(/[^a-z0-9._-]/g, "-");
-  return `plugin-${cleanPlugin}-${cleanProvider}`;
+  if (providerCount <= 1) return `plugin-${cleanPlugin}`;
+  // ':' is not allowed in plugin ids, so it keeps plugin-id/provider-id pairs injective.
+  return `plugin-${cleanPlugin}:${cleanProvider}`;
 }
 
 /** secrets.json 中按插件、按供应商、按账号隔离的键名。 */
@@ -261,11 +262,17 @@ function isValidPortString(value: string): boolean {
   return n >= 1 && n <= 65535;
 }
 
-/** 从 OAuth 授权链接的 query 参数中提取本次登录发出的 loopback 回调端口（最多递归两层）。 */
+/** 从 OAuth 授权链接的 query 参数中提取本次登录发出的 loopback 回调端口。 */
 export function extractLoopbackPorts(rawUrl: string, depth = 2): string[] {
   const ports: string[] = [];
   const add = (p: string) => {
     if (isValidPortString(p) && !ports.includes(p)) ports.push(p);
+  };
+  const isCallbackParameter = (key: string): boolean => {
+    const normalized = key.toLowerCase().replace(/[\s-]/g, "_");
+    return normalized === "redirect_uri" || normalized === "redirect_url" || normalized === "redirect"
+      || normalized === "callback" || normalized === "callback_url" || normalized === "return_uri"
+      || (normalized.includes("redirect") && (normalized.includes("uri") || normalized.includes("url")));
   };
   const scan = (page: string, remaining: number) => {
     let parsed: URL;
@@ -274,21 +281,18 @@ export function extractLoopbackPorts(rawUrl: string, depth = 2): string[] {
     } catch {
       return;
     }
-    for (const [k, v] of parsed.searchParams.entries()) {
+    for (const [key, value] of parsed.searchParams.entries()) {
+      if (!isCallbackParameter(key)) continue;
       try {
-        const inner = new URL(v);
+        const inner = new URL(value);
         if (inner.protocol === "http:" && isLoopbackHostname(inner.hostname)) {
           add(inner.port || "80");
           continue;
         }
-        if (remaining > 1 && (inner.protocol === "https:" || inner.protocol === "http:") && inner.host) {
-          scan(v, remaining - 1);
-          continue;
+        if (remaining > 1 && (inner.protocol === "https:" || inner.protocol === "http:")) {
+          scan(value, remaining - 1);
         }
-      } catch { /* 非 URL 参数 */ }
-      if (k.toLowerCase().includes("port") && isValidPortString(v)) {
-        add(v);
-      }
+      } catch { /* 非回调 URL 参数 */ }
     }
   };
   scan(rawUrl, depth);
@@ -509,13 +513,20 @@ export class ProviderPluginManager {
           continue;
         }
         try {
-          const parsed = JSON.parse(raw) as Record<string, unknown>;
-          for (const field of ["access", "refresh", "key", "token", "idToken", "secret"]) {
-            const v = parsed[field];
-            if (typeof v === "string" && v.length >= 6) {
-              out = out.split(v).join("[已隐藏]");
+          const parsed = JSON.parse(raw) as unknown;
+          const values: string[] = [];
+          const visit = (value: unknown, seen: Set<object>) => {
+            if (typeof value === "string") {
+              if (value.length >= 6) values.push(value);
+              return;
             }
-          }
+            if (!value || typeof value !== "object" || seen.has(value)) return;
+            seen.add(value);
+            if (Array.isArray(value)) value.forEach((item) => visit(item, seen));
+            else Object.values(value).forEach((item) => visit(item, seen));
+          };
+          visit(parsed, new Set());
+          for (const value of values) out = out.split(value).join("[已隐藏]");
         } catch {
           if (raw.length >= 6) out = out.split(raw).join("[已隐藏]");
         }
@@ -541,6 +552,7 @@ export class ProviderPluginManager {
         .map((spec) => ({
           package: spec.package,
           dir: resolveProviderPackageDir(pluginDir, spec.package),
+          version: spec.version,
         }))
         .filter((entry) => existsSync(entry.dir));
       if (!packages.length) continue;
@@ -609,16 +621,17 @@ export class ProviderPluginManager {
   }
 
   /** 安装或更新插件时：下载 Bun（按需）并用 Bun 安装校验过 integrity 的包，推送进度事件。 */
-  async installPluginProviders(pluginId: string): Promise<void> {
-    const manifest = this.options.store.files(pluginId).manifest;
+  async installPluginProviders(pluginId: string, targetDir?: string): Promise<void> {
+    const pluginDir = targetDir ?? this.options.store.pluginDir(pluginId);
+    const manifest = JSON.parse(readFileSync(join(pluginDir, "plugin.json"), "utf8")) as Record<string, unknown>;
     const specs = providerDeclarations(manifest);
     if (!specs.length) return;
-    const pluginDir = this.options.store.pluginDir(pluginId);
     const emitProgress = (ev: Omit<PluginInstallProgress, "pluginId">) => {
       this.options.bus.emit({ type: "plugin-install", pluginId, ...ev });
     };
     try {
       await this.bun.installPackages(pluginDir, specs, emitProgress);
+      if (targetDir) return;
       // 确保 state 里有记录；启动宿主加载一次元数据（methods / cli / icon / 静态模型）
       await this.host.syncIfRunning();
       const installed = this.options.store.get(pluginId);
@@ -666,10 +679,7 @@ export class ProviderPluginManager {
     const installed = this.options.store.get(pluginId);
     const specs = providerDeclarations(this.options.store.files(pluginId).manifest);
     if (!specs.length) return [];
-    const doc = this.readDoc();
-    const existing = doc.plugins[pluginId];
-    const hasProviders = existing && Object.keys(existing.providers).length > 0;
-    if ((forceHost || !hasProviders) && installed.enabled && !installed.needsApproval) {
+    if (forceHost && installed.enabled && !installed.needsApproval) {
       const loaded = await this.host.ensureStarted();
       this.mergeLoadedMetadata(loaded);
     }
@@ -1237,7 +1247,13 @@ export class ProviderPluginManager {
     const hostSession = session.hostSessionId;
     session.hostSessionId = undefined;
     try {
-      const res = await this.host.callback({ session: hostSession, ...(code !== undefined ? { code } : {}) }, session.controller.signal);
+      const res = await this.host.callback({
+        session: hostSession,
+        ...(code !== undefined ? { code } : {}),
+        pluginId: session.view.pluginId,
+        provider: session.view.providerId,
+        accountId: session.targetAccountId ?? "",
+      }, session.controller.signal);
       if (session.view.status === "cancelled" || session.view.status === "expired") {
         return { ...session.view };
       }
@@ -1302,9 +1318,14 @@ export class ProviderPluginManager {
     return { ...session.view };
   }
 
-  getSignInSession(sessionId: string): PluginSignInSessionView | null {
+  getSignInSession(sessionId: string, pluginId?: string, providerId?: string): PluginSignInSessionView | null {
     const s = this.activeSignIns.get(sessionId);
-    return s ? { ...s.view } : null;
+    if (!s || (pluginId !== undefined && s.view.pluginId !== pluginId) || (providerId !== undefined && s.view.providerId !== providerId)) return null;
+    return { ...s.view };
+  }
+
+  assertSignInSession(pluginId: string, providerId: string, sessionId: string): void {
+    if (!this.getSignInSession(sessionId, pluginId, providerId)) throw new Error("登录会话不属于当前插件和供应商");
   }
 
   cancelSignIn(sessionId: string): PluginSignInSessionView {

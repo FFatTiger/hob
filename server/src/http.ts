@@ -473,29 +473,32 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
   app.post("/api/plugins/:id/install", async c => {
     const id = c.req.param("id");
+    let staged: string | undefined;
     try {
       const body = await c.req.json().catch(() => ({})) as { source?: string };
-      runtime.plugins.store.install(id, false, false, body.source);
-      try {
-        await runtime.providerPlugins.installPluginProviders(id);
-      } catch (installErr) {
-        runtime.plugins.store.remove(id);
-        throw installErr;
-      }
+      staged = runtime.plugins.store.prepareProviderDirectory(id, false, body.source);
+      await runtime.providerPlugins.installPluginProviders(id, staged);
+      runtime.plugins.store.install(id, false, false, body.source, staged);
       await runtime.plugins.reload(id);
       await runtime.providerPlugins.onPluginStateChanged(id);
       return c.json(pluginView(id));
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    finally { if (staged) rmSync(staged, { recursive: true, force: true }); }
   });
   app.post("/api/plugins/:id/update", async c => {
     const id = c.req.param("id");
+    let staged: string | undefined;
     try {
-      runtime.plugins.store.install(id, true);
-      await runtime.providerPlugins.installPluginProviders(id);
+      staged = runtime.plugins.store.prepareProviderDirectory(id, true);
+      await runtime.providerPlugins.installPluginProviders(id, staged);
+      runtime.plugins.store.install(id, true, false, undefined, staged);
       await runtime.plugins.reload(id);
       await runtime.providerPlugins.onPluginStateChanged(id);
       return c.json(pluginView(id));
-    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    } catch (error) {
+      try { runtime.plugins.store.recordUpdateError(id, runtime.providerPlugins.redact(pluginError(error))); } catch { /* 保留原始失败响应 */ }
+      return c.json({ error: pluginError(error) }, 400);
+    } finally { if (staged) rmSync(staged, { recursive: true, force: true }); }
   });
   app.post("/api/plugins/:id/approve", async c => {
     const id = c.req.param("id");
@@ -676,15 +679,18 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.get("/api/plugins/:id/providers/:providerId/auth/session/:sessionId", c => {
-    const session = runtime.providerPlugins.getSignInSession(c.req.param("sessionId"));
+    const session = runtime.providerPlugins.getSignInSession(c.req.param("sessionId"), c.req.param("id"), c.req.param("providerId"));
     if (!session) return c.json({ error: "找不到该登录会话" }, 404);
     return c.json(session);
   });
   app.post("/api/plugins/:id/providers/:providerId/auth/paste", async c => {
     try {
       const body = await c.req.json().catch(() => null) as { sessionId?: unknown; url?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
       if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
       if (typeof body?.url !== "string" || !body.url.trim()) throw new Error("请粘贴浏览器地址");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
       const res = await runtime.providerPlugins.pasteLoopbackCallback(body.sessionId, body.url);
       return c.json(res);
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
@@ -692,8 +698,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/plugins/:id/providers/:providerId/auth/code", async c => {
     try {
       const body = await c.req.json().catch(() => null) as { sessionId?: unknown; code?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
       if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
       if (typeof body?.code !== "string" || !body.code.trim()) throw new Error("请输入授权码");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
       const session = await runtime.providerPlugins.submitSignInCode(body.sessionId, body.code);
       return c.json(session);
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
@@ -701,7 +710,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/plugins/:id/providers/:providerId/auth/cancel", async c => {
     try {
       const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
       if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
       return c.json(runtime.providerPlugins.cancelSignIn(body.sessionId));
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });

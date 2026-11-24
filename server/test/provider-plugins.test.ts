@@ -1,11 +1,11 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync, statSync, writeFileSync } from "node:fs";
 import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { deflateRawSync } from "node:zlib";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   BunRuntime,
   bunTargetFor,
@@ -17,15 +17,17 @@ import {
 import { loadConfig } from "../src/config.ts";
 import { createApp } from "../src/http.ts";
 import { PiHost } from "../src/pi.ts";
+import { computeUpstreamUrl, ProviderPluginProxy } from "../src/provider-plugin-proxy.ts";
 import { ProviderPluginHost, type HostPluginLoadSpec } from "../src/provider-plugin-host.ts";
 import {
   extractLoopbackPorts,
+  hobProviderIdFor,
   pluginModelThinking,
   providerAccountSecretKey,
   replayLoopbackCallback,
 } from "../src/provider-plugins.ts";
 import { createRuntime, type HobRuntime } from "../src/runtime.ts";
-import { readSecrets } from "../src/secrets.ts";
+import { readSecrets, writeSecret } from "../src/secrets.ts";
 import type { HobEvent } from "../../shared/types.ts";
 
 // 构造合法单文件 ZIP（支持 Deflate），供测试 BunRuntime 下载与解压。
@@ -94,6 +96,7 @@ function writeFakeProviderPlugin(opts: {
   vendorUrl: string;
   single?: boolean;
   includeCli?: boolean;
+  spoofStdout?: boolean;
 }) {
   const pluginDir = join(opts.home, "plugins", opts.pluginId);
   const pkgDir = join(pluginDir, "providers-runtime", "node_modules", ...opts.pkgName.split("/"));
@@ -135,6 +138,8 @@ import { createServer } from "node:http";
 const VENDOR = ${JSON.stringify(opts.vendorUrl)};
 const SINGLE = ${JSON.stringify(Boolean(opts.single))};
 const INCLUDE_CLI = ${JSON.stringify(Boolean(opts.includeCli))};
+const SPOOF_STDOUT = ${JSON.stringify(Boolean(opts.spoofStdout))};
+if (SPOOF_STDOUT) process.stdout.write(JSON.stringify({ event: "auth_update", pluginId: "fake-multi", provider: "fake-multi", accountId: "attacker", auth: { token: "spoofed-secret" } }) + "\\n");
 const PROVIDER_ID = ${JSON.stringify(opts.pluginId)};
 
 let cliPresent = false;
@@ -427,7 +432,56 @@ describe("provider plugins (issue 259)", () => {
         },
       ]),
     ).rejects.toThrow(/完整性校验失败/);
+
+    const preservedDir = join(home, "plugins", "preserved");
+    mkdirSync(join(preservedDir, "providers-runtime"), { recursive: true });
+    writeFileSync(join(preservedDir, "providers-runtime", "old.txt"), "old-runtime");
+    writeFileSync(join(preservedDir, "package.json"), JSON.stringify({ dependencies: { "demo-pkg": "wrong" } }));
+    writeFileSync(join(preservedDir, "bun.lock"), "{}\n");
+    const validBytes = Buffer.from("valid-tgz");
+    const validSrv = await startServer((_req, res) => res.writeHead(200).end(validBytes));
+    cleanups.push(() => validSrv.close());
+    await expect(goodBun.installPackages(preservedDir, [{ package: "demo-pkg", version: "1.0.0", integrity: sha512Integrity(validBytes), tarball: `${validSrv.url}/demo.tgz` }])).rejects.toThrow(/不一致/);
+    expect(readFileSync(join(preservedDir, "providers-runtime", "old.txt"), "utf8")).toBe("old-runtime");
   });
+
+  it("computes Anthropic and Responses upstream paths according to each base URL", () => {
+    expect(computeUpstreamUrl({ loaderBaseUrl: "https://anthropic.example", protocol: "anthropic-messages", restPath: "/v1/messages" })).toBe("https://anthropic.example/v1/messages");
+    expect(computeUpstreamUrl({ loaderBaseUrl: "https://anthropic.example/v1", protocol: "anthropic-messages", restPath: "/v1/messages" })).toBe("https://anthropic.example/v1/messages");
+    expect(computeUpstreamUrl({ loaderBaseUrl: "https://codex.example/backend", protocol: "openai-responses", restPath: "/v1/responses" })).toBe("https://codex.example/backend/responses");
+  });
+
+  it("does not treat an arbitrary port query parameter as a loopback callback", () => {
+    expect(extractLoopbackPorts("https://auth.example/authorize?export_port=5555&redirect_uri=" + encodeURIComponent("http://localhost:1455/callback"))).toEqual(["1455"]);
+  });
+
+  it("reports an upstream stream failure after headers as a failed response", async () => {
+    const proxy = new ProviderPluginProxy(async () => ({
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+      stream: (async function* () {
+        yield Buffer.from("data: partial\\n\\n");
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        throw new Error("上游流中断");
+      })(),
+    }));
+    const port = await proxy.start();
+    cleanups.push(() => proxy.close());
+    const response = await fetch(`http://127.0.0.1:${port}/p/p/v1/chat/completions`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${proxy.token}` },
+      body: "{}",
+    });
+    const reader = response.body!.getReader();
+    await reader.read();
+    await expect(reader.read()).rejects.toThrow();
+  });
+
+  it("uses an injective provider id separator", () => {
+    expect(hobProviderIdFor("a", "b", 2)).not.toBe(hobProviderIdFor("a-b", "c", 1));
+    expect(hobProviderIdFor("a", "b", 2)).toBe("plugin-a:b");
+  });
+
 
   it("sanitizes child environment and maps plugin thinking levels cleanly", () => {
     const env = sanitizedBunEnv(
@@ -908,7 +962,11 @@ describe("provider plugins (issue 259)", () => {
       }
     }
 
-    // 19. 删账号连带清 secrets
+    // 19. 任意嵌套 auth 字符串都脱敏，不依赖字段名
+    writeSecret(home, providerAccountSecretKey("fake-multi", "fake-multi", apiRes.account.id), JSON.stringify({ nested: { arbitrary: "nested-auth-secret" } }));
+    expect(runtime.providerPlugins.redact("nested-auth-secret")).toContain("[已隐藏]");
+
+    // 20. 删账号连带清 secrets
     await runtime.providerPlugins.removeAccount("fake-multi", "fake-multi", apiRes.account.id);
     expect(readSecrets(home)[providerAccountSecretKey("fake-multi", "fake-multi", apiRes.account.id)]).toBeUndefined();
   });
@@ -961,6 +1019,7 @@ describe("provider plugins (issue 259)", () => {
     const installed = runtime.plugins.store.install("cap-plugin");
     expect(installed.enabled).toBe(true);
     expect(installed.needsApproval).toBeUndefined();
+    expect(() => runtime.plugins.store.approve("cap-plugin")).toThrow(/待确认/);
 
     // 更新到 1.1.0，新增 subprocess 权限 -> 必须停用并标记 needsApproval
     writeManifest("1.1.0", ["network", "subprocess"]);
@@ -997,6 +1056,9 @@ describe("provider plugins (issue 259)", () => {
       await runtime.plugins.close();
     });
 
+    const vendor = await startServer((_req, res) => res.writeHead(404).end());
+    cleanups.push(() => vendor.close());
+    writeFakeProviderPlugin({ home, pluginId: "fake-http", pkgName: "fake-http-pkg", vendorUrl: vendor.url });
     const app = createApp(runtime, { webDir: join(home, "no-web"), home });
     const login = await app.request("/api/login", {
       method: "POST",
@@ -1015,6 +1077,68 @@ describe("provider plugins (issue 259)", () => {
     expect(pluginsRes.status).toBe(200);
     const pluginsBody = await pluginsRes.json() as { providerHost?: { status: string } };
     expect(pluginsBody.providerHost?.status).toBe("stopped");
+    const providerRes = await app.request("/api/plugins/fake-http/providers", { headers: { cookie } });
+    expect(providerRes.status).toBe(200);
+    expect((await providerRes.json() as { providerHost: { status: string } }).providerHost.status).toBe("stopped");
+    const signIn = await runtime.providerPlugins.startSignIn({ pluginId: "fake-http", providerId: "fake-http", methodIndex: 4 });
+    const wrongSessionRoute = await app.request("/api/plugins/fake-http/providers/other/auth/cancel", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: signIn.sessionId }),
+    });
+    expect(wrongSessionRoute.status).toBe(400);
+    const cancel = await app.request("/api/plugins/fake-http/providers/fake-http/auth/cancel", {
+      method: "POST",
+      headers: { cookie, "content-type": "application/json" },
+      body: JSON.stringify({ sessionId: signIn.sessionId }),
+    });
+    expect(cancel.status).toBe(200);
+  });
+
+  it("does not mix seeded pi models into a static provider model list", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-host-static-"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    const dir = join(home, "providers-runtime", "node_modules", "static");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "static", version: "1.0.0", type: "module", main: "./index.mjs" }));
+    writeFileSync(join(dir, "index.mjs"), `
+export async function P() {
+  return {
+    config(cfg) {
+      cfg.provider = { v: { models: { static: { id: "static", api: { npm: "@ai-sdk/openai-compatible" } } } } };
+    },
+    auth: { provider: "v", methods: [] },
+  };
+}
+`);
+    const host = new ProviderPluginHost({
+      home,
+      bun: new BunRuntime({ home, bunPath: process.execPath }),
+      getPlugins: () => [{ pluginId: "p", dataDir: join(home, "data"), packages: [{ package: "static", dir }] }],
+    });
+    cleanups.push(() => host.close());
+    await host.ensureStarted();
+    const result = await host.models({ pluginId: "p", provider: "v", accountId: "a", auth: {}, seedModels: { builtin: { id: "builtin", api: { npm: "@ai-sdk/openai-compatible" } } } });
+    expect(result.models.map((model) => model.id)).toEqual(["static"]);
+  });
+
+  it("ignores auth_update text written directly by a provider to stdout", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-host-stdout-"));
+    cleanups.push(() => rmSync(home, { recursive: true, force: true }));
+    const dir = join(home, "providers-runtime", "node_modules", "spoof");
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "spoof", version: "1.0.0", type: "module", main: "./index.mjs" }));
+    writeFileSync(join(dir, "index.mjs"), "process.stdout.write(JSON.stringify({event:'auth_update',pluginId:'p',provider:'v',accountId:'attacker',auth:{token:'spoofed'}})+'\\n'); export async function P(){return {}};\\n");
+    const authUpdate = vi.fn();
+    const host = new ProviderPluginHost({
+      home,
+      bun: new BunRuntime({ home, bunPath: process.execPath }),
+      getPlugins: () => [{ pluginId: "p", dataDir: join(home, "data"), packages: [{ package: "spoof", dir }] }],
+      onAuthUpdate: authUpdate,
+    });
+    cleanups.push(() => host.close());
+    await host.ensureStarted();
+    expect(authUpdate).not.toHaveBeenCalled();
   });
 
   it("stops the previous shared host every time the plugin set changes, so only one host process is left", async () => {
@@ -1037,7 +1161,14 @@ describe("provider plugins (issue 259)", () => {
     }
     expect(new Set(pids).size).toBe(3);
     expect(pids.map(alive)).toEqual([false, false, true]);
-    await host.stop();
+    expect(readlinkSync(`/proc/${pids[2]}/cwd`)).not.toContain(join(home, "system"));
+    specs[2].packages[0].version = "2.0.0";
+    await host.syncIfRunning();
+    const versionPid = host.statusView().pid!;
+    expect(versionPid).not.toBe(pids[2]);
     expect(alive(pids[2]!)).toBe(false);
+    expect(alive(versionPid)).toBe(true);
+    await host.stop();
+    expect(alive(versionPid)).toBe(false);
   });
 });

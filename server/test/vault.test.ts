@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { seedBuiltinVault } from "../src/dev-team.ts";
@@ -70,5 +70,19 @@ describe("built-in encrypted password vault", () => {
     hob.runtime.plugins.store.remove("vault");
     seedBuiltinVault(hob.runtime.plugins.store);
     expect(() => hob.runtime.plugins.store.get("vault")).toThrow("插件 vault 未安装");
+  });
+
+  it("moves an installed built-in vault to the version Hob ships, keeping its settings", () => {
+    const hob = makeHob(); hobs.push(hob);
+    const store = hob.runtime.plugins.store;
+    seedBuiltinVault(store);
+    const shipped = store.get("vault").version;
+    const docPath = join(hob.home, "system/plugins.json");
+    const doc = JSON.parse(readFileSync(docPath, "utf8"));
+    const entry = doc.plugins.find((plugin: { id: string }) => plugin.id === "vault");
+    entry.version = "0.9.0"; entry.enabled = false;
+    writeFileSync(docPath, JSON.stringify(doc));
+    seedBuiltinVault(store);
+    expect(store.get("vault")).toMatchObject({ version: shipped, enabled: false });
   });
 });

@@ -167,7 +167,7 @@ function saveLoginCard({ name, url, username, folder } = {}) {
     { tag: "column_set", columns: [{ weight: 1, elements: [{ tag: "input", name: "name", label: "名称", default_value: name || "", required: true }] }, { weight: 1, elements: [{ tag: "select_static", name: "folder", label: "文件夹", options, placeholder: "不放进文件夹", display: "dropdown", ...initial }] }] },
     { tag: "input", name: "url", label: "网址", default_value: url || "", input_type: "text" },
     { tag: "input", name: "username", label: "用户名", default_value: username || "", input_type: "text" },
-    { tag: "input", name: "password", label: "密码", input_type: "password", min_length: 10, generate: true, required: true },
+    { tag: "input", name: "password", label: "密码", input_type: "password", generate: true, required: true },
     { tag: "button", name: "cancel", text: "取消", type: "default" },
     { tag: "button", name: "save", text: "保存", type: "primary_filled", form_action_type: "submit" },
   ] }] } };

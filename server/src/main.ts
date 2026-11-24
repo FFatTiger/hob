@@ -75,6 +75,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
       runtime.scriptTools.close();
       runtime.jobs.disposeAll();
       runtime.router.disposeAll();
+      await runtime.providerPlugins.close();
       await runtime.plugins.close();
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },

@@ -70,7 +70,12 @@ export function thinkingForPick(pick: ModelPick, catalog: ModelCatalog): Thinkin
 function infoOf(model: Model<any>, settings: ModelSettings): ModelInfo {
   const ref = `${model.provider}/${model.id}`;
   const reasoning = Boolean(model.reasoning);
-  const plan = thinkingPlan(model.id, reasoning, settings.thinking?.[ref], model.api);
+  const userCustom = settings.thinking?.[ref];
+  const pluginMap =
+    userCustom === undefined && model.provider.startsWith("plugin-") && model.thinkingLevelMap
+      ? (model.thinkingLevelMap as ThinkingLevelMapSetting)
+      : undefined;
+  const plan = thinkingPlan(model.id, reasoning, userCustom ?? pluginMap, model.api);
   return {
     ref,
     provider: model.provider,

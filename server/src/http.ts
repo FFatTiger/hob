@@ -28,7 +28,7 @@ import type {
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
-import { answerApproval, answerCard, archiveAssistant, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
+import { answerApproval, answerCard, archiveAssistant, retirePluginCards, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -464,7 +464,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.post("/api/plugins/:id/update", async c => {
-    try { const id = c.req.param("id"); runtime.plugins.store.install(id, true); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
+    try { const id = c.req.param("id"); const before = runtime.plugins.store.list().find(plugin => plugin.id === id)?.version; if (runtime.plugins.store.install(id, true).version !== before) retirePluginCards(runtime, id); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
     catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.patch("/api/plugins/:id", async c => {

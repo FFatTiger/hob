@@ -20,6 +20,11 @@ console.info = writeErr;
 console.warn = writeErr;
 console.debug = () => {};
 
+// 防止单个插件内部未捕获的后台 Promise 拒绝把共享宿主进程整进程带崩
+process.on("unhandledRejection", (reason) => {
+  writeErr("unhandledRejection:", reason);
+});
+
 // ---- 有序输出队列 ----------------------------------------------------------
 
 const outq = [];
@@ -106,7 +111,8 @@ function clone(value) {
 
 function bounded(promise, signal, timeoutMs) {
   let timer;
-  const racers = [Promise.resolve(promise)];
+  const p = Promise.resolve(promise);
+  const racers = [p];
   if (signal) {
     racers.push(new Promise((_, reject) => {
       if (signal.aborted) {
@@ -115,7 +121,8 @@ function bounded(promise, signal, timeoutMs) {
       }
       const onAbort = () => reject(new DOMException("Aborted", "AbortError"));
       signal.addEventListener("abort", onAbort, { once: true });
-      Promise.resolve(promise).finally(() => signal.removeEventListener("abort", onAbort));
+      const cleanup = () => signal.removeEventListener("abort", onAbort);
+      p.then(cleanup, cleanup);
     }));
   }
   if (timeoutMs && timeoutMs > 0) {

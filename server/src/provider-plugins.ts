@@ -400,7 +400,6 @@ function classifySignInKind(params: {
   if (params.method === "code") return "code";
   if (params.loopbackPorts.length > 0) return "loopback_paste";
   if (extractUserCode(params.instructions)) return "device_code";
-  if (params.hasCli) return "local_cli";
   return "server_poll";
 }
 

@@ -133,6 +133,7 @@ export class ProviderPluginHost {
   private status: ProviderHostStatus = "stopped";
   private lastError?: string;
   private startPromise?: Promise<HostLoadedPlugin[]>;
+  private stopPromise?: Promise<void>;
   private loadedFingerprint = "";
   private loadedSnapshot: HostLoadedPlugin[] = [];
   private nextId = 1;
@@ -228,22 +229,23 @@ export class ProviderPluginHost {
   /** 按需启动（或插件集合变动时重新加载）；不会在 Hob 启动时自动拉起。 */
   async ensureStarted(): Promise<HostLoadedPlugin[]> {
     if (this.closed) throw new Error("Hob 正在关闭，无法启动插件宿主");
+    if (this.stopPromise) await this.stopPromise;
     const desired = this.options.getPlugins();
     const fp = this.fingerprint(desired);
 
-    if (this.child && this.status === "running" && this.loadedFingerprint === fp) {
+    if (this.child && !this.stopping && this.status === "running" && this.loadedFingerprint === fp) {
       this.scheduleIdleCheck();
       return this.loadedSnapshot;
     }
 
     if (this.startPromise) {
       await this.startPromise;
-      if (this.child && this.status === "running" && this.loadedFingerprint === fp) {
+      if (this.child && !this.stopping && this.status === "running" && this.loadedFingerprint === fp) {
         return this.loadedSnapshot;
       }
     }
 
-    if (this.child && this.status === "running" && this.loadedFingerprint !== fp) {
+    if (this.child && !this.stopping && this.status === "running" && this.loadedFingerprint !== fp) {
       // 插件列表变了：如果当前没有正在进行的请求，重启宿主清掉旧模块内存；否则直接 init 刷新
       if (this.activeCalls === 0 && this.activeSignIns === 0) {
         await this.stop();
@@ -288,6 +290,8 @@ export class ProviderPluginHost {
       stdio: ["pipe", "pipe", "pipe"],
     });
     this.child = child;
+    // 子进程意外退出时写入 stdin 可能触发异步 EPIPE，这里吞掉并由 exit/rpc 错误处理接管
+    child.stdin?.on("error", () => {});
 
     const rl = createInterface({ input: child.stdout!, terminal: false });
     rl.on("line", (line) => this.handleStdoutLine(line));
@@ -618,6 +622,7 @@ export class ProviderPluginHost {
 
   /** 主动停止 Bun 宿主进程（闲置超时或 Hob 退出时调用）。 */
   async stop(): Promise<void> {
+    if (this.stopPromise) return this.stopPromise;
     this.clearIdleTimer();
     const child = this.child;
     if (!child) {
@@ -626,36 +631,42 @@ export class ProviderPluginHost {
       return;
     }
     this.stopping = true;
-    const exitPromise = new Promise<void>((resolve) => {
-      if (child.exitCode !== null || child.signalCode !== null) {
-        resolve();
-        return;
+    const task = (async () => {
+      const exitPromise = new Promise<void>((resolve) => {
+        if (child.exitCode !== null || child.signalCode !== null) {
+          resolve();
+          return;
+        }
+        child.once("exit", () => resolve());
+      });
+      try {
+        child.stdin?.end();
+      } catch { /* ignore */ }
+      const timer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGTERM");
+        }
+      }, 1000);
+      const killTimer = setTimeout(() => {
+        if (child.exitCode === null && child.signalCode === null) {
+          child.kill("SIGKILL");
+        }
+      }, 3000);
+      try {
+        await exitPromise;
+      } finally {
+        clearTimeout(timer);
+        clearTimeout(killTimer);
       }
-      child.once("exit", () => resolve());
+      if (this.child === child) this.child = null;
+      this.loadedFingerprint = "";
+      this.stopping = false;
+      this.setStatus("stopped");
+    })();
+    this.stopPromise = task.finally(() => {
+      if (this.stopPromise === task) this.stopPromise = undefined;
     });
-    try {
-      child.stdin?.end();
-    } catch { /* ignore */ }
-    const timer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGTERM");
-      }
-    }, 1000);
-    const killTimer = setTimeout(() => {
-      if (child.exitCode === null && child.signalCode === null) {
-        child.kill("SIGKILL");
-      }
-    }, 3000);
-    try {
-      await exitPromise;
-    } finally {
-      clearTimeout(timer);
-      clearTimeout(killTimer);
-    }
-    if (this.child === child) this.child = null;
-    this.loadedFingerprint = "";
-    this.stopping = false;
-    this.setStatus("stopped");
+    return this.stopPromise;
   }
 
   async close(): Promise<void> {

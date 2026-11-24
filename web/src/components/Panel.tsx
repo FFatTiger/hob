@@ -255,7 +255,7 @@ function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean
   const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
   // 配了云桌面、这个助手的屏幕还没开：定时任务那组里留一行，点开全屏看（打开时会启动屏幕），比如先替助手登录网站
   const deskIdle = !desk && !!screenId && desktop.screens.some((entry) => entry.id === screenId && !entry.running);
-  const desktopRow = deskIdle ? <button onClick={() => setScreen("view")}><Icon name="panel" size={15} /><span>{t("云桌面")}</span><small>{t("待机")}</small><b>›</b></button> : null;
+  const desktopRow = deskIdle ? <button onClick={() => setScreen("view")}><Icon name="monitor" size={15} /><span>{t("云桌面")}</span><small>{t("待机")}</small><b>›</b></button> : null;
   const currentPanel = s.panelStack.at(-1);
   const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
   useEffect(() => {

@@ -2226,6 +2226,8 @@ svg.i {
   animation: followup-in 180ms ease both;
 }
 .followup-strip.in-group { margin-left: 40px; }
+/* 手机上群消息不缩进（头像缩小放在名字前），推荐跟着气泡左对齐 */
+.mmsgs .followup-strip.in-group { margin-left: 0; }
 .followup-chip {
   flex: none;
   max-width: 280px;

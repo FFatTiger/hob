@@ -1135,8 +1135,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   // 设置 → 关于
   app.get("/api/about", (c) => {
-    const pkg = JSON.parse(readFileSync(new URL("../../package.json", import.meta.url), "utf8")) as { version?: string };
-    const about: AboutInfo = { version: pkg.version ?? "0.0.0", home: options.home };
+    const update = runtime.update.status();
+    const about: AboutInfo = {
+      version: runtime.update.currentVersion,
+      home: options.home,
+      ...(update ? { update } : {}),
+    };
     return c.json(about);
   });
 

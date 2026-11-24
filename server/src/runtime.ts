@@ -35,6 +35,7 @@ import { SettingsStore as SettingsStoreImpl } from "./settings.ts";
 import { Store as StoreImpl } from "./store.ts";
 import { UsagePrices as UsagePricesImpl } from "./usage-prices.ts";
 import { UsageService as UsageServiceImpl } from "./usage.ts";
+import { UpdateChecker } from "./update-check.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 
 /**
@@ -73,6 +74,8 @@ export interface HobRuntime {
   push: PushService;
   /** 消耗：从会话文件统计用量，单价从 models.dev 拉 */
   usage: UsageService;
+  /** 版本检查：查 npm 上 hob-bot 最新版本，结果只放内存，定时由 main.ts 启动 */
+  update: UpdateChecker;
 }
 
 export interface CreateRuntimeOptions {
@@ -180,6 +183,10 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     settings,
     prices,
     onPricesLoaded: () => providers.apply(),
+  });
+  runtime.update = new UpdateChecker({
+    ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
+    onChange: (update) => bus.emit({ type: "update", update }),
   });
   return runtime;
 }

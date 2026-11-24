@@ -16,10 +16,26 @@ import { resolvePluginMcp, validatePluginValues } from "./plugin-config.ts";
 import { PluginStore } from "./plugin-store.ts";
 import { proxyEnvironment, type ProxyEnvironmentSettings } from "./network-proxy.ts";
 
-export type PluginConnectionStatus = "pending_config" | "connecting" | "connected" | "needs_login" | "needs_relogin" | "error";
+export type PluginConnectionStatus = "pending_config" | "connecting" | "idle" | "connected" | "needs_login" | "needs_relogin" | "error";
 export interface PluginServiceState { pluginId: string; name: string; status: PluginConnectionStatus; missing?: string[]; error?: string; tools: Tool[]; toolErrors?: { name: string; reason: string }[]; oauth?: { declared: boolean; loggedIn: boolean } }
 export interface CredentialProvider { pluginId: string; providerName: string; service: string; tool: string; role: PluginCredentialRole }
-type Connection = { state: PluginServiceState; client?: McpClient; retry?: NodeJS.Timeout; retryCount?: number; activeCalls?: number; onIdle?: Set<() => void>; stopped: boolean; hadCredentials?: boolean };
+type Connection = {
+  state: PluginServiceState;
+  client?: McpClient;
+  retry?: NodeJS.Timeout;
+  retryCount?: number;
+  activeCalls?: number;
+  onIdle?: Set<() => void>;
+  idle?: NodeJS.Timeout;
+  connecting?: Promise<void>;
+  closing?: Promise<void>;
+  raw?: unknown;
+  kind?: "stdio" | "http";
+  keepAlive?: boolean;
+  stopped: boolean;
+  hadCredentials?: boolean;
+};
+export const PLUGIN_IDLE_MS = 10 * 60 * 1000;
 const execSecret = promisify(execCallback);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
 
@@ -32,9 +48,16 @@ export class PluginHost {
   private closed = false;
   migrationErrors: string[] = [];
   onToolsChanged?: () => void;
-  constructor(home: string, private readonly proxySettings: () => ProxyEnvironmentSettings = () => ({ proxy: "", noProxy: "" })) { this.store = new PluginStore(home, proxySettings, process.env.HOB_PLUGIN_OFFICIAL_URL); }
+  constructor(home: string, private readonly proxySettings: () => ProxyEnvironmentSettings = () => ({ proxy: "", noProxy: "" }), private readonly idleMs = PLUGIN_IDLE_MS) { this.store = new PluginStore(home, proxySettings, process.env.HOB_PLUGIN_OFFICIAL_URL); }
   private paths(id: string, profiles?: { name: string; config: Record<string, unknown> }[]) {
     return { root: fileURLToPath(new URL("../../", import.meta.url)), plugin_root: join(this.store.home, "plugins", id), plugin_data: join(this.store.home, "plugin-data", id), ...(profiles ? { profiles } : {}) };
+  }
+  private pluginKeepAlive(id: string): boolean {
+    try {
+      const { manifest } = this.store.files(id);
+      const extensions = isObject(manifest.extensions) ? manifest.extensions["com.hob.plugins"] : undefined;
+      return isObject(extensions) && extensions.keepAlive === true;
+    } catch { return false; }
   }
   private key(id: string, name: string): string { return JSON.stringify([id, name]); }
   states(id?: string): PluginServiceState[] {
@@ -59,7 +82,7 @@ export class PluginHost {
     if (!plugin?.enabled) return [];
     const providers: CredentialProvider[] = [];
     for (const state of this.connections.values()) {
-      if (state.state.pluginId !== plugin.id || state.state.status !== "connected") continue;
+      if (state.state.pluginId !== plugin.id || !["connected", "idle"].includes(state.state.status)) continue;
       for (const tool of state.state.tools) {
         const meta = isObject(tool._meta) ? tool._meta : undefined;
         const value = meta?.["hob/credentials"];
@@ -140,7 +163,7 @@ export class PluginHost {
     if (!isObject(resolved.mcpServers)) throw new Error("mcpServers 必须是对象");
     await Promise.all(Object.entries(resolved.mcpServers).map(async ([name, raw]) => {
       if (isObject(raw) && raw.enabled === false) return;
-      const connection: Connection = { stopped: false, state: { pluginId: id, name, status: "connecting", tools: [] } };
+      const connection: Connection = { stopped: false, raw, keepAlive: this.pluginKeepAlive(id), state: { pluginId: id, name, status: "connecting", tools: [] } };
       this.connections.set(this.key(id, name), connection);
       await this.connect(connection, raw);
     }));
@@ -164,16 +187,50 @@ export class PluginHost {
     }, delay);
     connection.retry.unref();
   }
+  private armIdle(connection: Connection): void {
+    if (connection.idle) clearTimeout(connection.idle);
+    connection.idle = undefined;
+    if (connection.keepAlive || connection.kind !== "stdio" || connection.stopped || this.closed || !connection.client || connection.state.status !== "connected") return;
+    connection.idle = setTimeout(() => void this.stopIdle(connection), this.idleMs);
+    connection.idle.unref();
+  }
+  private async stopIdle(connection: Connection): Promise<void> {
+    connection.idle = undefined;
+    if (connection.stopped || this.closed || connection.keepAlive || connection.kind !== "stdio" || connection.activeCalls || connection.state.status !== "connected") {
+      this.armIdle(connection);
+      return;
+    }
+    const client = connection.client;
+    if (!client) return;
+    connection.client = undefined;
+    connection.state.status = "idle";
+    connection.closing = client.close().catch(() => {}).finally(() => {
+      if (connection.closing) connection.closing = undefined;
+    });
+    this.onToolsChanged?.();
+    await connection.closing;
+  }
   private async connect(connection: Connection, raw: unknown): Promise<void> {
+    if (connection.stopped || this.closed) return;
+    if (connection.connecting) return connection.connecting;
+    const task = this.connectOnce(connection, raw);
+    connection.connecting = task;
+    try { await task; } finally { if (connection.connecting === task) connection.connecting = undefined; }
+  }
+  private async connectOnce(connection: Connection, raw: unknown): Promise<void> {
     if (connection.stopped || this.closed) return;
     const state = connection.state;
     state.status = "connecting"; delete state.error;
     const parsed = validateMcpServerConfig(state.name, raw);
     if (parsed.kind === "invalid") { state.status = "error"; state.error = this.redact(state.pluginId, parsed.error); this.scheduleRetry(connection, raw); return; }
+    connection.kind = parsed.kind;
     const client = new McpClient({ name: "Hob", version: "1.0", requestTimeoutMs: (parsed.config.timeout ?? 15) * 1000 });
     connection.client = client;
     client.onClose(() => {
       if (connection.stopped || this.closed || connection.client !== client) return;
+      connection.client = undefined;
+      if (connection.idle) clearTimeout(connection.idle);
+      connection.idle = undefined;
       state.status = "error"; state.error = "MCP 连接已断开"; state.tools = [];
       this.onToolsChanged?.();
       this.scheduleRetry(connection, raw);
@@ -194,7 +251,7 @@ export class PluginHost {
       state.tools = tools; connection.retryCount = 0;
       // 有的服务不登录也能列出工具（如 Gmail），没登录就不算连上：工具留着给插件页看，不交给助手
       if (state.oauth?.declared && !hadCredentials) { state.status = "needs_login"; state.error = undefined; if (connection.client === client) connection.client = undefined; await client.close().catch(() => {}); }
-      else state.status = "connected";
+      else { state.status = "connected"; this.armIdle(connection); }
       this.onToolsChanged?.();
     } catch (error) {
       if (connection.stopped || this.closed) return;
@@ -227,12 +284,23 @@ export class PluginHost {
     }
     return message;
   }
+  private async ensureConnected(connection: Connection): Promise<void> {
+    if (connection.closing) await connection.closing;
+    if (connection.stopped || this.closed) throw new Error(`插件服务 ${connection.state.pluginId}/${connection.state.name} 未连接`);
+    if (connection.state.status === "idle" || connection.state.status === "connecting") await this.connect(connection, connection.raw);
+    if (connection.state.status !== "connected" || !connection.client) throw new Error(connection.state.error ?? `插件服务 ${connection.state.pluginId}/${connection.state.name} 未连接`);
+  }
   async call(id: string, service: string, tool: string, args: Record<string, unknown>, signal?: AbortSignal) {
     const connection = this.connections.get(this.key(id, service));
-    if (!connection || connection.state.status !== "connected" || !connection.client) throw new Error(connection?.state.error ?? `插件服务 ${id}/${service} 未连接`);
+    if (!connection) throw new Error(`插件服务 ${id}/${service} 未连接`);
+    await this.ensureConnected(connection);
+    const client = connection.client;
+    if (!client) throw new Error(connection.state.error ?? `插件服务 ${id}/${service} 未连接`);
     const hadCredentials = connection.hadCredentials === true;
     connection.activeCalls = (connection.activeCalls ?? 0) + 1;
-    try { return await connection.client.callTool(tool, args, signal ? { signal, timeoutMs: 0 } : {}); }
+    if (connection.idle) clearTimeout(connection.idle);
+    connection.idle = undefined;
+    try { return await client.callTool(tool, args, signal ? { signal, timeoutMs: 0 } : {}); }
     catch (error) {
       const authError = error instanceof McpOAuthAuthorizationRequiredError || (error instanceof McpHttpError && (error.status === 401 || error.status === 403));
       if (authError) connection.state.status = hadCredentials ? "needs_relogin" : "needs_login";
@@ -249,6 +317,7 @@ export class PluginHost {
       if (!connection.activeCalls) {
         for (const resolve of connection.onIdle ?? []) resolve();
         connection.onIdle?.clear();
+        this.armIdle(connection);
       }
     }
   }
@@ -258,12 +327,15 @@ export class PluginHost {
       if (connection.state.pluginId !== id) continue;
       connection.stopped = true;
       if (connection.retry) clearTimeout(connection.retry);
+      if (connection.idle) clearTimeout(connection.idle);
+      connection.idle = undefined;
       this.connections.delete(key);
-      if (connection.client) {
+      if (connection.client || connection.closing) {
         const client = connection.client;
         closing.push((async () => {
           if (connection.activeCalls) await new Promise<void>(resolve => (connection.onIdle ??= new Set()).add(resolve));
-          await client.close().catch(() => {});
+          if (connection.closing) await connection.closing;
+          else if (client) await client.close().catch(() => {});
         })());
       }
     }
@@ -326,7 +398,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
   const used = new Set(reservedNames);
   for (const plugin of host.store.list()) {
     if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
-    const states = host.states(plugin.id).filter(state => state.status === "connected");
+    const states = host.states(plugin.id).filter(state => ["connected", "idle"].includes(state.status));
     const visibleStates = states.map((state) => ({ ...state, tools: state.tools.filter(visibleToModel) }));
     const count = visibleStates.reduce((n, state) => n + state.tools.length, 0);
     for (const state of visibleStates) {

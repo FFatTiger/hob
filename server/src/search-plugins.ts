@@ -33,7 +33,7 @@ export function searchPluginsTool(host: PluginHost, assistantId: string) {
         else {
           const services = host.states(entry.id);
           const errors = services.filter(service => service.status === "error" && service.error).map(service => service.error);
-          if (services.length && services.every(service => service.status === "connected")) { state = "已经能用"; next = `它的工具名以 ${pluginToolName(entry.id, "")} 开头。`; }
+          if (services.length && services.every(service => service.status === "connected" || service.status === "idle")) { state = "已经能用"; next = `它的工具名以 ${pluginToolName(entry.id, "")} 开头。`; }
           else { state = "待配置"; next = `用户在「插件 → ${name}」里填配置。${errors.length ? ` ${errors.join("；")}` : ""}${services.some(service => service.status === "connecting") ? " 服务正在连接。" : ""}`; }
         }
         return { matches, text: `${name}：${description}\n${sources.length > 1 ? `来自「${entry.sourceName}」。\n` : ""}状态：${state}。${next}` };

@@ -4465,13 +4465,13 @@ button:not(:disabled):active {
   padding: 10px 10px 8px;
   border-radius: 10px;
   background: var(--field);
-  box-shadow: inset 0 0 0 1px transparent;
   transition: box-shadow var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in);
 }
 @media (hover: hover) {
   .palette:not(:disabled):hover { background: color-mix(in srgb, var(--text) 6%, var(--field)); }
 }
-.palette.on { box-shadow: inset 0 0 0 1.5px var(--accent); }
+/* 选中的样子和上面「主题」那排分段按钮一样：白底轻阴影，不加描边 */
+.palette.on { background: var(--seg-thumb); box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1); }
 .palette:disabled { cursor: default; opacity: .6; }
 .palette-dots { display: flex; align-items: center; gap: 5px; height: 22px; }
 .palette-dots i {

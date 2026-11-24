@@ -53,6 +53,7 @@ import type {
   SettingsPatch,
   ThinkingLevelMapSetting,
   TokenPrice,
+  UpdateCheck,
   UsageModelPrice,
   UsageView,
 } from "../../shared/types.ts";
@@ -194,6 +195,7 @@ export interface State {
   search: boolean; // 手机上的搜索框
   menu: { id: string; x: number; y: number } | null; // 助手右键 / 长按菜单（视口坐标）
   tick: number; // 定时刷新“进行中 · N 分钟”
+  update: UpdateCheck | null; // 服务端 npm 版本检查结果
   updateReady: boolean; // 新版本装好了，等用户点「刷新」
   loggingIn: boolean;
   desktopLogin: { approvalId: string; assistantId: string } | null;
@@ -366,6 +368,7 @@ function initial(): State {
     search: false,
     menu: null,
     tick: 0,
+    update: null,
     updateReady: false,
     loggingIn: false,
     desktopLogin: null,
@@ -1148,6 +1151,7 @@ async function loadBootstrap(reconnect = false) {
       approvals: index(boot.approvals),
       cards: {},
       settings: boot.settings,
+      update: boot.update ?? null,
       ...(boot.settings.settings.general.locale ? { locale: boot.settings.settings.general.locale } : {}),
       theme: boot.settings.settings.general.theme,
     });
@@ -1391,6 +1395,9 @@ export function applyEvent(ev: HobEvent) {
           ? { pluginSignIn: { ...s.pluginSignIn, [`${ev.signIn.pluginId}:${ev.signIn.providerId}`]: ev.signIn } }
           : {}),
       }));
+      break;
+    case "update":
+      set({ update: ev.update });
       break;
   }
 }

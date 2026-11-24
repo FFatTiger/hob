@@ -10,6 +10,7 @@ import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
 import { Panel } from "./Panel.tsx";
 import { usePinDrag } from "./PinDrag.ts";
+import { UpdateArrow, availableVersion } from "./SettingsParts.tsx";
 
 /** 手机首页只关心这几位：切页（mobile/sel/gsel）变了不重画这一大片。 */
 const pickList = (s: State) => ({
@@ -18,10 +19,12 @@ const pickList = (s: State) => ({
   groupPrefs: s.groupPrefs,
   query: s.query,
   search: s.search,
+  update: s.update,
 });
 
 export const MobileList = memo(function MobileList() {
   const s = useAppSelect(pickList, shallow);
+  const updateVersion = availableVersion(s.update);
   const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const layout = pinLayout(pins.length);
@@ -29,8 +32,13 @@ export const MobileList = memo(function MobileList() {
   return (
     <>
       <div className="mhead">
-        <button className="me" title={t("设置")} onClick={openSettings}>
+        <button
+          className={`me${updateVersion ? " has-update" : ""}`}
+          title={updateVersion ? `${t("设置")} · ${t("有新版本 {version}", { version: updateVersion })}` : t("设置")}
+          onClick={openSettings}
+        >
           <Icon name="user" size={17} />
+          {updateVersion ? <UpdateArrow version={updateVersion} /> : null}
         </button>
         <span className="sp" />
         {s.search ? (

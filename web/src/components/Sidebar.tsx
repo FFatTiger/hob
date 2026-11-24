@@ -10,9 +10,11 @@ import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
 import { usePinDrag } from "./PinDrag.ts";
+import { UpdateArrow, availableVersion } from "./SettingsParts.tsx";
 
 export function Sidebar() {
   const s = useApp();
+  const updateVersion = availableVersion(s.update);
   const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const pinRows = useRows(drag.order, (row) => row.id);
@@ -61,7 +63,10 @@ export function Sidebar() {
         </button>
         <button className="frow" onClick={openSettings}>
           <Icon name="gear" size={18} />
-          <span className="sp">{t("设置")}</span>
+          <span className="sp">
+            {t("设置")}
+            {updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+          </span>
         </button>
       </div>
     </aside>

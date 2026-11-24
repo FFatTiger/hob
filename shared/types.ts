@@ -1280,10 +1280,17 @@ export interface PushSubscriptionJson {
   keys: { p256dh: string; auth: string };
 }
 
+/** 版本更新检查结果（服务端查 npm registry，只放内存）。 */
+export type UpdateCheck =
+  | { status: "available"; latest: string }
+  | { status: "up-to-date"; latest: string }
+  | { status: "error"; error: string };
+
 /** GET /api/about：设置 → 关于 里显示的那几项。 */
 export interface AboutInfo {
   version: string; // Hob 的版本（package.json）
   home: string; // 数据目录
+  update?: UpdateCheck; // 最近一次版本检查结果（尚未检查完成时省略）
 }
 
 /** 文件预览的种类（按扩展名判定，见 shared/files.ts）；不认识的扩展名服务端嗅探内容后归成 code/text/other。 */
@@ -1335,6 +1342,7 @@ export interface Bootstrap {
   approvals: Approval[]; // pending
   settings: SettingsFile;
   delegations?: Delegation[];
+  update?: UpdateCheck;
 }
 
 export type HobEvent =
@@ -1365,6 +1373,7 @@ export type HobEvent =
   | { type: "profile"; assistantId: string } // rules/memories/worklog 变了，前端重拉 profile
   | { type: "knowledge" } // 知识库有变化，打开着的知识库页面重拉
   | { type: "skills"; assistantId: string } // 这个助手的技能有变化，打开着的技能列表重拉
+  | { type: "update"; update: UpdateCheck } // 版本检查结果变化
   | ({ type: "plugin-install" } & PluginInstallProgress) // 安装/更新带模型插件时的 Bun/包进度
   | { type: "plugin-providers"; pluginId?: string; providerId?: string; host?: ProviderHostStatusView; signIn?: PluginSignInSessionView }; // 供应商插件宿主、账号、登录或模型有变化
 

@@ -109,7 +109,7 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-import { PageHead, Group, PalettePicker, Seg, LinkRow } from "./SettingsParts.tsx";
+import { PageHead, Group, PalettePicker, Seg, LinkRow, UpdateArrow, availableVersion } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
@@ -238,6 +238,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
   const s = useApp();
   const sections = sectionItems();
   const current = s.section ?? (narrow ? null : "general");
+  const updateVersion = availableVersion(s.update);
   // 换分栏、进出子页都从顶上看起
   const main = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -256,7 +257,10 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
         <div className="setbody">
           {sections.map((item) => (
             <button className="setitem" key={item.id} onClick={() => setSection(item.id)}>
-              <span>{item.label}</span>
+              <span className="setitem-label">
+                {item.label}
+                {item.id === "about" && updateVersion ? <UpdateArrow version={updateVersion} /> : null}
+              </span>
               <Icon name="chev" size={15} />
             </button>
           ))}
@@ -284,6 +288,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
               onClick={() => setSection(item.id)}
             >
               {item.label}
+              {item.id === "about" && updateVersion ? <UpdateArrow version={updateVersion} /> : null}
             </button>
           ))}
           <span className="sp" />
@@ -3224,23 +3229,39 @@ function SearchProviderDetail({ provider, configured, busy, save }: { provider: 
 
 const REPO_URL = "https://github.com/FFatTiger/hob";
 
-/** 关于页：版本、数据目录，以及仓库入口。 */
+/** 关于页：版本、更新状态、数据目录，以及仓库入口。 */
 export function AboutView({ about }: { about: AboutInfo | null }) {
   if (!about) return <Empty>{t("正在读取版本信息…")}</Empty>;
-  const rows: [string, string][] = [
-    [t("Hob 版本"), about.version],
-    [t("数据目录"), about.home],
-  ];
+  const update = about.update;
   return (
     <>
       <PageHead title={t("关于")} desc={t("Hob 的版本与数据目录。")} />
       <div className="kvcard">
-        {rows.map(([label, value]) => (
-          <div className="kvrow" key={label}>
-            <span className="k">{label}</span>
-            <span className="v">{value}</span>
+        <div className="kvrow">
+          <span className="k">{t("Hob 版本")}</span>
+          <span className="v">{about.version}</span>
+        </div>
+        {update?.status === "available" ? (
+          <a className="kvrow linkrow" href={`${REPO_URL}/releases/tag/v${update.latest}`} target="_blank" rel="noreferrer">
+            <span className="k update-available">{t("有新版本 {version}", { version: update.latest })}</span>
+            <span className="v">
+              <span className="link">{t("查看更新内容")}</span>
+              <Icon name="out" size={13} />
+            </span>
+          </a>
+        ) : update?.status === "up-to-date" ? (
+          <div className="kvrow">
+            <span className="k update-status">{t("已是最新版本")}</span>
           </div>
-        ))}
+        ) : update?.status === "error" ? (
+          <div className="kvrow">
+            <span className="k update-status update-error">{t("检查更新失败：{reason}", { reason: update.error })}</span>
+          </div>
+        ) : null}
+        <div className="kvrow">
+          <span className="k">{t("数据目录")}</span>
+          <span className="v">{about.home}</span>
+        </div>
         <LinkRow icon="github" label="GitHub" value="FFatTiger/hob" href={REPO_URL} />
       </div>
     </>
@@ -3248,9 +3269,11 @@ export function AboutView({ about }: { about: AboutInfo | null }) {
 }
 
 function AboutSection() {
+  const s = useApp();
   const [about, setAbout] = useState<AboutInfo | null>(null);
   useEffect(() => {
     void loadAbout().then(setAbout);
   }, []);
-  return <AboutView about={about} />;
+  const current = about ? { ...about, ...(s.update ? { update: s.update } : {}) } : null;
+  return <AboutView about={current} />;
 }

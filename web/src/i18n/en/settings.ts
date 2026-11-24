@@ -58,4 +58,8 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "智能 {smart}% · 成本 {cost}% · 速度 {speed}%": "Intelligence {smart}% · Cost {cost}% · Speed {speed}%",
   "来自插件 {plugin}": "From plugin {plugin}",
   "来自插件的服务商点击后前往对应插件页管理账号与模型；从本机导入会只读本机配置并一次性复制到 Hob。": "Click a plugin provider to manage its accounts and models on its plugin page. Local import reads your local configuration once without changing the source.",
+  "有新版本 {version}": "New version {version}",
+  "查看更新内容": "View release notes",
+  "已是最新版本": "Up to date",
+  "检查更新失败：{reason}": "Couldn't check for updates: {reason}",
 };

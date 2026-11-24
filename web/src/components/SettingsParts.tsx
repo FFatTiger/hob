@@ -1,7 +1,24 @@
 // 设置页的公共外壳：页头、分组、几选一的分段控件。设置里的各分栏共用，尺寸和间距照 docs/design/v2。
 import type { CSSProperties, ReactNode } from "react";
+import { t } from "../../../shared/i18n.ts";
+import type { UpdateCheck } from "../../../shared/types.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { PALETTE_SWATCHES, type Palette } from "../palette.ts";
+
+/** 有新版本时返回最新版本号，其余情况（最新、失败、未查）返回 null。 */
+export function availableVersion(update: UpdateCheck | null | undefined): string | null {
+  return update?.status === "available" ? update.latest : null;
+}
+
+/** 侧栏「设置」和设置导航「关于」右边的新版本小箭头。 */
+export function UpdateArrow({ version }: { version: string }) {
+  const label = t("有新版本 {version}", { version });
+  return (
+    <span className="update-arrow" title={label} role="img" aria-label={label}>
+      <Icon name="up" size={14} />
+    </span>
+  );
+}
 
 export function PageHead({ title, desc }: { title: string; desc: ReactNode }) {
   return (

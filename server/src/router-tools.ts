@@ -47,7 +47,7 @@ import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./to
 import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput } from "./workspace.ts";
+import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd } from "./workspace.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -177,6 +177,11 @@ export function buildRouterTools(
   ownWorkDir = assistantWorkDir(runtime.home, assistantId),
 ): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
+  const resolvedWorkspace = resolveWorkspaceCwd(store, runtime.home, assistantId, groupId);
+  const hasBoundWorkspace = Boolean(resolvedWorkspace.bound);
+  const currentGroup = groupId ? store.group(groupId) : undefined;
+  const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
+  const groupHasBoundCwd = Boolean(parentGroup?.cwd);
   const assistant = () => {
     const found = store.assistant(assistantId);
     if (!found) throw new Error(`助手不存在：${assistantId}`);
@@ -419,12 +424,14 @@ export function buildRouterTools(
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
         note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
-        cwd: Type.Optional(
-          Type.String({
-            description:
-              "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填时：当前会话绑定了工作目录就自动继承它，未绑定则在任务自己的隔离目录里执行。相对路径以当前工作目录为准。",
-          }),
-        ),
+        ...(hasBoundWorkspace ? {} : {
+          cwd: Type.Optional(
+            Type.String({
+              description:
+                "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。",
+            }),
+          ),
+        }),
         files: Type.Optional(
           Type.Array(Type.String(), {
             description: "要交给任务的文件路径；相对路径以你的工作目录为准，图片会直接给模型查看",
@@ -447,7 +454,7 @@ export function buildRouterTools(
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
-          const rawCwd = normalizeWorkspaceCwdInput(params.cwd);
+          const rawCwd = hasBoundWorkspace ? undefined : normalizeWorkspaceCwdInput(params.cwd);
           const explicitCwd = rawCwd ? resolve(cwd, rawCwd) : undefined;
           const job = await jobs.start(assignee.id, {
             title: String(params.title),
@@ -1147,7 +1154,9 @@ export function buildRouterTools(
           topic: Type.Optional(Type.String({ description: "已有话题的 id。创建新话题时不填。" })),
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给话题的文件路径" }))),
-          cwd: Type.Optional(Type.String({ description: "仅创建新话题（填 title）且所属群未绑定工作目录时可选，话题的工作目录（绝对路径，创建后不可修改）。" })),
+          ...(groupHasBoundCwd ? {} : {
+            cwd: Type.Optional(Type.String({ description: "仅创建新话题（填 title）时可选，话题的工作目录（绝对路径，创建后不可修改）。" })),
+          }),
         }),
         execute: async (_id, params: any) => {
           const problem = notOwner();
@@ -1164,7 +1173,7 @@ export function buildRouterTools(
 
           try {
             if (topicId) {
-              if (params.cwd !== undefined) return fail(CWD_IMMUTABLE);
+              if (!groupHasBoundCwd && params.cwd !== undefined) return fail(CWD_IMMUTABLE);
               const target = store.group(topicId);
               if (!target || target.parentId !== gid) return fail(`「${topicId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
               // 已关闭的话题先重新打开，接着在里面处理
@@ -1174,7 +1183,7 @@ export function buildRouterTools(
               void runtime.groups.deliverEvent(topicId, assistantId, event).catch((error) => console.error("转到话题的事件没送到：", error));
               return endTurn(`已转到话题「${topic.name}」（${topic.id}），接下来在话题里处理。`);
             }
-            const topic = runtime.groups.createTopic(gid, title, assistantId, params.cwd !== undefined ? { cwd: params.cwd } : undefined);
+            const topic = runtime.groups.createTopic(gid, title, assistantId, !groupHasBoundCwd && params.cwd !== undefined ? { cwd: params.cwd } : undefined);
             runtime.groups.appendItem(topic.id, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
             void runtime.groups
               .deliverEvent(topic.id, assistantId, event)

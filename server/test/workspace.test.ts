@@ -455,9 +455,9 @@ describe("继承链与不可变边界", () => {
       const jFreeDev = hob.runtime.store.jobs().find((j) => j.title === "自由群指派开发")!;
       expect(jFreeDev.cwd).toBe(astDir);
 
-      // 5. 显式传入 cwd（含相对路径基于当前会话 cwd）优先于绑定目录
-      await startInLocked.execute("c4", { title: "显式子目录", note: "只看子目录", cwd: "packages" });
-      const jSub = hob.runtime.store.jobs().find((j) => j.title === "显式子目录")!;
+      // 5. 未绑定会话允许显式传入 cwd；底层 jobs.start 也支持显式绝对目录
+      await startInFree.execute("c4", { title: "未绑定显式目录", note: "只看子目录", cwd: subDir });
+      const jSub = hob.runtime.store.jobs().find((j) => j.title === "未绑定显式目录")!;
       expect(jSub.cwd).toBe(subDir);
 
       const jExplicit = await hob.runtime.jobs.start(dev.id, { title: "显式绝对目录", instruction: "在另一目录工作", cwd: explicitDir });
@@ -754,7 +754,7 @@ describe("AGENTS.md 自动加载与 Prompt Cache 稳定性", () => {
       expect(seen).toHaveLength(2);
       expect(seen[0]).toContain("<project_context>");
       expect(seen[0]).toContain("PROJECT_RULE_V1");
-      expect(seen[0]).toContain(`当前工作目录：${project}（来源：你的设置）。`);
+      expect(seen[0]).toContain(`当前工作目录：${project}（来源：你的设置）。命令、文件读写和派出的任务都在这个目录进行。`);
       expect(seen[1]).toBe(seen[0]); // 逐字一致，Prompt Cache 不漂移
       expect(seenSystemCount[1]).toBe(seenSystemCount[0]); // 未追加任何中间 system delta
 
@@ -889,10 +889,12 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const freeTopicView = (await showGroup.execute("sg3", { groupId: freeTopic.id })).content[0] as { text: string };
       expect(freeTopicView.text).toContain(`工作目录：${topicDir}`);
 
-      // open_topic：群主在综合里创建新话题可带 cwd；群已绑时传 cwd 拒；转到已有话题传 cwd 拒
+      // open_topic：群未绑时暴露 cwd 且创建新话题可带 cwd、转到已有话题传 cwd 拒；群已绑时隐藏 cwd 且忽略强传 cwd
       vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
       const devFreeTools = buildRouterTools(hob.runtime, dev.id, freeGroup.id);
       const openFree = findTool(devFreeTools, "open_topic");
+      expect("cwd" in openFree.parameters.properties).toBe(true);
+      expect(openFree.parameters.properties.cwd.description).toBe("仅创建新话题（填 title）时可选，话题的工作目录（绝对路径，创建后不可修改）。");
       const openedNew = await openFree.execute("ot1", { title: "话题二", note: "交接说明", cwd: topicDir });
       expect(openedNew.isError).not.toBe(true);
       const topic2 = hob.runtime.groups.topicsOf(freeGroup.id).find((t) => t.name === "话题二")!;
@@ -904,8 +906,12 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
 
       const devLockedTools = buildRouterTools(hob.runtime, dev.id, lockedGroup.id, grpDir);
       const openLocked = findTool(devLockedTools, "open_topic");
-      const openLockedConflict = await openLocked.execute("ot3", { title: "违规目录", note: "说明", cwd: topicDir });
-      expect(openLockedConflict.isError).toBe(true);
+      expect("cwd" in openLocked.parameters.properties).toBe(false);
+      const openLockedForced = await openLocked.execute("ot3", { title: "忽略强传目录", note: "说明", cwd: topicDir });
+      expect(openLockedForced.isError).not.toBe(true);
+      const lockedTopic2 = hob.runtime.groups.topicsOf(lockedGroup.id).find((t) => t.name === "忽略强传目录")!;
+      expect(lockedTopic2.cwd).toBeUndefined();
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, lockedTopic2.id)).toMatchObject({ bound: grpDir, source: "group", sessionCwd: grpDir });
 
       // message_group：目标群未设 cwd 时可传 cwd；目标群已设 cwd 时传非空 cwd 拒绝
       const msgGroup = findTool(hobTools, "message_group");
@@ -935,6 +941,96 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const sentSecret = await sendFile.execute("sf2", { path: ".env" });
       expect(sentSecret.isError).toBe(true);
       expect((sentSecret.content[0] as { text: string }).text).toContain("这个文件不对页面开放");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("按会话上下文动态隐藏 start_job 与 open_topic 的 cwd 参数，并在已绑定会话忽略强传 cwd", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    const astDir = makeTempDir("hob-ws-hide-ast-");
+    const grpDir = makeTempDir("hob-ws-hide-grp-");
+    const topicDir = makeTempDir("hob-ws-hide-topic-");
+    const otherDir = makeTempDir("hob-ws-hide-other-");
+    try {
+      vi.spyOn(hob.runtime.router, "event").mockResolvedValue(true);
+      vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
+
+      const dev = addAssistant(hob, "dev", { name: "开发", cwd: astDir });
+      const writer = addAssistant(hob, "writer", { name: "写手" });
+      const lockedGroup = hob.runtime.groups.create({
+        name: "绑定群",
+        purpose: "项目维护",
+        ownerId: "hob",
+        members: ["hob", dev.id, writer.id],
+        cwd: grpDir,
+      });
+      const freeGroup = hob.runtime.groups.create({
+        name: "自由群",
+        purpose: "综合协作",
+        ownerId: "hob",
+        members: ["hob", dev.id, writer.id],
+      });
+      const boundTopic = hob.runtime.groups.createTopic(freeGroup.id, "绑定话题", "hob", { cwd: topicDir });
+      const freeTopic = hob.runtime.groups.createTopic(freeGroup.id, "未绑定话题", "hob");
+
+      const findTool = (tools: ReturnType<typeof buildRouterTools>, name: string) =>
+        tools.find((t) => t.name === name)!;
+
+      // 1. 未绑定会话：start_job 暴露 cwd（含精简说明）
+      const unboundStartCases = [
+        { label: "主助手单聊", tools: buildRouterTools(hob.runtime, "hob") },
+        { label: "未绑定助手单聊", tools: buildRouterTools(hob.runtime, writer.id) },
+        { label: "未绑定群综合", tools: buildRouterTools(hob.runtime, "hob", freeGroup.id) },
+        { label: "未绑定话题", tools: buildRouterTools(hob.runtime, "hob", freeTopic.id) },
+      ];
+      for (const { label, tools } of unboundStartCases) {
+        const startTool = findTool(tools, "start_job");
+        expect("cwd" in startTool.parameters.properties, label).toBe(true);
+        expect(startTool.parameters.properties.cwd.description, label).toBe(
+          "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。",
+        );
+      }
+
+      // 2. 已绑定会话（单聊助手绑定、群绑定、话题绑定）：start_job 隐藏 cwd，且强传 cwd 时忽略并落在绑定目录
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "ast ok" }),
+        call("report", { outcome: "done", result: "grp ok" }),
+        call("report", { outcome: "done", result: "topic ok" }),
+      ]);
+      const boundStartCases = [
+        { label: "单聊助手绑定", title: "强传单聊", tools: buildRouterTools(hob.runtime, dev.id, undefined, astDir), expectedCwd: astDir },
+        { label: "群绑定", title: "强传群聊", tools: buildRouterTools(hob.runtime, "hob", lockedGroup.id, grpDir), expectedCwd: grpDir },
+        { label: "话题绑定", title: "强传话题", tools: buildRouterTools(hob.runtime, "hob", boundTopic.id, topicDir), expectedCwd: topicDir },
+      ];
+      for (const { label, title, tools, expectedCwd } of boundStartCases) {
+        const startTool = findTool(tools, "start_job");
+        expect("cwd" in startTool.parameters.properties, label).toBe(false);
+        const res = await startTool.execute(`force-${title}`, { title, note: "测试忽略强传 cwd", cwd: otherDir });
+        expect(res.isError, label).not.toBe(true);
+        const created = hob.runtime.store.jobs().find((j) => j.title === title)!;
+        expect(created.cwd, label).toBe(expectedCwd);
+      }
+      await hob.runtime.jobs.waitIdle();
+
+      // 3. open_topic：群已绑定 cwd 时隐藏 cwd（且强传不透传）；群未绑定 cwd 时暴露 cwd
+      const lockedOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", lockedGroup.id, grpDir), "open_topic");
+      expect("cwd" in lockedOpenTopic.parameters.properties).toBe(false);
+      const lockedOpenRes = await lockedOpenTopic.execute("ot-locked", { title: "群绑话题", note: "交接", cwd: otherDir });
+      expect(lockedOpenRes.isError).not.toBe(true);
+      const createdLockedTopic = hob.runtime.groups.topicsOf(lockedGroup.id).find((t) => t.name === "群绑话题")!;
+      expect(createdLockedTopic.cwd).toBeUndefined();
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", createdLockedTopic.id).bound).toBe(grpDir);
+
+      const freeOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", freeGroup.id), "open_topic");
+      expect("cwd" in freeOpenTopic.parameters.properties).toBe(true);
+      expect(freeOpenTopic.parameters.properties.cwd.description).toBe(
+        "仅创建新话题（填 title）时可选，话题的工作目录（绝对路径，创建后不可修改）。",
+      );
+      const freeOpenRes = await freeOpenTopic.execute("ot-free", { title: "自由新话题", note: "交接", cwd: otherDir });
+      expect(freeOpenRes.isError).not.toBe(true);
+      const createdFreeTopic = hob.runtime.groups.topicsOf(freeGroup.id).find((t) => t.name === "自由新话题")!;
+      expect(createdFreeTopic.cwd).toBe(otherDir);
     } finally {
       hob.close();
     }

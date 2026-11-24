@@ -1469,16 +1469,20 @@ svg.i {
 }
 .b {
   align-self: flex-start;
-  max-width: 548px;
+  max-width: min(548px, 100%);
+  min-width: 0;
   background: var(--bubble);
   overflow-wrap: anywhere;
+  overflow-x: clip;
 }
 .u {
   align-self: flex-end;
-  max-width: 500px;
+  max-width: min(500px, 100%);
+  min-width: 0;
   background: var(--user);
   color: var(--utext);
   overflow-wrap: anywhere;
+  overflow-x: clip;
 }
 .g {
   height: 12px;
@@ -1889,6 +1893,23 @@ svg.i {
 .code-block:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
 @media (hover: none) { .code-copy { opacity: 1; } }
 .math-display { overflow-x: auto; overflow-y: hidden; margin: 6px 0; }
+/* 行内公式单个不换行段超宽时在自身内横向滚动，保留基线对齐且不撑出气泡 */
+.katex .katex-html > .katex-base {
+  display: inline-flex;
+  align-items: baseline;
+  max-width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+.katex .katex-html > .katex-base > * {
+  flex: none;
+}
+.math-display .katex .katex-html > .katex-base {
+  display: inline-block;
+  max-width: none;
+  overflow: visible;
+}
 /* 音频：播放键 + 波形 + 时长 + 倍速 */
 .media-audio { display: flex; align-items: center; gap: 12px; width: 320px; max-width: 100%; padding: 12px 14px; border-radius: 18px; background: var(--bubble); color: var(--text); }
 .audio-play { flex: none; width: 40px; height: 40px; display: grid; place-items: center; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
@@ -1982,6 +2003,7 @@ svg.i {
   position: relative;
   align-self: flex-start;
   max-width: 548px;
+  min-width: 0;
 }
 .hov.right {
   align-self: flex-end;

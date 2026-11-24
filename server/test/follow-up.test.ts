@@ -75,7 +75,7 @@ describe("follow-up suggestion output", () => {
       return fauxAssistantMessage([fauxText('["继续整理", "继续整理"]')]);
     });
     const stableContext = followUpContext(FOLLOW_UP_SYSTEM_PROMPT, [{ role: "user", text: "完成一份旅行计划" }], model);
-    expect(stableContext.messages.at(-1)).toMatchObject({ role: "user", content: "上面是到目前为止的对话。给出用户接下来可能说的话。" });
+    expect(stableContext.messages.at(-1)).toMatchObject({ role: "user", content: "上面是到目前为止的对话。给出用户接下来可能说的话，用用户最后那句话的语言写。用户最后说的是：「完成一份旅行计划」" });
     await expect(generateFollowUpSuggestions({ completeSimple }, model, [{ role: "user", text: "完成一份旅行计划" }])).resolves.toEqual(["继续整理"]);
     expect(completeSimple).toHaveBeenCalledOnce();
   });

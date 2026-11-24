@@ -18,7 +18,7 @@ export function pluginDescription(manifest: Record<string, unknown>, id: string)
 }
 
 export function pluginStatus(status: PluginServiceStatus) {
-  return ({ pending_config: t("待配置"), connecting: t("连接中"), idle: t("未启动（用到时自动启动）"), connected: t("运行中"), needs_login: t("需要登录"), needs_relogin: t("需要重新登录"), error: t("出错") })[status];
+  return ({ pending_config: t("待配置"), connecting: t("连接中"), idle: t("已连接"), connected: t("已连接"), needs_login: t("需要登录"), needs_relogin: t("需要重新登录"), error: t("出错") })[status];
 }
 
 export function PluginStatus({ status }: { status: PluginServiceStatus }) {

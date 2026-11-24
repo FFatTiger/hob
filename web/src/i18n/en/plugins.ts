@@ -273,4 +273,5 @@ export const pluginsEn = {
   "请粘贴浏览器地址": "Paste the browser URL",
   "请输入授权码": "Enter the authorization code",
   "点击下方按钮发起 {name} 登录。完成后即可在「设置 → 服务商」和模型列表中使用。": "Click below to start signing in to {name}. Once done, it appears in Settings → Providers and the model list.",
+  "第一次登录会先在运行 Hob 的机器上装好 {name}，要等一会儿。": "The first sign-in installs {name} on the machine running Hob first, which takes a moment.",
 };

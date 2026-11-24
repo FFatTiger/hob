@@ -209,6 +209,7 @@ describe("供应商插件五种登录界面", () => {
         pluginId="agy-cli"
         provider={baseProvider({
           name: "Antigravity",
+          methods: [],
           cli: { declared: true, name: "agy CLI", installed: false, installing: false },
         })}
         onSessionChange={noop}
@@ -222,6 +223,25 @@ describe("供应商插件五种登录界面", () => {
     expect(html).toContain("安装 agy CLI");
     expect(html).toContain("重新检测");
     expect(html).toContain("取消");
+  });
+  it("声明了登录方式又靠本机命令行的插件：照常显示登录方式，提示第一次会先装好命令行，不出检测卡", () => {
+    const html = renderToStaticMarkup(
+      <ProviderSignInCard
+        pluginId="agy-cli"
+        provider={baseProvider({
+          name: "Antigravity",
+          methods: [{ index: 0, type: "oauth", label: "Sign in with Google", labels: { zh: "使用 Google 登录" } }],
+          cli: { declared: true, name: "Antigravity CLI", installed: false, installing: false },
+        })}
+        onSessionChange={() => {}}
+        onCliChange={() => {}}
+        onDone={() => {}}
+        onCancel={() => {}}
+      />,
+    );
+    expect(html).toContain("开始登录");
+    expect(html).toContain("第一次登录会先在运行 Hob 的机器上装好 Antigravity CLI");
+    expect(html).not.toContain("重新检测");
   });
 });
 

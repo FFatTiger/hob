@@ -749,7 +749,8 @@ export function ProviderSignInCard({
   };
 
   // Flow 5: Local CLI detection (07e)
-  if (isCliProvider && (!session || session.kind === "local_cli")) {
+  // 只有插件不声明任何登录方式、全靠本机命令行时才出检测卡；声明了登录方式的照常走登录，缺的命令行由服务端在登录前装好
+  if (isCliProvider && (session?.kind === "local_cli" || (!session && methods.length === 0))) {
     const cliName = effectiveCli?.name || t("本机客户端");
     const installed = Boolean(effectiveCli?.installed);
     const hasLoggedAccount = provider.accounts.some((a) => a.status === "logged_in");
@@ -1143,6 +1144,7 @@ export function ProviderSignInCard({
         <div className="plugin-login-title">{method ? localizedMethodLabel(method) : t("登录账号")}</div>
         <div className="plugin-login-desc">
           {t("点击下方按钮发起 {name} 登录。完成后即可在「设置 → 服务商」和模型列表中使用。", { name: provider.name })}
+          {effectiveCli?.declared && !effectiveCli.installed ? ` ${t("第一次登录会先在运行 Hob 的机器上装好 {name}，要等一会儿。", { name: effectiveCli.name || t("本机客户端") })}` : null}
         </div>
         {error ? <div className="badline" role="alert">{error}</div> : null}
         <div className="plugin-actions">

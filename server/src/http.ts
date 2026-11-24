@@ -346,13 +346,25 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return Array.isArray(visibility) && visibility.includes("app") && !visibility.includes("model");
     };
     const credentialRoles = runtime.plugins.credentialRolesForPlugin(id);
-    return { ...view, credentialRoles, skills: runtime.plugins.store.skills(id), autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id), services: services.map(service => ({ ...service, tools: service.tools.filter(tool => !appOnly(tool)).map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })) };
+    const providers = runtime.providerPlugins.pluginProvidersView(id);
+    const hasDeclaredProviders = (() => {
+      try { return runtime.plugins.store.providersOf(id).length > 0; } catch { return false; }
+    })();
+    return {
+      ...view,
+      credentialRoles,
+      skills: runtime.plugins.store.skills(id),
+      autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id),
+      services: services.map(service => ({ ...service, tools: service.tools.filter(tool => !appOnly(tool)).map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })),
+      ...(hasDeclaredProviders ? { providers, providerHost: runtime.providerPlugins.hostStatus() } : {}),
+    };
   };
   const pluginError = (error: unknown) => error instanceof Error ? error.message : String(error);
   app.get("/api/plugins", (c) => {
-    try { return c.json({ plugins: runtime.plugins.store.list().map(p => pluginView(p.id)), migrationErrors: runtime.plugins.migrationErrors }); }
+    try { return c.json({ plugins: runtime.plugins.store.list().map(p => pluginView(p.id)), migrationErrors: runtime.plugins.migrationErrors, providerHost: runtime.providerPlugins.hostStatus() }); }
     catch (error) { return c.json({ error: pluginError(error) }, 500); }
   });
+  app.get("/api/plugins/provider-host", (c) => c.json(runtime.providerPlugins.hostStatus()));
   app.get("/api/plugins/:id/icon", c => {
     try {
       const icon = runtime.plugins.store.icon(c.req.param("id"), c.req.query("source"));
@@ -460,17 +472,59 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.post("/api/plugins/:id/install", async c => {
-    try { const id = c.req.param("id"); const body = await c.req.json().catch(() => ({})) as { source?: string }; runtime.plugins.store.install(id, false, false, body.source); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
-    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    const id = c.req.param("id");
+    let staged: string | undefined;
+    try {
+      const body = await c.req.json().catch(() => ({})) as { source?: string };
+      staged = runtime.plugins.store.prepareProviderDirectory(id, false, body.source);
+      await runtime.providerPlugins.installPluginProviders(id, staged);
+      runtime.plugins.store.install(id, false, false, body.source, staged);
+      await runtime.plugins.reload(id);
+      await runtime.providerPlugins.onPluginStateChanged(id);
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    finally { if (staged) rmSync(staged, { recursive: true, force: true }); }
   });
   app.post("/api/plugins/:id/update", async c => {
-    try { const id = c.req.param("id"); const before = runtime.plugins.store.list().find(plugin => plugin.id === id)?.version; if (runtime.plugins.store.install(id, true).version !== before) retirePluginCards(runtime, id); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
-    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    const id = c.req.param("id");
+    let staged: string | undefined;
+    try {
+      staged = runtime.plugins.store.prepareProviderDirectory(id, true);
+      await runtime.providerPlugins.installPluginProviders(id, staged);
+      const before = runtime.plugins.store.list().find(plugin => plugin.id === id)?.version;
+      if (runtime.plugins.store.install(id, true, false, undefined, staged).version !== before) retirePluginCards(runtime, id);
+      await runtime.plugins.reload(id);
+      await runtime.providerPlugins.onPluginStateChanged(id);
+      return c.json(pluginView(id));
+    } catch (error) {
+      try { runtime.plugins.store.recordUpdateError(id, runtime.providerPlugins.redact(pluginError(error))); } catch { /* 保留原始失败响应 */ }
+      return c.json({ error: pluginError(error) }, 400);
+    } finally { if (staged) rmSync(staged, { recursive: true, force: true }); }
+  });
+  app.post("/api/plugins/:id/approve", async c => {
+    const id = c.req.param("id");
+    try {
+      runtime.plugins.store.approve(id);
+      await runtime.plugins.reload(id);
+      await runtime.providerPlugins.ensurePluginMetadata(id, true);
+      await runtime.providerPlugins.onPluginStateChanged(id);
+      router.releaseSessions();
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.patch("/api/plugins/:id", async c => {
     const body = await c.req.json().catch(() => ({})) as PluginPatch;
-    try { const id = c.req.param("id"); const enabled = runtime.plugins.store.get(id).enabled; runtime.plugins.store.patch(id, body); if (runtime.plugins.store.get(id).enabled !== enabled) await runtime.plugins.reload(id); router.releaseSessions(); return c.json(pluginView(id)); }
-    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    try {
+      const id = c.req.param("id");
+      const enabled = runtime.plugins.store.get(id).enabled;
+      runtime.plugins.store.patch(id, body);
+      if (runtime.plugins.store.get(id).enabled !== enabled) {
+        await runtime.plugins.reload(id);
+        await runtime.providerPlugins.onPluginStateChanged(id);
+      }
+      router.releaseSessions();
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.put("/api/plugins/:id/config", async c => {
     const body = await c.req.json().catch(() => null) as { values?: unknown } | null;
@@ -505,8 +559,174 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.delete("/api/plugins/:id", async c => {
-    try { const id = c.req.param("id"); await runtime.plugins.stopPlugin(id); runtime.plugins.store.remove(id); router.releaseSessions(); return c.json({ ok: true }); }
-    catch (error) { return c.json({ error: pluginError(error) }, 400); }
+    try {
+      const id = c.req.param("id");
+      await runtime.plugins.stopPlugin(id);
+      await runtime.providerPlugins.onPluginRemoved(id);
+      runtime.plugins.store.remove(id);
+      router.releaseSessions();
+      return c.json({ ok: true });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+
+  // ---- 带模型的插件（供应商插件）HTTP 接口 ---------------------------------
+  app.get("/api/plugins/:id/providers", async c => {
+    try {
+      const id = c.req.param("id");
+      const load = c.req.query("load") === "1";
+      const providers = await runtime.providerPlugins.ensurePluginMetadata(id, load);
+      return c.json({ providers, providerHost: runtime.providerPlugins.hostStatus() });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/models/refresh", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const body = await c.req.json().catch(() => ({})) as { accountId?: unknown };
+      const accountId = typeof body.accountId === "string" && body.accountId ? body.accountId : undefined;
+      const models = await runtime.providerPlugins.refreshModels(id, providerId, accountId);
+      return c.json({ models, plugin: pluginView(id) });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/:id/providers/:providerId/usage", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const accountId = c.req.query("accountId") || undefined;
+      const usage = await runtime.providerPlugins.fetchUsage(id, providerId, accountId);
+      return c.json(usage);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/accounts/active", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const body = await c.req.json().catch(() => null) as { accountId?: unknown } | null;
+      if (typeof body?.accountId !== "string" || !body.accountId) throw new Error("accountId 不能为空");
+      await runtime.providerPlugins.setActiveAccount(id, providerId, body.accountId);
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.delete("/api/plugins/:id/providers/:providerId/accounts/:accountId", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const accountId = c.req.param("accountId");
+      await runtime.providerPlugins.removeAccount(id, providerId, accountId);
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/prompt", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const body = await c.req.json().catch(() => null) as { methodIndex?: unknown; inputs?: unknown; validateKey?: unknown; validateValue?: unknown } | null;
+      if (typeof body?.methodIndex !== "number" || !Number.isInteger(body.methodIndex) || body.methodIndex < 0) throw new Error("methodIndex 无效");
+      if (typeof body.validateKey === "string") {
+        const error = await runtime.providerPlugins.validatePrompt({
+          pluginId: id,
+          providerId,
+          methodIndex: body.methodIndex,
+          key: body.validateKey,
+          value: typeof body.validateValue === "string" ? body.validateValue : "",
+        });
+        return c.json({ error });
+      }
+      const inputs = body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs)
+        ? Object.fromEntries(Object.entries(body.inputs as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+        : {};
+      const prompt = await runtime.providerPlugins.nextPrompt({ pluginId: id, providerId, methodIndex: body.methodIndex, inputs });
+      return c.json({ prompt });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/api-key", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const body = await c.req.json().catch(() => null) as { methodIndex?: unknown; key?: unknown; displayName?: unknown; inputs?: unknown; accountId?: unknown } | null;
+      if (typeof body?.methodIndex !== "number" || !Number.isInteger(body.methodIndex) || body.methodIndex < 0) throw new Error("methodIndex 无效");
+      const inputs = body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs)
+        ? Object.fromEntries(Object.entries(body.inputs as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+        : {};
+      const result = await runtime.providerPlugins.signInApiKey({
+        pluginId: id,
+        providerId,
+        methodIndex: body.methodIndex,
+        key: typeof body.key === "string" ? body.key : undefined,
+        displayName: typeof body.displayName === "string" && body.displayName.trim() ? body.displayName.trim() : undefined,
+        inputs,
+        accountId: typeof body.accountId === "string" && body.accountId ? body.accountId : undefined,
+      });
+      return c.json({ accountId: result.account.id, models: result.models, ...(result.modelsError ? { modelsError: result.modelsError } : {}), plugin: pluginView(id) });
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/start", async c => {
+    try {
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      const body = await c.req.json().catch(() => null) as { methodIndex?: unknown; inputs?: unknown; accountId?: unknown } | null;
+      if (typeof body?.methodIndex !== "number" || !Number.isInteger(body.methodIndex) || body.methodIndex < 0) throw new Error("methodIndex 无效");
+      const inputs = body.inputs && typeof body.inputs === "object" && !Array.isArray(body.inputs)
+        ? Object.fromEntries(Object.entries(body.inputs as Record<string, unknown>).filter(([, v]) => typeof v === "string")) as Record<string, string>
+        : {};
+      const session = await runtime.providerPlugins.startSignIn({
+        pluginId: id,
+        providerId,
+        methodIndex: body.methodIndex,
+        inputs,
+        accountId: typeof body.accountId === "string" && body.accountId ? body.accountId : undefined,
+      });
+      return c.json(session);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/:id/providers/:providerId/auth/session/:sessionId", c => {
+    const session = runtime.providerPlugins.getSignInSession(c.req.param("sessionId"), c.req.param("id"), c.req.param("providerId"));
+    if (!session) return c.json({ error: "找不到该登录会话" }, 404);
+    return c.json(session);
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/paste", async c => {
+    try {
+      const body = await c.req.json().catch(() => null) as { sessionId?: unknown; url?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
+      if (typeof body?.url !== "string" || !body.url.trim()) throw new Error("请粘贴浏览器地址");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
+      const res = await runtime.providerPlugins.pasteLoopbackCallback(body.sessionId, body.url);
+      return c.json(res);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/code", async c => {
+    try {
+      const body = await c.req.json().catch(() => null) as { sessionId?: unknown; code?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
+      if (typeof body?.code !== "string" || !body.code.trim()) throw new Error("请输入授权码");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
+      const session = await runtime.providerPlugins.submitSignInCode(body.sessionId, body.code);
+      return c.json(session);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/auth/cancel", async c => {
+    try {
+      const body = await c.req.json().catch(() => null) as { sessionId?: unknown } | null;
+      const id = c.req.param("id");
+      const providerId = c.req.param("providerId");
+      if (typeof body?.sessionId !== "string" || !body.sessionId) throw new Error("sessionId 不能为空");
+      runtime.providerPlugins.assertSignInSession(id, providerId, body.sessionId);
+      return c.json(runtime.providerPlugins.cancelSignIn(body.sessionId));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/:id/providers/:providerId/cli", async c => {
+    try {
+      return c.json(await runtime.providerPlugins.checkCli(c.req.param("id"), c.req.param("providerId")));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/providers/:providerId/cli/install", async c => {
+    try {
+      return c.json(await runtime.providerPlugins.installCli(c.req.param("id"), c.req.param("providerId")));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.get("/api/plugins/:id/services/:service/oauth", c => {
     try {

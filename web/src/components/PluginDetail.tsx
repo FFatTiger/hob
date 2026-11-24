@@ -8,6 +8,8 @@ import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCat
 import { Disclosure } from "./Disclosure.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
+import { approvePlugin, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
+import { hasProviderContribution, isUnofficialPlugin, pluginDetailText, pluginReviewedVersion } from "./plugin-meta.ts";
 
 function Description({ text }: { text: string }) {
   return <div className="plugin-sub">{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
@@ -54,7 +56,7 @@ function statusTone(status: PluginServiceStatus): "warn" | "bad" | "ok" {
 }
 
 export function PluginDetail({ id }: { id: string }) {
-  const { assistants } = useApp();
+  const { assistants, pluginProviderTick } = useApp();
   const [item, setItem] = useState<PluginView | null>(null);
   const [catalog, setCatalog] = useState<PluginCatalogView | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -84,6 +86,9 @@ export function PluginDetail({ id }: { id: string }) {
     setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false);
     void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
+  useEffect(() => {
+    if (pluginProviderTick > 0) void refresh().catch(() => {});
+  }, [pluginProviderTick]);
   useEffect(() => {
     const hasList = Boolean(item?.credentialRoles?.includes("list"));
     const service = hasList ? item?.services.find(candidate => candidate.status === "connected" || candidate.status === "idle")?.name : undefined;
@@ -134,7 +139,15 @@ export function PluginDetail({ id }: { id: string }) {
   const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "builtin" ? t("Hob 自带") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
   const name = pluginName(item.manifest, id);
   const publisher = typeof hob?.publisher === "string" ? hob.publisher : "";
-  const subtitle = item.plugin.source === "builtin" && hasList ? t("Hob 自带 · 存在这台机器上，加密保存") : [publisher, origin, t("版本 {version}", { version: item.plugin.version })].filter(Boolean).join(" · ");
+  const hasProviders = hasProviderContribution(item.manifest, Boolean(item.providers?.length));
+  const unofficial = isUnofficialPlugin(item.manifest, Boolean(item.providers?.length));
+  const reviewed = pluginReviewedVersion(item.manifest, item.plugin.version);
+  const subtitle = item.plugin.source === "builtin" && hasList
+    ? t("Hob 自带 · 存在这台机器上，加密保存")
+    : unofficial
+      ? t("非官方 · 社区维护 · 我们审过的版本 {version}", { version: reviewed })
+      : [publisher, origin, t("版本 {version}", { version: item.plugin.version })].filter(Boolean).join(" · ");
+  const detailDesc = pluginDetailText(item.manifest, pluginDescription(item.manifest, id));
   const configFields = fields.length > 0 && !profileMode;
   const missingProfile = item.profiles?.find(candidate => candidate.missing.length);
   const missingProfileLabels = missingProfile ? fieldMissing(item.config, missingProfile.missing) : [];
@@ -193,13 +206,22 @@ export function PluginDetail({ id }: { id: string }) {
   return <div className="plugin-content">
     <div className="plugin-identity">
       <PluginIcon name={name} id={id} manifest={item.manifest} />
-      <div><div className="plugin-title">{name}</div><div className="plugin-sub">{subtitle}</div></div>
-      <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu"><button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button>{latest && newerPluginVersion(latest.version, item.plugin.version) ? <button onClick={() => void run(() => updatePlugin(id))}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
+      <div className="plugin-identity-text"><div className="plugin-title">{name}</div><div className="plugin-sub">{subtitle}</div></div>
+      <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu">{!item.plugin.needsApproval ? <button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button> : null}{latest && newerPluginVersion(latest.version, item.plugin.version) ? <button onClick={() => void run(() => updatePlugin(id))}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
     </div>
-    <Description text={pluginDescription(item.manifest, id)} />
+    <Description text={detailDesc} />
     {error && <div className="badline" role="alert">{error}</div>}
 
-    {!credentialConnected ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
+    {item.plugin.needsApproval ? (
+      <PluginUpdateApprovalBanner
+        item={item}
+        busy={busy}
+        onApprove={() => void run(() => approvePlugin(id))}
+        onKeepDisabled={() => void run(() => patchPlugin(id, { enabled: false }))}
+      />
+    ) : null}
+
+    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
       {statusBlock}
       {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
       {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}
@@ -210,6 +232,17 @@ export function PluginDetail({ id }: { id: string }) {
         <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
     </section> : null}
+
+    {hasProviders ? (
+      <PluginProvidersSection
+        pluginId={id}
+        providers={item.providers ?? []}
+        host={item.providerHost}
+        toolCount={tools.total}
+        paused={Boolean(item.plugin.needsApproval || !item.plugin.enabled)}
+        onRefreshPlugin={refresh}
+      />
+    ) : null}
 
     {loginData ? <PluginLogins id={id} data={loginData} canSave={item.credentialRoles?.includes("save") ?? false} canDelete={item.credentialRoles?.includes("delete") ?? false} browse={item.plugin.source === "builtin"} reload={async () => { const value = await loadPluginLogins(id, loginData.service); setLoginData(value); }} /> : null}
 
@@ -248,7 +281,7 @@ export function PluginDetail({ id }: { id: string }) {
       {toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}
     </section> : toolErrors.length ? <div className="plugin-tool-errors">{toolErrors.map(toolError => <div className="plugin-tool-error" key={`${toolError.name}:${toolError.reason}`}>{toolError.name}: {toolError.reason}</div>)}</div> : null}
 
-    {!hasList ? assistantSection : null}
+    {!hasList && (!hasProviders || tools.total > 0) ? assistantSection : null}
     {!!item.skills?.length && <section className="plugin-section"><h2>{t("技能")}</h2><div className="plugin-list">{item.skills.map(skill => <div className="plugin-tool" key={skill}>{skill}</div>)}</div></section>}
   </div>;
 }

@@ -1,4 +1,5 @@
 import { PluginHost } from "./plugin-host.ts";
+import { ProviderPluginManager, type ProviderPluginManagerOptions } from "./provider-plugins.ts";
 import { ScriptToolCredentials } from "./script-tools.ts";
 import { setLocale, type Locale } from "../../shared/i18n.ts";
 import "./i18n/en/index.ts";
@@ -49,6 +50,8 @@ export interface HobRuntime {
   knowledge: KnowledgeStore;
   pi: PiHost;
   plugins: PluginHost;
+  /** 带模型的插件：共享 Bun 宿主、账号凭据、五种登录流程、模型缓存与内部代理 */
+  providerPlugins: ProviderPluginManager;
   /** 界面可改的设置（settings.json），每次现读所以改完立即生效 */
   settings: SettingsStore;
   desktop: DesktopService;
@@ -82,6 +85,8 @@ export interface CreateRuntimeOptions {
   pushSender?: PushSender;
   /** 测试注入假的服务商接口（拉模型列表用）和价格表接口（价格用） */
   fetchImpl?: typeof fetch;
+  /** 测试用：覆盖供应商插件的 Bun 下载地址、闲置超时等 */
+  providerPlugins?: Pick<ProviderPluginManagerOptions, "bunOptions" | "hostIdleMs" | "hostScriptPath">;
 }
 
 /** 建出全部服务（不包含 HTTP 和定时器启动），测试和 startHob 共用。 */
@@ -117,6 +122,19 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   });
   try { plugins.migrationErrors = plugins.store.migrateLegacy(); plugins.store.migrateEmailService(); plugins.migrationErrors.push(...plugins.store.migrateProfiles()); }
   catch (error) { plugins.migrationErrors = [error instanceof Error ? error.message : String(error)]; }
+  const providerPlugins = new ProviderPluginManager({
+    home: options.home,
+    store: plugins.store,
+    bus,
+    proxy: () => {
+      const { proxy, noProxy } = settings.settings.general;
+      return { proxy, noProxy };
+    },
+    getThinkingSettings: () => settings.settings.models.thinking,
+    onProvidersChanged: () => providers.apply(),
+    ...(options.providerPlugins ?? {}),
+  });
+  providers.setProviderPlugins(providerPlugins);
   const runtime = {
     scriptTools: new ScriptToolCredentials(),
     home: options.home,
@@ -126,6 +144,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     knowledge: new KnowledgeStore(options.home, bus, store, undefined, () => settings.settings.knowledge?.embedding ?? { source: "off" }),
     pi: options.pi,
     plugins,
+    providerPlugins,
     settings,
     desktop: new DesktopService(options.home, settings),
     providers,

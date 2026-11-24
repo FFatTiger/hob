@@ -2,11 +2,15 @@ import { useEffect, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginsView } from "../../../shared/types.ts";
-import { Icon } from "../icons.tsx";
+import { BrandIcon } from "../brand-icons.tsx";
+import type { Brand } from "../brand-recognition.ts";
+import { Icon, type IconName } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
-import { addCustomPlugin, addPluginSource, deletePluginSource, refreshPluginSources, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
+import { addCustomPlugin, addPluginSource, clearPluginInstallProgress, deletePluginSource, refreshPluginSources, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
 import { DialogShell } from "./DialogShell.tsx";
 import { PluginDetail } from "./PluginDetail.tsx";
+import { PluginInstallView, PluginPreInstallDetail, type CatalogPluginItem } from "./PluginMarketViews.tsx";
+import { hasProviderContribution, hobExtension, isUnofficialPlugin, pluginOverallStatus, pluginPublisher, pluginSummaryText, type PluginBadgeStatus } from "./plugin-meta.ts";
 import "./plugins.css";
 
 export function pluginName(manifest: Record<string, unknown>, id: string) {
@@ -25,34 +29,32 @@ export function PluginStatus({ status }: { status: PluginServiceStatus }) {
   return <span className={`plugin-state ${status}`}><span className="plugin-state-dot" />{pluginStatus(status)}</span>;
 }
 
-function CredentialStatus() {
-  return <span className="plugin-state connected"><span className="plugin-state-dot" />{t("已开启")}</span>;
-}
-
-function pluginServiceStatus(item: PluginsView["plugins"][number]): PluginServiceStatus | undefined {
-  const priority: Record<PluginServiceStatus, number> = { error: 0, needs_relogin: 1, needs_login: 2, pending_config: 3, connecting: 4, idle: 5, connected: 6 };
-  return item.services.map(service => service.status).sort((a, b) => priority[a] - priority[b])[0];
+export function PluginBadge({ badge }: { badge: PluginBadgeStatus }) {
+  return <span className={`plugin-state ${badge.tone}`}><span className="plugin-state-dot" />{badge.label}</span>;
 }
 
 /** 需要处理的排在前面，停用的排最后。 */
 function sortInstalled(plugins: PluginsView["plugins"]) {
-  const rank = (item: PluginsView["plugins"][number]) => {
-    if (!item.plugin.enabled) return 5;
-    return ({ pending_config: 0, needs_login: 1, needs_relogin: 2, error: 3, connecting: 4, idle: 8, connected: 9 } as Record<PluginServiceStatus, number>)[pluginServiceStatus(item) ?? "connected"];
-  };
+  const rank = (item: PluginsView["plugins"][number]) => pluginOverallStatus(item)?.rank ?? 9;
   return [...plugins].sort((a, b) => rank(a) - rank(b));
 }
 
 export function PluginIcon({ name: _name, id, manifest, source }: { name: string; id: string; manifest: Record<string, unknown>; source?: string }) {
   const [failed, setFailed] = useState(false);
-  const extensions = manifest.extensions as Record<string, unknown> | undefined;
-  const hob = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
+  const hob = hobExtension(manifest);
+  const mockBrand = MOCK && typeof manifest.mockBrand === "string" ? manifest.mockBrand : "";
   const src = MOCK && typeof manifest.mockIcon === "string" ? manifest.mockIcon : typeof hob?.icon === "string" ? `/api/plugins/${encodeURIComponent(id)}/icon${source ? `?source=${encodeURIComponent(source)}` : ""}` : "";
+  if (mockBrand === "github" || mockBrand === "mem" || mockBrand === "key") {
+    return <div className="plugin-icon plugin-icon-brand"><Icon name={mockBrand as IconName} size={22} /></div>;
+  }
+  if (mockBrand) {
+    return <div className="plugin-icon plugin-icon-brand"><BrandIcon brand={mockBrand as Brand} size={22} plain /></div>;
+  }
   return <div className="plugin-icon">{src && !failed ? <img alt="" src={src} onError={() => setFailed(true)} /> : <Icon name={id === "vault" ? "key" : "plugin"} size={22} />}</div>;
 }
 
-function PluginNav({ narrow, page, pluginId, view }: { narrow: boolean; page: PluginPage; pluginId: string | null; view: PluginsView | null }) {
-  const choose = (next: PluginPage) => openPlugins(null, next);
+function PluginNav({ narrow, page, pluginId, view, onSelectMarket }: { narrow: boolean; page: PluginPage; pluginId: string | null; view: PluginsView | null; onSelectMarket?: () => void }) {
+  const choose = (next: PluginPage) => { onSelectMarket?.(); openPlugins(null, next); };
   if (narrow) return <nav className="home-filters plugin-categories" aria-label={t("插件分类")}>
     <button className={`home-filter${page === "installed" ? " on" : ""}`} onClick={() => choose("installed")}>{t("已安装")}</button>
     <button className={`home-filter${page === "market" ? " on" : ""}`} onClick={() => choose("market")}>{t("市场")}</button>
@@ -63,10 +65,10 @@ function PluginNav({ narrow, page, pluginId, view }: { narrow: boolean; page: Pl
     <div className="knowledge-label">{t("已安装的插件")}</div>
     {sortInstalled(view?.plugins ?? []).map((item) => {
       const name = pluginName(item.manifest, item.plugin.id);
-      const status = pluginServiceStatus(item);
-      return <button className={`navrow plugin-navrow${pluginId === item.plugin.id ? " sel" : ""}`} key={item.plugin.id} onClick={() => openPlugins(item.plugin.id)}>
+      const badge = pluginOverallStatus(item);
+      return <button className={`navrow plugin-navrow${pluginId === item.plugin.id ? " sel" : ""}`} key={item.plugin.id} onClick={() => { onSelectMarket?.(); openPlugins(item.plugin.id); }}>
         <PluginIcon name={name} id={item.plugin.id} manifest={item.manifest} />
-        <span className="plugin-nav-text"><span className="plugin-nav-name">{name}</span>{item.plugin.enabled ? (item.credentialRoles?.includes("list") ? <CredentialStatus /> : status ? <PluginStatus status={status} /> : null) : <span className="plugin-state disabled">{t("已停用")}</span>}</span>
+        <span className="plugin-nav-text"><span className="plugin-nav-name">{name}</span>{badge ? <PluginBadge badge={badge} /> : null}</span>
       </button>;
     })}
     <button className={`navrow plugin-new${!pluginId && page === "new" ? " sel" : ""}`} onClick={() => choose("new")}>＋ {t("添加自定义 MCP")}</button>
@@ -106,9 +108,7 @@ function CustomPluginForm({ run }: { run: (action: () => Promise<unknown>) => vo
 function PluginRow({
   id,
   manifest,
-  status,
-  disabled = false,
-  credentialProvider = false,
+  badge,
   installed = false,
   onOpen,
   action,
@@ -118,10 +118,8 @@ function PluginRow({
 }: {
   id: string;
   manifest: Record<string, unknown>;
-  status?: PluginServiceStatus;
-  disabled?: boolean;
+  badge?: PluginBadgeStatus | null;
   installed?: boolean;
-  credentialProvider?: boolean;
   onOpen?: () => void;
   action?: { label: string; onClick: () => void };
   source?: string;
@@ -129,7 +127,7 @@ function PluginRow({
   problem?: string;
 }) {
   const name = pluginName(manifest, id);
-  const description = pluginDescription(manifest, id);
+  const description = pluginSummaryText(manifest, pluginDescription(manifest, id));
   const clickable = Boolean(onOpen);
   return (
     <div
@@ -147,32 +145,32 @@ function PluginRow({
         {problem && <div className="badline">{problem}</div>}
       </div>
       <span className="plugin-row-end">
-        {action ? <button className="hob-btn plugin-install" onClick={(event) => { event.stopPropagation(); action.onClick(); }}>{action.label}</button> : disabled ? <span className="plugin-state disabled">{t("已停用")}</span> : credentialProvider ? <CredentialStatus /> : status ? <PluginStatus status={status} /> : installed ? <span className="plugin-state">{t("已安装")}</span> : null}
+        {action ? <button className="hob-btn plugin-install" onClick={(event) => { event.stopPropagation(); action.onClick(); }}>{action.label}</button> : badge ? <PluginBadge badge={badge} /> : installed ? <span className="plugin-state">{t("已安装")}</span> : null}
         {clickable && !action ? <Icon name="chev" size={15} className="plugin-row-chevron" /> : null}
       </span>
     </div>
   );
 }
 
-function hobExtension(manifest: Record<string, unknown>): Record<string, unknown> {
-  const extensions = manifest.extensions as Record<string, unknown> | undefined;
-  const hob = extensions?.["com.hob.plugins"];
-  return hob && typeof hob === "object" ? hob as Record<string, unknown> : {};
-}
-function pluginCategories(manifest: Record<string, unknown>): string[] {
+function pluginCategories(manifest: Record<string, unknown>, hasProviders?: boolean): string[] {
   const categories = hobExtension(manifest).categories;
-  return Array.isArray(categories) ? categories.filter((value): value is string => typeof value === "string" && !!value) : [];
+  const list = Array.isArray(categories) ? categories.filter((value): value is string => typeof value === "string" && !!value) : [];
+  if (hasProviderContribution(manifest, hasProviders) && !list.includes("providers")) {
+    return ["providers", ...list];
+  }
+  return list;
 }
-const CATEGORY_ORDER = ["communication", "productivity", "development", "data", "search", "design", "media", "finance", "home", "other"];
+const CATEGORY_ORDER = ["providers", "communication", "productivity", "development", "data", "search", "design", "media", "finance", "home", "other"];
 function categoryName(slug: string): string {
-  return ({ communication: t("沟通"), productivity: t("效率"), development: t("开发工具"), data: t("数据"), search: t("搜索"), design: t("设计"), media: t("媒体"), finance: t("财务"), home: t("家居"), other: t("其他") } as Record<string, string>)[slug] ?? slug;
+  return ({ providers: t("供应商"), communication: t("沟通"), productivity: t("效率"), development: t("开发工具"), data: t("数据"), search: t("搜索"), design: t("设计"), media: t("媒体"), finance: t("财务"), home: t("家居"), other: t("其他") } as Record<string, string>)[slug] ?? slug;
 }
 
-function PluginCard({ item, sourceLabel, update, onOpen, onInstall, onUpdate }: { item: PluginCatalogView["plugins"][number]; sourceLabel?: string; update: boolean; onOpen?: () => void; onInstall: () => void; onUpdate: () => void }) {
+function PluginCard({ item, sourceLabel, update, onOpen, onInstall, onUpdate }: { item: CatalogPluginItem; sourceLabel?: string; update: boolean; onOpen?: () => void; onInstall: () => void; onUpdate: () => void }) {
   const name = pluginName(item.manifest, item.id);
-  const publisher = typeof hobExtension(item.manifest).publisher === "string" ? String(hobExtension(item.manifest).publisher) : "";
+  const publisher = pluginPublisher(item.manifest);
   const meta = [publisher, sourceLabel].filter(Boolean).join(" · ");
-  const categories = pluginCategories(item.manifest).map(categoryName).join(" · ");
+  const categories = pluginCategories(item.manifest, item.hasProviders).map(categoryName).join(" · ");
+  const unofficial = isUnofficialPlugin(item.manifest, item.hasProviders);
   const button = (label: string, onClick: () => void) => <button className="hob-btn plugin-install" onClick={(event) => { event.stopPropagation(); onClick(); }}>{label}</button>;
   return <div className={`plugin-card${onOpen ? " clickable" : ""}`} role={onOpen ? "button" : undefined} tabIndex={onOpen ? 0 : undefined} onClick={onOpen} onKeyDown={onOpen ? (event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onOpen(); } } : undefined}>
     <div className="plugin-card-head">
@@ -180,9 +178,14 @@ function PluginCard({ item, sourceLabel, update, onOpen, onInstall, onUpdate }: 
       <div className="plugin-card-title"><div className="name">{name}</div>{meta && <div className="plugin-card-meta">{meta}</div>}</div>
       {item.error ? null : update ? button(t("更新"), onUpdate) : item.installed ? <span className="plugin-state">{t("已安装")}</span> : button(t("安装"), onInstall)}
     </div>
-    <div className="plugin-card-desc">{pluginDescription(item.manifest, item.id)}</div>
+    <div className="plugin-card-desc">{pluginSummaryText(item.manifest, pluginDescription(item.manifest, item.id))}</div>
     {item.error && <div className="badline">{item.error}</div>}
-    {categories && <div className="plugin-card-cats">{categories}</div>}
+    {(categories || unofficial) ? (
+      <div className="plugin-card-foot">
+        <span className="plugin-card-cats">{categories}</span>
+        {unofficial ? <span className="plugin-card-unoff">{t("非官方 · 社区维护")}</span> : null}
+      </div>
+    ) : null}
   </div>;
 }
 
@@ -230,13 +233,25 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   const [sourceFilter, setSourceFilter] = useState("all");
   const [category, setCategory] = useState("all");
   const [query, setQuery] = useState("");
-  const [marketDetail, setMarketDetail] = useState<PluginCatalogView["plugins"][number] | null>(null);
+  const [marketDetail, setMarketDetail] = useState<CatalogPluginItem | null>(null);
+  const [installing, setInstalling] = useState<{ item: CatalogPluginItem; done: boolean; error?: string } | null>(null);
+  const [installBusy, setInstallBusy] = useState(false);
   const [checking, setChecking] = useState(false);
   const refresh = async () => { const [nextView, nextCatalog] = await Promise.all([loadPlugins(), loadPluginCatalog()]); setView(nextView); setCatalog(nextCatalog); };
   const run = (action: () => Promise<unknown>) => {
     void (async () => { try { setError(""); await action(); await refresh(); } catch (errorValue) { setError(errorValue instanceof Error ? errorValue.message : String(errorValue)); } })();
   };
-  useEffect(() => { void refresh().catch((errorValue) => setError(errorValue instanceof Error ? errorValue.message : String(errorValue))); }, []);
+  useEffect(() => { void refresh().catch((errorValue) => setError(errorValue instanceof Error ? errorValue.message : String(errorValue))); }, [s.pluginProviderTick]);
+  useEffect(() => {
+    if (!catalog?.plugins.length || installing) return;
+    const entries = Object.values(s.pluginInstall);
+    if (!entries.length) return;
+    const active = entries[0];
+    const match = catalog.plugins.find((item) => item.id === active.pluginId);
+    if (match && !s.pluginId) {
+      setInstalling({ item: match, done: active.stage === "done", error: active.error });
+    }
+  }, [catalog, s.pluginInstall, s.pluginId]);
   useEffect(() => {
     if (!catalog?.sources?.some(source => source.refreshing)) return;
     const timer = window.setTimeout(() => { void refresh().catch(e => setError(e instanceof Error ? e.message : String(e))); }, 1500);
@@ -256,19 +271,49 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [s.page]);
+  const startInstall = async (item: CatalogPluginItem) => {
+    const providerPlugin = hasProviderContribution(item.manifest, item.hasProviders);
+    if (providerPlugin) {
+      clearPluginInstallProgress(item.id);
+      setMarketDetail(null);
+      setInstalling({ item, done: false });
+      try {
+        setError("");
+        await installPlugin(item.id, item.source);
+        await refresh();
+        setInstalling({ item, done: true });
+      } catch (errorValue) {
+        setInstalling({ item, done: false, error: errorValue instanceof Error ? errorValue.message : String(errorValue) });
+      }
+      return;
+    }
+    setInstallBusy(true);
+    try {
+      setError("");
+      await installPlugin(item.id, item.source);
+      await refresh();
+      setMarketDetail(null);
+      openPlugins(item.id);
+    } catch (errorValue) {
+      setError(errorValue instanceof Error ? errorValue.message : String(errorValue));
+    } finally {
+      setInstallBusy(false);
+    }
+  };
   const installed = sortInstalled(view?.plugins ?? []);
   const available = (catalog?.plugins ?? []).filter(item => !item.installed && !item.error);
   const sources = catalog?.sources ?? [];
   const usable = (catalog?.plugins ?? []).filter(item => !item.error);
-  const categories = [...new Set(usable.flatMap(item => pluginCategories(item.manifest)))].sort((a, b) => (CATEGORY_ORDER.indexOf(a) + 1 || 99) - (CATEGORY_ORDER.indexOf(b) + 1 || 99));
+  const categories = [...new Set(usable.flatMap(item => pluginCategories(item.manifest, item.hasProviders)))].sort((a, b) => (CATEGORY_ORDER.indexOf(a) + 1 || 99) - (CATEGORY_ORDER.indexOf(b) + 1 || 99));
   const words = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
   const shown = (catalog?.plugins ?? []).filter(item => (sourceFilter === "all" || item.source === sourceFilter)
-    && (category === "all" || pluginCategories(item.manifest).includes(category))
-    && words.every(word => [item.id, pluginName(item.manifest, item.id), pluginDescription(item.manifest, item.id), String(hobExtension(item.manifest).publisher ?? ""), ...pluginCategories(item.manifest).map(categoryName)].some(value => value.toLowerCase().includes(word))));
+    && (category === "all" || pluginCategories(item.manifest, item.hasProviders).includes(category))
+    && words.every(word => [item.id, pluginName(item.manifest, item.id), pluginSummaryText(item.manifest, pluginDescription(item.manifest, item.id)), pluginPublisher(item.manifest), ...pluginCategories(item.manifest, item.hasProviders).map(categoryName)].some(value => value.toLowerCase().includes(word))));
+  const hasProviderCards = shown.some((item) => hasProviderContribution(item.manifest, item.hasProviders));
   const check = <button className="hob-icon-btn" title={t("检查更新")} aria-label={t("检查更新")} disabled={checking} onClick={() => { setChecking(true); run(() => refreshPluginSources().finally(() => setChecking(false))); }}><Icon name={checking ? "spin" : "retry"} size={18} className={checking ? "spin" : undefined} /></button>;
   const plus = <span className="plugin-head-actions">{check}<button className="hob-icon-btn" title={t("添加插件源")} aria-label={t("添加插件源")} onClick={() => setSourceDialog(true)}><Icon name="plus" size={18} /></button></span>;
   const landing = s.pluginPage === "market" || (s.pluginPage === "installed" && !narrow) ? <>
-    {!narrow && <div className="plugin-market-heading"><div><PluginHeading title={t("市场")} description={t("装上插件，助手就能用它的工具。装好后在插件页填配置。")} /></div>{plus}</div>}
+    {!narrow && <div className="plugin-market-heading"><div><PluginHeading title={t("市场")} description={t("安装插件后，助手可使用它的模型和工具。")} /></div>{plus}</div>}
     {sources.filter(source => source.error).map(source => <div className="badline" key={source.id}>{source.updatedAt ? t("「{name}」没有更新：{error}（上次更新 {time}）", { name: sourceName(source), error: source.error!, time: fmtWhen(source.updatedAt) }) : t("「{name}」读取失败：{error}", { name: sourceName(source), error: source.error! })}</div>)}
     {error && <div className="badline" role="alert">{error}</div>}{view?.migrationErrors.map((message) => <div className="badline" key={message}>{message}</div>)}
     <label className="knowledge-search plugin-search"><Icon name="search" size={16} /><input value={query} placeholder={t("搜索插件")} onChange={(event) => setQuery(event.target.value)} /></label>
@@ -278,8 +323,9 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
       const installedVersion = view?.plugins.find(plugin => plugin.plugin.id === item.id && plugin.plugin.source === item.source)?.plugin.version;
       const update = Boolean(item.installed && !item.error && installedVersion && newerPluginVersion(item.version, installedVersion));
       const sourceLabel = item.source === "builtin" ? t("Hob 自带") : sources.length > 1 ? sourceName({ id: item.source ?? "", name: item.sourceName ?? "" }) : undefined;
-      return <PluginCard key={`${item.source}:${item.id}:${index}`} item={item} sourceLabel={sourceLabel} update={update} onOpen={item.error ? undefined : item.installed ? () => openPlugins(item.id) : () => setMarketDetail(item)} onInstall={() => run(() => installPlugin(item.id, item.source))} onUpdate={() => run(() => updatePlugin(item.id))} />;
+      return <PluginCard key={`${item.source}:${item.id}:${index}`} item={item} sourceLabel={sourceLabel} update={update} onOpen={item.error ? undefined : item.installed ? () => openPlugins(item.id) : () => { setError(""); setMarketDetail(item); }} onInstall={() => void startInstall(item)} onUpdate={() => run(() => updatePlugin(item.id))} />;
     })}</div>
+    {hasProviderCards ? <div className="plugin-note">{t("带模型的社区插件采用非官方接入方式，可能触发厂商限制；安装前可点击卡片查看审核版本与权限说明。")}</div> : null}
     {catalog && !shown.length && <div className="plugin-note plugin-empty">{query.trim() ? t("没有找到「{query}」相关的插件。", { query: query.trim() }) : t("这个分类还没有插件。")}</div>}
   </> : s.pluginPage === "new" ? <>
     <PluginHeading title={t("添加自定义 MCP")} description={t("连接自定义工具服务。")} />
@@ -288,17 +334,18 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   </> : <>
     {!narrow && <PluginHeading title={t("插件")} description={t("连接常用工具，让助手在工作中使用。")} />}
     {error && <div className="badline" role="alert">{error}</div>}{view?.migrationErrors.map((message) => <div className="badline" key={message}>{message}</div>)}
-    <div className="plugin-list plugin-installed-list">{installed.map((item) => <PluginRow key={item.plugin.id} id={item.plugin.id} manifest={item.manifest} status={pluginServiceStatus(item)} credentialProvider={item.credentialRoles?.includes("list")} disabled={!item.plugin.enabled} installed onOpen={() => openPlugins(item.plugin.id)} />)}</div>
+    <div className="plugin-list plugin-installed-list">{installed.map((item) => <PluginRow key={item.plugin.id} id={item.plugin.id} manifest={item.manifest} badge={pluginOverallStatus(item)} installed onOpen={() => openPlugins(item.plugin.id)} />)}</div>
     <div className="plugin-note">{t("需要处理的排在前面。停用的插件显示「已停用」。")}</div>
     {available.length ? <section className="plugin-market-more">
       <div className="plugin-section-head"><span>{t("市场里还有")}</span><button className="plugin-link" onClick={() => openPlugins(null, "market")}>{t("去市场")} <Icon name="chev" size={14} /></button></div>
-      <div className="plugin-list">{available.map((item, index) => <PluginRow key={`${item.source}:${item.id}:${index}`} id={item.id} manifest={item.manifest} source={item.source} action={{ label: t("安装"), onClick: () => run(() => installPlugin(item.id, item.source)) }} />)}</div>
+      <div className="plugin-list">{available.map((item, index) => <PluginRow key={`${item.source}:${item.id}:${index}`} id={item.id} manifest={item.manifest} source={item.source} onOpen={() => { setError(""); setMarketDetail(item); }} action={{ label: t("安装"), onClick: () => void startInstall(item) }} />)}</div>
     </section> : null}
   </>;
+  const inSubView = Boolean(s.pluginId || marketDetail || installing);
   return <main className={`setpage plugins${narrow ? " narrow" : ""}${leaving ? " leaving" : ""}`}>
-    {narrow ? <div className="sethead"><button className="hob-icon-btn" title={s.pluginId || marketDetail ? t("返回插件") : t("返回 Hob")} aria-label={s.pluginId || marketDetail ? t("返回插件") : t("返回 Hob")} onClick={() => marketDetail ? setMarketDetail(null) : s.pluginId ? openPlugins() : closePlugins()}><Icon name="left" size={17} /></button><span className="t">{t("插件")}</span>{!s.pluginId && !marketDetail && (s.pluginPage === "market" ? plus : s.pluginPage === "installed" ? <button className="hob-icon-btn" title={t("添加自定义 MCP")} aria-label={t("添加自定义 MCP")} onClick={() => openPlugins(null, "new")}><Icon name="plus" size={18} /></button> : null)}</div> : null}
-    {(!narrow || (!s.pluginId && !marketDetail)) ? <PluginNav narrow={narrow} page={s.pluginPage} pluginId={s.pluginId} view={view} /> : null}
-    <section className="setmain plugin-main">{s.pluginId ? <PluginDetail id={s.pluginId} /> : marketDetail ? <div className="plugin-content"><button className="plugin-link" onClick={() => setMarketDetail(null)}>{t("返回插件")}</button><div className="plugin-identity"><PluginIcon id={marketDetail.id} name={pluginName(marketDetail.manifest, marketDetail.id)} manifest={marketDetail.manifest} source={marketDetail.source} /><div><div className="plugin-title">{pluginName(marketDetail.manifest, marketDetail.id)}</div><div className="plugin-sub">{sourceName({ id: marketDetail.source ?? "", name: marketDetail.sourceName ?? "" })} · {t("版本 {version}", { version: marketDetail.version })}</div></div></div><div className="plugin-sub">{pluginDescription(marketDetail.manifest, marketDetail.id)}</div>{error && <div className="badline" role="alert">{error}</div>}<div className="plugin-actions"><button className="hob-btn hob-btn-primary" onClick={() => run(async () => { await installPlugin(marketDetail.id, marketDetail.source); setMarketDetail(null); openPlugins(marketDetail.id); })}>{t("安装")}</button></div></div> : <div className="plugin-content">{landing}</div>}</section>
+    {narrow ? <div className="sethead"><button className="hob-icon-btn" title={inSubView ? t("返回插件") : t("返回 Hob")} aria-label={inSubView ? t("返回插件") : t("返回 Hob")} onClick={() => installing ? (clearPluginInstallProgress(installing.item.id), setInstalling(null)) : marketDetail ? setMarketDetail(null) : s.pluginId ? openPlugins() : closePlugins()}><Icon name="left" size={17} /></button><span className="t">{t("插件")}</span>{!inSubView && (s.pluginPage === "market" ? plus : s.pluginPage === "installed" ? <button className="hob-icon-btn" title={t("添加自定义 MCP")} aria-label={t("添加自定义 MCP")} onClick={() => openPlugins(null, "new")}><Icon name="plus" size={18} /></button> : null)}</div> : null}
+    {(!narrow || !inSubView) ? <PluginNav narrow={narrow} page={s.pluginPage} pluginId={s.pluginId} view={view} onSelectMarket={() => { setMarketDetail(null); if (installing) { clearPluginInstallProgress(installing.item.id); setInstalling(null); } }} /> : null}
+    <section className="setmain plugin-main">{s.pluginId ? <PluginDetail id={s.pluginId} /> : installing ? <PluginInstallView item={installing.item} progress={s.pluginInstall[installing.item.id]} host={view?.providerHost} done={installing.done} error={installing.error} onBack={() => { clearPluginInstallProgress(installing.item.id); setInstalling(null); }} onOpenPlugin={() => { const id = installing.item.id; clearPluginInstallProgress(id); setInstalling(null); openPlugins(id); }} onRetry={() => void startInstall(installing.item)} /> : marketDetail ? <PluginPreInstallDetail item={marketDetail} sourceLabel={sourceName({ id: marketDetail.source ?? "", name: marketDetail.sourceName ?? "" })} error={error} busy={installBusy} onBack={() => setMarketDetail(null)} onInstall={() => void startInstall(marketDetail)} /> : <div className="plugin-content">{landing}</div>}</section>
     {sourceDialog && <SourceDialog sources={sources} refresh={refresh} onClose={() => setSourceDialog(false)} />}
   </main>;
 }

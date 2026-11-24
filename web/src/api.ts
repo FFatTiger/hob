@@ -43,7 +43,14 @@ import type {
   MemoryProvider,
   ModelThinkingPatch,
   ModelThinkingSaved,
+  PluginAuthPromptView,
+  PluginCliStatusView,
+  PluginProviderModelView,
+  PluginProviderUsageView,
+  PluginProviderView,
+  PluginSignInSessionView,
   Profile,
+  ProviderHostStatusView,
   ProviderImportView,
   ProvidersView,
   PushSubscriptionJson,
@@ -185,6 +192,22 @@ export interface HobApi {
   pluginLoginSecret(id: string, loginId: string, service?: string): Promise<{ username: string; password: string; totp?: string }>;
   savePluginLogin(id: string, body: { id?: string; service?: string; name: string; uris: string[]; username: string; password: string; folder?: string }): Promise<{ id: string; folder?: string }>;
   deletePluginLogin(id: string, loginId: string, service?: string): Promise<{ ok: true }>;
+  pluginProviderHost(): Promise<ProviderHostStatusView>;
+  approvePlugin(id: string): Promise<PluginView>;
+  pluginProviders(id: string, load?: boolean): Promise<{ providers: PluginProviderView[]; providerHost: ProviderHostStatusView }>;
+  refreshPluginModels(id: string, providerId: string, accountId?: string): Promise<{ models: PluginProviderModelView[]; plugin: PluginView }>;
+  pluginProviderUsage(id: string, providerId: string, accountId?: string): Promise<PluginProviderUsageView>;
+  setPluginActiveAccount(id: string, providerId: string, accountId: string): Promise<PluginView>;
+  deletePluginAccount(id: string, providerId: string, accountId: string): Promise<PluginView>;
+  pluginAuthPrompt(id: string, providerId: string, body: { methodIndex: number; inputs?: Record<string, string>; validateKey?: string; validateValue?: string }): Promise<{ prompt?: PluginAuthPromptView | null; error?: string | null }>;
+  pluginAuthApiKey(id: string, providerId: string, body: { methodIndex: number; key?: string; displayName?: string; inputs?: Record<string, string>; accountId?: string }): Promise<{ accountId: string; models: PluginProviderModelView[]; modelsError?: string; plugin: PluginView }>;
+  pluginAuthStart(id: string, providerId: string, body: { methodIndex: number; inputs?: Record<string, string>; accountId?: string }): Promise<PluginSignInSessionView>;
+  pluginAuthSession(id: string, providerId: string, sessionId: string): Promise<PluginSignInSessionView>;
+  pluginAuthPaste(id: string, providerId: string, body: { sessionId: string; url: string }): Promise<PluginSignInSessionView>;
+  pluginAuthCode(id: string, providerId: string, body: { sessionId: string; code: string }): Promise<PluginSignInSessionView>;
+  pluginAuthCancel(id: string, providerId: string, sessionId: string): Promise<PluginSignInSessionView>;
+  pluginProviderCli(id: string, providerId: string): Promise<PluginCliStatusView>;
+  installPluginProviderCli(id: string, providerId: string): Promise<PluginCliStatusView>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
   testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
@@ -278,6 +301,8 @@ const EVENT_TYPES: HobEvent["type"][] = [
   "group-item",
   "group-delta",
   "group-activity",
+  "plugin-install",
+  "plugin-providers",
 ];
 export const realApi: HobApi = {
   knowledge: (query = {}) => {
@@ -359,6 +384,22 @@ export const realApi: HobApi = {
   pluginLoginSecret: (id, loginId, service) => req<{ username: string; password: string; totp?: string }>(`/api/plugins/${encodeURIComponent(id)}/logins/secret`, json({ id: loginId, ...(service ? { service } : {}) })),
   savePluginLogin: (id, body) => req<{ id: string; folder?: string }>(`/api/plugins/${encodeURIComponent(id)}/logins`, json(body)),
   deletePluginLogin: (id, loginId, service) => req<{ ok: true }>(`/api/plugins/${encodeURIComponent(id)}/logins/${encodeURIComponent(loginId)}${service ? `?service=${encodeURIComponent(service)}` : ""}`, { method: "DELETE" }),
+  pluginProviderHost: () => req<ProviderHostStatusView>("/api/plugins/provider-host"),
+  approvePlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/approve`, json({})),
+  pluginProviders: (id, load) => req<{ providers: PluginProviderView[]; providerHost: ProviderHostStatusView }>(`/api/plugins/${encodeURIComponent(id)}/providers${load ? "?load=1" : ""}`),
+  refreshPluginModels: (id, providerId, accountId) => req<{ models: PluginProviderModelView[]; plugin: PluginView }>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/models/refresh`, json(accountId ? { accountId } : {})),
+  pluginProviderUsage: (id, providerId, accountId) => req<PluginProviderUsageView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/usage${accountId ? `?accountId=${encodeURIComponent(accountId)}` : ""}`),
+  setPluginActiveAccount: (id, providerId, accountId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/accounts/active`, json({ accountId })),
+  deletePluginAccount: (id, providerId, accountId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/accounts/${encodeURIComponent(accountId)}`, { method: "DELETE" }),
+  pluginAuthPrompt: (id, providerId, body) => req<{ prompt?: PluginAuthPromptView | null; error?: string | null }>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/prompt`, json(body)),
+  pluginAuthApiKey: (id, providerId, body) => req<{ accountId: string; models: PluginProviderModelView[]; modelsError?: string; plugin: PluginView }>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/api-key`, json(body)),
+  pluginAuthStart: (id, providerId, body) => req<PluginSignInSessionView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/start`, json(body)),
+  pluginAuthSession: (id, providerId, sessionId) => req<PluginSignInSessionView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/session/${encodeURIComponent(sessionId)}`),
+  pluginAuthPaste: (id, providerId, body) => req<PluginSignInSessionView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/paste`, json(body)),
+  pluginAuthCode: (id, providerId, body) => req<PluginSignInSessionView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/code`, json(body)),
+  pluginAuthCancel: (id, providerId, sessionId) => req<PluginSignInSessionView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/auth/cancel`, json({ sessionId })),
+  pluginProviderCli: (id, providerId) => req<PluginCliStatusView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/cli`),
+  installPluginProviderCli: (id, providerId) => req<PluginCliStatusView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/cli/install`, json({})),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
   testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),

@@ -2,7 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { createPortal } from "react-dom";
 import { Icon } from "../icons.tsx";
 
-type Option = { value: string; label: string; disabled?: boolean; icon?: ReactNode };
+type Option = { value: string; label: string; meta?: string; disabled?: boolean; icon?: ReactNode };
 
 export function Select({ value, onChange, options, disabled, className, "aria-label": label }: {
   value: string; onChange: (value: string) => void; options: Option[]; disabled?: boolean; className?: string; "aria-label"?: string;
@@ -25,7 +25,8 @@ export function Select({ value, onChange, options, disabled, className, "aria-la
     // 选项的字和按钮上的字左边对齐：减去按钮内边距，补上列表外框和选项的内边距
     const inset = parseFloat(getComputedStyle(trigger.current).paddingLeft) || 0;
     const shift = (parseFloat(getComputedStyle(popup.current).paddingLeft) || 0) + (popup.current.clientLeft || 0) + (parseFloat(getComputedStyle(popup.current.querySelector('[role="option"]') ?? popup.current).paddingLeft) || 0) - inset;
-    const width = Math.min(window.innerWidth - 16, Math.max(rect.width + shift * 2, popup.current.offsetWidth));
+    const hasMeta = options.some((option) => Boolean(option.meta));
+    const width = Math.min(window.innerWidth - 16, Math.max(rect.width + shift * 2, popup.current.offsetWidth, hasMeta ? 280 : 0));
     const height = Math.min(popup.current.scrollHeight, window.innerHeight - 16);
     const below = window.innerHeight - rect.bottom - 8;
     const above = rect.top - 8;
@@ -59,6 +60,6 @@ export function Select({ value, onChange, options, disabled, className, "aria-la
       else if (event.key === "End") { event.preventDefault(); move(-1, options.length); }
       else if (event.key === "Enter" || event.key === " ") { event.preventDefault(); choose(active); }
     }}><span className="select-value">{selected?.icon}<span>{selected?.label ?? ""}</span></span><Icon name="down" size={14} /></button>
-    {open && createPortal(<div ref={popup} className="amenu select-popup" style={position} role="listbox" aria-label={label} onScroll={(event) => event.stopPropagation()}>{options.map((option, index) => <button key={`${option.value}-${index}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={index === active ? "sel" : ""} onMouseEnter={() => !option.disabled && setActive(index)} onClick={() => choose(index)}><span className="select-value">{option.icon}<span>{option.label}</span></span>{option.value === value && <Icon name="check" size={15} />}</button>)}</div>, document.body)}
+    {open && createPortal(<div ref={popup} className="amenu select-popup" style={position} role="listbox" aria-label={label} onScroll={(event) => event.stopPropagation()}>{options.map((option, index) => <button key={`${option.value}-${index}`} type="button" role="option" aria-selected={option.value === value} disabled={option.disabled} className={index === active ? "sel" : ""} onMouseEnter={() => !option.disabled && setActive(index)} onClick={() => choose(index)}><span className="select-value">{option.icon}<span>{option.label}</span></span>{option.meta ? <span className="select-meta">{option.meta}</span> : null}{option.value === value && <Icon name="check" size={15} />}</button>)}</div>, document.body)}
   </>;
 }

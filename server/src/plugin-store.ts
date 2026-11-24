@@ -6,7 +6,7 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PluginSources, OFFICIAL_SOURCE } from "./plugin-sources.ts";
 import type { ProxyEnvironmentSettings } from "./network-proxy.ts";
-import { pluginConfig, profileDeclaration, validatePluginValues, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
+import { diffCapabilities, pluginCapabilities, pluginConfig, profileDeclaration, providerDeclarations, validatePluginValues, type PluginCapabilitySnapshot, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
 import { systemDir } from "./config.ts";
 
@@ -28,6 +28,13 @@ export interface InstalledPlugin {
   legacyMcp?: boolean;
   /** 旧 MCP 配置中通过命令求值的敏感项。 */
   secretCommands?: string[];
+  /** 已确认的能力快照；更新后能力变化时需重新确认。 */
+  approvedCapabilities?: PluginCapabilitySnapshot;
+  /** 更新后能力变化，等待用户重新确认。 */
+  needsApproval?: boolean;
+  capabilityChanges?: string[];
+  /** 上次更新失败原因，保留旧插件继续运行。 */
+  updateError?: string;
 }
 type Document = { plugins: InstalledPlugin[] };
 type Obj = Record<string, unknown>;
@@ -88,9 +95,18 @@ export class PluginStore {
   files(id: string): { manifest: Obj; mcp: Obj; config: PluginConfig } {
     const dir = this.dir(id);
     const manifest = readJson(join(dir, "plugin.json"));
-    const mcp = readJson(join(dir, "mcp.json"));
-    if (!object(manifest) || !object(mcp)) throw new Error(`插件 ${id} 清单无效`);
+    if (!object(manifest)) throw new Error(`插件 ${id} 清单无效`);
+    const providers = providerDeclarations(manifest);
+    const mcpPath = join(dir, "mcp.json");
+    const mcp = existsSync(mcpPath) ? readJson(mcpPath) : providers.length > 0 ? { mcpServers: {} } : undefined;
+    if (!object(mcp)) throw new Error(`插件 ${id} 清单无效`);
     return { manifest, mcp, config: pluginConfig(manifest, mcp) };
+  }
+  providersOf(id: string) {
+    return providerDeclarations(this.files(id).manifest);
+  }
+  pluginDir(id: string): string {
+    return this.dir(id);
   }
   skills(id: string): string[] {
     this.get(id);
@@ -119,7 +135,26 @@ export class PluginStore {
     return { content: readFileSync(actual), type };
   }
   catalog() { return [...this.builtinCatalog(), ...this.sources.catalog()]; }
-  install(id: string, update = false, force = false, sourceId?: string): InstalledPlugin {
+  /** Copy an official plugin source to an isolated staging directory before provider dependencies are installed. */
+  prepareProviderDirectory(id: string, update = false, sourceId?: string): string {
+    const installed = this.list().find((plugin) => plugin.id === id);
+    const wanted = update ? installed?.source : (sourceId ?? (id === "vault" ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
+    const entry = wanted === BUILTIN_SOURCE ? this.builtinEntry(id) : this.catalog().find((item) => item.id === id && item.source === wanted);
+    if (!entry) throw new Error(`插件源没有插件 ${id}`);
+    if (entry.error) throw new Error(entry.error);
+    if (update && installed?.source === "custom") throw new Error("自定义插件不能从插件源更新");
+    if (update && !installed) throw new Error(`插件 ${id} 未安装`);
+    if (!update && installed) throw new Error(`插件 ${id} 已安装`);
+    const staging = join(this.home, `.plugin-stage-${randomUUID()}`);
+    try {
+      cpSync(entry.path, staging, { recursive: true, errorOnExist: true });
+      return staging;
+    } catch (error) {
+      rmSync(staging, { recursive: true, force: true });
+      throw error;
+    }
+  }
+  install(id: string, update = false, force = false, sourceId?: string, preparedSource?: string): InstalledPlugin {
     const doc = this.read();
     const old = doc.plugins.find(p => p.id === id);
     const wanted = update ? old?.source : (sourceId ?? (id === "vault" ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
@@ -127,9 +162,11 @@ export class PluginStore {
     const entry = wanted === BUILTIN_SOURCE ? this.builtinEntry(id) : this.catalog().find(item => item.id === id && item.source === wanted);
     if (!entry) throw new Error(`插件源没有插件 ${id}`);
     if (entry.error) throw new Error(entry.error);
-    const source = entry.path;
+    const source = preparedSource ?? entry.path;
     const manifest = readJson(join(source, "plugin.json"));
-    const mcp = readJson(join(source, "mcp.json"));
+    const providers = providerDeclarations(manifest);
+    const mcpPath = join(source, "mcp.json");
+    const mcp = existsSync(mcpPath) ? readJson(mcpPath) : providers.length > 0 ? { mcpServers: {} } : (() => { throw new Error(`插件 ${id} 缺少 mcp.json`); })();
     const definitions = pluginConfig(manifest, mcp);
     if (old && !update && old.source !== wanted) {
       const installedManifest = this.files(id).manifest;
@@ -139,8 +176,28 @@ export class PluginStore {
     if (old && !update) throw new Error(`插件 ${id} 已安装`);
     if (!old && update) throw new Error(`插件 ${id} 未安装`);
     if (old && !force && !newerPluginVersion(entry.version, old.version)) return old;
+    const nextCapabilities = pluginCapabilities(manifest, mcp);
+    let previousCapabilities = old?.approvedCapabilities;
+    if (old && !previousCapabilities) {
+      try {
+        const prev = this.files(id);
+        previousCapabilities = pluginCapabilities(prev.manifest, prev.mcp);
+      } catch { /* fallback */ }
+    }
+    const capabilityChanges = old && previousCapabilities ? diffCapabilities(previousCapabilities, nextCapabilities) : [];
     const declaration = profileDeclaration(manifest);
-    const next: InstalledPlugin = old ? { ...old, version: entry.version, sourceName: entry.sourceName } : { id, version: entry.version, source: entry.source, sourceName: entry.sourceName, enabled: true, tools: {} };
+    const next: InstalledPlugin = old
+      ? {
+          ...old,
+          version: entry.version,
+          sourceName: entry.sourceName,
+          ...(capabilityChanges.length
+            ? { enabled: false, needsApproval: true, capabilityChanges, approvedCapabilities: previousCapabilities }
+            : { approvedCapabilities: nextCapabilities, needsApproval: undefined, capabilityChanges: undefined }),
+        }
+      : { id, version: entry.version, source: entry.source, sourceName: entry.sourceName, enabled: true, tools: {}, approvedCapabilities: nextCapabilities };
+    if (old) delete next.updateError;
+    if (!next.needsApproval) { delete next.needsApproval; delete next.capabilityChanges; }
     if (declaration) {
       if (old && !next.profiles) {
         const profile: PluginProfile = { id: randomUUID(), name: declaration.title ?? "配置", config: {} };
@@ -483,11 +540,36 @@ export class PluginStore {
     for (const key of Object.keys(readSecrets(this.home))) if (key.startsWith(profileSecretPrefix(id, profileId))) writeSecret(this.home, key, "");
     this.write(doc);
   }
+  recordUpdateError(id: string, message: string): void {
+    const doc = this.read();
+    const plugin = doc.plugins.find(item => item.id === id);
+    if (!plugin) throw new Error(`插件 ${id} 未安装`);
+    plugin.updateError = message.slice(0, 1000);
+    this.write(doc);
+  }
+
+  approve(id: string): InstalledPlugin {
+    const doc = this.read();
+    const p = doc.plugins.find(item => item.id === id);
+    if (!p) throw new Error(`插件 ${id} 未安装`);
+    if (!p.needsApproval) throw new Error("插件没有待确认的能力变化");
+    const { manifest, mcp } = this.files(id);
+    p.approvedCapabilities = pluginCapabilities(manifest, mcp);
+    delete p.needsApproval;
+    delete p.capabilityChanges;
+    p.enabled = true;
+    this.write(doc);
+    return p;
+  }
   patch(id: string, patch: { enabled?: boolean; assistants?: string[] | null; tools?: InstalledPlugin["tools"] }): void {
     const doc = this.read();
     const p = doc.plugins.find(item => item.id === id);
     if (!p) throw new Error(`插件 ${id} 未安装`);
-    if (patch.enabled !== undefined) { if (typeof patch.enabled !== "boolean") throw new Error("enabled 必须是布尔值"); p.enabled = patch.enabled; }
+    if (patch.enabled !== undefined) {
+      if (typeof patch.enabled !== "boolean") throw new Error("enabled 必须是布尔值");
+      if (patch.enabled && p.needsApproval) throw new Error("插件更新后能力有变化，请先确认后再启用");
+      p.enabled = patch.enabled;
+    }
     if (patch.assistants !== undefined) { if (patch.assistants !== null && (!Array.isArray(patch.assistants) || patch.assistants.some(a => typeof a !== "string"))) throw new Error("assistants 必须是字符串数组"); if (patch.assistants === null) delete p.assistants; else p.assistants = patch.assistants; }
     if (patch.tools !== undefined) {
       if (!object(patch.tools)) throw new Error("tools 必须是对象");

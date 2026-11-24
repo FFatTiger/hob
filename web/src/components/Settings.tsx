@@ -19,6 +19,7 @@ import type {
   ModelInfo,
   ModelThinkingView,
   ModelsView,
+  PluginProviderSummary,
   ProviderApi,
   ProviderImportItem,
   ProviderImportView,
@@ -85,7 +86,9 @@ import {
   loadPush,
   importLore,
   importProviders,
+  MOCK,
   openJobs,
+  openPlugins,
   removeProvider,
   removePushDevice,
   saveImage,
@@ -718,7 +721,7 @@ function ValuePick<V extends string>({
   onChange,
 }: {
   value: V;
-  options: { value: V; text: string; icon?: ReactNode }[];
+  options: { value: V; text: string; meta?: string; icon?: ReactNode }[];
   label: string;
   icon?: IconName;
   onChange: (next: V) => void;
@@ -726,7 +729,7 @@ function ValuePick<V extends string>({
   return (
     <span className="ctl">
       {icon ? <Icon name={icon} size={14} /> : null}
-      <Select aria-label={label} value={value} onChange={(next) => onChange(next as V)} options={options.map((item) => ({ value: item.value, label: item.text, icon: item.icon }))} />
+      <Select aria-label={label} value={value} onChange={(next) => onChange(next as V)} options={options.map((item) => ({ value: item.value, label: item.text, meta: item.meta, icon: item.icon }))} />
     </span>
   );
 }
@@ -1013,10 +1016,41 @@ function ProvidersSection() {
   return <ProvidersHome view={view} notice={notice} connectionStatus={connectionStatus} />;
 }
 
-/** 服务商页：已配置的服务商（整行点进详情）、添加服务商、从本机导入。 */
+function PluginProviderIcon({ provider, models, size = 32 }: { provider: PluginProviderSummary; models?: readonly { id: string; name?: string }[]; size?: number }) {
+  const [failed, setFailed] = useState(false);
+  const lower = `${provider.pluginId} ${provider.name}`.toLowerCase();
+  if (!MOCK && !failed) {
+    return (
+      <span className="brand-icon" style={{ width: size, height: size }}>
+        <img alt="" src={`/api/plugins/${encodeURIComponent(provider.pluginId)}/icon`} onError={() => setFailed(true)} />
+      </span>
+    );
+  }
+  if (lower.includes("copilot") || lower.includes("github")) {
+    return <span className="brand-icon" style={{ width: size, height: size }}><Icon name="github" size={Math.round(size * 0.58)} /></span>;
+  }
+  return <BrandIcon size={size} brand={providerBrand(provider.id, provider.name, models)} />;
+}
+
+function pluginProviderStatus(provider: PluginProviderSummary): { cls: string; text: string } {
+  if (!provider.enabled) return { cls: "note", text: t("已停用") };
+  if (provider.error && !provider.loggedIn) {
+    return /过期|重新登录|失效|expired|relogin/i.test(provider.error)
+      ? { cls: "provider-status-warn", text: t("需要重新登录") }
+      : { cls: "badline", text: t("出错") };
+  }
+  if (provider.loggedIn) {
+    const isKeyless = provider.pluginId === "zen-free" || provider.activeAccount?.toLowerCase() === "public";
+    return { cls: "provider-status-ok", text: isKeyless ? t("已启用") : t("已登录") };
+  }
+  return { cls: "provider-status-warn", text: t("需要登录") };
+}
+
+/** 服务商页：已配置的服务商（整行点进详情）、来自插件的服务商（点进插件页）、添加服务商、从本机导入。 */
 function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView; notice: string | null; connectionStatus: Record<string, "connected" | "failed"> }) {
   const builtinName = (id: string) => view.builtin.find((item) => item.id === id)?.name ?? id;
   const label = (provider: ProviderView) => (provider.kind === "builtin" ? builtinName(provider.id) : provider.name);
+  const pluginProviders = view.pluginProviders ?? [];
 
   return (
     <>
@@ -1040,12 +1074,32 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
                 <div className="rname">{label(provider)}</div>
                 <div className="rprov">{provider.kind === "builtin" ? t("内置服务商") : t("兼容接口")} · {t("{n} 个模型", { n: view.models[provider.id]?.length ?? 0 })}</div>
               </div>
-              <span className={provider.keyConfigured && connectionStatus[provider.id] !== "failed" ? "note" : "badline"}>
+              <span className={provider.keyConfigured && connectionStatus[provider.id] !== "failed" ? (connectionStatus[provider.id] === "connected" ? "provider-status-ok" : "note") : "badline"}>
                 {provider.keyConfigured ? (connectionStatus[provider.id] === "connected" ? t("已连接") : connectionStatus[provider.id] === "failed" ? t("连接失败") : t("未验证")) : t("未填 Key")}
               </span>
               <Icon name="chev" size={15} className="rgo" />
             </button>
           ))}
+          {pluginProviders.map((provider) => {
+            const st = pluginProviderStatus(provider);
+            return (
+              <button
+                className="list-row setting-row"
+                key={provider.id}
+                onClick={() => openPlugins(provider.pluginId)}
+              >
+                <PluginProviderIcon provider={provider} models={view.models[provider.id]} />
+                <div className="rmain">
+                  <div className="rname">{provider.name}</div>
+                  <div className="rprov">
+                    {t("来自插件 {plugin}", { plugin: provider.pluginName })} · {t("{n} 个模型", { n: provider.modelCount })}
+                  </div>
+                </div>
+                <span className={st.cls}>{st.text}</span>
+                <Icon name="chev" size={15} className="rgo" />
+              </button>
+            );
+          })}
           <button className="maddrow" onClick={() => openSub({ kind: "addProvider", title: t("添加服务商") })}>
             <Icon name="plus" size={16} />
             {t("添加服务商")}
@@ -1055,10 +1109,14 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
             {t("从本机导入")}
           </button>
         </div>
-        {view.providers.length ? null : (
+        {view.providers.length || pluginProviders.length ? null : (
           <Empty>{t("尚未添加其他服务商。")}</Empty>
         )}
-        <div className="note">{t("从本机导入会只读本机配置并一次性复制到 Hob，不会修改来源。")}</div>
+        <div className="note">
+          {pluginProviders.length
+            ? t("来自插件的服务商点击后前往对应插件页管理账号与模型；从本机导入会只读本机配置并一次性复制到 Hob。")
+            : t("从本机导入会只读本机配置并一次性复制到 Hob，不会修改来源。")}
+        </div>
         {notice ? <div className="okline">{notice}</div> : null}
       </Group>
     </>
@@ -1818,14 +1876,24 @@ function ProviderFoot({
 function ModelsSection() {
   const s = useApp();
   const [view, setView] = useState<ModelsView | null>(null);
+  const [providerNames, setProviderNames] = useState<Record<string, string>>({});
   useEffect(() => {
     void loadModels().then(setView);
+    void loadProviders().then((res) => {
+      if (!res.ok) return;
+      const pv = res.view;
+      const names: Record<string, string> = {};
+      for (const b of pv.builtin) names[b.id] = b.name;
+      for (const p of pv.providers) if (p.kind === "custom" && p.name) names[p.id] = p.name;
+      for (const pp of pv.pluginProviders ?? []) names[pp.id] = pp.name;
+      setProviderNames(names);
+    });
   }, []);
 
   if (!view) return <Empty>{t("正在读取模型列表…")}</Empty>;
   if (s.sub?.kind === "model") return <ModelDetail view={view} modelRef={s.sub.ref} />;
-  if (s.sub?.kind === "addModels") return <AddModels view={view} />;
-  return <ModelsHome view={view} />;
+  if (s.sub?.kind === "addModels") return <AddModels view={view} providerNames={providerNames} />;
+  return <ModelsHome view={view} providerNames={providerNames} />;
 }
 
 function modelUseState(entry: RosterEntry, info?: ModelInfo) {
@@ -1914,16 +1982,25 @@ function SubBack({ label }: { label?: string }) {
   );
 }
 
-function ModelsHome({ view }: { view: ModelsView }) {
+function ModelsHome({ view, providerNames = {} }: { view: ModelsView; providerNames?: Record<string, string> }) {
   const providers = useApp().settings.settings.providers;
   const { models, save, roles, feedback } = useModelSettings();
   const byRef = new Map(view.models.map((model) => [model.ref, model]));
+  const providerLabel = (providerId?: string) => (providerId ? providerNames[providerId] ?? providerId : "");
   const suggestOff = "__suggest_off__";
   const pickOptions = (current: string) => [
     ...(models.roster.length ? [] : [{ value: "", text: t("未设置") }]),
     ...models.roster
       .filter((entry) => byRef.has(entry.ref) || entry.ref === current)
-      .map((entry) => ({ value: entry.ref, text: byRef.get(entry.ref)?.name ?? entry.ref, icon: <BrandIcon size={20} brand={brandForRef(entry.ref, view.models, providers)} /> })),
+      .map((entry) => {
+        const info = byRef.get(entry.ref);
+        return {
+          value: entry.ref,
+          text: info?.name ?? entry.ref,
+          meta: info ? providerLabel(info.provider) : undefined,
+          icon: <BrandIcon size={20} brand={brandForRef(entry.ref, view.models, providers)} />,
+        };
+      }),
   ];
   const role = (key: "conversation" | "work", label: string, pickLabel: string) => (
     <div className="mline">
@@ -2005,6 +2082,7 @@ function ModelsHome({ view }: { view: ModelsView }) {
                       {roleLabel(label === t("对话") ? "conversation" : label === t("任务执行") ? "work" : "suggest")}
                     </span>
                   ))}
+                  {info?.provider.startsWith("plugin-") ? `${providerLabel(info.provider)} · ` : ""}
                   {scoreSummary(usage.scores)}
                   {usage.unconfirmed ? <span className="model-use-warning">{t("请确认用途")}</span> : null}
                   {!info ? ` · ${t("该模型的服务商已删除或未配置 Key")}` : null}
@@ -2106,9 +2184,10 @@ function ModelDetail({ view, modelRef }: { view: ModelsView; modelRef: string })
   );
 }
 
-function AddModels({ view }: { view: ModelsView }) {
+function AddModels({ view, providerNames = {} }: { view: ModelsView; providerNames?: Record<string, string> }) {
   const providers = useApp().settings.settings.providers;
   const providerName = (id: string) => {
+    if (providerNames[id]) return providerNames[id];
     const provider = providers.find((item) => item.id === id);
     return provider?.kind === "custom" ? provider.name : undefined;
   };
@@ -2163,7 +2242,7 @@ function AddModels({ view }: { view: ModelsView }) {
                 <Disclosure
                   key={group.provider}
                   className="mgroup-disclosure"
-                  label={<span className="provider-model-label"><BrandIcon size={28} brand={providerBrand(group.provider, providerName(group.provider), group.models)} /><span className="n">{group.provider}</span></span>}
+                  label={<span className="provider-model-label"><BrandIcon size={28} brand={providerBrand(group.provider, providerName(group.provider), group.models)} /><span className="n">{providerName(group.provider) ?? group.provider}</span></span>}
                   count={picked ? t("已加入 {picked} / {total}", { picked, total: group.models.length }) : group.models.length}
                   open={open}
                   onToggle={() => toggleGroup(group.provider)}

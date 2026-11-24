@@ -1,3 +1,6 @@
+import { isSemver } from "../../shared/plugin-version.ts";
+import type { PluginProviderSpec } from "../../shared/types.ts";
+
 export type PluginConfigValue = string | number | boolean | (string | number | boolean)[];
 export interface PluginConfigField {
   type: "string" | "number" | "boolean" | "file" | "directory";
@@ -20,6 +23,73 @@ const fields = new Set(["type", "title", "description", "required", "default", "
 const keyPattern = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const reference = /\$\{(?:(hob)\.(root|plugin_root|plugin_data|profiles)|(user_config\.)?([A-Za-z_][A-Za-z0-9_]*))\}/g;
 
+export interface PluginCapabilitySnapshot {
+  providers: string[];
+  permissions: string[];
+  mcpServers: string[];
+}
+
+const PKG_NAME = /^(?:@[a-z0-9._-]+\/)?[a-z0-9][a-z0-9._-]*$/i;
+const INTEGRITY = /^sha512-[A-Za-z0-9+/=]+$/;
+
+/** 读取并校验 plugin.json 的 extensions["com.hob.plugins"].providers 声明。 */
+export function providerDeclarations(manifest: unknown): PluginProviderSpec[] {
+  if (!isRecord(manifest)) return [];
+  const extensions = manifest.extensions;
+  const hob = isRecord(extensions) ? extensions["com.hob.plugins"] : undefined;
+  if (!isRecord(hob) || hob.providers === undefined) return [];
+  if (!Array.isArray(hob.providers)) throw new Error("extensions.com.hob.plugins.providers 必须是数组");
+  const out: PluginProviderSpec[] = [];
+  const seen = new Set<string>();
+  for (const item of hob.providers) {
+    if (!isRecord(item)) throw new Error("providers 中的每一项必须是对象");
+    const pkg = typeof item.package === "string" ? item.package.trim() : "";
+    const version = typeof item.version === "string" ? item.version.trim() : "";
+    const integrity = typeof item.integrity === "string" ? item.integrity.trim() : "";
+    if (!pkg || !PKG_NAME.test(pkg)) throw new Error(`providers.package 无效：${pkg || "(空)"}`);
+    if (!isSemver(version)) throw new Error(`providers.version 必须是 semver：${pkg}`);
+    if (!INTEGRITY.test(integrity)) throw new Error(`providers.integrity 必须是 sha512-... 格式：${pkg}`);
+    if (seen.has(pkg)) throw new Error(`providers 中存在重复的包：${pkg}`);
+    seen.add(pkg);
+    let tarball: string | undefined;
+    if (item.tarball !== undefined) {
+      if (typeof item.tarball !== "string" || !item.tarball.trim()) throw new Error(`providers.tarball 必须是网址：${pkg}`);
+      let parsed: URL;
+      try { parsed = new URL(item.tarball.trim()); } catch { throw new Error(`providers.tarball 网址无效：${pkg}`); }
+      if (parsed.protocol !== "https:" && parsed.protocol !== "http:") throw new Error(`providers.tarball 只支持 http(s) 协议：${pkg}`);
+      tarball = parsed.toString();
+    }
+    out.push({ package: pkg, version, integrity, ...(tarball ? { tarball } : {}) });
+  }
+  return out;
+}
+
+/** 提取插件声明的能力快照（用于更新时检测能力变化，变化后需用户重新确认）。 */
+export function pluginCapabilities(manifest: unknown, mcp: unknown): PluginCapabilitySnapshot {
+  const providers = providerDeclarations(manifest).map((p) => p.package).sort();
+  const extensions = isRecord(manifest) ? manifest.extensions : undefined;
+  const hob = isRecord(extensions) ? extensions["com.hob.plugins"] : undefined;
+  const rawPerms = isRecord(hob) && Array.isArray(hob.permissions) ? hob.permissions : [];
+  const permissions = [...new Set(rawPerms.filter((v): v is string => typeof v === "string" && !!v.trim()).map((v) => v.trim()))].sort();
+  const mcpServers = isRecord(mcp) && isRecord(mcp.mcpServers) ? Object.keys(mcp.mcpServers).sort() : [];
+  return { providers, permissions, mcpServers };
+}
+
+/** 比较更新前后的能力快照，只报告新增或变化的能力项。 */
+export function diffCapabilities(before: PluginCapabilitySnapshot, after: PluginCapabilitySnapshot): string[] {
+  const changes: string[] = [];
+  for (const pkg of after.providers) {
+    if (!before.providers.includes(pkg)) changes.push(`新增模型包：${pkg}`);
+  }
+  for (const perm of after.permissions) {
+    if (!before.permissions.includes(perm)) changes.push(`新增权限：${perm}`);
+  }
+  for (const srv of after.mcpServers) {
+    if (!before.mcpServers.includes(srv)) changes.push(`新增工具服务：${srv}`);
+  }
+  return changes;
+}
+
 export function profileDeclaration(manifest: unknown): PluginProfilesDeclaration | null {
   if (!isRecord(manifest)) return null;
   const extensions = manifest.extensions;
@@ -32,11 +102,14 @@ export function profileDeclaration(manifest: unknown): PluginProfilesDeclaration
 
 /** 校验声明，并从允许的位置收集旧格式环境变量引用。 */
 export function pluginConfig(manifest: unknown, mcp: unknown): PluginConfig {
-  if (!isRecord(manifest) || !isRecord(mcp) || !isRecord(mcp.mcpServers)) throw new Error("插件清单和 mcpServers 必须是对象");
+  if (!isRecord(manifest)) throw new Error("插件清单必须是对象");
+  const providers = providerDeclarations(manifest);
+  const resolvedMcp = mcp === undefined && providers.length > 0 ? { mcpServers: {} } : mcp;
+  if (!isRecord(resolvedMcp) || !isRecord(resolvedMcp.mcpServers)) throw new Error("插件清单和 mcpServers 必须是对象");
   const raw = manifest.userConfig ?? {};
   if (!isRecord(raw)) throw new Error("userConfig 必须是对象");
   const profiles = profileDeclaration(manifest);
-  if (profiles && isRecord(mcp.mcpServers) && Object.values(mcp.mcpServers).some(server => isRecord(server) && server.oauth !== undefined)) throw new Error("支持多个 profile 的插件暂时不能用 OAuth 登录");
+  if (profiles && isRecord(resolvedMcp.mcpServers) && Object.values(resolvedMcp.mcpServers).some(server => isRecord(server) && server.oauth !== undefined)) throw new Error("支持多个 profile 的插件暂时不能用 OAuth 登录");
   const config: PluginConfig = Object.create(null);
   for (const [key, value] of Object.entries(raw)) {
     if (!keyPattern.test(key) || !isRecord(value)) throw new Error(`userConfig.${key} 无效`);
@@ -52,7 +125,7 @@ export function pluginConfig(manifest: unknown, mcp: unknown): PluginConfig {
     if (value.default !== undefined && !(value.multiple ? Array.isArray(value.default) && value.default.every(validItem) : validItem(value.default))) throw new Error(`userConfig.${key}.default 无效`);
     config[key] = value as unknown as PluginConfigField;
   }
-  forEachTemplate(mcp, (text, location) => {
+  forEachTemplate(resolvedMcp, (text, location) => {
     for (const match of text.matchAll(reference)) {
       const [, builtin, path, explicit, key] = match;
       if (builtin) continue;

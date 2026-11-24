@@ -57,7 +57,7 @@ import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
-export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
+export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -67,6 +67,16 @@ export const SCENE_UI: Record<
   "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "login-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-install-progress": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-install-done": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-errors": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-login-device": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-login-web": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-login-paste": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-login-apikey": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-login-cli": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "provider-update-confirm": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   vault: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "vault-empty": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "readme-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -1939,7 +1949,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   }
   const pluginViews: PluginView[] = [];
   const pluginSources: import("../../shared/types.ts").PluginSourceView[] = [{ id: "official", name: "Hob 官方", url: "https://github.com/FFatTiger/hob-plugins" }];
-  const pluginCatalog = [
+  const pluginCatalog: import("../../shared/types.ts").PluginCatalogView["plugins"] = [
     { id: "github", version: "1.0.0", manifest: { name: "GitHub", description: "查看和管理代码仓库、议题与拉取请求。", mockIcon: githubIcon, extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } } }, installed: false },
     { id: "gmail", version: "1.0.0", manifest: { name: "Gmail", description: "查找邮件、创建草稿并管理邮件。", mockIcon: gmailIcon, extensions: { "com.hob.plugins": { publisher: "Google", categories: ["communication"] } } }, installed: false },
     { id: "email", version: "1.0.0", manifest: { ...emailManifest, mockIcon: emailIcon }, installed: false },
@@ -2006,7 +2016,396 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     { id: "vault-router", name: "家里路由器", username: "admin", uris: ["http://192.168.1.1"], folder: "家里", hasPassword: true, hasTotp: false },
   ];
   for (const plugin of [github, gmail, email, vault, custom]) plugin.plugin.assistants = ["hob", "page"];
-  pluginViews.push(github, gmail, email, vault, custom);
+  const isProviderScene = scene.startsWith("provider-");
+  const mockHost: import("../../shared/types.ts").ProviderHostStatusView = {
+    status: scene === "provider-login-cli" || scene === "provider-login-apikey" ? "stopped" : "running",
+    bunVersion: "1.4.2",
+    bunInstalled: scene !== "provider-install-progress",
+    ...(scene === "provider-login-cli" || scene === "provider-login-apikey" ? {} : { pid: 41234 }),
+    idleMs: 600_000,
+  };
+  const nowIso = new Date().toISOString();
+  const tenMinAgo = new Date(Date.now() - 10 * 60_000).toISOString();
+  const twoHoursAgo = new Date(Date.now() - 2 * 3600_000).toISOString();
+  const in14Min = new Date(Date.now() + 14 * 60_000).toISOString();
+  const in9Min = new Date(Date.now() + 9 * 60_000).toISOString();
+  const copilotModels: import("../../shared/types.ts").PluginProviderModelView[] = [
+    { id: "claude-sonnet-4.5", apiId: "claude-sonnet-4.5", name: "Claude Sonnet 4.5", api: "anthropic-messages", reasoning: true, variants: ["low", "medium", "high"], thinkingLevels: ["off", "low", "medium", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 16_384 },
+    { id: "gpt-4.1", apiId: "gpt-4.1", name: "GPT-4.1", api: "openai-completions", reasoning: false, variants: [], thinkingLevels: ["off"], input: ["text", "image"], contextWindow: 128_000, maxTokens: 16_384 },
+    { id: "o3-mini", apiId: "o3-mini", name: "o3-mini", api: "openai-responses", reasoning: true, variants: ["low", "medium", "high"], thinkingLevels: ["low", "medium", "high"], input: ["text"], contextWindow: 200_000, maxTokens: 32_768 },
+    { id: "gpt-4o", apiId: "gpt-4o", name: "GPT-4o", api: "openai-completions", reasoning: false, variants: [], thinkingLevels: ["off"], input: ["text", "image"], contextWindow: 128_000, maxTokens: 16_384 },
+    { id: "claude-haiku-4.5", apiId: "claude-haiku-4.5", name: "Claude Haiku 4.5", api: "anthropic-messages", reasoning: true, variants: ["low", "high"], thinkingLevels: ["off", "low", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 8_192 },
+    { id: "gemini-2.5-pro", apiId: "gemini-2.5-pro", name: "Gemini 2.5 Pro", api: "openai-completions", reasoning: true, variants: ["medium", "high"], thinkingLevels: ["off", "medium", "high"], input: ["text", "image"], contextWindow: 1_000_000, maxTokens: 16_384 },
+  ];
+  const zcodeModels: import("../../shared/types.ts").PluginProviderModelView[] = [
+    { id: "glm-4.7", apiId: "glm-4.7", name: "GLM-4.7", api: "openai-completions", reasoning: true, variants: ["low", "medium", "high"], thinkingLevels: ["off", "low", "medium", "high"], input: ["text"], contextWindow: 128_000, maxTokens: 8_192 },
+    { id: "glm-4.6", apiId: "glm-4.6", name: "GLM-4.6", api: "openai-completions", reasoning: true, variants: ["high"], thinkingLevels: ["off", "high"], input: ["text"], contextWindow: 128_000, maxTokens: 8_192 },
+    { id: "glm-4.5-air", apiId: "glm-4.5-air", name: "GLM-4.5-Air", api: "openai-completions", reasoning: false, variants: [], thinkingLevels: ["off"], input: ["text"], contextWindow: 128_000, maxTokens: 8_192 },
+  ];
+  const providerCatalogItems = [
+    {
+      id: "zen-free",
+      version: "1.0.0",
+      hasProviders: true,
+      manifest: {
+        name: "zen-free",
+        displayName: "Zen Free",
+        description: "免费公开模型，无需登录即可启用，适合试用和日常对话。",
+        mockBrand: "mem",
+        extensions: {
+          "com.hob.plugins": {
+            publisher: "magpie-community",
+            sourceUrl: "https://github.com/magpie-community/plugins/tree/main/packages/zen-free",
+            categories: ["providers"],
+            unofficial: true,
+            reviewedVersion: "0.1.28",
+            permissions: ["network", "bun_runtime"],
+            providers: [{ package: "@magpie-community/opencode-zen-free-auth", version: "0.1.28", integrity: "sha512-mock" }],
+          },
+        },
+      },
+      installed: false,
+    },
+    {
+      id: "copilot",
+      version: scene === "provider-update-confirm" ? "0.5.0" : "0.4.2",
+      hasProviders: true,
+      manifest: {
+        name: "copilot",
+        displayName: "Copilot",
+        description: "使用 GitHub Copilot 订阅中的 Claude、GPT 与 o3 等模型。",
+        mockBrand: "github",
+        extensions: {
+          "com.hob.plugins": {
+            publisher: "magpie-community",
+            sourceUrl: "https://github.com/magpie-community/plugins/tree/main/packages/copilot",
+            categories: ["providers"],
+            unofficial: true,
+            reviewedVersion: scene === "provider-update-confirm" ? "0.5.0" : "0.4.2",
+            permissions: scene === "provider-update-confirm" ? ["network", "subprocess", "local_credentials", "bun_runtime"] : ["network", "bun_runtime"],
+            providers: [{ package: "@magpie-community/opencode-copilot-auth", version: scene === "provider-update-confirm" ? "0.5.0" : "0.4.2", integrity: "sha512-mock" }],
+          },
+        },
+      },
+      installed: false,
+    },
+    {
+      id: "zcode",
+      version: "1.1.0",
+      hasProviders: true,
+      manifest: {
+        name: "zcode",
+        displayName: "ZCode",
+        description: "接入 GLM 编程套餐模型，附带联网搜索与网页读取工具。",
+        mockBrand: "zhipu",
+        extensions: {
+          "com.hob.plugins": {
+            publisher: "magpie-community",
+            sourceUrl: "https://github.com/magpie-community/plugins/tree/main/packages/zcode",
+            categories: ["providers", "search"],
+            unofficial: true,
+            reviewedVersion: "1.1.0",
+            permissions: ["network", "bun_runtime"],
+            providers: [{ package: "@magpie-community/opencode-zcode-auth", version: "1.1.0", integrity: "sha512-mock" }],
+          },
+        },
+      },
+      installed: false,
+    },
+    {
+      id: "chatgpt",
+      version: "0.8.4",
+      hasProviders: true,
+      manifest: {
+        name: "chatgpt",
+        displayName: "ChatGPT 订阅",
+        description: "使用 ChatGPT Plus / Pro 订阅中的 GPT 与 Codex 模型。",
+        mockBrand: "openai",
+        extensions: {
+          "com.hob.plugins": {
+            publisher: "numman-ali",
+            sourceUrl: "https://github.com/numman-ali/opencode-openai-codex-auth",
+            categories: ["providers"],
+            unofficial: true,
+            reviewedVersion: "0.8.4",
+            permissions: ["network", "bun_runtime"],
+            providers: [{ package: "opencode-openai-codex-auth", version: "0.8.4", integrity: "sha512-mock" }],
+          },
+        },
+      },
+      installed: false,
+    },
+    {
+      id: "agy-cli",
+      version: "0.3.1",
+      hasProviders: true,
+      manifest: {
+        name: "agy-cli",
+        displayName: "Antigravity",
+        description: "通过运行 Hob 的机器上已登录的 agy CLI 接入 Antigravity 账号中的模型，支持动态获取可用模型列表与思考档。",
+        mockBrand: "google",
+        extensions: {
+          "com.hob.plugins": {
+            publisher: "magpie-community",
+            sourceUrl: "https://github.com/magpie-community/plugins/tree/main/packages/agy-cli",
+            categories: ["providers"],
+            unofficial: true,
+            reviewedVersion: "0.3.1",
+            summary: { zh: "通过运行 Hob 机器上的 agy CLI 接入 Antigravity 模型。", en: "Connect Antigravity models via the local agy CLI on the Hob host." },
+            permissions: ["network", "subprocess", "local_credentials", "bun_runtime"],
+            providers: [{ package: "@magpie-community/opencode-agy-cli-auth", version: "0.3.1", integrity: "sha512-mock" }],
+          },
+        },
+      },
+      installed: false,
+    },
+  ];
+  if (isProviderScene) {
+    pluginCatalog.unshift(...providerCatalogItems);
+  }
+
+  const copilotPlugin: PluginView = {
+    plugin: {
+      id: "copilot",
+      version: scene === "provider-update-confirm" ? "0.5.0" : "0.4.2",
+      source: "official",
+      enabled: scene !== "provider-update-confirm",
+      tools: {},
+      config: {},
+      ...(scene === "provider-update-confirm" ? { needsApproval: true, capabilityChanges: ["新增权限：subprocess", "新增权限：local_credentials"] } : {}),
+    },
+    manifest: providerCatalogItems[1]!.manifest,
+    config: {},
+    missing: [],
+    services: [],
+    providerHost: mockHost,
+    providers: [
+      {
+        hobProviderId: "plugin-copilot",
+        providerId: "github-copilot",
+        name: "Copilot",
+        single: false,
+        methods: [{ index: 0, type: "oauth", label: "设备码登录" }],
+        accounts: scene === "provider-login-device"
+          ? []
+          : scene === "provider-update-confirm" || scene === "provider-errors"
+            ? [{ id: "acc-1", providerId: "github-copilot", displayName: "lin@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Pro", createdAt: twoHoursAgo, updatedAt: tenMinAgo }]
+            : [
+                { id: "acc-1", providerId: "github-copilot", displayName: "lin@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Pro", createdAt: twoHoursAgo, updatedAt: tenMinAgo },
+                { id: "acc-2", providerId: "github-copilot", displayName: "work@example.org", authType: "oauth", active: false, status: "needs_relogin", plan: "Enterprise", lastError: "授权令牌已失效", createdAt: twoHoursAgo, updatedAt: twoHoursAgo },
+                { id: "acc-3", providerId: "github-copilot", displayName: "dev@example.net", authType: "oauth", active: false, status: "expired", plan: "Pro", lastError: "登录已于昨天过期", createdAt: twoHoursAgo, updatedAt: twoHoursAgo },
+              ],
+        activeAccountId: scene === "provider-login-device" ? undefined : "acc-1",
+        models: scene === "provider-login-device" ? [] : scene === "provider-errors" ? copilotModels.slice(0, 4) : copilotModels,
+        ...(scene === "provider-errors" ? { modelsCachedAt: twoHoursAgo, modelsError: "连接 api.example.com 超时（10 秒）。", modelsFellBack: true } : {}),
+        usageSupported: true,
+        ...(scene === "provider-errors"
+          ? { usage: { windows: [], error: "服务端返回 429，请求过于频繁，请稍后重试。", fetchedAt: nowIso } }
+          : scene === "provider-login-device"
+            ? {}
+            : {
+                usage: {
+                  plan: "Pro",
+                  fetchedAt: nowIso,
+                  windows: [
+                    { name: "5 小时", used: 40, display: "已用 40%", resetsAt: new Date(Date.now() + 2 * 3600_000).toISOString() },
+                    { name: "本周", used: 12, display: "已用 12%", resetsAt: new Date(Date.now() + 3 * 86400_000).toISOString() },
+                  ],
+                },
+              }),
+        ...(scene === "provider-login-device"
+          ? {
+              signIn: {
+                sessionId: "mock-device-1",
+                pluginId: "copilot",
+                providerId: "github-copilot",
+                methodIndex: 0,
+                kind: "device_code",
+                status: "waiting",
+                userCode: "ABCD-1234",
+                url: "https://github.com/login/device",
+                createdAt: nowIso,
+                expiresAt: in14Min,
+              },
+            }
+          : {}),
+      },
+    ],
+  };
+
+  const zcodePlugin: PluginView = {
+    plugin: { id: "zcode", version: "1.1.0", source: "official", enabled: true, assistants: ["hob", "page"], tools: { save_snippet: { enabled: false } }, config: {} },
+    manifest: providerCatalogItems[2]!.manifest,
+    config: {},
+    missing: [],
+    services: [
+      {
+        pluginId: "zcode",
+        name: "zcode-tools",
+        status: "connected",
+        tools: [
+          { name: "web_search", toolName: "zcode_web_search", enabled: true, description: "使用套餐内置搜索检索网页与技术文档。", inputSchema: {}, annotations: { readOnlyHint: true } },
+          { name: "read_webpage", toolName: "zcode_read_webpage", enabled: true, description: "读取指定网页正文并转为 Markdown。", inputSchema: {}, annotations: { readOnlyHint: true } },
+          { name: "save_snippet", toolName: "zcode_save_snippet", enabled: false, description: "将代码片段保存到 ZCode 账号收藏。", inputSchema: {}, annotations: { readOnlyHint: false } },
+        ],
+      },
+    ],
+    providerHost: { ...mockHost, status: scene === "provider-login-web" ? "running" : "stopped" },
+    providers: [
+      {
+        hobProviderId: "plugin-zcode",
+        providerId: "zcode",
+        name: "ZCode",
+        single: false,
+        methods: [
+          { index: 0, type: "oauth", label: "网页登录" },
+          { index: 1, type: "api", label: "API 密钥", placeholder: "sk-..." },
+        ],
+        accounts: scene === "provider-login-web" || scene === "provider-login-apikey"
+          ? []
+          : [{ id: "z-1", providerId: "zcode", displayName: "lin@example.com", authType: "oauth", active: true, status: "logged_in", plan: "GLM 编程套餐 Pro", hint: "模型与工具共用此账号", createdAt: twoHoursAgo, updatedAt: tenMinAgo }],
+        activeAccountId: scene === "provider-login-web" || scene === "provider-login-apikey" ? undefined : "z-1",
+        models: scene === "provider-login-web" || scene === "provider-login-apikey" ? [] : zcodeModels,
+        usageSupported: false,
+        ...(scene === "provider-login-web"
+          ? {
+              signIn: {
+                sessionId: "mock-web-1",
+                pluginId: "zcode",
+                providerId: "zcode",
+                methodIndex: 0,
+                kind: "server_poll",
+                status: "waiting",
+                url: "https://zcode.example.com/oauth/authorize",
+                createdAt: nowIso,
+                expiresAt: in9Min,
+              },
+            }
+          : scene === "provider-login-apikey"
+            ? {
+                signIn: {
+                  sessionId: "mock-api-tab",
+                  pluginId: "zcode",
+                  providerId: "zcode",
+                  methodIndex: 1,
+                  kind: "api",
+                  status: "pending",
+                  createdAt: nowIso,
+                  expiresAt: in9Min,
+                },
+              }
+            : {}),
+      },
+    ],
+  };
+
+  const chatgptPlugin: PluginView = {
+    plugin: { id: "chatgpt", version: "0.8.4", source: "official", enabled: true, tools: {}, config: {} },
+    manifest: providerCatalogItems[3]!.manifest,
+    config: {},
+    missing: [],
+    services: [],
+    providerHost: mockHost,
+    providers: [
+      {
+        hobProviderId: "plugin-chatgpt",
+        providerId: "openai-codex",
+        name: "ChatGPT 订阅",
+        single: false,
+        methods: [{ index: 0, type: "oauth", label: "网页登录" }],
+        accounts: [],
+        models: [],
+        usageSupported: false,
+        ...(scene === "provider-login-paste"
+          ? {
+              signIn: {
+                sessionId: "mock-paste-1",
+                pluginId: "chatgpt",
+                providerId: "openai-codex",
+                methodIndex: 0,
+                kind: "loopback_paste",
+                status: "waiting",
+                url: "https://auth.example.com/oauth/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback",
+                loopbackPasteAllowed: true,
+                createdAt: nowIso,
+                expiresAt: in9Min,
+              },
+            }
+          : {}),
+      },
+    ],
+  };
+
+  const agyPlugin: PluginView = {
+    plugin: { id: "agy-cli", version: "0.3.1", source: "official", enabled: true, tools: {}, config: {} },
+    manifest: providerCatalogItems[4]!.manifest,
+    config: {},
+    missing: [],
+    services: [],
+    providerHost: { ...mockHost, status: "stopped" },
+    providers: [
+      {
+        hobProviderId: "plugin-agy-cli",
+        providerId: "agy-cli",
+        name: "Antigravity",
+        single: true,
+        methods: [{ index: 0, type: "oauth", label: "本机 agy CLI" }],
+        accounts: [],
+        models: [],
+        usageSupported: true,
+        cli: { declared: true, name: "agy CLI", installed: false, installing: false },
+      },
+    ],
+  };
+
+  if (isProviderScene) {
+    if (scene === "provider-install-progress") {
+      pluginViews.push(github, vault);
+    } else if (scene === "provider-install-done") {
+      pluginViews.push(copilotPlugin, github, vault);
+    } else if (scene === "provider-login-paste" || scene === "provider-login-cli") {
+      pluginViews.push(copilotPlugin, zcodePlugin, chatgptPlugin, agyPlugin, github, vault);
+    } else {
+      pluginViews.push(copilotPlugin, zcodePlugin, github, vault);
+    }
+  } else {
+    pluginViews.push(github, gmail, email, vault, custom);
+  }
+  const mockPluginProviderSummaries: import("../../shared/types.ts").PluginProviderSummary[] = isProviderScene
+    ? [
+        { id: "plugin-copilot", pluginId: "copilot", pluginName: "Copilot", providerId: "github-copilot", name: "Copilot", enabled: true, loggedIn: true, activeAccount: "lin@example.com", modelCount: 6 },
+        { id: "plugin-zen-free", pluginId: "zen-free", pluginName: "Zen Free", providerId: "zen-free", name: "Zen Free", enabled: true, loggedIn: true, activeAccount: "public", modelCount: 4 },
+        { id: "plugin-zcode", pluginId: "zcode", pluginName: "ZCode", providerId: "zcode", name: "ZCode", enabled: true, loggedIn: true, activeAccount: "lin@example.com", modelCount: 3 },
+        { id: "plugin-chatgpt", pluginId: "chatgpt", pluginName: "ChatGPT 订阅", providerId: "openai-codex", name: "ChatGPT 订阅", enabled: true, loggedIn: false, modelCount: 5, error: "需要重新登录" },
+      ]
+    : [];
+  const mockPluginModels: import("../../shared/types.ts").ModelInfo[] = isProviderScene
+    ? [
+        { ref: "anthropic/claude-sonnet-4-5", provider: "anthropic", id: "claude-sonnet-4-5", name: "Claude Sonnet 4.5", reasoning: true, thinkingLevels: ["off", "low", "medium", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 16_384, cost: { input: 3, output: 15 } },
+        { ref: "plugin-copilot/gpt-4.1", provider: "plugin-copilot", id: "gpt-4.1", name: "GPT-4.1", reasoning: false, thinkingLevels: ["off"], input: ["text", "image"], contextWindow: 128_000, maxTokens: 16_384, cost: { input: 0, output: 0 } },
+        { ref: "plugin-copilot/o3-mini", provider: "plugin-copilot", id: "o3-mini", name: "o3-mini", reasoning: true, thinkingLevels: ["low", "medium", "high"], input: ["text"], contextWindow: 200_000, maxTokens: 32_768, cost: { input: 0, output: 0 } },
+        { ref: "plugin-chatgpt/gpt-5.2-codex", provider: "plugin-chatgpt", id: "gpt-5.2-codex", name: "GPT-5.2 Codex", reasoning: true, thinkingLevels: ["low", "medium", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 32_768, cost: { input: 0, output: 0 } },
+        { ref: "plugin-zcode/glm-4.7", provider: "plugin-zcode", id: "glm-4.7", name: "GLM-4.7", reasoning: true, thinkingLevels: ["off", "low", "medium", "high"], input: ["text"], contextWindow: 128_000, maxTokens: 8_192, cost: { input: 0, output: 0 } },
+        { ref: "plugin-zen-free/qwen3-coder-free", provider: "plugin-zen-free", id: "qwen3-coder-free", name: "Qwen3 Coder Free", reasoning: false, thinkingLevels: ["off"], input: ["text"], contextWindow: 128_000, maxTokens: 8_192, cost: { input: 0, output: 0 } },
+      ]
+    : [];
+  if (isProviderScene) {
+    db.settings.settings.providers = [db.settings.settings.providers[0]!];
+    db.settings.settings.models = {
+      ...db.settings.settings.models,
+      conversation: { ref: "anthropic/claude-sonnet-4-5", thinking: "medium" },
+      work: { ref: "plugin-copilot/gpt-4.1", thinking: "off" },
+      suggest: { ref: "plugin-zen-free/qwen3-coder-free", thinking: "off" },
+      roster: [
+        { ref: "anthropic/claude-sonnet-4-5", note: "", scores: { smart: 85, cost: 55, speed: 70 }, scoresConfirmed: true, thinking: "medium" },
+        { ref: "plugin-copilot/gpt-4.1", note: "", scores: { smart: 80, cost: 10, speed: 80 }, scoresConfirmed: true, thinking: "off" },
+        { ref: "plugin-copilot/o3-mini", note: "", scores: { smart: 85, cost: 15, speed: 65 }, scoresConfirmed: true, thinking: "medium" },
+        { ref: "plugin-chatgpt/gpt-5.2-codex", note: "", scores: { smart: 90, cost: 10, speed: 70 }, scoresConfirmed: true, thinking: "high" },
+        { ref: "plugin-zcode/glm-4.7", note: "", scores: { smart: 80, cost: 15, speed: 75 }, scoresConfirmed: true, thinking: "medium" },
+        { ref: "plugin-zen-free/qwen3-coder-free", note: "", scores: { smart: 70, cost: 0, speed: 85 }, scoresConfirmed: true, thinking: "off" },
+      ],
+    };
+  }
   const mockProfileFields = (p: PluginView, profile: NonNullable<PluginView["profiles"]>[number]) => profile.config;
   const mockProfileMissing = (profile: NonNullable<PluginView["profiles"]>[number]) => profile.missing;
 
@@ -2084,6 +2483,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   let desktop = clone(DESKTOP_VIEWS[desktopMockScene()]);
   const providersView = (): ProvidersView => ({
     providers: db.settings.settings.providers.map((provider) => ({ ...provider, keyConfigured: keys.has(provider.id) })),
+    ...(mockPluginProviderSummaries.length ? { pluginProviders: clone(mockPluginProviderSummaries) } : {}),
     builtin: clone(MOCK_BUILTIN),
     settings: clone(db.settings),
     models: Object.fromEntries(
@@ -2275,7 +2675,15 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       emit({ type: "rules" });
       return { rules: clone(globalRules) };
     },
-    models: async () => ({ ...clone(MOCK_MODELS), models: scene.startsWith("readme-") ? clone(MOCK_MODELS.models.slice(0, 2)).map((model, i) => ({ ...model, ref: i ? "anthropic/claude-sonnet" : "openai/gpt-5", name: i ? "Claude Sonnet" : "GPT-5" })) : clone(MOCK_MODELS.models), roster: clone(db.settings.settings.models.roster) }),
+    models: async () => ({
+      ...clone(MOCK_MODELS),
+      models: mockPluginModels.length
+        ? clone(mockPluginModels)
+        : scene.startsWith("readme-")
+          ? clone(MOCK_MODELS.models.slice(0, 2)).map((model, i) => ({ ...model, ref: i ? "anthropic/claude-sonnet" : "openai/gpt-5", name: i ? "Claude Sonnet" : "GPT-5" }))
+          : clone(MOCK_MODELS.models),
+      roster: clone(db.settings.settings.models.roster),
+    }),
     providers: async () => providersView(),
     claude: async () => ({ settings: clone(db.settings), status: { found: false, loggedIn: false } }),
     saveClaude: async (revision, claude) => {
@@ -2432,7 +2840,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!desktop.url) return { ok: false, error: "请先填写云桌面地址。" };
       return { ok: true, health: clone(DESKTOP_HEALTH) };
     },
-    plugins: async () => clone({ plugins: pluginViews, migrationErrors: [] }),
+    plugins: async () => clone({ plugins: pluginViews, migrationErrors: [], providerHost: mockHost }),
     pluginCatalog: async () => clone({ sources: pluginSources, plugins: pluginCatalog.map(p => ({ ...p, source: p.source ?? "official", sourceName: p.sourceName ?? "Hob 官方", installed: pluginViews.some(v => v.plugin.id === p.id && v.plugin.source === (p.source ?? "official")) })) }),
     refreshPluginSources: async () => ({ ok: true }),
     addPluginSource: async url => { const source = { id: `source-${pluginSources.length}`, url, name: url }; pluginSources.push(source); return clone(source); },
@@ -2454,6 +2862,164 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     pluginLoginSecret: async (_id, loginId) => ({ username: mockVaultLogins.find(login => login.id === loginId)?.username ?? "", password: "mock-vault-secret" }),
     savePluginLogin: async (id, body) => { const p = mockPlugin(id); if (id === "vault") { const existing = mockVaultLogins.find(login => login.id === body.id); if (existing) Object.assign(existing, { name: body.name, username: body.username, uris: body.uris, folder: body.folder }); else mockVaultLogins.push({ id: body.id ?? `vault-${mockVaultLogins.length + 1}`, name: body.name, username: body.username, uris: body.uris, ...(body.folder ? { folder: body.folder } : {}), hasPassword: true, hasTotp: false }); } return { id: body.id ?? `mock-${p.plugin.id}` }; },
     deletePluginLogin: async (_id, loginId) => { const index = mockVaultLogins.findIndex(login => login.id === loginId); if (index >= 0) mockVaultLogins.splice(index, 1); return { ok: true as const }; },
+    pluginProviderHost: async () => clone({ status: "running" as const, bunVersion: "1.4.2", bunInstalled: true, pid: 41234, idleMs: 600_000 }),
+    approvePlugin: async (id) => {
+      const p = mockPlugin(id);
+      p.plugin.needsApproval = false;
+      p.plugin.capabilityChanges = undefined;
+      p.plugin.enabled = true;
+      return clone(p);
+    },
+    pluginProviders: async (id) => {
+      const p = mockPlugin(id);
+      return clone({
+        providers: p.providers ?? [],
+        providerHost: p.providerHost ?? { status: "running" as const, bunVersion: "1.4.2", bunInstalled: true, pid: 41234, idleMs: 600_000 },
+      });
+    },
+    refreshPluginModels: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone({ models: prov?.models ?? [], plugin: p });
+    },
+    pluginProviderUsage: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone(prov?.usage ?? { windows: [], error: "演示模式暂无实时额度数据。", fetchedAt: new Date().toISOString() });
+    },
+    setPluginActiveAccount: async (id, providerId, accountId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov) {
+        prov.activeAccountId = accountId;
+        for (const acc of prov.accounts) acc.active = acc.id === accountId;
+      }
+      return clone(p);
+    },
+    deletePluginAccount: async (id, providerId, accountId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov) {
+        prov.accounts = prov.accounts.filter((acc) => acc.id !== accountId);
+        if (prov.activeAccountId === accountId) {
+          prov.activeAccountId = prov.accounts[0]?.id;
+          if (prov.accounts[0]) prov.accounts[0].active = true;
+        }
+      }
+      return clone(p);
+    },
+    pluginAuthPrompt: async () => ({ prompt: null }),
+    pluginAuthApiKey: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const accountId = body.accountId ?? `acc-${Date.now()}`;
+      if (prov) {
+        for (const acc of prov.accounts) acc.active = false;
+        const existing = prov.accounts.find((acc) => acc.id === accountId);
+        if (existing) {
+          existing.active = true;
+          existing.status = "logged_in";
+          existing.lastError = undefined;
+          existing.updatedAt = nowIso;
+          if (body.displayName?.trim()) existing.displayName = body.displayName.trim();
+        } else {
+          prov.accounts.push({
+            id: accountId,
+            providerId,
+            displayName: body.displayName?.trim() || "个人账号",
+            authType: "api",
+            active: true,
+            status: "logged_in",
+            createdAt: nowIso,
+            updatedAt: nowIso,
+          });
+        }
+        prov.activeAccountId = accountId;
+        prov.signIn = undefined;
+      }
+      return clone({ accountId, models: prov?.models ?? [], plugin: p });
+    },
+    pluginAuthStart: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+      const session = {
+        sessionId: `mock-signin-${Date.now()}`,
+        pluginId: id,
+        providerId,
+        methodIndex: body.methodIndex,
+        kind: (prov?.cli?.declared ? "local_cli" : id === "chatgpt" ? "loopback_paste" : id === "zcode" ? "server_poll" : "device_code") as import("../../shared/types.ts").PluginSignInKind,
+        status: "waiting" as const,
+        url: id === "chatgpt" ? "https://auth.example.com/oauth/authorize?redirect_uri=http%3A%2F%2F127.0.0.1%3A1455%2Fauth%2Fcallback" : "https://example.com/login/device",
+        ...(id === "copilot" ? { userCode: "ABCD-1234" } : {}),
+        ...(id === "chatgpt" ? { loopbackPasteAllowed: true } : {}),
+        ...(prov?.cli?.declared ? { localCliNote: "这是运行 Hob 的那台机器上的登录，不是你当前使用的设备。" } : {}),
+        createdAt: nowIso,
+        expiresAt,
+      };
+      if (prov) prov.signIn = session;
+      return clone(session);
+    },
+    pluginAuthSession: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      if (prov?.signIn) return clone(prov.signIn);
+      const nowIso = new Date().toISOString();
+      return { sessionId: "none", pluginId: id, providerId, methodIndex: 0, kind: "device_code", status: "cancelled", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthPaste: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      if (!/^http:\/\/(127\.0\.0\.1|localhost):\d+\//.test(body.url.trim())) {
+        throw new Error("只接受本次登录发出的本机回调地址（127.0.0.1），其他地址已拒绝。");
+      }
+      if (prov) {
+        const accountId = `acc-${Date.now()}`;
+        for (const acc of prov.accounts) acc.active = false;
+        prov.accounts.push({ id: accountId, providerId, displayName: "user@example.com", authType: "oauth", active: true, status: "logged_in", plan: "Plus", createdAt: nowIso, updatedAt: nowIso });
+        prov.activeAccountId = accountId;
+        prov.signIn = { ...(prov.signIn ?? { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "loopback_paste" as const, createdAt: nowIso, expiresAt: nowIso }), status: "completed" as const, accountId };
+        return clone(prov.signIn);
+      }
+      return { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "loopback_paste", status: "completed", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthCode: async (id, providerId, body) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      if (prov) {
+        const accountId = `acc-${Date.now()}`;
+        for (const acc of prov.accounts) acc.active = false;
+        prov.accounts.push({ id: accountId, providerId, displayName: "user@example.com", authType: "oauth", active: true, status: "logged_in", createdAt: nowIso, updatedAt: nowIso });
+        prov.activeAccountId = accountId;
+        prov.signIn = { ...(prov.signIn ?? { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "code" as const, createdAt: nowIso, expiresAt: nowIso }), status: "completed" as const, accountId };
+        return clone(prov.signIn);
+      }
+      return { sessionId: body.sessionId, pluginId: id, providerId, methodIndex: 0, kind: "code", status: "completed", createdAt: nowIso, expiresAt: nowIso };
+    },
+    pluginAuthCancel: async (id, providerId, sessionId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const nowIso = new Date().toISOString();
+      const cancelled = { ...(prov?.signIn ?? { sessionId, pluginId: id, providerId, methodIndex: 0, kind: "device_code" as const, createdAt: nowIso, expiresAt: nowIso }), status: "cancelled" as const };
+      if (prov) prov.signIn = undefined;
+      return clone(cancelled);
+    },
+    pluginProviderCli: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      return clone(prov?.cli ?? { declared: false });
+    },
+    installPluginProviderCli: async (id, providerId) => {
+      const p = mockPlugin(id);
+      const prov = p.providers?.find((item) => item.providerId === providerId);
+      const next = { declared: true, name: prov?.cli?.name ?? "agy CLI", installed: true, installing: false };
+      if (prov) prov.cli = next;
+      return clone(next);
+    },
     search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
@@ -3115,6 +3681,28 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     events: (handlers) => {
       listeners.add(handlers.onEvent);
       const timers: ReturnType<typeof setTimeout>[] = [];
+      if (scene === "provider-install-progress") {
+        timers.push(setTimeout(() => emit({
+          type: "plugin-install",
+          pluginId: "copilot",
+          stage: "downloading_bun",
+          package: "@magpie-community/opencode-copilot-auth",
+          downloadedBytes: Math.round(28.4 * 1024 * 1024),
+          totalBytes: Math.round(42.0 * 1024 * 1024),
+          percent: 68,
+        }), 30));
+      }
+      if (scene === "provider-install-done") {
+        timers.push(setTimeout(() => emit({
+          type: "plugin-install",
+          pluginId: "copilot",
+          stage: "done",
+          package: "@magpie-community/opencode-copilot-auth",
+          downloadedBytes: Math.round(42.0 * 1024 * 1024),
+          totalBytes: Math.round(42.0 * 1024 * 1024),
+          percent: 100,
+        }), 30));
+      }
       if (scene === "act-demo") {
         timers.push(setTimeout(() => emit({ type: "router-activity", assistantId: "hob", activity: { state: "tool", label: "搜索：最新 AI 动态" } }), 2500));
         timers.push(setTimeout(() => {

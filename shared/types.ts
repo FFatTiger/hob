@@ -67,8 +67,208 @@ export interface PluginProfileView {
   missing: string[];
 }
 
+/** plugin.json 中 extensions["com.hob.plugins"].providers 的一项。 */
+export interface PluginProviderSpec {
+  package: string;
+  version: string;
+  integrity: string;
+  /** 可选：非 npm 包（如 magpie-community dist 分支）的固定 tarball 地址 */
+  tarball?: string;
+}
+
+/** 共享 Bun 宿主进程的状态。 */
+export type ProviderHostStatus = "stopped" | "starting" | "running" | "error";
+
+export interface ProviderHostStatusView {
+  status: ProviderHostStatus;
+  bunVersion: string;
+  bunInstalled: boolean;
+  pid?: number;
+  idleMs: number;
+  lastError?: string;
+}
+
+/** 供应商插件声明的登录方式里的表单问题。 */
+export interface PluginAuthPromptOption {
+  label: string;
+  value: string;
+  hint?: string;
+  labels?: Record<string, string>;
+  hints?: Record<string, string>;
+}
+
+export interface PluginAuthPromptView {
+  type: "text" | "select";
+  key: string;
+  message: string;
+  messages?: Record<string, string>;
+  placeholder?: string;
+  options?: PluginAuthPromptOption[];
+}
+
+/** 供应商插件声明的一种登录方式。 */
+export interface PluginAuthMethodView {
+  index: number;
+  type: "oauth" | "api";
+  label: string;
+  labels?: Record<string, string>;
+  keyless?: boolean;
+  placeholder?: string;
+  hasPrompts?: boolean;
+}
+
+/** 供应商插件的一个已登录账号（不含任何密钥或令牌）。 */
+export type PluginProviderAccountStatus = "logged_in" | "needs_relogin" | "expired" | "error";
+
+export interface PluginProviderAccountView {
+  id: string;
+  providerId: string;
+  displayName: string;
+  authType: "oauth" | "api";
+  active: boolean;
+  status: PluginProviderAccountStatus;
+  plan?: string;
+  hint?: string;
+  lastError?: string;
+  expiresAt?: Iso;
+  createdAt: Iso;
+  updatedAt: Iso;
+}
+
+/** 进行中或已结束的供应商插件登录会话。 */
+export type PluginSignInKind = "api" | "keyless" | "device_code" | "server_poll" | "loopback_paste" | "code" | "local_cli";
+export type PluginSignInStatus = "pending" | "waiting" | "completed" | "failed" | "cancelled" | "expired";
+
+export interface PluginSignInSessionView {
+  sessionId: string;
+  pluginId: string;
+  providerId: string;
+  methodIndex: number;
+  kind: PluginSignInKind;
+  status: PluginSignInStatus;
+  url?: string;
+  userCode?: string;
+  instructions?: string;
+  opened?: boolean;
+  /** 是否允许提交浏览器停住的本机回调地址（仅限本次登录发出的 loopback 端口） */
+  loopbackPasteAllowed?: boolean;
+  /** 本机 CLI 登录时的提示：明确说明检测和登录发生在跑 Hob 的那台机器 */
+  localCliNote?: string;
+  error?: string;
+  accountId?: string;
+  createdAt: Iso;
+  expiresAt: Iso;
+}
+
+/** 供应商插件声明的本机 CLI 检测状态（如 agy CLI）。 */
+export interface PluginCliStatusView {
+  declared: boolean;
+  name?: string;
+  manual?: string;
+  installed?: boolean;
+  installing?: boolean;
+  error?: string;
+}
+
+/** 供应商插件提供的单个模型视图。 */
+export interface PluginProviderModelView {
+  id: string;
+  apiId: string;
+  name: string;
+  api: ProviderApi;
+  reasoning: boolean;
+  /** 插件显式声明的思考档名（variants）；未声明则按 reasoning 判定 */
+  variants: string[];
+  thinkingLevels: ThinkingLevel[];
+  input: ("text" | "image")[];
+  contextWindow: number;
+  maxTokens: number;
+  cost?: { input: number; output: number };
+  free?: boolean;
+}
+
+/** 供应商插件额度窗口（来自 Magpie 扩展 auth.usage）。 */
+export interface PluginUsageWindowView {
+  name: string;
+  used: number | null;
+  resetsAt?: Iso;
+  resetSecs?: number;
+  display?: string;
+  amount?: number;
+  limit?: number;
+  unit?: string;
+  span?: number;
+  model?: string;
+  models?: string[];
+  aside?: boolean;
+  balance?: number | null;
+}
+
+export interface PluginProviderUsageView {
+  plan?: string;
+  user?: string;
+  until?: Iso;
+  renew?: "auto" | "off" | "";
+  balance?: string;
+  error?: string;
+  resets?: {
+    count: number;
+    until?: Iso;
+    byWindow?: boolean;
+    fiveHour?: number;
+    weekly?: number;
+    team?: boolean;
+  } | null;
+  windows: PluginUsageWindowView[];
+  fetchedAt: Iso;
+}
+
+/** 插件详情页里一个供应商（模型提供者）的完整视图。 */
+export interface PluginProviderView {
+  /** 注册进 Hob / 引擎的服务商 id，如 plugin-zen-free */
+  hobProviderId: string;
+  /** 插件内部声明的 provider id，如 opencode-zen-free */
+  providerId: string;
+  name: string;
+  icon?: string;
+  single: boolean;
+  methods: PluginAuthMethodView[];
+  accounts: PluginProviderAccountView[];
+  activeAccountId?: string;
+  models: PluginProviderModelView[];
+  modelsCachedAt?: Iso;
+  modelsError?: string;
+  modelsFellBack?: boolean;
+  usageSupported: boolean;
+  usage?: PluginProviderUsageView;
+  cli?: PluginCliStatusView;
+  signIn?: PluginSignInSessionView;
+  error?: string;
+}
+
+/** 安装或更新带模型插件时的实时进度（通过 SSE 推送）。 */
+export type PluginInstallStage =
+  | "downloading_bun"
+  | "verifying_bun"
+  | "extracting_bun"
+  | "installing_package"
+  | "verifying_package"
+  | "done"
+  | "error";
+
+export interface PluginInstallProgress {
+  pluginId: string;
+  stage: PluginInstallStage;
+  package?: string;
+  downloadedBytes?: number;
+  totalBytes?: number;
+  percent?: number;
+  message?: string;
+  error?: string;
+}
+
 export interface PluginView {
-  plugin: { id: string; version: string; source: string; sourceName?: string; enabled: boolean; assistants?: string[]; tools: Record<string, { enabled?: boolean }>; config: Record<string, unknown>; profiles?: { id: string; name: string; config: Record<string, unknown> }[] };
+  plugin: { id: string; version: string; source: string; sourceName?: string; enabled: boolean; assistants?: string[]; tools: Record<string, { enabled?: boolean }>; config: Record<string, unknown>; profiles?: { id: string; name: string; config: Record<string, unknown> }[]; needsApproval?: boolean; capabilityChanges?: string[]; updateError?: string };
   manifest: Record<string, unknown>;
   config: Record<string, Record<string, unknown>>;
   profiles?: PluginProfileView[];
@@ -77,10 +277,14 @@ export interface PluginView {
   skills?: string[];
   services: PluginServiceView[];
   autoLogins?: LoginAutoEntry[];
+  /** 插件声明的模型供应商（有 providers 贡献时存在） */
+  providers?: PluginProviderView[];
+  /** 共享 Bun 宿主状态（有 providers 贡献时存在） */
+  providerHost?: ProviderHostStatusView;
 }
-export interface PluginsView { plugins: PluginView[]; migrationErrors: string[] }
+export interface PluginsView { plugins: PluginView[]; migrationErrors: string[]; providerHost?: ProviderHostStatusView }
 export interface PluginSourceView { id: string; name: string; url: string; updatedAt?: string; error?: string; refreshing?: boolean }
-export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
+export interface PluginCatalogView { plugins: { id: string; version: string; manifest: Record<string, unknown>; installed: boolean; hasProviders?: boolean; source?: string; sourceName?: string; error?: string }[]; sources?: PluginSourceView[] }
 export interface PluginLoginView {
   id: string;
   name: string;
@@ -251,9 +455,25 @@ export interface ClaudeCodeStatus {
   error?: string;
 }
 
+/** 设置 → 服务商页里来自插件的服务商一行（只读展示，点击跳到插件页）。 */
+export interface PluginProviderSummary {
+  id: string; // Hob 服务商 id，如 plugin-copilot
+  pluginId: string;
+  pluginName: string;
+  providerId: string;
+  name: string;
+  enabled: boolean;
+  loggedIn: boolean;
+  activeAccount?: string;
+  modelCount: number;
+  error?: string;
+}
+
 /** GET /api/providers：已配的服务商、引擎自带的服务商目录、跟着一起回的整份设置（前端要新 revision）。 */
 export interface ProvidersView {
   providers: ProviderView[];
+  /** 来自插件的模型服务商（不在 settings.providers 中编辑） */
+  pluginProviders?: PluginProviderSummary[];
   builtin: { id: string; name: string }[];
   settings: SettingsFile;
   /** 每个已配置服务商的模型和思考档，键是服务商 id；服务商详情里列模型、编辑思考档 */
@@ -1126,7 +1346,9 @@ export type HobEvent =
   | { type: "routine_removed"; id: string }
   | { type: "profile"; assistantId: string } // rules/memories/worklog 变了，前端重拉 profile
   | { type: "knowledge" } // 知识库有变化，打开着的知识库页面重拉
-  | { type: "skills"; assistantId: string }; // 这个助手的技能有变化，打开着的技能列表重拉
+  | { type: "skills"; assistantId: string } // 这个助手的技能有变化，打开着的技能列表重拉
+  | ({ type: "plugin-install" } & PluginInstallProgress) // 安装/更新带模型插件时的 Bun/包进度
+  | { type: "plugin-providers"; pluginId?: string; providerId?: string; host?: ProviderHostStatusView; signIn?: PluginSignInSessionView }; // 供应商插件宿主、账号、登录或模型有变化
 
 /** POST /api/assistants/:id/messages 的请求体 */
 export interface SendMessageBody {

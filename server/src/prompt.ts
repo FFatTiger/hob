@@ -28,6 +28,10 @@ export interface PromptSettings {
   credentialsEnabled?: boolean;
   /** 在哪个群里说话：提示词把「一对一」那段换成群里的规矩 */
   group?: Group;
+  /** 绑定的外部工作目录信息（未绑定时不填，提示词零改动） */
+  workspace?: { cwd: string; source: "topic" | "group" | "assistant" };
+  /** 绑定的外部工作目录运行时不存在或不可访问时的告警路径 */
+  workspaceWarning?: string;
   /** 任务带着技能（任何一档）：提示词里让它先读对得上的那份 */
   taskSkills?: boolean;
 }
@@ -154,6 +158,12 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
     // 用户给这个助手的补充提示词：原样接在身份后面，不加标题和别的话
     lines.splice(identityEnd, 0, "", assistant.instructions.trim(), "");
   }
+  if (settings.workspace) {
+    const sourceLabel = settings.workspace.source === "topic" ? "本话题" : settings.workspace.source === "group" ? "本群" : "你的设置";
+    lines.push(`当前工作目录：${settings.workspace.cwd}（来源：${sourceLabel}）。命令与文件读写默认在这个目录进行，分派任务不填 cwd 时也会自动继承它。`);
+  } else if (settings.workspaceWarning) {
+    lines.push(`注意：配置的工作目录「${settings.workspaceWarning}」当前不存在或不可访问，本轮已临时回落到默认目录，请核实该目录是否已被移动或删除。`);
+  }
   const english = userReadsEnglish(settings);
   lines.push(
     "", `你的回复显示在聊天气泡里。用户像看消息一样看它，常常是在手机上、在别的事中间抽空看一眼，最先看、最记得住的是开头那句。所以先给结论，接着说用户接下来用得上的：要用户拿主意的事、没办成的地方、用户该知道的风险。这几样说全、说清，漏了用户还得回头来问。`,
@@ -271,7 +281,7 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
   // 指定了 cwd 的任务另有一个自己的目录：放临时文件和隔离着的副本，命令默认在指定的目录里跑
   const ownDir = job.cwd ? store.workDir(job.id, job.assistantId) : undefined;
   const workingLine = job.cwd && ownDir !== job.cwd
-    ? `工作目录：${job.cwd}，是「${name}」指定的现成目录：你的命令默认在这里运行，改动直接落在这里。任务自己的目录是 ${ownDir}：要另拉一份代码隔离着执行，或者放临时文件和中间产物，用它。读取不限目录。`
+    ? `工作目录：${job.cwd}：你的命令默认在这里运行，改动直接落在这里。任务自己的目录是 ${ownDir}：要另拉一份代码隔离着执行，或者放临时文件和中间产物，用它。读取不限目录。`
     : `工作目录：${job.cwd ?? homedir()}。产出放在这里；读取不限目录。`;
   const lines = [`你是「${name}」派出的后台任务，在自己的会话里完成交给你的任务。`, workingLine, `交给你的消息是「${name}」写的交接说明和附带的文件，里面引用的用户原话代表用户本人。`,
     ...(typeof assistant?.instructions === "string" && assistant.instructions.trim() ? ["", `## 「${name}」的补充提示词`, `用户给「${name}」写了下面这份补充提示词。里面关于怎么做事、做出来的东西什么样的要求，你执行任务时照着做；关于怎么跟用户说话的部分归「${name}」自己，你的结果是交给它的。`, "", assistant.instructions] : []),

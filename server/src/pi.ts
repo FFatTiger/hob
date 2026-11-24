@@ -55,6 +55,8 @@ export interface OpenSessionOptions {
   /** 任务使用的技能；对话会话不加载。 */
   skills?: Skill[];
   disabledSkills?: string[];
+  /** 会话打开时快照好的项目指令文件（通常仅绑定工作目录根的 AGENTS.md） */
+  agentsFiles?: Array<{ path: string; content: string }>;
   /** Router 大结果落盘目录；任务不传。 */
   spillDir?: string;
   /** 工具和模型各自的无响应时限；每次调用时读取当前设置。 */
@@ -154,13 +156,14 @@ export function bundledPluginEntry(packageName: string): string {
   return join(dirname(manifest), entry);
 }
 
-function emptyLoader(systemPrompt: () => string): ResourceLoader {
+function emptyLoader(systemPrompt: () => string, agentsFiles: Array<{ path: string; content: string }> = []): ResourceLoader {
+  const frozenAgents = agentsFiles.map((file) => ({ ...file }));
   return {
     getExtensions: () => ({ extensions: [], errors: [], runtime: createExtensionRuntime() }),
     getSkills: () => ({ skills: [], diagnostics: [] }),
     getPrompts: () => ({ prompts: [], diagnostics: [] }),
     getThemes: () => ({ themes: [], diagnostics: [] }),
-    getAgentsFiles: () => ({ agentsFiles: [] }),
+    getAgentsFiles: () => ({ agentsFiles: frozenAgents }),
     // 每轮现读 store：换了规矩/记忆下一轮就生效
     getSystemPrompt: () => systemPrompt(),
     getSystemPromptSource: () => undefined,
@@ -374,7 +377,7 @@ export class PiHost {
     await base.reload();
     // 系统提示词仍由我们每轮现读（DefaultResourceLoader 的提示词只在 reload 时算一次）
     return {
-      ...emptyLoader(options.systemPrompt),
+      ...emptyLoader(options.systemPrompt, options.agentsFiles),
       getExtensions: () => base.getExtensions(),
       getSkills: () => {
         if (!options.skills) return { skills: [], diagnostics: [] };

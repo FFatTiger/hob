@@ -150,7 +150,7 @@ describe("提示词角色和内容", () => {
     expect(specific).toContain("你是「运维」，用户的助手，负责服务器。\n详细职责：维护机器");
     expect(specific).toContain("用户在一对一的对话里和你合作。别的助手会把归你管的事交给你：交来的消息是交接方写的交接说明，里面引用的用户原话等同用户本人的要求");
     const worker = buildWorkerPrompt(store, "t", { ...settings, abilities: { exec: false, write: true, image: false } });
-    expect(worker).toContain("你是「Hob」派出的后台任务，在自己的会话里完成交给你的任务。\n工作目录：/work，是「Hob」指定的现成目录：你的命令默认在这里运行，改动直接落在这里。任务自己的目录是 /own：要另拉一份代码隔离着执行，或者放临时文件和中间产物，用它。读取不限目录。");
+    expect(worker).toContain("你是「Hob」派出的后台任务，在自己的会话里完成交给你的任务。\n工作目录：/work：你的命令默认在这里运行，改动直接落在这里。任务自己的目录是 /own：要另拉一份代码隔离着执行，或者放临时文件和中间产物，用它。读取不限目录。");
     expect(worker).toContain("不能做：执行命令（bash）、生成图片（generate_image）。");
     expect(worker).toContain("## 这些事执行前先用 ask_user 确认\n- 删除\n- 重启");
     // 没指定 cwd：任务就在自己的目录里做
@@ -166,7 +166,7 @@ describe("提示词角色和内容", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const start = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "start_job")!;
-      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。");
+      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填时：当前会话绑定了工作目录就自动继承它，未绑定则在任务自己的隔离目录里执行。相对路径以当前工作目录为准。");
     } finally { hob.close(); }
   });
 });

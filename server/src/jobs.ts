@@ -1,6 +1,6 @@
 import { homedir } from "node:os";
 import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
-import { dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, extname, join, resolve } from "node:path";
 import type { AgentSession, SessionManager } from "@earendil-works/pi-coding-agent";
 import type { ImageContent } from "@earendil-works/pi-ai";
 import { commandSummary } from "../../shared/command.ts";
@@ -44,6 +44,7 @@ import { searchTools } from "./search.ts";
 import { pauseToolTimeoutForUser } from "./tool-timeout.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
+import { loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const ACTIVITY_LIMIT = 200;
@@ -77,18 +78,9 @@ export function hasImageFiles(files: string[] | undefined): boolean {
   return (files ?? []).some((file) => isImagePath(file));
 }
 
-/** 校验任务工作目录：必须在 Hob 数据目录之外；调用方另行校验目录是否存在。 */
-export function validateJobCwd(home: string, cwd: string): void {
-  const canonical = (path: string): string => {
-    const absolute = resolve(path);
-    let parent = absolute;
-    while (!existsSync(parent) && dirname(parent) !== parent) parent = dirname(parent);
-    return resolve(realpathSync(parent), relative(parent, absolute));
-  };
-  const path = relative(canonical(home), canonical(cwd));
-  if (!path || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path))) {
-    throw new Error("不能把 Hob 的数据目录指定为任务工作目录；不填 cwd 就在任务自己的目录里执行，需要的文件放在 files 里。");
-  }
+/** 校验任务工作目录：必须存在且为目录、在 Hob 数据目录之外且不包含 Hob 数据目录。 */
+export function validateJobCwd(home: string, cwd: string): string {
+  return validateWorkspaceCwd(cwd, home, { jobError: true });
 }
 
 /** 一张图超过这个大小就不当图片给模型（只留路径），免得把会话撑得太大。 */
@@ -337,9 +329,10 @@ export class JobManager {
         throw new Error(`前置任务「${before.title}」（${id}）${endWord(before.status)}，无法等待它完成。`);
       }
     }
-    if (input.cwd?.trim()) {
-      validateJobCwd(this.runtime.home, input.cwd);
-    }
+    const explicitCwd = normalizeWorkspaceCwdInput(input.cwd);
+    const inheritedCwd = explicitCwd ? undefined : resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId).bound;
+    const targetCwd = explicitCwd ?? inheritedCwd;
+    const validatedCwd = targetCwd ? validateJobCwd(this.runtime.home, targetCwd) : undefined;
     await this.runtime.models.get();
     signal?.throwIfAborted();
     const requested =
@@ -375,7 +368,7 @@ export class JobManager {
       createdAt: new Date().toISOString(),
       stats: { reads: 0, commands: 0, edits: 0 },
       activity: [],
-      cwd: input.cwd?.trim() ? input.cwd : ownDir,
+      cwd: validatedCwd ?? ownDir,
       model: picked.model.ref,
       thinking: picked.model.thinking,
       ...(picked.modelReason ? { modelReason: picked.modelReason } : {}),
@@ -480,7 +473,15 @@ export class JobManager {
     // 提示词里的「不能做」跟着这一轮实际给的工具走：沉淀一定要有 write、edit
     const promptAbilities: Abilities = sediment ? { ...abilities, write: true } : abilities;
     const knowledge = await boundKnowledge(this.runtime, job.assistantId);
-    const customTools = [registerReportTool(this.runtime, job.id, sediment), registerAskTool(this.runtime, job.id, sediment), findKnowledgeTool(this.runtime), saveSkillTool(this.runtime, job.assistantId, job.groupId, job.cwd ?? this.store.workDir(job.id), job.id)];
+    const ownDir = this.store.workDir(job.id, job.assistantId);
+    const workerCwd = job.cwd ?? ownDir;
+    const agentsFiles = job.cwd && job.cwd !== ownDir ? loadWorkspaceAgentsFile(job.cwd) : [];
+    const customTools = [
+      registerReportTool(this.runtime, job.id, sediment),
+      registerAskTool(this.runtime, job.id, sediment),
+      findKnowledgeTool(this.runtime),
+      saveSkillTool(this.runtime, job.assistantId, job.groupId, workerCwd, job.id, [workerCwd, ownDir]),
+    ];
     if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, job.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, job.id));
     customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
@@ -505,7 +506,8 @@ export class JobManager {
     const opened = await this.runtime.pi.open({
       file: this.store.workerFile(job.id),
       cwd: job.cwd ?? homedir(),
-      writeGuard: { home: this.runtime.home, roots: () => [job.cwd ?? this.store.workDir(job.id)] },
+      agentsFiles,
+      writeGuard: { home: this.runtime.home, roots: () => [...new Set([ownDir, ...(job.cwd ? [job.cwd] : [])])] },
       model: job.model ?? this.runtime.settings.settings.models.work.ref,
       thinking: job.thinking ?? this.runtime.settings.settings.models.work.thinking,
       memory: this.runtime.settings.memory().provider,

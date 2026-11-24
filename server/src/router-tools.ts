@@ -9,7 +9,7 @@ import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
 import { lookupFile, isInPagesDir, OUTSIDE_HOB } from "./files.ts";
 import { resolveMovedPath } from "./layout.ts";
-import { assistantFilesDir } from "./config.ts";
+import { assistantFilesDir, assistantWorkDir } from "./config.ts";
 import {
   COLORS,
   COLOR_IDS,
@@ -47,6 +47,7 @@ import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./to
 import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
+import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput } from "./workspace.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -168,7 +169,13 @@ function fileMeta(path: string): string | undefined {
 }
 
 /** 一个助手的 Router 能用的全部工具。改状态的工具都写卡片 + 发事件。 */
-export function buildRouterTools(runtime: HobRuntime, assistantId: string, groupId?: string, cwd = runtime.home): Tool[] {
+export function buildRouterTools(
+  runtime: HobRuntime,
+  assistantId: string,
+  groupId?: string,
+  cwd = runtime.home,
+  ownWorkDir = assistantWorkDir(runtime.home, assistantId),
+): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
   const assistant = () => {
     const found = store.assistant(assistantId);
@@ -321,7 +328,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
-    saveSkillTool(runtime, assistantId, groupId, cwd),
+    saveSkillTool(runtime, assistantId, groupId, cwd, undefined, [cwd, ownWorkDir]),
     searchPluginsTool(runtime.plugins, assistantId),
     {
       name: "check_job",
@@ -415,7 +422,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         cwd: Type.Optional(
           Type.String({
             description:
-              "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。",
+              "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填时：当前会话绑定了工作目录就自动继承它，未绑定则在任务自己的隔离目录里执行。相对路径以当前工作目录为准。",
           }),
         ),
         files: Type.Optional(
@@ -440,6 +447,8 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
+          const rawCwd = normalizeWorkspaceCwdInput(params.cwd);
+          const explicitCwd = rawCwd ? resolve(cwd, rawCwd) : undefined;
           const job = await jobs.start(assignee.id, {
             title: String(params.title),
             ...(groupId ? { groupId } : {}),
@@ -447,7 +456,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
             ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
             instruction: note,
             ...(Array.isArray(params.after) && params.after.length ? { after: params.after.map(String) } : {}),
-            ...(params.cwd ? { cwd: resolve(cwd, String(params.cwd)) } : {}),
+            ...(explicitCwd ? { cwd: explicitCwd } : {}),
             ...(files.length ? { files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
@@ -833,10 +842,12 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
         let path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
-        // 页面只读得到 Hob 自己的目录和任务工作目录：范围外的文件复制一份进来再发，卡片和预览才打得开
-        const scope = lookupFile(runtime.home, path, store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []));
-        if (!scope.ok && scope.error !== OUTSIDE_HOB) return fail(`${scope.error}：${path}`);
-        if (!scope.ok) {
+        // 页面只读得到 Hob 自己的目录和任务工作目录：外部目录（含绑定的项目目录）文件复制一份进 files/sent/ 再发，同时拦截敏感文件
+        const homeScope = lookupFile(runtime.home, path, []);
+        if (!homeScope.ok && homeScope.error !== OUTSIDE_HOB) return fail(`${homeScope.error}：${path}`);
+        if (!homeScope.ok) {
+          const workScope = lookupFile(runtime.home, path, [...store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []), cwd]);
+          if (!workScope.ok && workScope.error !== OUTSIDE_HOB) return fail(`${workScope.error}：${path}`);
           if (!statSync(path).isFile()) return fail(`这是目录，不是文件：${path}`);
           const copy = join(assistantFilesDir(runtime.home, assistantId, "sent"), randomUUID().slice(0, 8), basename(path));
           mkdirSync(dirname(copy), { recursive: true });
@@ -999,6 +1010,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           title: Type.String({ description: "话题名，写这件事，如「相册备份出错」，最多 40 字。" }),
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给群的文件路径" }))),
+          cwd: Type.Optional(Type.String({ description: "可选，仅目标群未绑定工作目录时可用，为新话题指定工作目录（绝对路径，创建后不可修改）。" })),
         }),
         execute: async (_id, params: any, signal) => {
           const id = String(params.groupId ?? "").trim();
@@ -1017,7 +1029,11 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           try {
             signal?.throwIfAborted();
-            const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, { text: note, files });
+            const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, {
+              text: note,
+              files,
+              ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
+            });
             const cancel = () => {
               const current = store.group(topic.id);
               if (current && !current.closedAt && !runtime.groups.summary(topic.id).busy?.length) {
@@ -1131,6 +1147,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
           topic: Type.Optional(Type.String({ description: "已有话题的 id。创建新话题时不填。" })),
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给话题的文件路径" }))),
+          cwd: Type.Optional(Type.String({ description: "仅创建新话题（填 title）且所属群未绑定工作目录时可选，话题的工作目录（绝对路径，创建后不可修改）。" })),
         }),
         execute: async (_id, params: any) => {
           const problem = notOwner();
@@ -1147,6 +1164,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
 
           try {
             if (topicId) {
+              if (params.cwd !== undefined) return fail(CWD_IMMUTABLE);
               const target = store.group(topicId);
               if (!target || target.parentId !== gid) return fail(`「${topicId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
               // 已关闭的话题先重新打开，接着在里面处理
@@ -1156,7 +1174,7 @@ export function buildRouterTools(runtime: HobRuntime, assistantId: string, group
               void runtime.groups.deliverEvent(topicId, assistantId, event).catch((error) => console.error("转到话题的事件没送到：", error));
               return endTurn(`已转到话题「${topic.name}」（${topic.id}），接下来在话题里处理。`);
             }
-            const topic = runtime.groups.createTopic(gid, title, assistantId);
+            const topic = runtime.groups.createTopic(gid, title, assistantId, params.cwd !== undefined ? { cwd: params.cwd } : undefined);
             runtime.groups.appendItem(topic.id, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
             void runtime.groups
               .deliverEvent(topic.id, assistantId, event)

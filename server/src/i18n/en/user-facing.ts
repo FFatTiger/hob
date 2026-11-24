@@ -327,4 +327,13 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "请求超时": "Request timed out",
   "返回的不是有效 JSON": "Response was not valid JSON",
   "返回的版本号无效": "Invalid version in response",
+  "主助手不支持设置工作目录。": "The primary assistant does not support a work directory.",
+  "工作目录仅支持在创建时绑定，创建后不可修改。": "Work directory can only be set at creation and cannot be changed afterward.",
+  "所属群已绑定工作目录（{path}），话题自动沿用群目录，不支持单独指定。": "This group already has a work directory ({path}). Topics inherit it automatically and cannot set a different one.",
+  "工作目录必须是路径文字。": "Work directory must be a path string.",
+  "工作目录必须填写绝对路径（如 /workspace/app）。": "Work directory must be an absolute path (for example, /workspace/app).",
+  "不能把 Hob 的数据目录作为工作目录。": "Hob's data directory cannot be used as a work directory.",
+  "工作目录范围过大（包含 Hob 数据目录），请指定具体的项目目录。": "That directory is too broad (it contains Hob's data directory). Choose a specific project directory.",
+  "工作目录不存在：{path}": "Work directory does not exist: {path}",
+  "工作目录不是文件夹：{path}": "Work directory is not a folder: {path}",
 };

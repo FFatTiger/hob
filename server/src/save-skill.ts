@@ -21,7 +21,7 @@ function noLinks(path: string, name: string, prefix = ""): void {
 }
 
 /** 不异步让出事件循环：查找、校验和提交一份技能按调用顺序执行。 */
-export function saveSkillDirectory(runtime: HobRuntime, assistantId: string, group: Group | undefined, cwd: string, input: SaveInput, origin: SkillOrigin) {
+export function saveSkillDirectory(runtime: HobRuntime, assistantId: string, group: Group | undefined, cwd: string, input: SaveInput, origin: SkillOrigin, allowedFromDirs?: string[]) {
   const { name, general } = input;
   const from = input.from === "" ? undefined : input.from;
   const edits = input.edits?.length ? input.edits : undefined;
@@ -46,8 +46,12 @@ export function saveSkillDirectory(runtime: HobRuntime, assistantId: string, gro
   const backup = join(stage, ".previous");
   try {
     if (from !== undefined) {
+      const roots = [...new Set([cwd, ...(allowedFromDirs ?? [])])];
       const source = realpathSync(resolve(cwd, from));
-      if (!inside(realpathSync(cwd), source)) throw new Error("from 要指向工作目录里的技能文件夹。");
+      const allowed = roots.some((root) => {
+        try { return inside(realpathSync(root), source); } catch { return false; }
+      });
+      if (!allowed) throw new Error("from 要指向工作目录里的技能文件夹。");
       noLinks(source, name);
       cpSync(source, staged, { recursive: true, filter: (path) => path !== join(source, ".history") });
     } else {
@@ -105,7 +109,7 @@ export function saveSkillDirectory(runtime: HobRuntime, assistantId: string, gro
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 
-export function saveSkillTool(runtime: HobRuntime, assistantId: string, groupId: string | undefined, cwd: string, jobId?: string): ToolDefinition<any, any> {
+export function saveSkillTool(runtime: HobRuntime, assistantId: string, groupId: string | undefined, cwd: string, jobId?: string, allowedFromDirs?: string[]): ToolDefinition<any, any> {
   const group = groupId ? runtime.store.group(groupId) : undefined;
   const english = userReadsEnglish(runtime.settings.settings.general);
   return {
@@ -123,7 +127,7 @@ export function saveSkillTool(runtime: HobRuntime, assistantId: string, groupId:
         const target = !jobId && !group && runtime.store.assistant(assistantId)?.primary ? params.assistantId || assistantId : assistantId;
         if (!runtime.store.assistant(target)) throw new Error(`没有这个助手：${target}`);
         const origin: SkillOrigin = jobId ? { kind: "job", jobId } : { kind: "assistant", assistantId, ...(groupId ? { groupId } : {}) };
-        const saved = saveSkillDirectory(runtime, target, group, cwd, params, origin);
+        const saved = saveSkillDirectory(runtime, target, group, cwd, params, origin, allowedFromDirs);
         if (jobId) runtime.jobs.recordSavedSkill(jobId, { name: saved.name, title: saved.title, version: saved.version, updated: saved.updated });
         runtime.bus.emit({ type: "skills", assistantId: target });
         await runtime.router.addItem(assistantId, { kind: "note", icon: "skill", text: t("已存技能「{title}」第 {version} 版", { title: saved.title, version: saved.version }) }, groupId);

@@ -19,6 +19,7 @@ import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
+import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, topicCwdLockedByGroup, validateWorkspaceCwd } from "./workspace.ts";
 
 /** 一条用户消息引出的助手回合上限：挡来回 @ 的死循环，不是限制正常协作。 */
 export const MAX_WAVE_TURNS = 20;
@@ -85,6 +86,7 @@ export interface CreateGroupInput {
   ownerId?: unknown;
   members?: unknown;
   parentId?: unknown;
+  cwd?: unknown;
 }
 
 export interface UpdateGroupInput {
@@ -93,6 +95,7 @@ export interface UpdateGroupInput {
   ownerId?: unknown;
   members?: unknown;
   listOrder?: unknown;
+  cwd?: unknown;
 }
 
 export class GroupManager {
@@ -200,12 +203,15 @@ export class GroupManager {
     // 话题是挂在群下面的群，但得先有群：建群的接口不建话题
     if (input.parentId !== undefined) throw new Error("创建群不接受 parentId：话题在群里创建（POST /api/groups/:gid/topics）。");
     const members = this.membersOf(input.members, "群里至少要有一个助手");
+    const normalizedCwd = normalizeWorkspaceCwdInput(input.cwd);
+    const cwd = normalizedCwd ? validateWorkspaceCwd(normalizedCwd, this.runtime.home) : undefined;
     const group: Group = {
       id: newId("g-"),
       name: this.text(input.name, "群名", 40),
       purpose: this.text(input.purpose, "职责", 200),
       ownerId: this.ownerOf(input.ownerId, members),
       members,
+      ...(cwd ? { cwd } : {}),
       createdAt: new Date().toISOString(),
     };
     this.store.saveGroup(group);
@@ -218,15 +224,23 @@ export class GroupManager {
    * 开一个话题：话题是挂在群下面的群，时间线、成员会话、已读都是自己的。
    * 成员、群主、负责什么取所属的群，不另存。
    */
-  createTopic(gid: string, title: unknown, createdBy: string): Group {
+  createTopic(gid: string, title: unknown, createdBy: string, options?: { cwd?: unknown }): Group {
     const group = this.group(gid);
     if (group.parentId) throw new Error("话题挂在群下面：话题里不能再创建话题。");
+    const normalizedCwd = normalizeWorkspaceCwdInput(options?.cwd);
+    let cwd: string | undefined;
+    if (group.cwd) {
+      if (normalizedCwd) throw new Error(topicCwdLockedByGroup(group.cwd));
+    } else if (normalizedCwd) {
+      cwd = validateWorkspaceCwd(normalizedCwd, this.runtime.home);
+    }
     const topic: Group = {
       id: newId("g-"),
       name: this.text(title, "话题名", 40),
       purpose: group.purpose,
       ownerId: group.ownerId,
       members: group.members,
+      ...(cwd ? { cwd } : {}),
       createdAt: new Date().toISOString(),
       parentId: gid,
       createdBy,
@@ -261,8 +275,8 @@ export class GroupManager {
    * 任意助手把一件事交给这个群：开一个话题，把交接说明作为第一条用户条目转进去，
    * 记下是谁交来的，综合里落一行。叫醒群主由调用方发（它还要结束这一轮）。
    */
-  handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string }): { topic: Group; item: GroupItem } {
-    const topic = this.createTopic(gid, title, by);
+  handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string; cwd?: unknown }): { topic: Group; item: GroupItem } {
+    const topic = this.createTopic(gid, title, by, original.cwd !== undefined ? { cwd: original.cwd } : undefined);
     const item = this.appendItem(topic.id, "user", {
       kind: "user",
       text: original.text,
@@ -359,6 +373,7 @@ export class GroupManager {
   /** 话题不再依赖工作方式字段。旧群文件里的 workflow 由存储层原样保留。 */
   update(gid: string, patch: UpdateGroupInput): Group {
     const group = this.group(gid);
+    if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
     if (group.parentId) {
       return this.renameTopic(group, patch);
     }
@@ -439,6 +454,7 @@ export class GroupManager {
 
   /** 话题只能改名：成员、群主、负责什么跟着所属的群。 */
   private renameTopic(topic: Group, patch: UpdateGroupInput): Group {
+    if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
     if (patch.members !== undefined || patch.ownerId !== undefined || patch.purpose !== undefined) {
       throw new Error("话题的成员、群主与职责随所属的群，请在群设置中修改。");
     }

@@ -11,6 +11,7 @@ import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
 import { candidateId, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
 import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
+import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
 
 export interface ActionResult {
   status: number;
@@ -599,6 +600,7 @@ export interface AssistantPatch {
   models?: unknown;
   abilities?: unknown;
   knowledge?: unknown;
+  cwd?: unknown;
 }
 
 /**
@@ -609,6 +611,9 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
   const { store, bus, router } = runtime;
   const assistant = store.assistant(id);
   if (!assistant) return { status: 404, body: { error: "助手不存在" } };
+  if (body.cwd !== undefined) {
+    return { status: 400, body: { error: assistant.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE } };
+  }
   if (body.instructions !== undefined && typeof body.instructions !== "string") return { status: 400, body: { error: "说明必须是文字。" } };
   if (body.knowledge !== undefined) {
     if (!Array.isArray(body.knowledge) || body.knowledge.some((item) => typeof item !== "string")) return { status: 400, body: { error: "知识库绑定无效。" } };
@@ -675,6 +680,14 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
     catch (error) { return { status: 400, body: { error: `第 ${index + 1} 条定时「${item.name}」：${error instanceof Error ? error.message : String(error)}` } }; }
   }
 
+  let cwd: string | undefined;
+  try {
+    const normalized = normalizeWorkspaceCwdInput(draft.cwd);
+    if (normalized) cwd = validateWorkspaceCwd(normalized, runtime.home);
+  } catch (error) {
+    return { status: 400, body: { error: error instanceof Error ? error.message : String(error) } };
+  }
+
   const now = new Date().toISOString();
   const assistant: Assistant = {
     id,
@@ -682,6 +695,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
     duty: draft.duty,
     dutyLong: draft.dutyLong,
     ...(typeof draft.instructions === "string" && draft.instructions.trim() ? { instructions: draft.instructions.trim() } : {}),
+    ...(cwd ? { cwd } : {}),
     // 和已有助手撞了头像就换个颜色（自画的图案各不相同，不算撞）
     sprite: distinctSprite(draft.sprite, store.assistants().map((a) => a.sprite)),
     ...(draft.prop ? { prop: draft.prop } : {}),

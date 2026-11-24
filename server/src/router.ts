@@ -42,6 +42,7 @@ import { visibleSkills } from "./skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
+import { loadWorkspaceAgentsFile, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
 
 import { pushAssistantTurnEnd } from "./push.ts";
 import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
@@ -506,9 +507,24 @@ export class RouterManager {
     }
     const abilities = assistant.abilities ?? { exec: true, write: true, image: true };
     const directToolNames = ["read", ...(abilities.exec ? ["bash"] : []), ...(abilities.write ? ["edit", "write"] : [])];
-    const workDir = assistantWorkDir(this.runtime.home, assistant.id);
-    mkdirSync(workDir, { recursive: true });
-    const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, workDir);
+    const ownWorkDir = assistantWorkDir(this.runtime.home, assistant.id);
+    mkdirSync(ownWorkDir, { recursive: true });
+    const resolved = resolveWorkspaceCwd(this.store, this.runtime.home, assistant.id, state.groupId);
+    let sessionCwd = resolved.sessionCwd;
+    let workspacePrompt: { cwd: string; source: "topic" | "group" | "assistant" } | undefined;
+    let workspaceWarning: string | undefined;
+    let agentsFiles: Array<{ path: string; content: string }> = [];
+    if (resolved.bound && resolved.source !== "default") {
+      try {
+        sessionCwd = validateWorkspaceCwd(resolved.bound, this.runtime.home);
+        workspacePrompt = { cwd: sessionCwd, source: resolved.source };
+        agentsFiles = loadWorkspaceAgentsFile(sessionCwd);
+      } catch {
+        sessionCwd = ownWorkDir;
+        workspaceWarning = resolved.bound;
+      }
+    }
+    const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, sessionCwd, ownWorkDir);
     const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
     const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames, {
       onCard: (payload) => this.addPluginCard(assistant.id, state.groupId, payload),
@@ -526,8 +542,18 @@ export class RouterManager {
     const opened = await this.runtime.pi.open({
       file,
       spillDir: state.groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
-      cwd: workDir,
-      writeGuard: { home: this.runtime.home, roots: () => [workDir, ...this.store.jobs().filter((job) => job.assistantId === assistant.id).map((job) => job.cwd ?? this.store.workDir(job.id))] },
+      cwd: sessionCwd,
+      agentsFiles,
+      writeGuard: {
+        home: this.runtime.home,
+        roots: () => [
+          ...new Set([
+            sessionCwd,
+            ownWorkDir,
+            ...this.store.jobs().filter((job) => job.assistantId === assistant.id).map((job) => job.cwd ?? this.store.workDir(job.id)),
+          ]),
+        ],
+      },
       model: pick.ref,
       thinking: thinkingForPick(pick, this.runtime.models),
       memory: this.runtime.settings.memory().provider,
@@ -552,6 +578,8 @@ export class RouterManager {
           abilities,
           knowledgeNames: state.knowledgeNames,
           ...(group ? { group } : {}),
+          ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
+          ...(workspaceWarning ? { workspaceWarning } : {}),
         });
       },
       tools: allowedTools,

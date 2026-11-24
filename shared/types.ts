@@ -583,6 +583,8 @@ export interface Assistant {
   abilities?: { exec: boolean; write: boolean; image: boolean };
   /** 知识库二期：绑定的用户知识库 id。缺省 = 没绑定：不自动查，也没有 search_knowledge */
   knowledge?: string[];
+  /** 可选工作目录（主助手不支持；普通助手仅创建时可绑定，创建后不可修改） */
+  cwd?: string;
   createdAt: Iso;
   splitFrom?: { from: string; at: Iso; readonly conversations?: number }; // conversations 仅供读取旧数据
 }
@@ -614,6 +616,8 @@ export interface Group {
   memberModels?: Record<string, { conversation?: ModelPick; work?: ModelPick }>; // 各成员在本群的模型覆盖
   /** 首页助手/群列表的固定顺序：小的在前；没排过的按最近活跃排。 */
   listOrder?: number;
+  /** 可选工作目录（创建时绑定，不可修改；群绑定时其下所有话题沿用） */
+  cwd?: string;
   createdAt: Iso;
   parentId?: string; // 有它的是话题：所属的群
   createdBy?: string; // 话题：谁开的，"user" 或成员 assistantId
@@ -987,6 +991,8 @@ export interface Draft {
   duty: string; // 一句话职责
   dutyLong: string; // 草稿卡 "职责" 行
   instructions?: string; // 用户写的说明
+  /** 可选工作目录（创建后不可修改） */
+  cwd?: string;
   routines: { name: string; instruction: string; schedule: string }[]; // 草稿卡 "定时任务" 行
   routinesText: string; // 草稿卡 "定时任务" 行的展示文字
   askFirst: string[]; // 执行前确认的事项

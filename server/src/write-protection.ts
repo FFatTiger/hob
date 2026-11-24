@@ -27,13 +27,16 @@ function canonical(path: string, depth = 0): string {
 
 export function writablePath(home: string, roots: string[], requested: string): string {
   const path = resolve(requested), actual = canonical(path), homePath = resolve(home), actualHome = canonical(homePath);
-  const allowed = roots.some((root) => {
-    const absolute = resolve(root), actualRoot = canonical(absolute);
-    const expected = inside(homePath, absolute) ? resolve(actualHome, relative(homePath, absolute)) : absolute;
-    if (inside(homePath, absolute) ? !inside(expected, actualRoot) : inside(actualHome, actualRoot)) return false;
-    return inside(actualRoot, actual);
-  });
-  if ((inside(homePath, path) || inside(actualHome, actual)) && !allowed) throw new Error(BLOCKED);
+  if (inside(homePath, path) || inside(actualHome, actual)) {
+    const allowed = roots.some((root) => {
+      const absolute = resolve(root), actualRoot = canonical(absolute);
+      if (!inside(homePath, absolute)) return false;
+      const expected = resolve(actualHome, relative(homePath, absolute));
+      if (!inside(expected, actualRoot)) return false;
+      return inside(actualRoot, actual);
+    });
+    if (!allowed) throw new Error(BLOCKED);
+  }
   return path;
 }
 

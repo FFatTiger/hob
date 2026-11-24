@@ -36,6 +36,7 @@ import { claudeStatus } from "./claude-status.ts";
 import { checkDesktopUrl } from "./desktop.ts";
 import { desktopProfile, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
+import { allowedWorkspaceDirs, CWD_IMMUTABLE } from "./workspace.ts";
 import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
 import { pluginToolName } from "./plugin-host.ts";
@@ -98,7 +99,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     c.res = localized;
   });
   // ponytail: 每次取文件都扫一遍 job.json（几十上百个），慢了再缓存
-  const workDirs = () => store.jobs().flatMap((job) => (job.cwd ? [job.cwd] : []));
+  const workDirs = () => [...new Set([...store.jobs().flatMap((job) => (job.cwd ? [job.cwd] : [])), ...allowedWorkspaceDirs(store)])];
 
   app.use("/api/*", async (c, next) => {
     if (c.req.path === "/api/login") return next();
@@ -1376,6 +1377,9 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json({ ok: true, rule });
     }
     try {
+      if (body.cwd !== undefined) {
+        return c.json({ error: CWD_IMMUTABLE }, 400);
+      }
       if (body.models !== undefined) {
         const { models, ...rest } = body;
         await runtime.groups.updateModels(id, models);
@@ -1414,9 +1418,9 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/groups/:id/topics", async (c) => {
     const id = c.req.param("id");
     if (!store.group(id)) return c.json({ error: "群不存在" }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as { title?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { title?: unknown; cwd?: unknown };
     try {
-      return c.json(runtime.groups.createTopic(id, body.title, "user"), 201);
+      return c.json(runtime.groups.createTopic(id, body.title, "user", body.cwd !== undefined ? { cwd: body.cwd } : undefined), 201);
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }

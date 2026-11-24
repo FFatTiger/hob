@@ -1817,18 +1817,9 @@ export async function loadProfile(id: string) {
 
 /* ---------------- 发消息 ---------------- */
 
+/** 推荐提问不跟着打字清：发出去时（send）才清，服务端也在新一轮开始时清。 */
 export function setText(text: string) {
-  set((s) => {
-    // 打字时只在当前对话确实挂着推荐时才清，免得每个按键都换掉整份助手 / 群列表
-    const a = s.gsel ? undefined : s.assistants.find((x) => x.id === s.sel);
-    const g = s.gsel ? s.groups.find((x) => x.id === s.gsel) : undefined;
-    if (!a?.suggestions && !g?.suggestions) return { text };
-    return {
-      text,
-      assistants: a ? s.assistants.map((x) => x === a ? { ...x, suggestions: undefined } : x) : s.assistants,
-      groups: g ? s.groups.map((x) => x === g ? { ...x, suggestions: undefined } : x) : s.groups,
-    };
-  });
+  set({ text });
 }
 
 export function setQuote(quote: { itemId: string; text: string } | null) {

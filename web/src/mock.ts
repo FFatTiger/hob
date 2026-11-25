@@ -3764,6 +3764,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         purpose: group.purpose,
         ownerId: group.ownerId,
         members: [...group.members],
+        ...(group.replyMode ? { replyMode: group.replyMode } : {}),
         ...(cwd ? { cwd } : {}),
         createdAt: now,
         parentId: group.id,
@@ -3837,6 +3838,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         group.models = models;
       }
       if (patch.name !== undefined) group.name = patch.name.trim() || group.name;
+      if (patch.replyMode === "owner" || patch.replyMode === "all") group.replyMode = patch.replyMode;
       if (patch.purpose !== undefined) {
         group.purpose = patch.purpose;
         for (const topic of db.groups.filter((g) => g.parentId === groupId)) topic.purpose = patch.purpose;

@@ -101,6 +101,23 @@ export class PluginHost {
       && this.credentialProviders(assistantId, "generate").length > 0
       && this.credentialProviders(assistantId, "save").length > 0;
   }
+  supersededSkills(assistantId: string): Set<string> {
+    const names = new Set<string>();
+    for (const plugin of this.store.list()) {
+      if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
+      try {
+        const { manifest } = this.store.files(plugin.id);
+        const extensions = isObject(manifest.extensions) ? manifest.extensions["com.hob.plugins"] : undefined;
+        const list = isObject(extensions) ? extensions.supersedesSkills : undefined;
+        if (Array.isArray(list)) {
+          for (const item of list) {
+            if (typeof item === "string" && item.trim()) names.add(item.trim());
+          }
+        }
+      } catch { /* ignore unreadable manifest */ }
+    }
+    return names;
+  }
   async callCredential(provider: CredentialProvider, args: Record<string, unknown>, signal?: AbortSignal): Promise<Record<string, unknown>> {
     const response = await this.call(provider.pluginId, provider.service, provider.tool, args, signal);
     if (response.isError) {
@@ -376,7 +393,8 @@ export function pluginToolDisplayNames(host: PluginHost): Record<string, string>
   return names;
 }
 
-export type PluginCardHandler = (card: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: Card }) => void | Promise<void>;
+export type PluginCardOutcome = void | { text?: string };
+export type PluginCardHandler = (card: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: Card }, signal?: AbortSignal) => PluginCardOutcome | Promise<PluginCardOutcome>;
 export type PluginCardErrorHandler = (pluginId: string, message: string) => void | Promise<void>;
 export interface PluginToolOptions {
   onCard?: PluginCardHandler;
@@ -394,6 +412,21 @@ function visibleToModel(tool: Tool): boolean {
   return !(Array.isArray(visibility) && visibility.every((item) => item !== "model"));
 }
 
+function pluginDirectTools(host: PluginHost, pluginId: string): Set<string> {
+  const names = new Set<string>();
+  try {
+    const { manifest } = host.store.files(pluginId);
+    const extensions = isObject(manifest.extensions) ? manifest.extensions["com.hob.plugins"] : undefined;
+    const list = isObject(extensions) ? extensions.directTools : undefined;
+    if (Array.isArray(list)) {
+      for (const item of list) {
+        if (typeof item === "string" && item.trim()) names.add(item.trim());
+      }
+    }
+  } catch { /* ignore unreadable manifest */ }
+  return names;
+}
+
 /** The same tool set is used for assistant, group, worker and future script calls. */
 export function pluginToolsForAssistant(host: PluginHost, assistantId: string, reservedNames: ReadonlySet<string> = new Set(), options: PluginToolOptions = {}): PluginAgentTool[] {
   const result: PluginAgentTool[] = [];
@@ -402,7 +435,8 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
     if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
     const states = host.states(plugin.id).filter(state => ["connected", "idle", "connecting"].includes(state.status));
     const visibleStates = states.map((state) => ({ ...state, tools: state.tools.filter(visibleToModel) }));
-    const count = visibleStates.reduce((n, state) => n + state.tools.length, 0);
+    const enabledCount = visibleStates.reduce((n, state) => n + state.tools.filter(tool => plugin.tools[tool.name]?.enabled !== false).length, 0);
+    const directTools = pluginDirectTools(host, plugin.id);
     for (const state of visibleStates) {
       const errors: { name: string; reason: string }[] = [];
       for (const tool of state.tools) {
@@ -420,7 +454,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
           description: tool.description ?? "",
           parameters: normalizeMcpInputSchema(tool.inputSchema) as TSchema,
           namespace: { name: plugin.id },
-          exposure: count > 10 ? "deferred" : "direct",
+          exposure: enabledCount <= 10 || directTools.has(tool.name) ? "direct" : "deferred",
           annotations: tool.annotations,
           execute: async (_callId, args, signal) => {
             if (!isObject(args)) throw new Error("插件工具参数必须是对象");
@@ -428,6 +462,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
             if (response.isError) response.content = response.content.map(block => block.type === "text" ? { ...block, text: host.redact(plugin.id, block.text) } : block);
             const limited = await limitMcpContent(toLlmContent(response));
             const content = [...limited.content];
+            let terminate = false;
             const cardMeta = isObject(response._meta) ? response._meta["hob/card"] : undefined;
             if (cardMeta !== undefined) {
               const validation = validateCard(cardMeta, { mode: "plugin" });
@@ -448,18 +483,25 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
                 }
                 const config = card.config as { callback_tool?: unknown } | undefined;
                 if (options.onCard) {
-                  await options.onCard({
+                  const outcome = await options.onCard({
                     pluginId: plugin.id,
                     pluginName: host.displayName(plugin.id),
                     service: state.name,
                     ...(typeof config?.callback_tool === "string" ? { callbackTool: config.callback_tool } : {}),
                     card,
-                  });
-                  content.push({ type: "text", text: `（${host.displayName(plugin.id)} 的卡片「${cardTitle(card) || "未命名"}」已显示给用户）` });
+                  }, signal);
+                  if (outcome?.text) {
+                    content.splice(0, content.length, { type: "text", text: outcome.text });
+                  } else {
+                    content.push({ type: "text", text: `（${host.displayName(plugin.id)} 的卡片「${cardTitle(card) || "未命名"}」已显示给用户）` });
+                    if (validation.value.interactive) terminate = true;
+                  }
+                } else {
+                  content.push({ type: "text", text: `（当前运行环境不支持展示 ${host.displayName(plugin.id)} 的交互卡片「${cardTitle(card) || "未命名"}」，请回到主对话中发起）` });
                 }
               }
             }
-            return { content, details: response.structuredContent, isError: response.isError };
+            return { content, details: response.structuredContent, isError: response.isError, ...(terminate ? { terminate: true } : {}) };
           },
         });
       }

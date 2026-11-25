@@ -88,11 +88,12 @@
 .plugin-more .disclosure-row { min-height: 38px; padding: 8px 0; }
 .plugin-more .expand > div { padding-top: 2px; }
 .plugin-list .plugin-tool { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 11px 12px; border-radius: 10px; font-size: 14px; }
+.plugin-list .plugin-tool.is-tool { align-items: flex-start; }
 .plugin-tool .tool-info { flex: 1; min-width: 0; }
 .plugin-tool .tool-name { font-size: 13px; overflow-wrap: anywhere; }
-.plugin-tool .tool-desc { margin-top: 3px; overflow: hidden; color: var(--text2); font-size: 12px; text-overflow: ellipsis; white-space: nowrap; }
-.plugin-tool .kind { flex: none; color: var(--accent); font-size: 12px; }
-.plugin-tool .tog { border: 0; cursor: pointer; }
+.plugin-tool .tool-desc { display: -webkit-box; overflow: hidden; margin-top: 3px; color: var(--text2); font-size: 12px; line-height: 1.5; white-space: normal; overflow-wrap: anywhere; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.plugin-tool .kind { flex: none; margin-top: 2px; color: var(--accent); font-size: 12px; white-space: nowrap; }
+.plugin-tool .tog { margin-top: 1px; border: 0; cursor: pointer; }
 .plugin-tool .tog.off { background: var(--text3); }
 .plugin-tool .tog.off::after { right: auto; left: 3px; }
 .plugin-tools-head { display: flex; align-items: baseline; gap: 12px; }

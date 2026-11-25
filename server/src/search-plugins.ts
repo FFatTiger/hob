@@ -21,8 +21,24 @@ export function searchPluginsTool(host: PluginHost, assistantId: string) {
         const name = typeof manifest.displayName === "string" ? manifest.displayName : typeof manifest.name === "string" ? manifest.name : entry.id;
         const description = typeof manifest.description === "string" ? manifest.description : "";
         const extensions = manifest.extensions as Record<string, any> | undefined;
-        const categories = extensions?.["com.hob.plugins"]?.categories;
-        const matches = !words.length || [entry.id, name, description, ...(Array.isArray(categories) ? categories.filter((value): value is string => typeof value === "string") : [])].some(value => words.some(word => value.toLowerCase().includes(word)));
+        const hobExt = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
+        const categories = hobExt?.categories;
+        const localizedTexts = (value: unknown): string[] => {
+          if (typeof value === "string") return [value];
+          if (value && typeof value === "object" && !Array.isArray(value)) {
+            return Object.values(value as Record<string, unknown>).filter((v): v is string => typeof v === "string");
+          }
+          return [];
+        };
+        const haystack = [
+          entry.id,
+          name,
+          description,
+          ...localizedTexts(hobExt?.summary),
+          ...localizedTexts(hobExt?.description),
+          ...(Array.isArray(categories) ? categories.filter((value): value is string => typeof value === "string") : []),
+        ];
+        const matches = !words.length || haystack.some(value => words.some(word => value.toLowerCase().includes(word)));
         const plugin = entry.plugin;
         let state: string;
         let next: string;

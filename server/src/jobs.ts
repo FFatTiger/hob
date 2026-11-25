@@ -25,7 +25,8 @@ import { resolveMovedPath } from "./layout.ts";
 import { availableDesktopTools, browserShellEnv, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
-import { pluginToolDisplayNames, pluginToolsForAssistant } from "./plugin-host.ts";
+import { pluginToolDisplayNames, pluginToolsForAssistant, type PluginCardOutcome } from "./plugin-host.ts";
+import { cardTitle } from "./cards.ts";
 import { jobModel, assistantInGroup } from "./models.ts";
 import { duration, jobProcessLines, reviewedSkillsText } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
@@ -136,6 +137,8 @@ interface WorkerState {
   nextReminder: number;
   finishTimer?: NodeJS.Timeout;
   ask?: (label: string) => void;
+  /** 正在等待用户交互的插件卡片（cardId → resolve），用于停止任务和停滞看门狗判断 */
+  pluginCards?: Map<string, (answer: string) => void>;
   /** 用户叫停了：收尾期间这个 worker 的 report/追问都不再算数 */
   stopped?: boolean;
   /** 正在跑的工具步骤，按 toolCallId 存：输出更新、跑完都按同一个步骤 id 替换 */
@@ -505,7 +508,10 @@ export class JobManager {
     // 定时跑的就是 Worker：主助手的任务要看得到各助这段时间的动静才能写早报
     if (assistant?.primary) customTools.push(overviewTool(this.runtime));
     const existingNames = new Set([...workerTools(abilities), ...customTools.map(tool => tool.name), "tool_search"]);
-    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, job.assistantId, existingNames);
+    const pluginTools = pluginToolsForAssistant(this.runtime.plugins, job.assistantId, existingNames, {
+      onCard: (payload, signal) => this.awaitPluginCard(job.id, payload, signal),
+      onCardError: (_pluginId, message) => this.runtime.router.addPluginCardError(job.assistantId, job.groupId, message),
+    });
     customTools.push(...pluginTools);
     const toolSearch = pluginTools.some(tool => tool.exposure === "deferred");
     const group = job.groupId ? this.store.group(job.groupId) : undefined;
@@ -854,6 +860,19 @@ export class JobManager {
     if (worker?.finishTimer) clearTimeout(worker.finishTimer);
     this.followUps.delete(jobId);
     worker?.scriptRevokes?.forEach((revoke) => revoke());
+    if (worker?.pluginCards?.size) {
+      for (const [cardId, resolveCard] of [...worker.pluginCards]) {
+        this.pluginCardWaiters.delete(cardId);
+        worker.pluginCards.delete(cardId);
+        const existing = this.store.card(cardId);
+        if (existing?.status === "open") {
+          const closed = { ...existing, status: "done" as const, feedback: { unavailable: "后台任务已结束，这张卡片已失效。" }, updatedAt: new Date().toISOString() };
+          this.store.saveCard(closed);
+          this.bus.emit({ type: "card", card: closed });
+        }
+        resolveCard("（后台任务已结束）");
+      }
+    }
     await worker?.desktop?.dispose();
     await this.settle(job, status, { summary, reason, files, lastText: worker?.lastText });
 
@@ -1243,6 +1262,102 @@ export class JobManager {
 
   /** 提问真正送进了助手会话的那张提问卡（id）。还排在队里没送到的不算，那一轮结束时不能当作没人接。 */
   private deliveredQuestions = new Set<string>();
+  /** 等待用户点击的插件卡片（cardId → 对应任务与唤醒回调）。 */
+  private pluginCardWaiters = new Map<string, { jobId: string; resolve: (answer: string) => void }>();
+
+  /** 后台任务触发插件交互卡片：推送到父会话，交互卡阻塞工具调用直到用户操作完成（同时暂停超时与停滞看门狗）。 */
+  async awaitPluginCard(
+    jobId: string,
+    payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: import("../../shared/cards.ts").Card },
+    signal?: AbortSignal,
+  ): Promise<PluginCardOutcome> {
+    const job = this.store.job(jobId);
+    if (!job) return;
+    const record = await this.runtime.router.addPluginCard(job.assistantId, job.groupId, { ...payload, jobId });
+    if (!payload.callbackTool) return;
+    const worker = this.workers.get(jobId);
+    if (!worker || worker.stopped) return;
+
+    const resumeTimeout = pauseToolTimeoutForUser(signal);
+    const title = cardTitle(payload.card) || "未命名";
+    let settled = false;
+    let resolveCard!: (answer: string) => void;
+    const answerPromise = new Promise<string>((resolve) => {
+      resolveCard = (value) => {
+        if (settled) return;
+        settled = true;
+        resumeTimeout();
+        resolve(value);
+      };
+    });
+
+    worker.pluginCards ??= new Map();
+    worker.pluginCards.set(record.id, resolveCard);
+    this.pluginCardWaiters.set(record.id, { jobId, resolve: resolveCard });
+    if (job.status === "running") {
+      const waiting: Job = { ...job, status: "waiting" };
+      this.store.saveJob(waiting);
+      worker.job = waiting;
+      if (worker.pausedAt === undefined) worker.pausedAt = Date.now();
+      this.bus.emit({ type: "job", job: waiting });
+    }
+
+    const cancel = () => {
+      this.pluginCardWaiters.delete(record.id);
+      worker.pluginCards?.delete(record.id);
+      const existing = this.store.card(record.id);
+      if (existing?.status === "open") {
+        const closed = { ...existing, status: "done" as const, feedback: { unavailable: "后台任务已中止，这张卡片已失效。" }, updatedAt: new Date().toISOString() };
+        this.store.saveCard(closed);
+        this.bus.emit({ type: "card", card: closed });
+      }
+      if (!worker.ask && !worker.pluginCards?.size) {
+        const current = this.store.job(jobId);
+        if (current?.status === "waiting") {
+          worker.job = { ...current, status: "running" };
+          this.store.saveJob(worker.job);
+          this.bus.emit({ type: "job", job: worker.job });
+        }
+        if (worker.pausedAt !== undefined) worker.pausedMs += Date.now() - worker.pausedAt;
+        worker.pausedAt = undefined;
+        worker.lastActivityAt = Date.now();
+      }
+      resolveCard("（交互卡片已中止）");
+    };
+
+    if (signal?.aborted) { cancel(); return { text: await answerPromise }; }
+    signal?.addEventListener("abort", cancel, { once: true });
+    try {
+      const answer = await answerPromise;
+      return { text: `用户在 ${payload.pluginName} 的卡片「${title}」上完成了操作，${payload.pluginName} 返回：${answer}` };
+    } finally {
+      signal?.removeEventListener("abort", cancel);
+      resumeTimeout();
+    }
+  }
+
+  /** 用户点击了后台任务发出的插件卡片且插件返回了结果文本：唤醒对应任务，把结果直接交回给工具。 */
+  resolvePluginCard(cardId: string, answer: string): boolean {
+    const waiter = this.pluginCardWaiters.get(cardId);
+    if (!waiter) return false;
+    this.pluginCardWaiters.delete(cardId);
+    const worker = this.workers.get(waiter.jobId);
+    worker?.pluginCards?.delete(cardId);
+    if (worker && !worker.ask && !worker.pluginCards?.size) {
+      const job = this.store.job(waiter.jobId);
+      if (job && job.status === "waiting") {
+        const next: Job = { ...job, status: "running" };
+        this.store.saveJob(next);
+        this.bus.emit({ type: "job", job: next });
+        worker.job = next;
+      }
+      if (worker.pausedAt !== undefined) worker.pausedMs += Date.now() - worker.pausedAt;
+      worker.pausedAt = undefined;
+      worker.lastActivityAt = Date.now();
+    }
+    waiter.resolve(answer);
+    return true;
+  }
 
   questionDelivered(jobId: string): void {
     const approval = this.store.approvals().find((item) => item.jobId === jobId && item.status === "pending");
@@ -1345,8 +1460,8 @@ export class JobManager {
           }
         }
       }
-      // 在等用户答提问不算没响应：等多久都是用户的事
-      if (!worker.ask && !worker.session?.isStreaming && now - worker.lastActivityAt > idleMs) {
+      // 在等用户答提问或点插件卡片不算没响应：等多久都是用户的事
+      if (!worker.ask && !worker.pluginCards?.size && !worker.session?.isStreaming && now - worker.lastActivityAt > idleMs) {
         void this.finish(jobId, "stuck", undefined, `${Math.round(idleMs / 60_000)} 分钟无响应`);
       }
     }

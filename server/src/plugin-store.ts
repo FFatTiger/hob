@@ -54,18 +54,51 @@ export class PluginStore {
     if (!validId.test(id)) throw new Error(`插件 id 无效：${id}`);
     return join(this.home, "plugins", id);
   }
-  private builtinRoot(): string { return fileURLToPath(new URL("../mcp/vault", import.meta.url)); }
+  private builtinRoot(): string { return fileURLToPath(new URL("../mcp", import.meta.url)); }
   private builtinCatalog(): { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; error?: string }[] {
-    const path = this.builtinRoot();
-    try {
-      const manifest = readJson(join(path, "plugin.json"));
-      const mcp = readJson(join(path, "mcp.json"));
-      if (!object(manifest) || typeof manifest.version !== "string") return [];
-      pluginConfig(manifest, mcp);
-      return [{ id: "vault", version: manifest.version, manifest, source: BUILTIN_SOURCE, sourceName: "Hob 自带", path }];
-    } catch { return []; }
+    const root = this.builtinRoot();
+    if (!existsSync(root)) return [];
+    const entries: { id: string; version: string; manifest: Obj; source: string; sourceName: string; path: string; error?: string }[] = [];
+    for (const item of readdirSync(root, { withFileTypes: true })) {
+      if (!item.isDirectory() || !validId.test(item.name)) continue;
+      const path = join(root, item.name);
+      if (!existsSync(join(path, "plugin.json")) || !existsSync(join(path, "mcp.json"))) continue;
+      try {
+        const manifest = readJson(join(path, "plugin.json"));
+        const mcp = readJson(join(path, "mcp.json"));
+        if (!object(manifest) || typeof manifest.version !== "string" || !manifest.version.trim()) continue;
+        pluginConfig(manifest, mcp);
+        entries.push({ id: item.name, version: manifest.version, manifest, source: BUILTIN_SOURCE, sourceName: "Hob 自带", path });
+      } catch (error) {
+        console.error(`跳过无效自带插件 ${item.name}：`, error instanceof Error ? error.message : error);
+      }
+    }
+    return entries.sort((a, b) => (a.id === "vault" ? -1 : b.id === "vault" ? 1 : a.id.localeCompare(b.id)));
   }
   private builtinEntry(id: string) { return this.builtinCatalog().find(entry => entry.id === id); }
+  /** 同步已安装的自带插件文件（版本升级或本地清单/脚本改动时同步，保留用户配置与工具开关）。 */
+  syncBuiltin(id: string): { updated: boolean; versionChanged: boolean } {
+    const installed = this.list().find(plugin => plugin.id === id && plugin.source === BUILTIN_SOURCE);
+    if (!installed) return { updated: false, versionChanged: false };
+    const entry = this.builtinEntry(id);
+    if (!entry) return { updated: false, versionChanged: false };
+    if (newerPluginVersion(entry.version, installed.version)) {
+      const next = this.install(id, true);
+      return { updated: true, versionChanged: next.version !== installed.version };
+    }
+    const dest = this.dir(id);
+    const filesToCheck = ["plugin.json", "mcp.json", "server.mjs"];
+    const changed = filesToCheck.some(name => {
+      const srcFile = join(entry.path, name);
+      const dstFile = join(dest, name);
+      if (!existsSync(srcFile)) return false;
+      if (!existsSync(dstFile)) return true;
+      return !readFileSync(srcFile).equals(readFileSync(dstFile));
+    });
+    if (!changed) return { updated: false, versionChanged: false };
+    this.install(id, true, true);
+    return { updated: true, versionChanged: false };
+  }
   private read(): Document {
     if (!existsSync(this.path)) return { plugins: [] };
     const value = readJson(this.path);
@@ -138,8 +171,9 @@ export class PluginStore {
   /** Copy an official plugin source to an isolated staging directory before provider dependencies are installed. */
   prepareProviderDirectory(id: string, update = false, sourceId?: string): string {
     const installed = this.list().find((plugin) => plugin.id === id);
-    const wanted = update ? installed?.source : (sourceId ?? (id === "vault" ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
-    const entry = wanted === BUILTIN_SOURCE ? this.builtinEntry(id) : this.catalog().find((item) => item.id === id && item.source === wanted);
+    const builtin = this.builtinEntry(id);
+    const wanted = update ? installed?.source : (sourceId ?? (builtin ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
+    const entry = wanted === BUILTIN_SOURCE ? builtin : this.catalog().find((item) => item.id === id && item.source === wanted);
     if (!entry) throw new Error(`插件源没有插件 ${id}`);
     if (entry.error) throw new Error(entry.error);
     if (update && installed?.source === "custom") throw new Error("自定义插件不能从插件源更新");
@@ -157,9 +191,10 @@ export class PluginStore {
   install(id: string, update = false, force = false, sourceId?: string, preparedSource?: string): InstalledPlugin {
     const doc = this.read();
     const old = doc.plugins.find(p => p.id === id);
-    const wanted = update ? old?.source : (sourceId ?? (id === "vault" ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
+    const builtin = this.builtinEntry(id);
+    const wanted = update ? old?.source : (sourceId ?? (builtin ? BUILTIN_SOURCE : OFFICIAL_SOURCE));
     if (old && update && old.source === "custom") throw new Error("自定义插件不能从插件源更新");
-    const entry = wanted === BUILTIN_SOURCE ? this.builtinEntry(id) : this.catalog().find(item => item.id === id && item.source === wanted);
+    const entry = wanted === BUILTIN_SOURCE ? builtin : this.catalog().find(item => item.id === id && item.source === wanted);
     if (!entry) throw new Error(`插件源没有插件 ${id}`);
     if (entry.error) throw new Error(entry.error);
     const source = preparedSource ?? entry.path;

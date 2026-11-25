@@ -110,11 +110,14 @@ export function seedHacker(store: Store, locale: Locale): void {
 }
 
 export function seedBuiltinVault(plugins: PluginStore, onUpdated?: (id: string) => void): void {
-  // 自带密码库跟着 Hob 版本走：装着的是自带的那份、Hob 带了新版本时，启动就换上（install 在版本没变时什么都不做）
-  const installed = plugins.list().find(plugin => plugin.id === "vault" && plugin.source === "builtin");
-  if (installed) {
-    try { if (plugins.install("vault", true).version !== installed.version) onUpdated?.("vault"); }
-    catch (error) { console.error("更新自带密码库失败，下次启动再试：", error instanceof Error ? error.message : error); }
+  // 所有已安装的自带插件跟着 Hob 版本走：启动时自动同步清单与文件（保留用户配置）
+  for (const installed of plugins.list().filter(plugin => plugin.source === "builtin")) {
+    try {
+      const { versionChanged } = plugins.syncBuiltin(installed.id);
+      if (versionChanged) onUpdated?.(installed.id);
+    } catch (error) {
+      console.error(`更新自带插件 ${installed.id} 失败，下次启动再试：`, error instanceof Error ? error.message : error);
+    }
   }
   const seeded = readSeeded(plugins.home);
   if (seeded.vault) return;

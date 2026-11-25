@@ -1,0 +1,155 @@
+{
+  "name": "opskat",
+  "displayName": "OpsKat",
+  "version": "1.0.0",
+  "description": "Connects via local opsctl to all infrastructure assets managed by OpsKat (SSH, databases, Redis, MongoDB, Kafka, Kubernetes, etcd, object storage, and custom asset types). Enforces OpsKat's native permission policies, model review, and isolated MCP audit logs, resolving approvals and MFA strictly over an out-of-band local IPC control socket.",
+  "userConfig": {
+    "OPSCTL_PATH": {
+      "type": "string",
+      "title": "opsctl 可执行文件路径",
+      "description": "留空时自动从系统 PATH 或默认安装路径查找 opsctl。"
+    },
+    "APPROVAL_MODE": {
+      "type": "string",
+      "title": "审批方式",
+      "description": "hob_card：通过带外本地 IPC 通道在 Hob 对话中出审批卡片；desktop：交给本机 OpsKat 桌面端弹窗。",
+      "options": ["hob_card", "desktop"],
+      "default": "hob_card"
+    },
+    "TOOLSET": {
+      "type": "string",
+      "title": "暴露工具集",
+      "description": "core：8 个核心运维工具（直出）；full：全量 18 个工具（核心工具保持直出，资产/分组管理与本会话审计按需加载）。",
+      "options": ["core", "full"],
+      "default": "core"
+    },
+    "ALLOW_PERMANENT": {
+      "type": "boolean",
+      "title": "允许卡片写入永久放行规则",
+      "description": "默认关闭（更安全）；开启后审批卡片才显示「永久允许」按钮。",
+      "default": false
+    },
+    "ALLOW_LOCAL_DIRS": {
+      "type": "string",
+      "title": "允许 cp 访问的本机目录（可选）",
+      "description": "限制文件传输可访问的本机目录，多个目录用逗号或分号分隔；留空时本地上传/下载需人工逐次确认。"
+    },
+    "DATA_DIR": {
+      "type": "directory",
+      "title": "OpsKat 数据目录（可选）",
+      "description": "留空使用 OpsKat 默认数据目录或系统 OPSKAT_DATA_DIR。"
+    },
+    "MASTER_KEY": {
+      "type": "string",
+      "title": "主密钥（可选）",
+      "description": "仅需覆盖 OPSKAT_MASTER_KEY 时填写；加密保存并自动脱敏。",
+      "sensitive": true
+    }
+  },
+  "extensions": {
+    "com.hob.plugins": {
+      "icon": "icon.png",
+      "publisher": "OpsKat",
+      "categories": ["development", "productivity"],
+      "keepAlive": true,
+      "supersedesSkills": ["opsctl"],
+      "directTools": [
+        "list_assets",
+        "get_asset",
+        "help",
+        "exec",
+        "batch_exec",
+        "cp",
+        "request_permission",
+        "get_task"
+      ],
+      "summary": {
+        "zh-CN": "连接本地 OpsKat 运维资产，通过带外控制通道在 Hob 对话里安全审批远程命令、文件传输与 MFA。",
+        "en": "Connect to OpsKat to operate remote servers, databases, and services with out-of-band approval and MFA cards in Hob chat."
+      },
+      "description": {
+        "zh-CN": "通过本地 opsctl 连接 OpsKat 管理的全部基础设施资产（SSH、数据库、Redis、MongoDB、Kafka、Kubernetes、etcd、对象存储及自定义资产类型）。严格采用数据面与控制面分离架构：MCP 通道仅传输不透明状态句柄，审批详情与人工决策/MFA 验证码全部经由本机用户独占 IPC 带外通道完成，凭据、验证码与内部策略绝不进入大模型上下文。",
+        "en": "Connects via local opsctl to all infrastructure assets managed by OpsKat (SSH, databases, Redis, MongoDB, Kafka, Kubernetes, etcd, object storage, and custom asset types). Enforces strict data-plane / control-plane separation: MCP carries only opaque handles while approval payloads, human decisions, and MFA codes travel exclusively over a user-restricted local IPC control socket—never entering the LLM context."
+      },
+      "userConfig": {
+        "OPSCTL_PATH": {
+          "title": { "zh-CN": "opsctl 可执行文件路径", "en": "opsctl executable path" },
+          "description": {
+            "zh-CN": "留空时自动从系统 PATH 或默认安装路径查找 opsctl。",
+            "en": "Leave blank to automatically locate opsctl from PATH or the default install directory."
+          }
+        },
+        "APPROVAL_MODE": {
+          "title": { "zh-CN": "审批方式", "en": "Approval mode" },
+          "description": {
+            "zh-CN": "hob_card：通过带外本地 IPC 通道在 Hob 对话中出审批卡片；desktop：交给本机 OpsKat 桌面端弹窗。",
+            "en": "hob_card: show interactive approval cards in Hob chat over out-of-band local IPC; desktop: delegate to the local OpsKat desktop dialog."
+          },
+          "options": {
+            "hob_card": { "zh-CN": "hob_card（Hob 对话审批卡片）", "en": "hob_card (Hob chat approval cards)" },
+            "desktop": { "zh-CN": "desktop（OpsKat 桌面端弹窗）", "en": "desktop (OpsKat desktop dialog)" }
+          }
+        },
+        "TOOLSET": {
+          "title": { "zh-CN": "暴露工具集", "en": "Exposed toolset" },
+          "description": {
+            "zh-CN": "core：8 个核心运维工具（直出）；full：全量 18 个工具（核心工具保持直出，资产/分组管理与本会话审计按需加载）。",
+            "en": "core: 8 essential operational tools (direct); full: all 18 tools (core tools stay direct; asset/group CRUD and session-scoped audit load on demand)."
+          },
+          "options": {
+            "core": { "zh-CN": "core（8 个核心工具）", "en": "core (8 essential tools)" },
+            "full": { "zh-CN": "full（全量 18 个工具）", "en": "full (all 18 tools)" }
+          }
+        },
+        "ALLOW_PERMANENT": {
+          "title": { "zh-CN": "允许卡片写入永久放行规则", "en": "Allow permanent allow-rule creation" },
+          "description": {
+            "zh-CN": "默认关闭（更安全）；开启后审批卡片才显示「永久允许」按钮。",
+            "en": "Disabled by default for safety; enable to show the 'Allow permanently' button on approval cards."
+          }
+        },
+        "ALLOW_LOCAL_DIRS": {
+          "title": { "zh-CN": "允许 cp 访问的本机目录（可选）", "en": "Allowed local directories for cp (optional)" },
+          "description": {
+            "zh-CN": "限制文件传输可访问的本机目录，多个目录用逗号或分号分隔；留空时本地上传/下载需人工逐次确认。",
+            "en": "Restrict local filesystem paths accessible to cp (comma or semicolon separated). When empty, local transfers require one-time human confirmation."
+          }
+        },
+        "DATA_DIR": {
+          "title": { "zh-CN": "OpsKat 数据目录（可选）", "en": "OpsKat data directory (optional)" },
+          "description": {
+            "zh-CN": "留空使用 OpsKat 默认数据目录或系统 OPSKAT_DATA_DIR。",
+            "en": "Leave blank to use OpsKat's default data directory or the host OPSKAT_DATA_DIR."
+          }
+        },
+        "MASTER_KEY": {
+          "title": { "zh-CN": "主密钥（可选）", "en": "Master key (optional)" },
+          "description": {
+            "zh-CN": "仅需覆盖 OPSKAT_MASTER_KEY 时填写；加密保存并自动脱敏。",
+            "en": "Only needed to override OPSKAT_MASTER_KEY; stored encrypted and automatically redacted."
+          }
+        }
+      },
+      "toolDescriptions": {
+        "list_assets": { "zh-CN": "列出 OpsKat 管理的资产清单（支持按类型和分组筛选），仅返回安全元数据。", "en": "List managed OpsKat assets with safe metadata (filterable by type and group)." },
+        "get_asset": { "zh-CN": "查看单个资产的连接信息、说明与认证引用状态，不返回任何明文密码或私钥。", "en": "Get safe connection metadata, description, and auth status for a single asset without exposing secrets." },
+        "list_groups": { "zh-CN": "列出所有资产分组及其层级结构。", "en": "List all asset groups and their hierarchy." },
+        "get_group": { "zh-CN": "查看指定资产分组的详细信息与说明。", "en": "Get detailed metadata and description for an asset group." },
+        "list_credentials": { "zh-CN": "列出凭据库与 SSH Agent 来源的安全元数据（不含密码和私钥）。", "en": "List safe inventory of managed credentials and SSH Agent sources without secrets." },
+        "get_credential": { "zh-CN": "按类型引用查看凭据或 SSH Agent 来源的关联资产与可用状态。", "en": "Inspect usage and availability of a managed credential or SSH Agent source." },
+        "help": { "zh-CN": "查询内置或自定义资产类型的配置字段与命令语法，首次操作某类型前调用。", "en": "Get config schema and command syntax for a built-in or custom asset type." },
+        "exec": { "zh-CN": "在任意类型资产上执行命令（SSH、数据库、Redis、MongoDB、Kafka、K8s、etcd、对象存储、自定义类型），需审批时在对话中出审批卡片。", "en": "Execute a command on any asset type; renders an interactive Hob approval card when confirmation is required." },
+        "batch_exec": { "zh-CN": "在多台资产上并行执行命令；需人工确认的条目自动合并为单张批量审批卡片。", "en": "Run commands across multiple assets in parallel, batching unapproved items into a single approval card." },
+        "cp": { "zh-CN": "在本机、SSH 服务器和对象存储之间传输文件或目录，每个远端端点与本机写入均按策略校验审批。", "en": "Copy files or directories across local paths, SSH servers, and object storage under policy and local-write checks." },
+        "request_permission": { "zh-CN": "在执行多步变更前预先申请一组临时命令权限，用户可在审批卡片中编辑收窄模式。", "en": "Request temporary session grant patterns before multi-step changes; users can edit patterns on the card." },
+        "list_audit": { "zh-CN": "只读查询当前 MCP 隔离会话的 OpsKat 审计日志（不跨会话暴露桌面/CLI 历史）。", "en": "Read-only query of OpsKat audit logs strictly scoped to the current isolated MCP session." },
+        "get_task": { "zh-CN": "等待或获取审批通过后转入后台执行的耗时命令结果。", "en": "Wait for or retrieve the result of a long-running approved command executing in the background." },
+        "put_asset": { "zh-CN": "新建或更新 OpsKat 资产配置（需一次性人工审批确认，明文凭据不进入审批详情）。", "en": "Create or update an OpsKat asset (requires one-time human confirmation; secrets are never shown)." },
+        "put_group": { "zh-CN": "新建或更新 OpsKat 资产分组（需一次性人工审批确认）。", "en": "Create or update an OpsKat asset group (requires one-time human confirmation)." },
+        "delete_asset": { "zh-CN": "删除指定资产（不可预授权，始终需要人工审批确认）。", "en": "Delete an asset (cannot be pre-approved; always requires human confirmation)." },
+        "delete_group": { "zh-CN": "删除指定资产分组（不可预授权，始终需要人工审批确认）。", "en": "Delete an asset group (cannot be pre-approved; always requires human confirmation)." },
+        "get_asset_secret": { "zh-CN": "读取自定义类型资产的字段值；敏感字段受策略与审批保护。", "en": "Read a field from a custom-type asset; secret fields require policy/human approval." }
+      }
+    }
+  }
+}

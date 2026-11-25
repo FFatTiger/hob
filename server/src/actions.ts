@@ -167,8 +167,30 @@ function recordObject(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function submittedValues(input: CardActionRequest): string[] {
+function multilineFieldNames(card: CardRecord["card"]): Set<string> {
+  const names = new Set<string>();
+  const walk = (elements: unknown): void => {
+    if (!Array.isArray(elements)) return;
+    for (const element of elements) {
+      if (!recordObject(element)) continue;
+      if (element.tag === "input" && element.input_type === "multiline_text" && typeof element.name === "string" && element.name) {
+        names.add(element.name);
+      }
+      if (Array.isArray(element.elements)) walk(element.elements);
+      if (Array.isArray(element.columns)) {
+        for (const col of element.columns) {
+          if (recordObject(col) && Array.isArray(col.elements)) walk(col.elements);
+        }
+      }
+    }
+  };
+  walk(card?.body?.elements);
+  return names;
+}
+
+function submittedValues(input: CardActionRequest, card?: CardRecord["card"]): string[] {
   const values: string[] = [];
+  const skipFields = card ? multilineFieldNames(card) : new Set<string>();
   const collect = (value: unknown): void => {
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean") {
       const text = String(value);
@@ -179,7 +201,12 @@ function submittedValues(input: CardActionRequest): string[] {
       Object.values(value).forEach(collect);
     }
   };
-  collect(input.form_value);
+  if (recordObject(input.form_value)) {
+    for (const [key, value] of Object.entries(input.form_value)) {
+      if (skipFields.has(key)) continue;
+      collect(value);
+    }
+  }
   const action = input.action;
   collect(action.value);
   collect(action.option);
@@ -224,9 +251,11 @@ function pluginCard(value: unknown): { card?: CardRecord["card"]; unsupported?: 
 export function retirePluginCards(runtime: HobRuntime, pluginId: string): void {
   for (const card of runtime.store.cards()) {
     if (card.status !== "open" || card.processing || card.owner.type !== "plugin" || card.owner.pluginId !== pluginId) continue;
-    const next: CardRecord = { ...card, status: "done", feedback: { unavailable: t("{plugin} 更新了，这张卡是更新前出的，已作废。还需要的话，请助手重新发起。", { plugin: card.plugin?.pluginName ?? pluginId }) }, updatedAt: new Date().toISOString() };
+    const reason = t("{plugin} 更新了，这张卡是更新前出的，已作废。还需要的话，请助手重新发起。", { plugin: card.plugin?.pluginName ?? pluginId });
+    const next: CardRecord = { ...card, status: "done", feedback: { unavailable: reason }, updatedAt: new Date().toISOString() };
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });
+    if (card.owner.jobId) runtime.jobs.resolvePluginCard(card.id, reason);
   }
 }
 
@@ -253,7 +282,7 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
   runtime.store.saveCard(processing);
   runtime.bus.emit({ type: "card", card: processing });
   const action = { ...(input.action as Record<string, unknown>), ...(input.form_value ? { form_value: input.form_value } : {}) } as Record<string, unknown>;
-  const redact = (text: string) => redactSubmittedText(runtime.plugins.redact(pluginId, text), submittedValues(input));
+  const redact = (text: string) => redactSubmittedText(runtime.plugins.redact(pluginId, text), submittedValues(input, record.card));
   const buttonText = input.button_text || (typeof action.text === "string" ? action.text : undefined) || (typeof action.name === "string" ? action.name : undefined) || "按钮";
   const controller = new AbortController();
   let timer: NodeJS.Timeout | undefined;
@@ -285,7 +314,12 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });
     const text = pluginText(response, runtime, pluginId, redact);
-    if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
+    if (text) {
+      const handledByJob = record.owner.jobId ? runtime.jobs.resolvePluginCard(record.id, text) : false;
+      if (!handledByJob) {
+        await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
+      }
+    }
     return { status: 200, body: { card: next } };
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error));

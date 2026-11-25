@@ -785,6 +785,7 @@ export const deletePluginSource = (id: string) => api.deletePluginSource(id);
 export const refreshPluginSources = () => api.refreshPluginSources();
 export const updatePlugin = (id: string) => api.updatePlugin(id);
 export const savePluginConfig = (id: string, values: Record<string, unknown>) => api.savePluginConfig(id, values);
+export const reloadPlugin = (id: string) => api.reloadPlugin(id);
 export const addPluginProfile = (id: string, name: string) => api.addPluginProfile(id, name);
 export const updatePluginProfile = (id: string, profileId: string, name: string) => api.updatePluginProfile(id, profileId, name);
 export const deletePluginProfile = (id: string, profileId: string) => api.deletePluginProfile(id, profileId);

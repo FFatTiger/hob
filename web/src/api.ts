@@ -180,6 +180,7 @@ export interface HobApi {
   updatePlugin(id: string): Promise<PluginView>;
   patchPlugin(id: string, patch: PluginPatch): Promise<PluginView>;
   savePluginConfig(id: string, values: Record<string, unknown>): Promise<PluginView>;
+  reloadPlugin(id: string): Promise<PluginView>;
   addPluginProfile(id: string, name: string): Promise<PluginView>;
   updatePluginProfile(id: string, profileId: string, name: string): Promise<PluginView>;
   deletePluginProfile(id: string, profileId: string): Promise<PluginView>;
@@ -373,6 +374,7 @@ export const realApi: HobApi = {
   updatePlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/update`, json({})),
   patchPlugin: (id, patch) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}`, json(patch, "PATCH")),
   savePluginConfig: (id, values) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/config`, json({ values }, "PUT")),
+  reloadPlugin: (id) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/reload`, json({}, "POST")),
   addPluginProfile: (id, name) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles`, json({ name }, "POST")),
   updatePluginProfile: (id, profileId, name) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles/${encodeURIComponent(profileId)}`, json({ name }, "PATCH")),
   deletePluginProfile: (id, profileId) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/profiles/${encodeURIComponent(profileId)}`, { method: "DELETE" }),

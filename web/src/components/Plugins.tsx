@@ -190,7 +190,7 @@ function PluginCard({ item, sourceLabel, update, onOpen, onInstall, onUpdate }: 
   </div>;
 }
 
-function sourceName(source: { id: string; name: string }) { return source.id === "official" ? t("Hob 官方") : source.name; }
+function sourceName(source: { id: string; name: string }) { return source.id === "official" ? t("Hob 官方") : source.id === "builtin" ? t("Hob 自带") : source.name; }
 function sourceAddress(address: string) {
   try {
     const url = new URL(address);

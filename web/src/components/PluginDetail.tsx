@@ -4,12 +4,12 @@ import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
 import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
-import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
+import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, openPlugins, patchPlugin, reloadPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
 import { approvePlugin, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
-import { hasProviderContribution, isUnofficialPlugin, pluginDetailText, pluginReviewedVersion } from "./plugin-meta.ts";
+import { hasProviderContribution, hobExtension, isUnofficialPlugin, localizedText, pluginDetailText, pluginReviewedVersion } from "./plugin-meta.ts";
 
 function Description({ text }: { text: string }) {
   return <div className="plugin-sub">{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
@@ -35,8 +35,21 @@ export function configGroups(config: PluginView["config"], values: Record<string
   return { fields, required, optional, initialOpen: !required.length || optionalHasValue };
 }
 
-function fieldMissing(config: PluginView["config"], keys: string[]): string[] {
-  return keys.map(key => String(config[key]?.title ?? key));
+function userConfigMeta(manifest: Record<string, unknown>, key: string): { title?: string; description?: string; options?: Record<string, unknown> } {
+  const map = hobExtension(manifest).userConfig as Record<string, unknown> | undefined;
+  const entry = map && typeof map === "object" && !Array.isArray(map) ? map[key] : undefined;
+  if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
+  const record = entry as Record<string, unknown>;
+  const options = record.options && typeof record.options === "object" && !Array.isArray(record.options) ? (record.options as Record<string, unknown>) : undefined;
+  return {
+    title: localizedText(record.title) || undefined,
+    description: localizedText(record.description) || undefined,
+    ...(options ? { options } : {}),
+  };
+}
+
+function fieldMissing(manifest: Record<string, unknown>, config: PluginView["config"], keys: string[]): string[] {
+  return keys.map(key => userConfigMeta(manifest, key).title || t(String(config[key]?.title ?? key)));
 }
 
 function accountValue(config: Record<string, Record<string, unknown>>): string {
@@ -112,9 +125,8 @@ export function PluginDetail({ id }: { id: string }) {
 
   const hasList = item.credentialRoles?.includes("list") ?? false;
   const credentialConnected = hasList && loginData !== null;
-  const extensions = item.manifest.extensions as Record<string, unknown> | undefined;
-  const hob = extensions?.["com.hob.plugins"] as Record<string, unknown> | undefined;
-  const profileSpec = hob?.profiles as Record<string, unknown> | undefined;
+  const hob = hobExtension(item.manifest);
+  const profileSpec = hob.profiles as Record<string, unknown> | undefined;
   const profile = item.profiles?.find(candidate => candidate.id === profileId);
   const profileMode = Array.isArray(item.profiles);
   const showAdd = profileMode && (adding || !item.profiles?.length);
@@ -125,7 +137,7 @@ export function PluginDetail({ id }: { id: string }) {
     const value = values[key] ?? (field.sensitive ? (field.configured ? true : "") : field.value);
     return field.required && (value === undefined || value === null || value === "" || (Array.isArray(value) && !value.length));
   }).map(([key]) => key);
-  const missing = fieldMissing(activeConfig, missingKeys);
+  const missing = fieldMissing(item.manifest, activeConfig, missingKeys);
   const profileMissing = profileMode ? [...new Set(item.profiles?.flatMap(candidate => candidate.missing) ?? [])] : [];
   const service = item.services[0];
   const serviceStatus = profileMissing.length && profileMode ? "pending_config" : service?.status ?? "connected";
@@ -151,7 +163,7 @@ export function PluginDetail({ id }: { id: string }) {
   const detailDesc = pluginDetailText(item.manifest, pluginDescription(item.manifest, id));
   const configFields = fields.length > 0 && !profileMode;
   const missingProfile = item.profiles?.find(candidate => candidate.missing.length);
-  const missingProfileLabels = missingProfile ? fieldMissing(item.config, missingProfile.missing) : [];
+  const missingProfileLabels = missingProfile ? fieldMissing(item.manifest, item.config, missingProfile.missing) : [];
   const missingText = missingProfile
     ? t("「{name}」还差：{fields}。填好保存后自动连接。", { name: missingProfile.name, fields: missingProfileLabels.join("、") })
     : missing.length ? t("还差：{fields}。填好保存后自动连接。", { fields: missing.join("、") }) : "";
@@ -193,14 +205,17 @@ export function PluginDetail({ id }: { id: string }) {
   };
   const renderField = ([key, field]: typeof fields[number]) => {
     const value = values[key] ?? (field.sensitive ? "" : field.value ?? "");
-    const label = String(field.title ?? key);
+    const meta = userConfigMeta(item.manifest, key);
+    const label = meta.title || t(String(field.title ?? key));
+    const description = meta.description || (typeof field.description === "string" ? t(field.description) : "");
+    const hasDefault = field.default !== undefined && field.default !== null && field.default !== "";
     return <label className="lbl" key={key}>{label}{field.required ? " *" : ""}
-      {field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
-      {typeof field.description === "string" && <Description text={field.description} />}</label>;
+      {field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}>{hasDefault ? null : <option value="">{t("请选择")}</option>}{field.options.map(option => { const optKey = String(option); const optLabel = meta.options ? localizedText(meta.options[optKey]) : ""; return <option key={optKey} value={optKey}>{optLabel || optKey}</option>; })}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
+      {description ? <Description text={description} /> : null}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
-  const statusBlock = serviceStatus === "connected" || serviceStatus === "idle" ? <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
-    : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{serviceStatus === "error" ? <button className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void refresh()}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
+  const statusBlock = serviceStatus === "connected" || serviceStatus === "idle" ? <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button type="button" className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
+    : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{configFields && serviceStatus !== "pending_config" ? <button type="button" className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}{serviceStatus === "error" ? <button type="button" className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void run(() => reloadPlugin(id))}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button type="button" className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
 
   const assistantSection = <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>;
 
@@ -293,6 +308,16 @@ function chosenSummary(names: string[], total: number): string {
   return names.length <= 3 ? names.join("、") : t("{n} 个助手", { n: names.length });
 }
 
+function toolDescriptionOf(manifest: Record<string, unknown>, tool: PluginToolView): string {
+  const map = hobExtension(manifest).toolDescriptions as Record<string, unknown> | undefined;
+  if (map && typeof map === "object" && !Array.isArray(map)) {
+    const localized = localizedText(map[tool.name]);
+    if (localized) return localized;
+  }
+  return tool.description ?? "";
+}
+
 function ToolRow({ tool, annotated, item, run }: { tool: PluginToolView; annotated: boolean; item: PluginView; run: (action: () => Promise<unknown>) => Promise<void> }) {
-  return <div className="plugin-tool"><div className="tool-info"><div className="tool-name"><code>{tool.name}</code></div><div className="tool-desc">{tool.description}</div></div>{annotated && tool.annotations?.readOnlyHint !== true ? <span className="kind">{t("会改动")}</span> : null}<button type="button" role="switch" className={`tog${tool.enabled ? "" : " off"}`} aria-label={tool.name} aria-checked={tool.enabled} onClick={() => void run(() => patchPlugin(item.plugin.id, { tools: { ...item.plugin.tools, [tool.name]: { ...item.plugin.tools[tool.name], enabled: !tool.enabled } } }))} /></div>;
+  const desc = toolDescriptionOf(item.manifest, tool);
+  return <div className="plugin-tool is-tool"><div className="tool-info"><div className="tool-name"><code>{tool.name}</code></div>{desc ? <div className="tool-desc">{desc}</div> : null}</div>{annotated && tool.annotations?.readOnlyHint !== true ? <span className="kind">{t("会改动")}</span> : null}<button type="button" role="switch" className={`tog${tool.enabled ? "" : " off"}`} aria-label={tool.name} aria-checked={tool.enabled} onClick={() => void run(() => patchPlugin(item.plugin.id, { tools: { ...item.plugin.tools, [tool.name]: { ...item.plugin.tools[tool.name], enabled: !tool.enabled } } }))} /></div>;
 }

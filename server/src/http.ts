@@ -532,7 +532,19 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const body = await c.req.json().catch(() => null) as { values?: unknown } | null;
     try {
       if (!body?.values || typeof body.values !== "object" || Array.isArray(body.values)) throw new Error("values 必须是对象");
-      const id = c.req.param("id"); if (runtime.plugins.store.saveConfig(id, body.values as Record<string, unknown>)) await runtime.plugins.reload(id); return c.json(pluginView(id));
+      const id = c.req.param("id");
+      const changed = runtime.plugins.store.saveConfig(id, body.values as Record<string, unknown>);
+      const hasError = runtime.plugins.states(id).some(state => state.status === "error");
+      if (changed || hasError) await runtime.plugins.reload(id);
+      return c.json(pluginView(id));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/reload", async c => {
+    try {
+      const id = c.req.param("id");
+      runtime.plugins.store.get(id);
+      await runtime.plugins.reload(id);
+      return c.json(pluginView(id));
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.post("/api/plugins/:id/profiles", async c => {

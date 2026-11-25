@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "opskat": {
+      "command": "node",
+      "args": ["${hob.root}/server/mcp/opskat/server.mjs"],
+      "timeout": 300,
+      "env": {
+        "OPSKAT_BIN": "${user_config.OPSCTL_PATH}",
+        "OPSKAT_APPROVAL_MODE": "${user_config.APPROVAL_MODE}",
+        "OPSKAT_TOOLSET": "${user_config.TOOLSET}",
+        "HOB_OPSKAT_ALLOW_PERMANENT": "${user_config.ALLOW_PERMANENT}",
+        "HOB_OPSKAT_ALLOW_LOCAL_DIRS": "${user_config.ALLOW_LOCAL_DIRS}",
+        "HOB_OPSKAT_DATA_DIR": "${user_config.DATA_DIR}",
+        "HOB_OPSKAT_MASTER_KEY": "${user_config.MASTER_KEY}"
+      }
+    }
+  }
+}

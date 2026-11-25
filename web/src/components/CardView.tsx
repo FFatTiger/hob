@@ -210,6 +210,7 @@ function CardInputControl({
   onChange,
   disabled,
   onCommit,
+  onEnter,
   customValue,
   onCustomChange,
 }: {
@@ -218,6 +219,7 @@ function CardInputControl({
   onChange: (value: unknown) => void;
   disabled: boolean;
   onCommit?: () => void;
+  onEnter?: () => void;
   customValue?: unknown;
   onCustomChange?: (value: string) => void;
 }) {
@@ -282,7 +284,7 @@ function CardInputControl({
   if (element.input_type === "multiline_text") return <textarea className="hc-input hc-area" disabled={disabled} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} />;
   if (element.tag === "input" && element.name === "to" && text.includes("<") && text.endsWith(">")) return <div className="hc-input hc-recipient"><span>{text}</span><Icon name="close" size={13} /></div>;
   const password = element.input_type === "password";
-  const field = <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { if (event.key === "Enter" && !event.nativeEvent.isComposing && onCommit) { event.preventDefault(); onCommit(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}</span>;
+  const field = <span className="hc-input-wrap"><input className="hc-input" disabled={disabled} type={password && !show ? "password" : "text"} value={text} placeholder={cardText(element.placeholder)} maxLength={element.max_length} onChange={(event) => onChange(event.target.value)} onBlur={onCommit} onKeyDown={(event) => { const enterHandler = onEnter ?? onCommit; if (event.key === "Enter" && !event.nativeEvent.isComposing && enterHandler) { event.preventDefault(); enterHandler(); } }} />{password ? <button type="button" className="hc-eye" disabled={disabled} aria-label={t("显示密码")} onClick={() => setShow((current) => !current)}><Icon name="eye" size={16} /></button> : null}</span>;
   // 「生成」是输入框旁边独立的按钮（效果图 1），不在输入框里面
   if (password && element.generate) return <span className="hc-input-row">{field}<button type="button" className="hc-generate" disabled={disabled} onClick={() => onChange(generatedPassword())}><Icon name="dice" size={15} />{t("生成")}</button></span>;
   return field;
@@ -379,6 +381,10 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   if (interactive && field) {
     const change = (value: unknown) => { setValue(field, value); if (!inForm && element.tag !== "input") submit({ ...element, value: undefined }, undefined, value); };
     const commit = inForm ? undefined : () => { if (element.tag === "input") submit({ ...element, value: undefined }, undefined, values[field]); };
+    const namedSubmit = inForm && element.tag === "input"
+      ? formElements?.find((item) => item?.tag === "button" && item.form_action_type === "submit" && item.name)
+      : undefined;
+    const enter = namedSubmit ? () => submit(namedSubmit, formElements) : undefined;
     const isChoiceGroup = element.tag === "select_static" || element.tag === "multi_select_static" || element.tag === "overflow";
     const Wrapper = isChoiceGroup ? "div" : "label";
     const hint = element.hint ? cardText(element.hint) : "";
@@ -394,6 +400,7 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
         onChange={change}
         disabled={disabled}
         onCommit={commit}
+        onEnter={enter}
         customValue={values[`${field}__custom`]}
         onCustomChange={(value) => setValue(`${field}__custom`, value)}
       />

@@ -132,8 +132,9 @@ export function visibleSkills(runtime: HobRuntime, assistantId: string, group?: 
   }
   const desktop = runtime.desktop?.view();
   if (desktop?.enabled && desktop.url && desktop.tokenConfigured) for (const skill of builtinSkills()) add(skill);
+  const superseded = runtime.plugins?.supersededSkills(assistantId) ?? new Set<string>();
   for (const root of loreRoots(runtime)) for (const skill of readOnly(root, "lore")) if (!disabled.includes(`lore:${skill.name}`)) add(skill);
-  for (const skill of readOnly(join(userHome, ".agents", "skills"), "local")) if (!disabled.includes(`common:${skill.name}`)) add(skill);
+  for (const skill of readOnly(join(userHome, ".agents", "skills"), "local")) if (!disabled.includes(`common:${skill.name}`) && !superseded.has(skill.name)) add(skill);
   return all;
 }
 

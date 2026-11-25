@@ -248,6 +248,7 @@ export interface CardOwnerPlugin {
   type: "plugin";
   pluginId: string;
   assistantId: string;
+  jobId?: string;
 }
 
 export type CardOwner = CardOwnerAssistant | CardOwnerPlugin;

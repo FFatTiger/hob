@@ -527,7 +527,7 @@ export class RouterManager {
     const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, sessionCwd, ownWorkDir);
     const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
     const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames, {
-      onCard: (payload) => this.addPluginCard(assistant.id, state.groupId, payload),
+      onCard: async (payload) => { await this.addPluginCard(assistant.id, state.groupId, payload); },
       onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, state.groupId, message),
     });
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
@@ -1189,10 +1189,10 @@ export class RouterManager {
     this.bus.emit({ type: "card", card: record });
   }
 
-  private async addPluginCard(assistantId: string, groupId: string | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"] }): Promise<void> {
+  async addPluginCard(assistantId: string, groupId: string | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"]; jobId?: string }): Promise<CardRecord> {
     const record: CardRecord = {
       id: newId("c-"),
-      owner: { type: "plugin", pluginId: payload.pluginId, assistantId },
+      owner: { type: "plugin", pluginId: payload.pluginId, assistantId, ...(payload.jobId ? { jobId: payload.jobId } : {}) },
       plugin: { service: payload.service, ...(payload.callbackTool ? { callbackTool: payload.callbackTool } : {}), pluginName: payload.pluginName },
       ...(groupId ? { groupId } : {}),
       card: payload.card,
@@ -1200,9 +1200,10 @@ export class RouterManager {
       createdAt: new Date().toISOString(),
     };
     await this.addCard(assistantId, record, groupId);
+    return record;
   }
 
-  private async addPluginCardError(assistantId: string, groupId: string | undefined, message: string): Promise<void> {
+  async addPluginCardError(assistantId: string, groupId: string | undefined, message: string): Promise<void> {
     await this.addItem(assistantId, { kind: "note", icon: "info", text: message }, groupId);
   }
 

@@ -65,7 +65,7 @@ import type { CardActionRequest, CardText } from "../../../shared/cards.ts";
 
 const NOTE_ICON: Record<NoteIcon, IconName> = {
   memory: "mem",
-  skill: "bulb",
+  skill: "book",
   rule: "rule",
   routine: "clock",
   split: "split",
@@ -306,7 +306,7 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
         {reason || sediment ? <div className={`jnote${!reason && sedimentLeave.leaving ? " leaving" : ""}`}>
           {reason ? <div className={`jnote-row${bad ? " bad" : ""}`}><span className="clamp">{reason}</span></div> : null}
           {sediment ? <div className={`jnote-row${sediment.status === "failed" ? " bad" : ""}`}>
-            <Icon name={sediment.status === "running" ? "spin" : "mem"} size={13} className={sediment.status === "running" ? "spin" : undefined} />
+            <Icon name={sediment.status === "running" ? "spin" : "book"} size={13} className={sediment.status === "running" ? "spin" : undefined} />
             <span>{sedimentText(sediment)}</span>
           </div> : null}
         </div> : null}

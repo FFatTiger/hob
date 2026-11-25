@@ -53,7 +53,7 @@ export function PanelRootDetails({ groupId, part, desktopRow }: { groupId?: stri
     {part !== "tabs" ? <div className="group-card sidebar-info">
       <button onClick={() => openSidebarPage("routines", groupId)}><Icon name="clock" size={15} /><span>{t("定时任务")}</span><small>{routineSummary(routines, s.settings.settings.general.timezone)}</small><b>›</b></button>
       {desktopRow}
-      <button onClick={() => openSidebarPage("skills", groupId)}><Icon name="mem" size={15} /><span>{t("技能")}</span><small>{skills?.error ? t("加载失败") : !skills?.loaded ? <DelayedText key={aid} text={t("正在加载…")} /> : values.skills}</small><b>›</b></button>
+      <button onClick={() => openSidebarPage("skills", groupId)}><Icon name="book" size={15} /><span>{t("技能")}</span><small>{skills?.error ? t("加载失败") : !skills?.loaded ? <DelayedText key={aid} text={t("正在加载…")} /> : values.skills}</small><b>›</b></button>
       {!groupId ? <button onClick={() => openPlugins()}><Icon name="plugin" size={15} /><span>{t("插件")}</span><b>›</b></button> : null}
       {!groupId ? <button onClick={() => openSidebarPage("knowledge")}><Icon name="archive" size={15} /><span>{t("知识库")}</span><small>{collectionsError ? t("加载失败") : collectionsLoading ? <DelayedText text={t("正在加载…")} /> : values.knowledge}</small><b>›</b></button> : null}
       <button onClick={() => openSidebarPage("rules", groupId)}><Icon name="rule" size={15} /><span>{t("执行前确认")}</span><small>{groupId && groupProfile?.error ? t("加载失败") : groupId && !groupProfile?.value ? <DelayedText text={t("正在加载…")} /> : values.rules}</small><b>›</b></button>

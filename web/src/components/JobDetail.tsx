@@ -162,7 +162,7 @@ function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; 
   return (
     <>
       <PanelHead className="jdhead" title={<span className="t">{t("任务")}</span>} close>
-        {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={job.sediment?.status === "running"} onClick={() => { void sedimentJob(job.id); }}><Icon name="mem" size={14} />{job.sediment?.status === "running" ? t("正在沉淀…") : t("沉淀成技能")}</button> : null}
+        {job.status === "done" ? <button className="hob-btn hob-btn-compact" disabled={job.sediment?.status === "running"} onClick={() => { void sedimentJob(job.id); }}><Icon name="book" size={14} />{job.sediment?.status === "running" ? t("正在沉淀…") : t("沉淀成技能")}</button> : null}
         {steps?.some((step) => step.name?.startsWith("browser_") || step.name?.startsWith("desktop_")) ? <button className="hob-btn hob-btn-compact" onClick={() => setShowDesktop(true)}><Icon name="pointer" size={14} />{t("查看桌面")}</button> : null}
         <button className="hob-icon-btn fp-act fp-wide-btn" title={t("切换全宽")} onClick={togglePreviewFull}>
           <Icon name={full ? "shrink" : "expand"} size={17} />

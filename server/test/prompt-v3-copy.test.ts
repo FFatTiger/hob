@@ -26,7 +26,12 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       store.saveJob({ id: "t", assistantId: "hob", title: "测试", instruction: "", status: "done", createdAt: "", stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       const options = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const routerSource = section("## 一、助手的系统提示词\n\n```\n", "\n```\n");
-      const core = strip(`你的回复显示在聊天气泡里${routerSource.split("你的回复显示在聊天气泡里")[1]!.split("## 技能")[0]}`).trim();
+      const core = strip(`你的回复显示在聊天气泡里${routerSource.split("你的回复显示在聊天气泡里")[1]!.split("## 技能")[0]}`)
+        .trim()
+        .replace(
+          "放进气泡里读起来像在翻报告。",
+          "放进气泡里读起来像在翻报告。内容本身有结构时，用 send_card 发成卡片。卡片就是为此做的：聊天气泡显示不好文档式的 Markdown，卡片有自己的标题、分栏、表格和折叠，在这里代替它。一份总结或汇报、几个选项的对比、一组数据、一份计划或清单，这些内容本来就分成几项、几节、几列，放进卡片比写成一段话或一份 Markdown 都好读。发了卡片，气泡里照常说结论和要用户做的事。几句话能说清的，直接回复。",
+        );
       const router = buildSystemPrompt(store, "hob", options);
       expect(router.slice(router.indexOf("你的回复显示在聊天气泡里"), router.indexOf("## 技能")).trim()).toBe(core);
       const workerSource = section("## 二、任务的系统提示词\n\n```\n", "\n```\n");

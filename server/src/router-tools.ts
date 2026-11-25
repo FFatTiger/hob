@@ -47,6 +47,7 @@ import { handOffTodos, readTodos, sessionTodosPath, updateTodosTool } from "./to
 import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
+import { markdownToCard } from "./card-markdown.ts";
 import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd } from "./workspace.ts";
 
 type Tool = ToolDefinition<any, any>;
@@ -562,26 +563,31 @@ export function buildRouterTools(
     {
       name: "send_card",
       label: "发送卡片",
-      description: `**说明**：在对话里发一张卡片。卡片可以只用来展示（表格、分栏、折叠的详情），也可以让用户填表、选择、点按钮。卡片里有能操作的东西时，这一轮在这里结束，用户操作完，结果会作为系统消息回到对话；只有展示内容的卡片不结束这一轮。你发的卡片不能有密码框：密码、密钥这类值要用插件的卡片收，不经过你。
+      description: `**说明**：在对话里发一张卡片。卡片有自己的标题、分栏、表格和折叠的段落，用来放文档式排版的内容；也可以让用户填表、选择、点按钮。卡片里有能操作的东西时，这一轮在这里结束，用户操作完，结果会作为系统消息回到对话；只有展示内容的卡片不结束这一轮。你发的卡片不能有密码框：密码、密钥这类值要用插件的卡片收，不经过你。
 
 **参数**
-- \`card\`：卡片 JSON，格式是飞书卡片 JSON 2.0 的一个子集：\`{ "header": { "title": "标题", "subtitle": "可选" }, "body": { "elements": [组件…] } }\`。组件用 \`tag\` 区分：
-  - \`markdown {content}\`：一段 Markdown。\`hr\`：分割线。\`img {src, alt}\`：图片，src 是 https 网址。
-  - \`table {columns: [{name, display_name}], rows: [{列的 name: 值}]}\`：表格。
-  - \`column_set {columns: [{weight, elements}]}\`：分栏，手机上会竖着排。\`collapsible_panel {header: {title}, expanded, elements}\`：折叠的详情。
-  - \`form {name, elements}\`：表单，里面的输入在点提交按钮时一起交回。
-  - \`input {name, label, placeholder, default_value, required, input_type: text | multiline_text | number, min, max}\`：输入框。
-  - \`select_static\` / \`multi_select_static {name, label, options: [{text, value}], initial_option / initial_options, required}\`：单选 / 多选。
-  - \`date_picker\` / \`picker_time\` / \`picker_datetime {name, label, required}\`：日期、时间、日期和时间。
-  - \`checker {name, text, checked}\`：开关。
-  - \`button {text, type: primary_filled | default | danger, form_action_type: submit}\`：按钮。表单里用 \`form_action_type: submit\` 提交；表单外的按钮点了就算一次操作；\`behaviors: [{type: "open_url", default_url}]\` 是打开网址。
-
-  表单里的每个输入都要有不重复的 \`name\`。`,
+- \`markdown\`：卡片内容。普通的 Markdown 照常写（小标题、列表、表格、代码块、链接），另外有这些写法：
+  - 卡片标题：第一行写 \`# 标题\`；紧跟着的一行普通文字是副标题，可以不写。
+  - 单独一行 \`---\` 是分割线；单独一行 \`![说明](https://…)\` 是图片。
+  - 分栏：单独一行 \`::: columns\` 开始，单独一行 \`:::\` 结束，栏和栏之间单独一行 \`+++\`。手机上会竖着排。各栏宽度不一样时写 \`::: columns{weights="2 1"}\`。
+  - 折叠：\`<details><summary>标题</summary>\` 开始，\`</details>\` 结束，中间是默认收起的内容；写成 \`<details open>\` 默认展开。
+  - 能操作的组件一行一个，写成 \`::组件[文字]{属性}\`，属性之间用空格隔开，带空格的值加引号：
+    - \`::input[标签]{name=… placeholder="…" default="…" required}\`：输入框，一行字。加 \`type=multiline\` 是一段话，\`type=number\` 是数字，可以加 \`min=\`、\`max=\`。
+    - \`::select[标签]{name=… options="选项1|选项2|选项3" default="选项1" required}\`：单选。\`::multiselect\` 是多选，\`default\` 里几个默认选中的也用 \`|\` 隔开。
+    - \`::date[标签]{name=… required}\`、\`::time[标签]{…}\`、\`::datetime[标签]{…}\`：日期、时间、日期和时间。
+    - \`::checkbox[文字]{name=… checked}\`：开关，写 \`checked\` 默认打开。
+    - \`::button[文字]{primary}\`：按钮，\`primary\` 是主按钮，\`danger\` 是危险操作。写 \`url=https://…\` 是打开网址；在表单里写 \`submit\` 是提交表单；其余的点了就算一次操作。
+  - 表单：单独一行 \`:::form{name=…}\` 开始，单独一行 \`:::\` 结束，里面的输入在点 \`submit\` 按钮时一起交回。表单里的每个输入都要有不重复的 \`name\`。`,
       parameters: Type.Object({
-        card: Type.Unsafe<Record<string, unknown>>({ type: "object", additionalProperties: true, description: "卡片 JSON" }),
+        markdown: Type.String({ description: "卡片内容，Markdown" }),
       }),
-      execute: async (_id, params: { card?: unknown }) => {
-        const result = validateCard(params.card);
+      execute: async (_id, params: { markdown?: unknown }) => {
+        if (typeof params.markdown !== "string" || !params.markdown.trim()) {
+          return fail("卡片内容不能为空。");
+        }
+        const { card, warnings, errors } = markdownToCard(params.markdown);
+        if (errors.length) return fail(`卡片格式不对：${errors.join("；")}`);
+        const result = validateCard(card);
         if (!result.ok) {
           const error = result.error.error.startsWith("卡片不能有")
             ? `你发的${result.error.error}`
@@ -597,9 +603,11 @@ export function buildRouterTools(
           createdAt: new Date().toISOString(),
         };
         await router.addCard(assistantId, record, groupId);
-        return result.value.interactive
-          ? endTurn("卡片已显示给用户，用户操作完结果会回到对话。")
-          : ok("卡片已显示给用户。");
+        const shown = result.value.interactive
+          ? "卡片已显示给用户，用户操作完结果会回到对话。"
+          : "卡片已显示给用户。";
+        const reply = warnings.length ? `${shown}注意：${warnings.join("；")}。` : shown;
+        return result.value.interactive ? endTurn(reply) : ok(reply);
       },
     },
     {

@@ -991,7 +991,7 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
     }
   });
 
-  it("按会话上下文动态隐藏 start_job 与 open_topic 的 cwd 参数，并在已绑定会话忽略强传 cwd", async () => {
+  it("按会话上下文调整 start_job 与 open_topic 的 cwd 参数：已绑定会话的任务只能在绑定目录里面运行", async () => {
     const hob = makeHob({}, { memory: "off" });
     const astDir = makeTempDir("hob-ws-hide-ast-");
     const grpDir = makeTempDir("hob-ws-hide-grp-");
@@ -1037,11 +1037,14 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
         );
       }
 
-      // 2. 已绑定会话（单聊助手绑定、群绑定、话题绑定）：start_job 隐藏 cwd，且强传 cwd 时忽略并落在绑定目录
+      // 2. 已绑定会话（单聊助手绑定、群绑定、话题绑定）：start_job 的 cwd 只收绑定目录里面的子目录，出了绑定目录拒绝，不填落在绑定目录
       hob.faux.setResponses([
         call("report", { outcome: "done", result: "ast ok" }),
         call("report", { outcome: "done", result: "grp ok" }),
         call("report", { outcome: "done", result: "topic ok" }),
+        call("report", { outcome: "done", result: "ast sub ok" }),
+        call("report", { outcome: "done", result: "grp sub ok" }),
+        call("report", { outcome: "done", result: "topic sub ok" }),
       ]);
       const boundStartCases = [
         { label: "单聊助手绑定", title: "强传单聊", tools: buildRouterTools(hob.runtime, dev.id, undefined, astDir), expectedCwd: astDir },
@@ -1050,11 +1053,16 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       ];
       for (const { label, title, tools, expectedCwd } of boundStartCases) {
         const startTool = findTool(tools, "start_job");
-        expect("cwd" in startTool.parameters.properties, label).toBe(false);
-        const res = await startTool.execute(`force-${title}`, { title, note: "测试忽略强传 cwd", cwd: otherDir });
+        expect(startTool.parameters.properties.cwd.description, label).toContain(`不填，任务就在 ${expectedCwd} 里运行`);
+        const outside = await startTool.execute(`out-${title}`, { title: `${title}-外面`, note: "出了绑定目录", cwd: otherDir });
+        expect((outside.content[0] as { text: string }).text, label).toContain(CWD_BOUND_LOCKED);
+        const res = await startTool.execute(`plain-${title}`, { title, note: "不填 cwd" });
         expect(res.isError, label).not.toBe(true);
-        const created = hob.runtime.store.jobs().find((j) => j.title === title)!;
-        expect(created.cwd, label).toBe(expectedCwd);
+        expect(hob.runtime.store.jobs().find((j) => j.title === title)!.cwd, label).toBe(expectedCwd);
+        mkdirSync(join(expectedCwd, "wt"), { recursive: true });
+        const sub = await startTool.execute(`sub-${title}`, { title: `${title}-子目录`, note: "子目录", cwd: "wt" });
+        expect(sub.isError, label).not.toBe(true);
+        expect(hob.runtime.store.jobs().find((j) => j.title === `${title}-子目录`)!.cwd, label).toBe(join(expectedCwd, "wt"));
       }
       await hob.runtime.jobs.waitIdle();
 

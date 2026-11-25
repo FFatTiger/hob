@@ -178,7 +178,7 @@ export function buildRouterTools(
 ): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
   const resolvedWorkspace = resolveWorkspaceCwd(store, runtime.home, assistantId, groupId);
-  const hideStartJobCwd = Boolean(resolvedWorkspace.bound) && (!groupId || resolvedWorkspace.source !== "assistant");
+  const boundSession = Boolean(resolvedWorkspace.bound) && (!groupId || resolvedWorkspace.source !== "assistant");
   const currentGroup = groupId ? store.group(groupId) : undefined;
   const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
   const groupHasBoundCwd = Boolean(parentGroup?.cwd);
@@ -429,14 +429,13 @@ export function buildRouterTools(
       parameters: Type.Object({
         title: Type.String({ description: "任务标题，短，如「查磁盘占用」" }),
         note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
-        ...(hideStartJobCwd ? {} : {
-          cwd: Type.Optional(
-            Type.String({
-              description:
-                "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。",
-            }),
-          ),
-        }),
+        cwd: Type.Optional(
+          Type.String({
+            description: boundSession
+              ? `可选。不填，任务就在 ${resolvedWorkspace.bound} 里运行；填它里面的一个子目录，任务就在那里运行，比如几个任务要并行改同一个项目，各给一份 worktree。相对路径以 ${resolvedWorkspace.bound} 为准。`
+              : "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。",
+          }),
+        ),
         files: Type.Optional(
           Type.Array(Type.String(), {
             description: "要交给任务的文件路径；相对路径以你的工作目录为准，图片会直接给模型查看",
@@ -459,7 +458,7 @@ export function buildRouterTools(
           // 群里可以指名成员：任务以它的身份跑（提示词、技能、记忆、默认模型都算它的），结果回到这个会话
           const assignee = assigneeOf(groupId ? params.assistantId : undefined);
           if ("error" in assignee) return fail(assignee.error);
-          const rawCwd = hideStartJobCwd ? undefined : normalizeWorkspaceCwdInput(params.cwd);
+          const rawCwd = normalizeWorkspaceCwdInput(params.cwd);
           const explicitCwd = rawCwd ? resolve(cwd, rawCwd) : undefined;
           const job = await jobs.start(assignee.id, {
             title: String(params.title),

@@ -44,7 +44,7 @@ import { searchTools } from "./search.ts";
 import { pauseToolTimeoutForUser } from "./tool-timeout.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
-import { CWD_BOUND_LOCKED, loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_BOUND_LOCKED, isInside, loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const ACTIVITY_LIMIT = 200;
@@ -335,10 +335,11 @@ export class JobManager {
     if (boundCwd) {
       validatedCwd = validateJobCwd(this.runtime.home, boundCwd);
       if (explicitCwd) {
+        // 绑定目录里面的子目录可以（比如并行任务各用一份 worktree），出了绑定目录不行
         const validatedExplicit = validateJobCwd(this.runtime.home, explicitCwd);
-        if (realpathSync(validatedExplicit) !== realpathSync(validatedCwd)) {
-          throw new Error(CWD_BOUND_LOCKED);
-        }
+        const [root, target] = [realpathSync(validatedCwd), realpathSync(validatedExplicit)];
+        if (!isInside(root, target)) throw new Error(CWD_BOUND_LOCKED);
+        if (target !== root) validatedCwd = validatedExplicit;
       }
     } else if (explicitCwd) {
       validatedCwd = validateJobCwd(this.runtime.home, explicitCwd);

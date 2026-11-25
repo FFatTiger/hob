@@ -245,7 +245,20 @@ export class PluginHost {
     const roles = (Object.keys(loginToolsIn(connection.state.tools)) as PluginLoginRole[]);
     connection.state.login = { roles, status };
   }
+  // 登录、退出会改变插件能给出的工具（没登录时可能只有登录工具），重新列一次
+  private async relistTools(pluginId: string, service: string): Promise<void> {
+    const connection = this.connections.get(this.key(pluginId, service));
+    const client = connection?.client;
+    if (!connection || !client) return;
+    try {
+      const tools = await client.listTools();
+      if (connection.client !== client || JSON.stringify(tools) === JSON.stringify(connection.state.tools)) return;
+      connection.state.tools = tools;
+      this.onToolsChanged?.();
+    } catch { /* 列不出来就保留原来的工具，下次重连再列 */ }
+  }
   private async refreshLoginStatus(pluginId: string, service: string, fallbackSignedIn: boolean): Promise<PluginToolLoginStatus | undefined> {
+    await this.relistTools(pluginId, service);
     const statusTarget = this.findLoginTool(pluginId, "status", service);
     if (statusTarget) {
       try {

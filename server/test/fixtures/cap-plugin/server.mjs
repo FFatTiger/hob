@@ -164,7 +164,9 @@ process.stdin.on("data", (chunk) => {
         },
       });
     } else if (message.method === "tools/list") {
-      write({ jsonrpc: "2.0", id: message.id, result: { tools: TOOLS } });
+      // 登录后才多出一个工具，用来测登录、退出后 Hob 重新列工具
+      const tools = readSession() ? [...TOOLS, { name: "whoami", description: "Signed-in account", inputSchema: { type: "object", properties: {} } }] : TOOLS;
+      write({ jsonrpc: "2.0", id: message.id, result: { tools } });
     } else if (message.method === "tools/call") {
       write({ jsonrpc: "2.0", id: message.id, result: callTool(message.params?.name) });
     } else if (message.id !== undefined) {

@@ -98,6 +98,9 @@ it("discovers _meta['hob/login'] tools, hides them from models and tool lists, a
       detail: "已登录 alice · [管理授权](https://example.invalid/apps)",
     });
 
+    // Login changes what the plugin offers: Hob re-lists tools without a reconnect
+    expect(pluginToolsForAssistant(hob.runtime.plugins, "hob").map((tool) => tool.name)).toEqual(["cap-plugin_ping", "cap-plugin_whoami"]);
+
     // 4. logout
     const logoutRes = await app.request("/api/plugins/cap-plugin/login/logout", { method: "POST", headers, body: "{}" });
     expect(logoutRes.status).toBe(200);
@@ -106,6 +109,7 @@ it("discovers _meta['hob/login'] tools, hides them from models and tool lists, a
 
     const finalList = await (await app.request("/api/plugins", { headers })).json() as PluginsView;
     expect(finalList.plugins.find((p) => p.plugin.id === "cap-plugin")?.login?.status).toEqual({ signedIn: false });
+    expect(pluginToolsForAssistant(hob.runtime.plugins, "hob").map((tool) => tool.name)).toEqual(["cap-plugin_ping"]);
   } finally {
     await hob.runtime.plugins.close();
     hob.close();

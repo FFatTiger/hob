@@ -28,6 +28,12 @@ hands longer work to background jobs, and checks with you when your rules say a 
 - **Schedules wake an assistant only when something changed.** A schedule can carry a check script that runs first; the assistant takes over only when the script finds something new.
 - **Finished work becomes a skill.** When an approach is worth keeping, whoever did the work writes it up as a skill: the assistant for what it did itself, or the job when the assistant asks it to review. Assistants and later jobs use it next time, and every change is kept as a new version.
 
+## Cards in the chat
+
+Assistants and plugins can send structured cards right inside a conversation—tables, columns, collapsible details, toggles and forms—so you don't have to copy things back and forth. When an assistant needs your input, it uses a card too, combining multiple-choice questions and fill-in fields (text, numbers, dates and times) so you can answer everything in one go.
+
+![Interactive cards in a conversation: a Cloudflare DNS table with collapsible details, and a question card combining choices and fill-in fields](docs/screenshots/en/cards.png)
+
 ## A team of assistants
 
 Put several assistants in a group and they work as a team: the group owner takes messages that don't name anyone, `@` calls a specific member, and each member can use different models in that group. The owner handles the group's schedules and decides what to do when one fires.
@@ -42,12 +48,17 @@ Hob works in a mobile browser and can be added to the home screen as an app. Pus
 
 ![Hob on a phone: the home list, a job card in a conversation and the to-do list](docs/screenshots/en/mobile.png)
 
+## Plugin marketplace
+
+Install tool plugins from the marketplace—starting with GitHub, Cloudflare, Gmail, an IMAP/SMTP mailbox and Bitwarden—to give assistants and jobs new tools. Each plugin gets its own settings page, sign-in when needed, per-tool switches and a choice of which assistants may use it. The marketplace also carries community provider plugins (Copilot, ChatGPT, the GLM Coding Plan, Antigravity and OpenCode Zen Free; compatible with OpenCode provider plugins, unofficial integrations) so you can use subscriptions or accounts you already have. Any MCP server can be added as a custom plugin, and you can host your own plugin source by forking [hob-plugins](https://github.com/FFatTiger/hob-plugins).
+
+![Plugin marketplace: installed tool and provider plugins on the left, category filters and installable plugins on the right](docs/screenshots/en/plugins.png)
+
 ## Also included
 
-- **Models**: built-in providers such as Anthropic, OpenAI, Google, DeepSeek and OpenRouter only need an API key; any OpenAI- or Anthropic-compatible endpoint works too. npm and source installs can also use your local Claude Code subscription. Provider plugins from the market let you use subscriptions or accounts you already have, such as Copilot, ChatGPT, the GLM Coding Plan and Antigravity (compatible with OpenCode provider plugins; unofficial integrations).
+- **Models**: built-in providers such as Anthropic, OpenAI, Google, DeepSeek and OpenRouter only need an API key; any OpenAI- or Anthropic-compatible endpoint works too. npm and source installs can also use your local Claude Code subscription, and provider plugins in the marketplace cover existing subscriptions and accounts.
 - **Knowledge bases**: organize and preview files, bind them to assistants and follow citations back to the source; with an embedding model you get hybrid search, including PDF text.
 - **Web search**: SearXNG, Exa, Tavily, Brave, Serper, Jina, Firecrawl, Perplexity, You.com and Ollama.
-- **Plugins**: install plugins from the market to give assistants and jobs new tools, starting with GitHub, Gmail, an IMAP/SMTP mailbox, Cloudflare and Bitwarden. Each plugin gets a settings page, sign-in when the service needs it, per-tool switches and a choice of which assistants may use it. Any MCP server can be added as a custom plugin, and you can add your own plugin source by forking [hob-plugins](https://github.com/FFatTiger/hob-plugins).
 - **Memory**: stored locally or in [Lore](https://github.com/FFatTiger/lore).
 - **Pages and images**: assistants can present comparisons and research as pages in the side panel, and generate or edit images through an OpenAI-compatible image API.
 - **Passwords**: a built-in local vault, or Bitwarden. When a site needs a login, Hob checks the address and, once you approve, fills the username and password into the cloud desktop page itself, so the password never passes through the assistant. A site you have not saved yet takes one entry on a card.
@@ -88,7 +99,7 @@ Hob is a single Node process, and all of its data lives in `HOB_HOME` (`~/.hob` 
 - **Keep it running** with any process manager, for example `pm2 start hob --name hob` (from a source checkout: `npm run build`, then `pm2 start deploy/pm2.config.cjs`). Put a reverse proxy with TLS in front; push notifications and adding to the home screen both need HTTPS.
 - **Docker**: the image is `ghcr.io/ffattiger/hob` (amd64 and arm64) and data lives in the `hob-data` volume; in a source checkout, add `--build` to build the image locally. The port is bound to localhost; for direct LAN access change it to `"30148:30148"` in `compose.yaml`. Jobs and local-command plugin servers run inside the container, which includes git, curl, python3, ripgrep, fd, node and npx. To let jobs work on projects on the host, create `workspace/` (the container runs as uid 1000) and uncomment the `./workspace:/workspace` mount.
 - **Cloud desktop**: `docker compose --profile desktop up -d` starts Hob and the desktop together with the token already wired up. For a separate deployment, reverse-proxy settings and resource usage, see the [desktop guide](desktop/README.md).
-- **Claude subscription**: for npm or source installs, install Claude Code, run `claude auth login`, then enable Claude subscription under **设置 → 服务商**. Usage counts against your subscription quota; Hob does not read or store Claude credentials, and Claude Code keeps its own session records in `~/.claude/projects/`. Docker images don't support this.
+- **Claude subscription**: for npm or source installs, install Claude Code, run `claude auth login`, then enable Claude subscription under **Settings → Providers**. Usage counts against your subscription quota; Hob does not read or store Claude credentials, and Claude Code keeps its own session records in `~/.claude/projects/`. Docker images don't support this.
 - **Backups and upgrades**: back up `HOB_HOME` to keep everything. Upgrading from a version before 1.5 migrates the data directory automatically and keeps a full backup; see the [1.5.0 release notes](https://github.com/FFatTiger/hob/releases/tag/v1.5.0) for details and rollback. With Docker, roll back with `docker compose run --rm hob node bin/hob.mjs layout --restore` after stopping Hob.
 
 ## Configuration

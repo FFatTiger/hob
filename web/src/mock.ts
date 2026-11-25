@@ -49,6 +49,12 @@ import type {
 import githubIcon from "./mock-plugins/github.svg?url";
 import gmailIcon from "./mock-plugins/gmail.svg?url";
 import emailIcon from "./mock-plugins/email.svg?url";
+import cloudflareIcon from "./mock-plugins/cloudflare.svg?url";
+import bitwardenIcon from "./mock-plugins/bitwarden.svg?url";
+import copilotIcon from "./mock-plugins/copilot.svg?url";
+import chatgptIcon from "./mock-plugins/chatgpt.svg?url";
+import zcodeIcon from "./mock-plugins/zcode.svg?url";
+import agyCliIcon from "./mock-plugins/agy-cli.svg?url";
 import emailManifest from "./mock-plugins/email.json";
 import { defaultSearch } from "../../shared/search.ts";
 import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry } from "../../shared/knowledge.ts";
@@ -60,7 +66,7 @@ import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.3" };
 
-export type SceneId = "cards-demo" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -90,6 +96,8 @@ export const SCENE_UI: Record<
   "vault-empty": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "readme-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-interactive-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "readme-plugins": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "readme-desktop": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-knowledge": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "readme-profile": { sel: "page", panel: "assistant", collapsed: false, dark: false, mobile: "chat" },
@@ -282,7 +290,7 @@ interface Db {
  * 演示数据按界面语言出两份。只有 README 截图用到的场景有英文版：界面英文时这些场景的数据
  * 也换成英文，免得截图里一半英文一半中文。别的场景照旧只有中文数据。
  */
-const ENGLISH_DEMO_SCENES: SceneId[] = ["s1", "s6", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos"];
+const ENGLISH_DEMO_SCENES: SceneId[] = ["s1", "s6", "readme-interactive-cards", "readme-plugins", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos"];
 
 function englishDemo(scene: SceneId): boolean {
   return currentLocale() === "en" && ENGLISH_DEMO_SCENES.includes(scene);
@@ -1841,6 +1849,99 @@ cp now.txt "$seen"`,
     ];
   }
 
+  if (scene === "readme-interactive-cards") {
+    const hob = assistants.find((item) => item.id === "hob")!;
+    hob.busy = false;
+    hob.last = { text: L("解析记录已查好，上线前还有几项等你定一下。", "DNS records are ready; a few release details need your call."), at: minsAgo(1) };
+    groups.length = 0;
+    for (const key of Object.keys(jobs)) {
+      if (key !== "readme-job") delete jobs[key];
+    }
+    for (const key of Object.keys(approvals)) delete approvals[key];
+    for (const key of Object.keys(delegations)) delete delegations[key];
+    cards["readme-card-dns"] = {
+      id: "readme-card-dns",
+      owner: { type: "plugin", pluginId: "cloudflare", assistantId: "hob" },
+      plugin: { service: "cloudflare", callbackTool: "callback", pluginName: "Cloudflare" },
+      status: "open",
+      createdAt: minsAgo(3),
+      card: {
+        schema: "2.0",
+        header: {
+          title: L("example.com 的解析记录", "DNS records for example.com"),
+        },
+        body: {
+          elements: [
+            {
+              tag: "table",
+              columns: [
+                { name: "type", display_name: L("类型", "Type") },
+                { name: "name", display_name: L("名称", "Name") },
+                { name: "content", display_name: L("内容", "Content") },
+                { name: "proxy", display_name: L("代理", "Proxied") },
+              ],
+              rows: [
+                { type: "A", name: "@", content: "203.0.113.10", proxy: true },
+                { type: "CNAME", name: "docs", content: "docs.example.pages.dev", proxy: true },
+                { type: "A", name: "api", content: "203.0.113.24", proxy: false },
+              ],
+            },
+            {
+              tag: "collapsible_panel",
+              expanded: false,
+              header: { title: L("查看其余记录与切换建议", "More records & cutover notes") },
+              elements: [
+                {
+                  tag: "markdown",
+                  content: L(
+                    "- `TXT @`：`v=spf1 include:_spf.mail.example.net ~all`\n- 建议在切换前半小时将 `@` 的 TTL 调到 60 秒。",
+                    "- `TXT @`: `v=spf1 include:_spf.mail.example.net ~all`\n- Lower the `@` TTL to 60s half an hour before cutover.",
+                  ),
+                },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    approvals["readme-ask-release"] = {
+      id: "readme-ask-release",
+      assistantId: "hob",
+      title: L("周末上线前，定一下这几项", "A few details before the weekend release"),
+      options: [],
+      questions: [
+        {
+          title: L("发布方式", "Rollout plan"),
+          options: [
+            { key: "A", label: L("先灰度 10%，观察半小时再全量", "Canary 10% for 30 min, then full rollout") },
+            { key: "B", label: L("直接全量切换", "Switch all traffic at once") },
+          ],
+          recommended: "A",
+        },
+        {
+          title: L("版本说明标题", "Release note title"),
+          options: [],
+          input: "text",
+          placeholder: L("例如：v2.1 首页改版上线", "e.g. v2.1 homepage refresh"),
+        },
+        {
+          title: L("计划上线日期", "Target release date"),
+          options: [],
+          input: "date",
+          placeholder: L("选择日期", "Choose a date"),
+        },
+      ],
+      status: "pending",
+      source: "router",
+      createdAt: minsAgo(1),
+    };
+    items.hob = [
+      { kind: "user", id: "rc-u", at: minsAgo(4), text: L("查下解析，安排上线。", "Check DNS & plan release.") },
+      { kind: "card", id: "rc-dns", at: minsAgo(3), cardId: "readme-card-dns" },
+      { kind: "question", id: "rc-ask", at: minsAgo(1), approvalId: "readme-ask-release" },
+    ];
+  }
+
   return {
     assistants,
     groups,
@@ -1857,9 +1958,9 @@ cp now.txt "$seen"`,
     ] },
     rules: {
       hob: [
-        { id: "rule-1", text: "花钱", mode: "ask", changedAt: at(10, 9, 0) },
-        { id: "rule-2", text: "改线上服务", mode: "ask", changedAt: at(10, 9, 0) },
-        { id: "rule-3", text: "清理我的文件", mode: "ask", changedAt: at(3, 9, 0) },
+        { id: "rule-1", text: L("花钱", "Spending money"), mode: "ask", changedAt: at(10, 9, 0) },
+        { id: "rule-2", text: L("改线上服务", "Changing live services"), mode: "ask", changedAt: at(10, 9, 0) },
+        { id: "rule-3", text: L("清理我的文件", "Deleting my files"), mode: "ask", changedAt: at(3, 9, 0) },
       ],
       page: scene.startsWith("readme-") ? [{ id: "readme-rule", text: L("向团队群发送周报", "Send the weekly report to the team group"), mode: "ask", changedAt: at(9, 9) }] : [
         { id: "rule-4", text: "删除草稿", mode: "ask", changedAt: at(9, 9, 0) },
@@ -2124,6 +2225,8 @@ const mockUploads = new Map<string, string>();
 
 export function createMock(scene: SceneId = "s1"): HobApi {
   const db = buildDb(scene);
+  const en = englishDemo(scene);
+  const L: Say = (zh, english) => (en ? english : zh);
   if (scene === "plugin-demo") {
     db.assistants = db.assistants.filter(a => ["hob", "page", "bird"].includes(a.id)).map(a => ({ ...a, name: a.id === "hob" ? "Hob" : a.id === "page" ? "写作" : "研究", duty: a.id === "hob" ? "主助手" : a.id === "page" ? "整理文章" : "收集资料", last: undefined, unread: 0, busy: false }));
     db.groups = []; db.jobs = {}; db.approvals = {}; db.delegations = {}; db.routines = []; db.items = {};
@@ -2540,7 +2643,183 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     ],
   };
 
-  if (isProviderScene) {
+  if (scene === "readme-plugins") {
+    const readmeCatalog: import("../../shared/types.ts").PluginCatalogView["plugins"] = [
+      {
+        id: "github",
+        version: "1.0.0",
+        manifest: {
+          name: "GitHub",
+          displayName: "GitHub",
+          description: L("查看和管理代码仓库、议题与拉取请求。", "Browse and manage repositories, issues and pull requests."),
+          mockIcon: githubIcon,
+          extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } },
+        },
+        installed: true,
+      },
+      {
+        id: "cloudflare",
+        version: "1.0.0",
+        manifest: {
+          name: "Cloudflare",
+          displayName: "Cloudflare",
+          description: L("管理域名解析、Workers、R2 与 D1 等 Cloudflare 资源。", "Manage DNS, Workers, R2, D1 and the rest of your Cloudflare account."),
+          mockIcon: cloudflareIcon,
+          extensions: { "com.hob.plugins": { publisher: "Cloudflare", categories: ["development"] } },
+        },
+        installed: true,
+      },
+      {
+        id: "gmail",
+        version: "1.0.0",
+        manifest: {
+          name: "Gmail",
+          displayName: "Gmail",
+          description: L("查找邮件、起草回复并管理收件箱。", "Search mail, draft replies and organize your inbox."),
+          mockIcon: gmailIcon,
+          extensions: { "com.hob.plugins": { publisher: "Google", categories: ["communication"] } },
+        },
+        installed: true,
+      },
+      {
+        id: "email",
+        version: "1.0.0",
+        manifest: {
+          name: "email",
+          displayName: L("邮箱", "Email"),
+          description: L("用应用专用密码连接任意支持 IMAP/SMTP 的邮箱。", "Connect any IMAP/SMTP mailbox with an app password."),
+          mockIcon: emailIcon,
+          extensions: { "com.hob.plugins": { publisher: "Hob", categories: ["communication"] } },
+        },
+        installed: false,
+      },
+      {
+        id: "bitwarden",
+        version: "2.0.3",
+        manifest: {
+          name: "Bitwarden",
+          displayName: "Bitwarden",
+          description: L("连接 Bitwarden 密码库，登录网站时由 Hob 直接填写密码。", "Connect your Bitwarden vault so Hob fills logins directly."),
+          mockIcon: bitwardenIcon,
+          extensions: { "com.hob.plugins": { publisher: "Bitwarden", categories: ["productivity"] } },
+        },
+        installed: true,
+      },
+      {
+        id: "copilot",
+        version: "1.0.1",
+        hasProviders: true,
+        manifest: {
+          name: "copilot",
+          displayName: "Copilot",
+          description: L("使用 GitHub Copilot 订阅中的 Claude、GPT 与 o3 等模型。", "Use Claude, GPT and o3 models from your Copilot subscription."),
+          mockIcon: copilotIcon,
+          extensions: {
+            "com.hob.plugins": {
+              publisher: "magpie-community",
+              categories: ["providers"],
+              unofficial: true,
+              reviewedVersion: "0.1.2",
+              permissions: ["network", "bun_runtime"],
+              providers: [{ package: "@magpie-community/opencode-copilot-auth", version: "0.1.2" }],
+            },
+          },
+        },
+        installed: true,
+      },
+      {
+        id: "chatgpt",
+        version: "1.0.1",
+        hasProviders: true,
+        manifest: {
+          name: "chatgpt",
+          displayName: L("ChatGPT 订阅", "ChatGPT"),
+          description: L("使用 ChatGPT Plus / Pro 订阅调用 GPT 与 Codex 模型。", "Use GPT and Codex models with ChatGPT Plus or Pro."),
+          mockIcon: chatgptIcon,
+          extensions: {
+            "com.hob.plugins": {
+              publisher: "numman-ali",
+              categories: ["providers"],
+              unofficial: true,
+              reviewedVersion: "4.4.0",
+              permissions: ["network", "bun_runtime"],
+              providers: [{ package: "opencode-openai-codex-auth", version: "4.4.0" }],
+            },
+          },
+        },
+        installed: false,
+      },
+      {
+        id: "zcode",
+        version: "1.0.1",
+        hasProviders: true,
+        manifest: {
+          name: "zcode",
+          displayName: "ZCode",
+          description: L("接入智谱 GLM 编程套餐与团队席位，支持网页登录与额度查询。", "Connect the GLM Coding Plan with web sign-in and quota tracking."),
+          mockIcon: zcodeIcon,
+          extensions: {
+            "com.hob.plugins": {
+              publisher: "magpie-community",
+              categories: ["providers"],
+              unofficial: true,
+              reviewedVersion: "0.1.69",
+              permissions: ["network", "bun_runtime"],
+              providers: [{ package: "@magpie-community/opencode-zcode-auth", version: "0.1.69" }],
+            },
+          },
+        },
+        installed: false,
+      },
+      {
+        id: "agy-cli",
+        version: "1.0.1",
+        hasProviders: true,
+        manifest: {
+          name: "agy-cli",
+          displayName: "Antigravity",
+          description: L("通过本机 agy CLI 接入 Antigravity 订阅模型与思考档。", "Connect Antigravity models through the local agy CLI."),
+          mockIcon: agyCliIcon,
+          extensions: {
+            "com.hob.plugins": {
+              publisher: "magpie-community",
+              categories: ["providers"],
+              unofficial: true,
+              reviewedVersion: "0.1.115",
+              permissions: ["network", "subprocess", "local_credentials", "bun_runtime"],
+              providers: [{ package: "@magpie-community/opencode-agy-cli-auth", version: "0.1.115" }],
+            },
+          },
+        },
+        installed: false,
+      },
+    ];
+    pluginCatalog.splice(0, pluginCatalog.length, ...readmeCatalog);
+    const makeConnected = (item: (typeof readmeCatalog)[number], role?: "vault"): PluginView => ({
+      plugin: { id: item.id, version: item.version, source: (item.source as "official" | "builtin" | undefined) ?? "official", enabled: true, assistants: ["hob", "page"], tools: {}, config: {} },
+      manifest: item.manifest,
+      config: {},
+      missing: [],
+      ...(role === "vault" ? { credentialRoles: ["list", "secret", "generate", "save", "delete"] as PluginView["credentialRoles"] } : {}),
+      services: [{ pluginId: item.id, name: item.id, status: "connected", missing: [], tools: [] }],
+    });
+    const readmeCopilot: PluginView = {
+      ...copilotPlugin,
+      plugin: { ...copilotPlugin.plugin, version: "1.0.1", enabled: true },
+      manifest: readmeCatalog[5]!.manifest,
+      providers: copilotPlugin.providers?.map((p) => ({
+        ...p,
+        accounts: [p.accounts[0]!],
+      })),
+    };
+    pluginViews.push(
+      makeConnected(readmeCatalog[0]!),
+      makeConnected(readmeCatalog[1]!),
+      makeConnected(readmeCatalog[2]!),
+      makeConnected(readmeCatalog[4]!, "vault"),
+      readmeCopilot,
+    );
+  } else if (isProviderScene) {
     if (scene === "provider-install-progress") {
       pluginViews.push(github, vault);
     } else if (scene === "provider-install-done") {
@@ -2591,8 +2870,6 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const mockProfileFields = (p: PluginView, profile: NonNullable<PluginView["profiles"]>[number]) => profile.config;
   const mockProfileMissing = (profile: NonNullable<PluginView["profiles"]>[number]) => profile.missing;
 
-  const en = englishDemo(scene);
-  const L: Say = (zh, english) => (en ? english : zh);
   const groupRules: Record<string, Rule[]> = {};
   if (scene === "g-owns" || scene === "g-owns-dark") {
     const group = db.groups.find((item) => item.id === "g-dev")!;

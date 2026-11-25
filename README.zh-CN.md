@@ -28,6 +28,12 @@
 - **定时任务有变化才叫醒助手。** 定时可以带一段检查脚本：到点先跑脚本，有新情况才让助手接手，没变化就不打扰你。
 - **做过的活能变成技能。** 做法值得留下时，谁做的谁来写成技能：助手自己做的它自己写，任务做的由助手让任务回顾后写。下次助手和任务都照着做，每次修改都留一个版本。
 
+## 对话里的卡片
+
+助手和插件可以直接在对话里发结构化卡片，把表格、分栏、折叠详情、开关或表单放进消息流，省得来回复制粘贴。需要你拍板或补充信息时，提问也做成了一张卡，能把多个选择题和填空题（文本、数字、日期时间）合在一起，一次填完提交。
+
+![对话里的交互卡片：Cloudflare 解析记录表格与折叠详情，下方是混合选择题和填空题的提问卡](docs/screenshots/cards.png)
+
 ## 助手团队
 
 把几个助手拉进一个群，就是一个小团队：不点名时由群主接话，`@` 可以点名某个成员，每个成员在这个群里可以用不同的模型。群的定时任务由群主统筹，到点后由群主决定开话题、派给谁。
@@ -42,12 +48,17 @@
 
 ![手机上的 Hob：首页、对话里的任务卡和待办清单](docs/screenshots/mobile.png)
 
+## 插件市场
+
+从插件市场安装工具插件（目前有 GitHub、Cloudflare、Gmail、支持 IMAP/SMTP 的邮箱和 Bitwarden），助手和任务就多了一批趁手的工具。每个插件有自己的配置页，需要登录的服务可以直接登录，工具能逐个开关，也能指定给哪些助手用。市场里还有社区维护的供应商插件（Copilot、ChatGPT 订阅、GLM 编程套餐、Antigravity、OpenCode Zen Free，兼容 OpenCode 供应商插件，属于非官方接入），能直接复用你已有的订阅或账号。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
+
+![插件市场：左栏是已安装的工具和供应商插件，右侧可按分类浏览和一键安装](docs/screenshots/plugins.png)
+
 ## 还能接上这些
 
-- **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅。也可以从插件市场装「供应商」插件，用 Copilot、ChatGPT 订阅、GLM 编程套餐、Antigravity 这类已有的订阅或账号当模型（兼容 OpenCode 的供应商插件，属于非官方接入）。
+- **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅，也可以从插件市场装供应商插件复用已有订阅或账号。
 - **知识库**：整理和预览文件，绑定给助手，引用能跳回原文；配了向量模型可以混合检索，PDF 也能建索引。
 - **联网搜索**：SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama。
-- **插件**：从市场安装插件，助手和任务就多了一批工具，目前有 GitHub、Gmail、支持 IMAP/SMTP 的邮箱、Cloudflare 和 Bitwarden。每个插件有自己的配置页，需要登录的服务可以直接登录，工具可以逐个开关，也能选给哪些助手用。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
 - **密码**：自带一个本机密码库，也能接 Bitwarden。网站要登录时，Hob 核对网址、你批准后直接把账号密码填进云桌面的登录页，密码不经过助手；没存过的网站在卡片上填一次就存下。
 - **记忆**：存在本地，或者接入 [Lore](https://github.com/FFatTiger/lore)。
 - **页面和图片**：助手可以把对比、调研做成网页在侧栏打开；配上 OpenAI 兼容的图像接口就能画图和改图。

@@ -1,16 +1,27 @@
 import { randomBytes, randomUUID } from "node:crypto";
 import { createServer, type Server } from "node:http";
+import { delimiter } from "node:path";
 import { validateToolArguments } from "@earendil-works/pi-ai/utils/validation";
 import { fileURLToPath } from "node:url";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { strictTools } from "./pi.ts";
 
-export type ScriptTool = ToolDefinition<any, any>;
+export type ScriptTool = ToolDefinition<any, any> & { hidden?: boolean };
 
 /** A single allowlist keeps conversation-only tools out; plugin host can append its tools here. */
-export function scriptToolList(tools: ScriptTool[], knowledgeEnabled: boolean, pluginTools: ScriptTool[] = []): ScriptTool[] {
+export function scriptToolList(tools: ScriptTool[], knowledgeEnabled: boolean, pluginTools: ScriptTool[] = [], commandTools: ScriptTool[] = []): ScriptTool[] {
   const names = new Set(["web_search", "web_fetch", "find_knowledge", "generate_image", ...(knowledgeEnabled ? ["search_knowledge"] : [])]);
-  return [...strictTools(tools.filter((tool) => names.has(tool.name))), ...pluginTools];
+  return [...strictTools(tools.filter((tool) => names.has(tool.name))), ...pluginTools, ...commandTools];
+}
+
+export function prependPath(env: NodeJS.ProcessEnv, dirs: string[]): NodeJS.ProcessEnv {
+  const prefix = [...new Set(dirs.filter(Boolean))];
+  if (!prefix.length) return env;
+  const pathKey = Object.keys(env).find((key) => key.toLowerCase() === "path") ?? "PATH";
+  const existing = (env[pathKey] ?? "").split(delimiter).filter(Boolean);
+  const prefixSet = new Set(prefix);
+  const merged = [...prefix, ...existing.filter((entry) => !prefixSet.has(entry))];
+  return { ...env, [pathKey]: merged.join(delimiter) };
 }
 export interface ScriptToolContext {
   tools: () => Promise<ScriptTool[]>;
@@ -42,7 +53,7 @@ export class ScriptToolCredentials {
           try {
             const input = JSON.parse(body) as { name: string; args?: unknown };
             const tools = await context.tools();
-            if (input.name === "$list") return send(200, tools.map(({ name, label, description, parameters }) => ({ name, label, description, parameters })));
+            if (input.name === "$list") return send(200, tools.filter((item) => !item.hidden).map(({ name, label, description, parameters }) => ({ name, label, description, parameters })));
             const tool = tools.find((item) => item.name === input.name);
             if (!tool) return send(404, { error: `工具不可用：${input.name}` });
             let args: unknown;
@@ -79,9 +90,10 @@ export class ScriptToolCredentials {
 
   get(token: string): ScriptToolContext | undefined { return this.contexts.get(token); }
 
-  environment(env: NodeJS.ProcessEnv, token: string): NodeJS.ProcessEnv {
+  environment(env: NodeJS.ProcessEnv, token: string, binDirs: string[] = []): NodeJS.ProcessEnv {
     const preload = fileURLToPath(new URL("./script-tools-preload.mjs", import.meta.url));
     const quoted = JSON.stringify(preload);
-    return { ...env, HOB_TOOLS_URL: this.url, HOB_TOOLS_TOKEN: token, NODE_OPTIONS: `${env.NODE_OPTIONS ?? ""} --import ${quoted}`.trim() };
+    const withPath = prependPath(env, binDirs);
+    return { ...withPath, HOB_TOOLS_URL: this.url, HOB_TOOLS_TOKEN: token, NODE_OPTIONS: `${withPath.NODE_OPTIONS ?? ""} --import ${quoted}`.trim() };
   }
 }

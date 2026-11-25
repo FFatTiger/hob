@@ -1,12 +1,12 @@
 import { validateMcpEntry, mcpConfigPath } from "./mcp.ts";
 import { newerPluginVersion } from "../../shared/plugin-version.ts";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PluginSources, OFFICIAL_SOURCE } from "./plugin-sources.ts";
 import type { ProxyEnvironmentSettings } from "./network-proxy.ts";
-import { diffCapabilities, pluginCapabilities, pluginConfig, profileDeclaration, providerDeclarations, validatePluginValues, type PluginCapabilitySnapshot, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
+import { binDeclaration, diffCapabilities, pluginCapabilities, pluginConfig, profileDeclaration, providerDeclarations, validatePluginValues, type PluginCapabilitySnapshot, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
 import { systemDir } from "./config.ts";
 
@@ -107,6 +107,23 @@ export class PluginStore {
   }
   pluginDir(id: string): string {
     return this.dir(id);
+  }
+  binDir(id: string): string | null {
+    try {
+      const { manifest } = this.files(id);
+      const rel = binDeclaration(manifest);
+      if (!rel) return null;
+      const root = realpathSync(this.dir(id));
+      const target = resolve(root, rel);
+      if (!existsSync(target) || lstatSync(target).isSymbolicLink()) return null;
+      const actual = realpathSync(target);
+      const checked = relative(root, actual);
+      if (!checked || checked === ".." || checked.startsWith(`..${sep}`) || isAbsolute(checked)) return null;
+      if (!statSync(actual).isDirectory()) return null;
+      return actual;
+    } catch {
+      return null;
+    }
   }
   skills(id: string): string[] {
     this.get(id);
@@ -239,6 +256,25 @@ export class PluginStore {
     let moved = false;
     try {
       cpSync(source, temp, { recursive: true, errorOnExist: true });
+      const binRel = binDeclaration(manifest);
+      if (binRel) {
+        const tempRoot = realpathSync(temp);
+        const binTarget = resolve(tempRoot, binRel);
+        if (existsSync(binTarget) && !lstatSync(binTarget).isSymbolicLink()) {
+          const actualBin = realpathSync(binTarget);
+          const checked = relative(tempRoot, actualBin);
+          if (checked && checked !== ".." && !checked.startsWith(`..${sep}`) && !isAbsolute(checked) && statSync(actualBin).isDirectory()) {
+            for (const entry of readdirSync(actualBin)) {
+              const entryPath = join(actualBin, entry);
+              const stat = lstatSync(entryPath);
+              if (!stat.isSymbolicLink() && stat.isFile()) {
+                const mode = stat.mode & 0o777;
+                chmodSync(entryPath, mode | ((mode & 0o444) >> 2));
+              }
+            }
+          }
+        }
+      }
       if (existsSync(dir)) { renameSync(dir, backup); moved = true; }
       try {
         renameSync(temp, dir);

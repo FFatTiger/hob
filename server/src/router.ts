@@ -1,4 +1,4 @@
-import { pluginToolsForAssistant } from "./plugin-host.ts";
+import { pluginCommandToolsForAssistant, pluginToolsForAssistant } from "./plugin-host.ts";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
@@ -9,7 +9,7 @@ import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } fr
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
 import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
-import { assistantTodosPath, assistantWorkDir } from "./config.ts";
+import { assistantTodosPath, assistantWorkDir, engineDir } from "./config.ts";
 import type {
   Assistant,
   AssistantSummary,
@@ -593,11 +593,18 @@ export class RouterManager {
       stall: { milliseconds: () => this.stallMs(), onRetry: () => this.setActivity(state, { state: "thinking", label: t("模型没有响应，正在重试") }) },
       bashSpawnHook: ({ command, cwd, env }) => {
         const credential = this.runtime.scriptTools.issue({
-          tools: async () => scriptToolList(tools, !!(await boundKnowledge(this.runtime, assistant.id)).length, pluginTools),
+          tools: async () => {
+            const reserved = new Set(existingNames);
+            const livePlugins = pluginToolsForAssistant(this.runtime.plugins, assistant.id, reserved);
+            for (const tool of livePlugins) reserved.add(tool.name);
+            const commandTools = pluginCommandToolsForAssistant(this.runtime.plugins, assistant.id, reserved);
+            return scriptToolList(tools, !!(await boundKnowledge(this.runtime, assistant.id)).length, livePlugins, commandTools);
+          },
           onCall: (tool) => this.setActivity(state, { state: "tool", label: tool.label }),
         });
         (state.scriptRevokes ??= new Set()).add(credential.revoke);
-        return { command, cwd, env: this.runtime.scriptTools.environment(proxyEnvironment(browserShellEnv(env, cliEnvironment), this.runtime.settings.settings.general), credential.token) };
+        const binDirs = [join(engineDir(this.runtime.home), "bin"), ...this.runtime.plugins.binDirsForAssistant(assistant.id)];
+        return { command, cwd, env: this.runtime.scriptTools.environment(proxyEnvironment(browserShellEnv(env, cliEnvironment), this.runtime.settings.settings.general), credential.token, binDirs) };
       },
     });
     state.toolLabels = new Map(tools.map((tool) => [tool.name, tool.label]));

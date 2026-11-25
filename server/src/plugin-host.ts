@@ -159,6 +159,15 @@ export class PluginHost {
   states(id?: string): PluginServiceState[] {
     return [...this.connections.values()].filter(c => !id || c.state.pluginId === id).map(c => structuredClone(c.state));
   }
+  binDirsForAssistant(assistantId: string): string[] {
+    const dirs: string[] = [];
+    for (const plugin of this.store.list()) {
+      if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
+      const dir = this.store.binDir(plugin.id);
+      if (dir) dirs.push(dir);
+    }
+    return dirs;
+  }
   credentialProviders(assistantId: string, role?: PluginCredentialRole): CredentialProvider[] {
     const providers: CredentialProvider[] = [];
     for (const plugin of this.store.list()) {
@@ -664,11 +673,61 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
                 }
               }
             }
-            return { content, details: response.structuredContent, isError: response.isError };
+            return {
+              content,
+              details: response.structuredContent,
+              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent } : {}),
+              isError: response.isError,
+            };
           },
         });
       }
       host.setToolErrors(plugin.id, state.name, errors);
+    }
+  }
+  return result;
+}
+
+function isCommandTool(tool: Tool): boolean {
+  return isObject(tool._meta) && tool._meta["hob/command"] === true;
+}
+
+/** Hidden plugin tools explicitly tagged with _meta["hob/command"]: true are callable only via script-tools. */
+export function pluginCommandToolsForAssistant(host: PluginHost, assistantId: string, reservedNames: ReadonlySet<string> = new Set()): (PluginAgentTool & { hidden: true })[] {
+  const result: (PluginAgentTool & { hidden: true })[] = [];
+  const used = new Set(reservedNames);
+  for (const plugin of host.store.list()) {
+    if (!plugin.enabled || (plugin.assistants && !plugin.assistants.includes(assistantId))) continue;
+    const states = host.states(plugin.id).filter(state => ["connected", "idle", "connecting"].includes(state.status));
+    for (const state of states) {
+      for (const tool of state.tools) {
+        if (visibleToModel(tool) || !isCommandTool(tool)) continue;
+        const name = pluginToolName(plugin.id, tool.name);
+        if (name.length > 64 || used.has(name)) continue;
+        used.add(name);
+        result.push({
+          name,
+          label: `${plugin.id} · ${tool.title ?? tool.name}`,
+          description: tool.description ?? "",
+          parameters: normalizeMcpInputSchema(tool.inputSchema) as TSchema,
+          namespace: { name: plugin.id },
+          exposure: "direct",
+          annotations: tool.annotations,
+          hidden: true,
+          execute: async (_callId, args, signal) => {
+            if (!isObject(args)) throw new Error("插件工具参数必须是对象");
+            const response = await host.call(plugin.id, state.name, tool.name, args, signal);
+            if (response.isError) response.content = response.content.map(block => block.type === "text" ? { ...block, text: host.redact(plugin.id, block.text) } : block);
+            const limited = await limitMcpContent(toLlmContent(response));
+            return {
+              content: [...limited.content],
+              details: response.structuredContent,
+              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent } : {}),
+              isError: response.isError,
+            };
+          },
+        });
+      }
     }
   }
   return result;

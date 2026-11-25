@@ -295,8 +295,13 @@ export function buildRouterTools(
       if (file.startsWith(`${root}${sep}`) && statSync(file).isFile()) return file;
     } catch { /* 交给普通文件规则报告错误 */ }
     const found = lookupFile(runtime.home, path, [...store.jobs().flatMap((job) => job.cwd ? [job.cwd] : []), cwd]);
-    if (!found.ok) throw new Error(found.error);
-    return found.info.path;
+    if (found.ok) return found.info.path;
+    // 技能清单里列出来的文件都能读：Lore 的在 system/ 里，本机和自带的在数据目录外，普通文件规则会拒掉
+    try {
+      const file = realpathSync(path);
+      if (statSync(file).isFile() && visibleSkills(runtime, assistantId, currentGroup).some((skill) => file.startsWith(`${realpathSync(skill.dir)}${sep}`))) return file;
+    } catch { /* 按普通文件规则的原因报 */ }
+    throw new Error(found.error);
   };
   const read = createReadToolDefinition(cwd, { operations: {
     access: async (path) => { checkFile(path); },

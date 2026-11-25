@@ -1229,7 +1229,7 @@ export function buildRouterTools(
               // 已关闭的话题先重新打开，接着在里面处理
               const topic = target.closedAt ? runtime.groups.reopen(topicId) : target;
               runtime.groups.appendItem(topicId, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
-              runtime.groups.note(gid, assistantId, `转到了话题「${topic.name}」`, "info");
+              runtime.groups.note(gid, assistantId, `转到了话题「${topic.name}」`, "info", undefined, topicId);
               void runtime.groups.deliverEvent(topicId, assistantId, event).catch((error) => console.error("转到话题的事件没送到：", error));
               return endTurn(`已转到话题「${topic.name}」（${topic.id}），接下来在话题里处理。`);
             }

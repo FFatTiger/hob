@@ -599,6 +599,7 @@ export interface AssistantSummary extends Assistant {
   activity?: RouterActivity | null;
   todos?: TodoItem[]; // 这个助手单聊里的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
+  seen?: string; // 单聊里助手接手到哪一条（条目 id）：你的消息下面显示已读
 }
 
 /**
@@ -666,6 +667,7 @@ export interface GroupSummary extends Group {
   todos?: TodoItem[]; // 这个会话（综合、话题）的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
   activity?: Record<string, RouterActivity>; // 正在说话的成员现在在做什么：页面刚打开时用，之后跟 group-activity 事件
+  seen?: Record<string, string>; // 每个成员接手到时间线的哪一条（条目 id）：你的消息下面显示「谁已读」
 }
 
 /**
@@ -1008,7 +1010,7 @@ export interface Draft {
 export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info" | "skill";
 
 export type Item = (
-  | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string } }
+  | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string }; reactions?: { by: string; emoji: string }[] }
   | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string; jobId?: string }; quote?: { itemId: string; text: string } }
   | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; routineId?: string; handbackId?: string; path?: string; targetGroupId?: string; detail?: string } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
   | { kind: "todos"; id: string; at: Iso; items: TodoItem[]; why: TodoArchiveWhy } // 老数据：以前收起的一份待办。现在不再写入，界面不显示（对话里只放用户需要看的东西）

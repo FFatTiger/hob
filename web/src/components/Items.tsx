@@ -2,7 +2,7 @@
 import { t } from "../../../shared/i18n.ts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Approval, ApprovalOption, Delegation, Draft, GroupItem, GroupSummary, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
+import type { Approval, ApprovalOption, AssistantSummary, Delegation, Draft, GroupItem, GroupSummary, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
 import { isRoutineDueNote } from "../../../shared/routine-note.ts";
@@ -743,6 +743,8 @@ function ItemView({
   mentions,
   quoteWho,
   forwarded,
+  readBy,
+  thinking,
 }: {
   item: Item;
   inlineDraft?: Draft;
@@ -754,6 +756,10 @@ function ItemView({
   quoteWho?: (itemId: string) => string | undefined;
   /** 从综合转进话题的用户消息：气泡上方加一行小字 */
   forwarded?: GroupItem["forwardedFrom"];
+  /** 你最后一条消息还没人回：接手了它的助手，气泡下面标出来 */
+  readBy?: AssistantSummary[];
+  /** 接手了还在想的助手：它的 👀 左右张望 */
+  thinking?: string[];
 }) {
   const s = useApp();
   const enter = fresh ? " enter" : "";
@@ -826,6 +832,7 @@ function ItemView({
             <button onClick={() => discardPending(pend)}>{t("删除")}</button>
           </div>
         ) : null}
+        {pend ? null : <Reactions itemId={item.id} readers={readBy ?? []} reactions={item.reactions ?? []} group={Boolean(mentions)} thinking={thinking ?? []} />}
         {pend ? null : <Tools text={item.text} itemId={item.id} />}
         </div>
       </div>
@@ -1094,9 +1101,39 @@ export function visibleItems<T extends Item>(items: T[]): T[] {
   });
 }
 
+/** 这一页上已经出现过的回应：第一次画出来的不弹，之后新挂上、换了表情的才弹一下 */
+const shownReactions = new Set<string>();
+
+/**
+ * 你消息下面贴着气泡的小胶囊：助手的表情回应。接手了还没回应的挂 👀，看得出消息到了。
+ * 群里每个助手一个，带它的头像；单聊只有一个助手，只放表情。
+ */
+function Reactions({ itemId, readers, reactions, group, thinking }: { itemId: string; readers: AssistantSummary[]; reactions: { by: string; emoji: string }[]; group: boolean; thinking: string[] }) {
+  const s = useApp();
+  const mounted = useRef(false);
+  const list = [...reactions, ...readers.filter((a) => !reactions.some((r) => r.by === a.id)).map((a) => ({ by: a.id, emoji: "👀" }))];
+  const keys = list.map((r) => `${itemId}:${r.by}:${r.emoji}`);
+  const pop = new Set(mounted.current ? keys.filter((key) => !shownReactions.has(key)) : []);
+  useEffect(() => { mounted.current = true; for (const key of keys) shownReactions.add(key); });
+  if (!list.length) return null;
+  return <div className="reactions">{list.map((r, i) => {
+    const a = s.assistants.find((x) => x.id === r.by);
+    return <span className="reaction" key={r.by} title={a?.name}>
+      <span className={`reaction-emoji${pop.has(keys[i]) ? " pop" : ""}${r.emoji === "👀" && thinking.includes(r.by) ? " looking" : ""}`} key={r.emoji}>{r.emoji}</span>
+      {group && a ? <Avatar sprite={a.sprite} prop={a.prop} size={16} /> : null}
+    </span>;
+  })}</div>;
+}
+
 export function ItemList({ items: all }: { items: Item[] }) {
   const s = useApp();
   const items = visibleItems(all);
+  // 你最后一条消息后面助手还没说话、它已经接手了这条：气泡下面标已读
+  const me = s.assistants.find((a) => a.id === s.sel);
+  const lastUser = items.findLastIndex((item) => item.kind === "user");
+  const unanswered = lastUser >= 0 && !items.slice(lastUser + 1).some((item) => item.kind === "assistant");
+  const seenAt = me?.seen ? all.findIndex((item) => item.id === me.seen) : -1;
+  const readBy = me && unanswered && seenAt >= all.findIndex((item) => item.id === items[lastUser].id) ? [me] : undefined;
   const { toolsFor, popup } = useItemGestures();
   const rows: ReactNode[] = [];
   if (items.length && !isToday(items[0].at) && items[0].kind !== "note") {
@@ -1120,7 +1157,7 @@ export function ItemList({ items: all }: { items: Item[] }) {
         ) : opensGroup(prev, item) ? (
           <div className="g" />
         ) : null}
-        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} /></GestureCard>
+        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} readBy={i === lastUser ? readBy : undefined} thinking={me?.busy ? [me.id] : undefined} /></GestureCard>
       </Fragment>,
     );
   }
@@ -1152,6 +1189,12 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
   };
   const rows: ReactNode[] = [];
   if (items.length && !isToday(items[0].at)) rows.push(<div className="div" key="first-div">{fmtWhen(items[0].at)}</div>);
+  // 你最后一条消息后面还没有成员说话：接手了它的成员写在气泡下面，不出声也看得出消息到了
+  const lastUser = items.findLastIndex((item) => item.kind === "user");
+  const unanswered = lastUser >= 0 && !items.slice(lastUser + 1).some((item) => item.kind === "assistant");
+  // 下标按完整时间线算：成员接手到的那条可能是界面不显示的条目
+  const indexOf = (id: string | undefined) => (id ? all.findIndex((item) => item.id === id) : -1);
+  const readBy = unanswered ? members.filter((m) => indexOf(g.seen?.[m.id]) >= indexOf(items[lastUser].id)) : [];
   let previous: GroupItem | undefined;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -1163,7 +1206,7 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
       rows.push(
         <Fragment key={item.id}>
           {divider}
-          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} /></GestureCard>
+          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} readBy={i === lastUser ? readBy : undefined} thinking={g.busy} /></GestureCard>
         </Fragment>,
       );
       continue;

@@ -6,6 +6,7 @@ import { hashPassword } from "../src/password.ts";
 import { PiHost } from "../src/pi.ts";
 import { createRuntime } from "../src/runtime.ts";
 import { buildRouterTools, isSingleEmoji } from "../src/router-tools.ts";
+import { buildSystemPrompt } from "../src/prompt.ts";
 import { makeHob, text, waitFor } from "./helpers.ts";
 
 function addMember(hob: ReturnType<typeof makeHob>, id: string, name: string) {
@@ -297,6 +298,26 @@ describe("react 工具", () => {
       expect(items.filter((item) => item.kind === "assistant").map((item) => item.text)).toEqual([
         "顺便提醒一下，下周二的评审也改到下午了。",
       ]);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("工具说明与系统提示词与票 265 原文一致，单聊和群成员都有", () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addMember(hob, "analyst", "分析员");
+      const group = hob.runtime.groups.create({ name: "项目群", purpose: "推进项目", ownerId: "hob", members: ["hob", "analyst"] });
+      const reactTool = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "react")!;
+      expect(reactTool.description).toBe("给用户最新的一条消息加一个表情回应，显示在那条消息的右下角，像聊天软件里的点赞。再调一次会换成新的表情。");
+      expect((reactTool.parameters as { properties: { emoji: { description: string } } }).properties.emoji.description).toBe("一个 emoji，比如 👍 ✅ ❤️ 😂");
+
+      const expected = "聊天里一句「好的」「收到」本身没有信息，用户读了只知道你看到了。这类时候用 react 给他的消息点一个表情就够了：用户告诉你一件事、不需要你接话，或者交代的事你正要去办、办完会再汇报。要给结论、要用户拿主意、汇报结果，照常用文字回复。";
+      const baseOpts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+      const singlePrompt = buildSystemPrompt(hob.runtime.store, "hob", baseOpts);
+      const memberPrompt = buildSystemPrompt(hob.runtime.store, "analyst", { ...baseOpts, group });
+      expect(singlePrompt).toContain(`几句话能说清的，直接回复。\n\n${expected}`);
+      expect(memberPrompt).toContain(`几句话能说清的，直接回复。\n\n${expected}`);
     } finally {
       hob.close();
     }

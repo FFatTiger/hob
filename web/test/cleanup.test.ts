@@ -12,7 +12,7 @@ beforeAll(async () => {
   server = await createServer({
     server: { port: 0, host: "127.0.0.1", proxy: {} },
     plugins: [{ name: "cleanup-test-exports", enforce: "pre", transform(code, id) {
-      if (id.endsWith("/components/Items.tsx")) return `${code}\nexport { SingleQuestionCard, JobCard };`;
+      if (id.endsWith("/components/Items.tsx")) return `${code}\nexport { QuestionCard, JobCard };`;
     } }],
   });
   await server.listen();

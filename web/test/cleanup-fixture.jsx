@@ -21,13 +21,13 @@ realApi.patchAssistant = async (id, patch) => {
   return {};
 };
 const store = await import("../src/store.ts");
-const { SingleQuestionCard, JobCard } = await import("../src/components/Items.tsx");
+const { QuestionCard, JobCard } = await import("../src/components/Items.tsx");
 const { PluginDetail } = await import("../src/components/PluginDetail.tsx");
 const { conversations, pinList } = await import("../src/home.ts");
 const approval = { id: "approval", assistantId: "hob", title: "是否继续？", options: [{ key: "A", label: "继续" }, { key: "B", label: "暂停" }], status: "pending", source: "router", createdAt: "2026-01-01" };
 store.getState().approvals = { approval };
 const job = { id: "t-1", assistantId: "hob", title: "测试任务", instruction: "", status: "running", createdAt: "2026-01-01", stats: { reads: 0, edits: 0, commands: 0 }, activity: [] };
-function Question() { const state = store.useApp(); return <SingleQuestionCard approval={state.approvals.approval} fresh={false} />; }
+function Question() { const state = store.useApp(); return <QuestionCard approval={state.approvals.approval} fresh={false} />; }
 const which = new URLSearchParams(location.search).get("fixture");
 if (which === "mcp") store.getState().assistants = [{ id: "hob", name: "Hob" }, { id: "sample-a", name: "示例助手" }];
 if (which === "pins") {

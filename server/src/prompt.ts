@@ -67,6 +67,9 @@ export function groupPromptLine(store: Store, group: Group): string {
   return `你在群「${group.name}」里，群里有用户和这几位助手：${members.join("、")}。这个群的职责：${group.purpose}。群里的消息不都是对你说的：@ 你、或者回复你的消息时才轮到你，每条消息前面写着是谁说的。你说的话群里所有人都看得到，所以只说这件事需要的。要别的成员接手，就 @ 他，说清要他做什么。`;
 }
 
+/** 全员回应的群和话题：接在 groupPromptLine 后面，每个成员（含群主）都有。 */
+export const GROUP_ALL_REPLY_LINE = "这个群设成了全员回应：用户没点名的消息，群主先回，其他成员按成员顺序依次轮到，前面的人说过什么你都看得到。轮到你时，你那一摊里有前面没说到的，就补上；没有要补充的，用 react 给用户的消息点个表情，不用把别人说过的再说一遍，用户看到表情就知道你看过了。";
+
 /** 群主多一段：没点名的消息由它接。 */
 export const GROUP_OWNER_LINE = "你是这个群的群主：用户没点名的消息由你接，事情最后也由你给用户一个结论。成员各管一摊，各自带着那一摊的技能，任务交给职责对口的成员，往往比别人执行得更准；所以接到一件事，先想它落在谁的职责里，落在你自己那一摊的就自己处理。请成员执行任务也有代价：每多请一位成员，就多一次交接和等待；一个人能完成的事交给一个人从头做到尾，需要别人把关时再请。互不依赖的事可以同时交给不同的人，有先后的才排队。成员的任务分派给成员：start_job 填它的 assistantId，任务就以它的身份、用它的技能执行。需要核对的，分派给没参与这项任务的成员，核对的人没写过，才看得出执行者自己看不到的地方。";
 
@@ -141,7 +144,11 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   const host = group?.parentId ? store.group(group.parentId) : undefined;
   const introGroup = host ?? group;
   const groupIntro = introGroup
-    ? [groupPromptLine(store, introGroup), ...(group && host ? [topicPromptLine(host.name, group.name)] : [])].join("\n\n")
+    ? [
+      groupPromptLine(store, introGroup),
+      ...(group?.replyMode === "all" ? [GROUP_ALL_REPLY_LINE] : []),
+      ...(group && host ? [topicPromptLine(host.name, group.name)] : []),
+    ].join("\n\n")
     : undefined;
   const ownerIntro = group && group.ownerId === assistantId
     ? [GROUP_OWNER_LINE, ...(group.parentId ? [] : [TOPIC_OPEN_LINE]), ROUTINE_GROUP_OWNER_LINE].join("\n\n")

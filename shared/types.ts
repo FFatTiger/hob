@@ -607,12 +607,16 @@ export interface AssistantSummary extends Assistant {
  * 话题是挂在群下面的群（有 parentId）：一件事一条时间线，成员在每个话题里各有一份会话；
  * 群自己的那条时间线就是「综合」。话题的成员、群主、负责什么都取所属的群。
  */
+export type GroupReplyMode = "owner" | "all";
+
 export interface Group {
   id: string; // "g-" + 短 id；话题也是
   name: string; // 话题：话题名
   purpose: string; // 负责什么，一句话
   ownerId: string; // 群主，必须在 members 里
   members: string[]; // assistantId，含群主，顺序就是成员列表的顺序
+  /** 用户没点名的消息谁来回应：缺省为 owner（群主回应）；all 为全员依次回应。群和话题各自一份。 */
+  replyMode?: GroupReplyMode;
   models?: { conversation?: ModelPick; work?: ModelPick }; // 本群模型默认值
   memberModels?: Record<string, { conversation?: ModelPick; work?: ModelPick }>; // 各成员在本群的模型覆盖
   /** 首页助手/群列表的固定顺序：小的在前；没排过的按最近活跃排。 */

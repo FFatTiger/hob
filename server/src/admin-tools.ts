@@ -29,6 +29,7 @@ type Tool = ToolDefinition<any, any>;
 
 /** 查看工具每页几条：由代码固定，不是参数。 */
 const PAGE_SIZE = 20;
+const REPLY_MODE_DESCRIPTION = "用户没点名的消息谁来回应：owner 群主回应（默认），all 全员回应，群主先回，其他成员依次轮到。";
 
 function ok(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined };
@@ -477,6 +478,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         purpose: Type.String({ description: "这个群的职责，最多 200 字" }),
         members: Type.Array(Type.String(), { description: "成员的助手 id，可以有你自己。" }),
         ownerId: Type.String({ description: "群主的助手 id，要在成员里，可以是你自己。" }),
+        replyMode: Type.Optional(Type.Union([Type.Literal("owner"), Type.Literal("all")], { description: REPLY_MODE_DESCRIPTION })),
         cwd: Type.Optional(Type.String({ description: "可选，群的工作目录（绝对路径，如 /workspace/app）。创建后不可修改；群绑定后其下所有话题共用该目录。" })),
       }),
       execute: async (_id, params: any) => {
@@ -486,6 +488,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
             purpose: params.purpose,
             members: params.members,
             ownerId: params.ownerId,
+            ...(params.replyMode !== undefined ? { replyMode: params.replyMode } : {}),
             ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
           });
           await announce({ conversation: t("已创建群「{name}」", { name: group.name }), targetGroupId: group.id });
@@ -506,13 +509,14 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         addMembers: Type.Optional(Type.Array(Type.String(), { description: "要加的成员 id" })),
         removeMembers: Type.Optional(Type.Array(Type.String(), { description: "要减的成员 id" })),
         ownerId: Type.Optional(Type.String({ description: "新群主的助手 id，要在成员里" })),
+        replyMode: Type.Optional(Type.Union([Type.Literal("owner"), Type.Literal("all")], { description: REPLY_MODE_DESCRIPTION })),
       }),
       execute: async (_id, params: any) => {
         const id = String(params.groupId ?? "").trim();
         const group = store.group(id);
         if (!group) return fail(`没有这个群：${id}`);
         if (group.parentId) return fail(`${id} 是话题，不是群；改话题名用 manage_topic。`);
-        const patch: { name?: unknown; purpose?: unknown; members?: string[]; ownerId?: unknown } = {};
+        const patch: { name?: unknown; purpose?: unknown; members?: string[]; ownerId?: unknown; replyMode?: unknown } = {};
         const changes: string[] = [];
         const name = filled(params.name);
         if (name !== undefined && name !== group.name) { patch.name = name; changes.push("名字"); }
@@ -528,6 +532,11 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
         if (addedReal.length || removedReal.length) { patch.members = members; changes.push("成员"); }
         const ownerId = filled(params.ownerId);
         if (ownerId !== undefined && ownerId !== group.ownerId) { patch.ownerId = ownerId; changes.push("群主"); }
+        if (params.replyMode !== undefined) {
+          const mode = typeof params.replyMode === "string" ? params.replyMode.trim() : params.replyMode;
+          if (mode !== "owner" && mode !== "all") return fail(`回应方式只能填 owner 或 all，收到「${String(params.replyMode)}」`);
+          if (mode !== (group.replyMode ?? "owner")) { patch.replyMode = mode; changes.push("回应方式"); }
+        }
         if (!changes.length) return fail("没有要改的项：至少填一项和现在不一样的。");
         let next: Group;
         try { next = runtime.groups.update(id, patch); }
@@ -541,6 +550,10 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           if (addedReal.length) list.push(inGroup ? `把${who(addedReal)}拉进了群` : `把${who(addedReal)}拉进${next.name}`);
           if (removedReal.length) list.push(inGroup ? `把${who(removedReal)}移出了群` : `把${who(removedReal)}移出${next.name}`);
           if (changes.includes("群主")) list.push(inGroup ? `群主换成${nameOf(next.ownerId)}` : `把${next.name}的群主换成${nameOf(next.ownerId)}`);
+          if (changes.includes("回应方式")) {
+            const label = next.replyMode === "all" ? "全员回应" : "群主回应";
+            list.push(inGroup ? `把回应方式改成${label}` : `把${next.name}的回应方式改成${label}`);
+          }
           return list.join("；");
         };
         const conversation = t("已{changes}", { changes: clauses(false) });

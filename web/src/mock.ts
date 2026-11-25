@@ -67,7 +67,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.3" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -170,6 +170,9 @@ export const SCENE_UI: Record<
   // 工作目录绑定演示：群绑定 / 话题跟随 / 独立话题绑定 / 助手绑定
   "workspace-cwd": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "workspace-cwd-dark": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  // 全员回应群演示（票 266）：用户没点名提问，群主回了，一个成员补充，另一个成员只挂 👀
+  "group-reply-all": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "group-reply-all-dark": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: true, mobile: "chat" },
 };
 
 const uid = (() => {
@@ -1799,6 +1802,51 @@ cp now.txt "$seen"`,
     topicItems[tHomeCwd.id] = [
       { kind: "user", id: "wc-3", at: at(1, 14, 5), text: L("帮我看下定时同步脚本为什么漏了隐藏目录。", "Check why the sync script skipped hidden folders."), speaker: "user" },
       { kind: "assistant", id: "wc-4", at: at(1, 14, 20), text: L("在 /srv/home-nas/scripts 找到了 rsync 过滤规则问题，修好后重跑正常。", "Found the rsync filter rule issue in /srv/home-nas/scripts and verified the fix."), speaker: "server" },
+    ];
+  }
+
+  if (scene === "group-reply-all" || scene === "group-reply-all-dark") {
+    const advisors: GroupSummary = {
+      id: "g-advisors",
+      name: L("产品评审团", "Product review"),
+      purpose: L("从产品、工程和测试三个视角同步评审需求方案", "Review proposals from product, engineering, and QA perspectives"),
+      ownerId: "po",
+      members: ["po", "dev", "qa"],
+      replyMode: "all",
+      createdAt: at(3, 10, 0),
+      unread: 0,
+      busy: [],
+      seen: { po: "ra-1", dev: "ra-1", qa: "ra-1" },
+      last: {
+        at: at(0, 10, 14),
+        speaker: "dev",
+        text: L("工程这边补一条：同一条件并发点击需要做去重，另外大报表切分批查询，避免把主库读连接打满。", "From engineering: deduplicate concurrent requests with identical filters, and paginate large queries so exports don't saturate primary DB connections."),
+      },
+    };
+    groups.unshift(advisors);
+    topicItems[advisors.id] = [
+      {
+        kind: "user",
+        id: "ra-1",
+        at: at(0, 10, 10),
+        text: L("下个版本想把导出报表改成后台异步生成，完成后通知用户下载，大家觉得有什么遗漏？", "For the next release, I want to move report exports to an async background job and notify users when ready. Anything we're missing?"),
+        speaker: "user",
+        reactions: [{ by: "qa", emoji: "👀" }],
+      },
+      {
+        kind: "assistant",
+        id: "ra-2",
+        at: at(0, 10, 12),
+        text: L("主流程没问题，建议补两个产品细节：一是导出记录里保留 7 天下载链接，用户关了通知也能再找；二是生成中给一个预计耗时，避免重复点导出。", "The core flow looks good. Two product details to add: keep download links for 7 days in export history so users can find them later, and show an estimated wait time while generating to avoid duplicate clicks."),
+        speaker: "po",
+      },
+      {
+        kind: "assistant",
+        id: "ra-3",
+        at: at(0, 10, 14),
+        text: L("工程这边补一条：同一条件并发点击需要做去重，另外大报表切分批查询，避免把主库读连接打满。", "From engineering: deduplicate concurrent requests with identical filters, and paginate large queries so exports don't saturate primary DB connections."),
+        speaker: "dev",
+      },
     ];
   }
 

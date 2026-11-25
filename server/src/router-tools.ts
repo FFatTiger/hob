@@ -184,6 +184,19 @@ function fail(text: string) {
   return { content: [{ type: "text" as const, text }], details: undefined, isError: true };
 }
 
+const GRAPHEME_SEGMENTER = new Intl.Segmenter("en", { granularity: "grapheme" });
+
+/** 是否正好是一个表情符号（用 Intl.Segmenter 数字素）。 */
+export function isSingleEmoji(raw: string): boolean {
+  const emoji = raw.trim();
+  if (!emoji) return false;
+  const graphemes = [...GRAPHEME_SEGMENTER.segment(emoji)];
+  if (graphemes.length !== 1) return false;
+  return /\p{Extended_Pictographic}/u.test(emoji)
+    || /^\p{Regional_Indicator}{2}$/u.test(emoji)
+    || /^[#*0-9]\uFE0F?\u20E3$/u.test(emoji);
+}
+
 function fileMeta(path: string): string | undefined {
   try {
     if (!statSync(path).isFile()) return undefined;
@@ -347,6 +360,21 @@ export function buildRouterTools(
     return desktop.enabled && Boolean(desktop.url && desktop.tokenConfigured) && runtime.plugins.hasPasswordGenerator(assistantId);
   })();
   const tools: Tool[] = [
+    {
+      name: "react",
+      label: "表情回应",
+      description: "给用户最新的一条消息加一个表情回应，显示在那条消息的右下角，像聊天软件里的点赞。再调一次会换成新的表情。",
+      parameters: Type.Object({
+        emoji: Type.String({ description: "一个 emoji，比如 👍 ✅ ❤️ 😂" }),
+      }),
+      execute: async (_id, params: { emoji: string }) => {
+        const emoji = typeof params.emoji === "string" ? params.emoji.trim() : "";
+        if (!isSingleEmoji(emoji)) return fail("emoji 要正好一个表情，比如 👍");
+        const result = groupId ? runtime.groups.react(groupId, assistantId, emoji) : router.react(assistantId, emoji);
+        if (!result.ok) return fail(result.error);
+        return ok(`已给用户的消息点了 ${emoji}。`);
+      },
+    },
     {
       name: "search_history",
       label: "搜索聊天记录",

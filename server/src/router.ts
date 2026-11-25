@@ -49,6 +49,7 @@ import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+import { reactionsList } from "./store.ts";
 import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./follow-up.ts";
 
 export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
@@ -94,7 +95,7 @@ export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "a
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
-  "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
+  "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "react", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "login", "fill_new_password",
   "open_topic", "close_topic",
 ]);
@@ -152,6 +153,8 @@ interface RouterState {
   turnLastText?: string;
   /** 这一轮最后一段以 NO_REPLY 收尾：助手决定不出声，没有新内容给用户看，不推「做完了」 */
   turnSilent?: boolean;
+  /** 这一轮成功点过表情回应：只点表情没出文字时不推「做完了」 */
+  turnReacted?: boolean;
   /** agent_settled 捕获的失败原因，reportTurnFailure 会清掉 turnError */
   turnFailure?: string;
   /** 这一轮开始前或事件带来的工作状态 */
@@ -709,6 +712,7 @@ export class RouterManager {
       if (event.type === "agent_start") {
         state.turnLastText = undefined;
         state.turnFailure = undefined;
+        state.turnReacted = undefined;
         state.checkJobSnapshots = new Map();
       }
     }
@@ -773,6 +777,7 @@ export class RouterManager {
         const result = event.result as { details?: { path?: string }; content?: { text?: string }[] } | undefined;
         this.liveFinish(assistantId, event.toolCallId, event.isError ? undefined : result?.details?.path, result?.content?.[0]?.text);
       }
+      if (event.toolName === "react" && !event.isError) state.turnReacted = true;
       if (state.currentDelegationId && (event.result as { terminate?: boolean } | undefined)?.terminate) state.terminatingTools?.add(event.toolCallId);
       return;
     }
@@ -1409,7 +1414,9 @@ export class RouterManager {
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
-    if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy && (error || !state.turnSilent)) {
+    const reactedOnly = Boolean(state.turnReacted && !state.turnLastText);
+    const silent = Boolean(state.turnSilent || reactedOnly);
+    if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy && (error || !silent)) {
       pushAssistantTurnEnd(
         { push: this.runtime.push, store: this.store },
         {
@@ -1420,7 +1427,7 @@ export class RouterManager {
       );
     }
     void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.groupId).catch((error) => console.error("收尾任务提问失败：", error));
-    if (!state.groupId && !error && !busy && !state.stalled && !state.turnSilent && state.turnLastText && !this.hasIdleWork(state)) {
+    if (!state.groupId && !error && !busy && !state.stalled && !silent && state.turnLastText && !this.hasIdleWork(state)) {
       void this.generateSuggestionsFor(state.assistantId);
     }
     state.turnHadWork = false;
@@ -1428,6 +1435,7 @@ export class RouterManager {
     state.turnDelegation = false;
     state.turnFailure = undefined;
     state.turnSilent = undefined;
+    state.turnReacted = undefined;
     state.turnLastText = undefined;
   }
 
@@ -1767,13 +1775,31 @@ export class RouterManager {
     return this.derived(assistantId).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
   }
 
+  /** 给单聊里最新的一条用户消息点表情回应；再点会换掉。 */
+  react(assistantId: string, emoji: string): { ok: true; itemId: string } | { ok: false; error: string } {
+    this.assistant(assistantId);
+    const target = this.derived(assistantId).result.items.findLast((item) => item.kind === "user");
+    if (!target || target.kind !== "user") return { ok: false, error: "对话里还没有用户的消息，无法添加表情回应。" };
+    const all = this.store.state(assistantId).reactions ?? {};
+    const forItem = { ...(all[target.id] ?? {}), [assistantId]: emoji };
+    this.store.saveState(assistantId, { reactions: { ...all, [target.id]: forItem } });
+    const reactions = reactionsList(forItem);
+    this.bus.emit({ type: "item", assistantId, item: { ...target, ...(reactions ? { reactions } : {}) } });
+    return { ok: true, itemId: target.id };
+  }
+
   items(assistantId: string, options: { before?: string; limit?: number } = {}): ItemsPage {
     const derived = this.derived(assistantId);
     const all = derived.result.items;
     const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
     const end = options.before ? derived.positions.get(options.before) ?? all.length : all.length;
     const start = Math.max(0, end - limit);
-    const page = all.slice(start, end);
+    const storedReactions = this.store.state(assistantId).reactions;
+    const page = all.slice(start, end).map((item) => {
+      if (item.kind !== "user") return item;
+      const reactions = reactionsList(storedReactions?.[item.id]);
+      return reactions ? { ...item, reactions } : item;
+    });
     const jobIds = new Set(page.filter((item) => item.kind === "job").map((item) => (item as { jobId: string }).jobId));
     const draftIds = new Set(
       page.filter((item) => item.kind === "draft").map((item) => (item as { draftId: string }).draftId),

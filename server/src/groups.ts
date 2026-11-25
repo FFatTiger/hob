@@ -11,6 +11,7 @@ import type {
   SendMessageBody,
 } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
+import { reactionsList } from "./store.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
@@ -915,9 +916,30 @@ export class GroupManager {
     return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}), ...(targetGroupId ? { targetGroupId } : {}) });
   }
 
-  /** 这一个群的时间线（去掉没说完的空回复）。 */
+  /** 给这个群（或话题）时间线上最新的一条用户消息点表情回应；再点会换掉。 */
+  react(gid: string, assistantId: string, emoji: string): { ok: true; itemId: string } | { ok: false; error: string } {
+    const group = this.group(gid);
+    if (!group.members.includes(assistantId)) return { ok: false, error: "你不是这个群的成员。" };
+    const target = this.timeline(gid).findLast((item) => item.kind === "user");
+    if (!target || target.kind !== "user") return { ok: false, error: "这个群里还没有用户的消息，无法添加表情回应。" };
+    const all = this.store.groupState(gid).reactions ?? {};
+    const forItem = { ...(all[target.id] ?? {}), [assistantId]: emoji };
+    this.store.saveGroupState(gid, { reactions: { ...all, [target.id]: forItem } });
+    const reactions = reactionsList(forItem);
+    this.bus.emit({ type: "group-item", groupId: gid, item: { ...target, ...(reactions ? { reactions } : {}) } });
+    return { ok: true, itemId: target.id };
+  }
+
+  /** 这一个群的时间线（去掉没说完的空回复，用户条目补上表情回应）。 */
   timeline(gid: string): GroupItem[] {
-    return this.store.groupItems(gid).filter((item) => item.kind !== "assistant" || item.text.trim().length > 0);
+    const storedReactions = this.store.groupState(gid).reactions;
+    return this.store.groupItems(gid)
+      .filter((item) => item.kind !== "assistant" || item.text.trim().length > 0)
+      .map((item) => {
+        if (item.kind !== "user") return item;
+        const reactions = reactionsList(storedReactions?.[item.id]);
+        return reactions ? { ...item, reactions } : item;
+      });
   }
 
   private append(gid: string, item: NewGroupItem, id = this.nextId(gid)): GroupItem {

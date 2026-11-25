@@ -28,7 +28,17 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
   - 启动时和每次服务商变动，把设置里的服务商套进引擎：内置服务商 `setRuntimeApiKey` / `removeRuntimeApiKey`，兼容接口 `registerProvider` / `unregisterProvider`。
   - 思考档也按 Hob 自己的设置写给引擎（见下文“思考档”）：兼容接口写进模型的 `thinkingLevelMap`，内置服务商写进 `HOB_HOME/system/engine/models.json` 的 `providers.<id>.modelOverrides`，写完 `refresh()` 一次让引擎重读。
   - 会话文件一律放在 `HOB_HOME` 下（不放进引擎目录）。
-  - 不加载用户装的扩展、主题、AGENTS.md；技能只加载下文指定的来源。使用自定义 `ResourceLoader`（见 pi 示例 `examples/sdk/12-full-control.ts`）。工具由 Hob 自己给。
+  - 不加载用户装的扩展、主题；`AGENTS.md` 只在会话绑定了工作目录时读那个目录根上的一份（见下文“工作目录”）；技能只加载下文指定的来源。使用自定义 `ResourceLoader`（见 pi 示例 `examples/sdk/12-full-control.ts`）。工具由 Hob 自己给。
+
+### 工作目录（`server/src/workspace.ts`）
+
+非主助手、群、话题可以在创建时绑一个项目目录（`cwd`），之后不能改。在哪个会话里就用哪个会话的目录，全部经 `resolveWorkspaceCwd` 解析：
+
+- 群和话题：群绑了，群和它所有话题都用群的，话题不能另绑；群没绑，话题用自己的；都没绑就是没绑定。成员助手自己的 `cwd` 在群里不生效。
+- 单聊：用助手自己的 `cwd`。
+- 没绑定：会话照旧在 `assistants/<id>/work`，任务在自己的目录。
+
+绑定后：会话的命令和文件工具默认在这个目录；会话打开时读一次目录根上的 `AGENTS.md`（没有就读 `CLAUDE.md`，最多 32,000 字），整个会话不变，保住提示词缓存；系统提示词写明绑定目录和助手自己的目录；派出的任务不填 `cwd` 就落在绑定目录，填了只能是它里面的子目录（`jobs.start` 里检查，例如并行任务各用一份 worktree）。绑定目录不能是数据目录、它里面的目录或它的上级；目录后来失效，会话回落到默认目录并在提示词里说明。
 
 ### 启动时的环境隔离（`server/src/boot.ts`）
 
@@ -167,7 +177,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 | 工具 | 作用 |
 |---|---|
 | `read` / `bash` / `edit` / `write` | 读取文件、执行命令、修改或写入文件；简单明确的事由助手自己做，复杂或耗时的事交给任务 |
-| `start_job(title, note, files?, cwd?, expect_minutes?, after?)` | 开任务，立即返回 jobId；任务看到 `note` 和显式 `files` 的路径，对话里出任务卡片。`cwd` 指定工作目录，不能指定 Hob 数据目录；不填就用任务自己的目录。相对路径以助手工作目录为准；`after` 要等哪些任务做完 |
+| `start_job(title, note, files?, cwd?, expect_minutes?, after?)` | 开任务，立即返回 jobId；任务看到 `note` 和显式 `files` 的路径，对话里出任务卡片。`cwd` 指定工作目录，不能指定 Hob 数据目录；不填就用任务自己的目录。会话绑定了工作目录时，不填就用绑定目录，填的话只能是它里面的子目录。相对路径以助手工作目录为准；`after` 要等哪些任务做完 |
 | `check_job(jobId)` | 查看任务状态、过程、结果和所用技能；主助手可看所有任务，其余助手只看自己的 |
 | `update_todos(items)` | 列一份待办，整份替换：每项只有 `text` 和 `status`（todo / doing / done）。单聊存 `assistants/<id>/todos.json`，群的综合和话题存 `groups/<gid>/todos.json`；同一份清单谁后写以谁为准。每轮开头把当前这份带给模型；全做完、清掉、话题关了、手上没活了的就收起（见下文「待办」） |
 | `review_job(jobId, note?)` | 让已结束的原任务在自己的会话里回顾，任务用 `save_skill` 保存需要的技能；进度和结果显示在原任务上 |

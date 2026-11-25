@@ -99,9 +99,10 @@ export function validateWorkspaceCwd(
 }
 
 /**
- * 单一解析链：
- * - 若群已设 cwd，其下所有话题强制锁定群 cwd；
- * - 否则：话题 cwd → 群 cwd → 非主助手 cwd → 系统默认（assistants/<id>/work）。
+ * 在哪个会话里，就用哪个会话的目录：
+ * - 群和话题里只看群和话题：群设了 cwd，群和它的话题都用群的；群没设，话题用自己的；都没设就是没绑定。助手自己的 cwd 不管。
+ * - 单聊用非主助手自己的 cwd。
+ * - 没绑定：系统默认（assistants/<id>/work）。
  */
 export function resolveWorkspaceCwd(
   store: Store,
@@ -122,6 +123,7 @@ export function resolveWorkspaceCwd(
     } else if (group?.cwd) {
       return { bound: group.cwd, source: "group", sessionCwd: group.cwd };
     }
+    return { source: "default", sessionCwd: assistantWorkDir(home, assistantId) };
   }
   const assistant = store.assistant(assistantId);
   if (assistant && !assistant.primary && assistant.cwd) {

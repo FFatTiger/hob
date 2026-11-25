@@ -166,7 +166,7 @@ describe("提示词角色和内容", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const start = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "start_job")!;
-      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。");
+      expect(start.parameters.properties.cwd.description).toBe("可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。");
     } finally { hob.close(); }
   });
 });

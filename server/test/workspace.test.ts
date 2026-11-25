@@ -373,9 +373,17 @@ describe("继承链与不可变边界", () => {
       });
       expect(freeGroup.cwd).toBeUndefined();
 
-      // 话题不设 cwd 时：dev 继承 assistant.cwd，hob 回落默认
+      // 话题不设 cwd 时：群里不看助手自己的 cwd，dev 和 hob 都是没绑定；dev 回到单聊才用自己的
       const freeTopic = hob.runtime.groups.createTopic(freeGroup.id, "日常同步", "user");
       expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, freeTopic.id)).toEqual({
+        source: "default",
+        sessionCwd: assistantWorkDir(hob.home, dev.id),
+      });
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, freeGroup.id)).toEqual({
+        source: "default",
+        sessionCwd: assistantWorkDir(hob.home, dev.id),
+      });
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id)).toEqual({
         bound: astDir,
         source: "assistant",
         sessionCwd: astDir,
@@ -484,11 +492,11 @@ describe("继承链与不可变边界", () => {
       expect(jLockedDev.cwd).toBe(groupDirPath);
       expect(jLockedPlain.cwd).toBe(groupDirPath);
 
-      // 4. 群未设 cwd 时指派给绑了目录的 dev：按执行人 dev 继承 astDir
+      // 4. 群未设 cwd 时指派给绑了目录的 dev：群里不看 dev 自己的目录，落在任务自己的目录
       const startInFree = buildRouterTools(hob.runtime, "hob", freeGroup.id, assistantWorkDir(hob.home, "hob")).find((t) => t.name === "start_job")!;
       await startInFree.execute("c3", { title: "自由群指派开发", note: "查代码", assistantId: dev.id });
       const jFreeDev = hob.runtime.store.jobs().find((j) => j.title === "自由群指派开发")!;
-      expect(jFreeDev.cwd).toBe(astDir);
+      expect(jFreeDev.cwd).toBe(join(hob.home, "assistants", dev.id, "jobs", jFreeDev.id, "work"));
 
       // 5. 未绑定会话给未绑定成员允许显式传入 cwd；已绑定成员传不同 explicitCwd 明确拒绝，传相同目录（含等价软链）则沿用 bound
       await startInFree.execute("c4", { title: "未绑定显式目录", note: "只看子目录", cwd: subDir });
@@ -1033,7 +1041,7 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
         const startTool = findTool(tools, "start_job");
         expect("cwd" in startTool.parameters.properties, label).toBe(true);
         expect(startTool.parameters.properties.cwd.description, label).toBe(
-          "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里。不填则在任务自己的隔离目录里执行（若指派的成员已绑定工作目录则自动继承）。相对路径以你的工作目录为准。",
+          "可选。填了，任务的命令默认就在这个目录里运行，改动直接落在这里，适合直接修改一个现成的项目。不填，任务在自己的目录里执行；只是读取某个项目，或者要另拉一份隔离着执行，不用填。相对路径以你的工作目录为准。",
         );
       }
 
@@ -1158,7 +1166,7 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
     }
   });
 
-  it("未绑群/话题跨成员指派 4 种组合与系统提示词区分：仅说话人自身绑定时保留 start_job.cwd 且不覆写已绑定执行者", async () => {
+  it("群里不看成员自己的目录：未绑定的群和话题里，绑了目录的成员和没绑的一样", async () => {
     const hob = makeHob({}, { memory: "off" });
     const dirA = makeTempDir("hob-ws-cross-a-");
     const dirC = makeTempDir("hob-ws-cross-c-");
@@ -1185,75 +1193,36 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
         cwd: grpDir,
       });
 
-      // 1. 未绑群 & 未绑话题里，说话人 A 自己绑定了 cwd：start_job 保留 cwd 参数（不隐藏）
-      const startAInFreeGroup = buildRouterTools(hob.runtime, memberA.id, freeGroup.id, dirA).find((t) => t.name === "start_job")!;
-      const startAInFreeTopic = buildRouterTools(hob.runtime, memberA.id, freeTopic.id, dirA).find((t) => t.name === "start_job")!;
-      const startBInFreeGroup = buildRouterTools(hob.runtime, memberB.id, freeGroup.id, assistantWorkDir(hob.home, memberB.id)).find((t) => t.name === "start_job")!;
-      expect("cwd" in startAInFreeGroup.parameters.properties).toBe(true);
-      expect("cwd" in startAInFreeTopic.parameters.properties).toBe(true);
-      expect("cwd" in startBInFreeGroup.parameters.properties).toBe(true);
+      // 1. 绑了目录的 A 在未绑定的群和话题里：start_job 的 cwd 说明和没绑定的会话一样
+      const unboundDescription = buildRouterTools(hob.runtime, memberB.id, freeGroup.id).find((t) => t.name === "start_job")!.parameters.properties.cwd.description;
+      const startAInFreeGroup = buildRouterTools(hob.runtime, memberA.id, freeGroup.id).find((t) => t.name === "start_job")!;
+      const startAInFreeTopic = buildRouterTools(hob.runtime, memberA.id, freeTopic.id).find((t) => t.name === "start_job")!;
+      expect(startAInFreeGroup.parameters.properties.cwd.description).toBe(unboundDescription);
+      expect(startAInFreeTopic.parameters.properties.cwd.description).toBe(unboundDescription);
 
       hob.faux.setResponses([
         call("report", { outcome: "done", result: "1" }),
         call("report", { outcome: "done", result: "2" }),
         call("report", { outcome: "done", result: "3" }),
-        call("report", { outcome: "done", result: "4" }),
-        call("report", { outcome: "done", result: "5" }),
-        call("report", { outcome: "done", result: "6" }),
       ]);
 
-      // 组合 1：已绑定 A 指派给自己（不传 cwd → dirA；传不同 cwd → 拒绝）
-      const aSelfOk = await startAInFreeGroup.execute("x1", { title: "A派自己默认", note: "执行" });
-      expect(aSelfOk.isError).not.toBe(true);
-      expect(hob.runtime.store.jobs().find((j) => j.title === "A派自己默认")?.cwd).toBe(dirA);
+      // 2. 不填 cwd：派给自己、派给绑了目录的 C，都落在任务自己的目录，不用成员自己的目录
+      await startAInFreeGroup.execute("x1", { title: "A派自己默认", note: "执行" });
+      const aSelf = hob.runtime.store.jobs().find((j) => j.title === "A派自己默认")!;
+      expect(aSelf.cwd).toBe(join(hob.home, "assistants", memberA.id, "jobs", aSelf.id, "work"));
+      await startAInFreeGroup.execute("x2", { title: "A派C默认", note: "执行", assistantId: memberC.id });
+      const aToC = hob.runtime.store.jobs().find((j) => j.title === "A派C默认")!;
+      expect(aToC.cwd).toBe(join(hob.home, "assistants", memberC.id, "jobs", aToC.id, "work"));
 
-      const aSelfOverride = await startAInFreeGroup.execute("x2", { title: "A派自己换目录", note: "执行", cwd: otherDir });
-      expect(aSelfOverride.isError).toBe(true);
-      expect((aSelfOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
-
-      // 组合 2：已绑定 A 指派给未绑定 B（不传 cwd → jobs/<id>/work；传显式 cwd → otherDir）
-      const aToBDefault = await startAInFreeGroup.execute("x3", { title: "A派B默认", note: "执行", assistantId: memberB.id });
-      expect(aToBDefault.isError).not.toBe(true);
-      const jobAToBDefault = hob.runtime.store.jobs().find((j) => j.title === "A派B默认")!;
-      expect(jobAToBDefault.cwd).toBe(join(hob.home, "assistants", memberB.id, "jobs", jobAToBDefault.id, "work"));
-
-      const aToBExplicit = await startAInFreeGroup.execute("x4", { title: "A派B显式目录", note: "执行", assistantId: memberB.id, cwd: otherDir });
-      expect(aToBExplicit.isError).not.toBe(true);
-      expect(hob.runtime.store.jobs().find((j) => j.title === "A派B显式目录")?.cwd).toBe(otherDir);
-
-      // 组合 3：已绑定 A 指派给已绑定 C（不传 cwd → dirC；传不同 cwd → 拒绝）
-      const aToCOk = await startAInFreeGroup.execute("x5", { title: "A派C默认", note: "执行", assistantId: memberC.id });
-      expect(aToCOk.isError).not.toBe(true);
-      expect(hob.runtime.store.jobs().find((j) => j.title === "A派C默认")?.cwd).toBe(dirC);
-
-      const aToCOverride = await startAInFreeGroup.execute("x6", { title: "A派C换目录", note: "执行", assistantId: memberC.id, cwd: otherDir });
-      expect(aToCOverride.isError).toBe(true);
-      expect((aToCOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
-
-      // 组合 4：未绑定 B 指派给已绑定 A（不传 cwd → dirA；传不同 cwd → 拒绝；传相同 dirA → 成功）
-      const bToAOk = await startBInFreeGroup.execute("x7", { title: "B派A默认", note: "执行", assistantId: memberA.id });
-      expect(bToAOk.isError).not.toBe(true);
-      expect(hob.runtime.store.jobs().find((j) => j.title === "B派A默认")?.cwd).toBe(dirA);
-
-      const bToAOverride = await startBInFreeGroup.execute("x8", { title: "B派A换目录", note: "执行", assistantId: memberA.id, cwd: otherDir });
-      expect(bToAOverride.isError).toBe(true);
-      expect((bToAOverride.content[0] as { text: string }).text).toContain(CWD_BOUND_LOCKED);
-
-      const bToASame = await startBInFreeGroup.execute("x9", { title: "B派A同目录", note: "执行", assistantId: memberA.id, cwd: dirA });
-      expect(bToASame.isError).not.toBe(true);
-      expect(hob.runtime.store.jobs().find((j) => j.title === "B派A同目录")?.cwd).toBe(dirA);
+      // 3. 填了 cwd：群里不受成员自己绑定的限制
+      const aToCExplicit = await startAInFreeGroup.execute("x3", { title: "A派C显式目录", note: "执行", assistantId: memberC.id, cwd: otherDir });
+      expect(aToCExplicit.isError).not.toBe(true);
+      expect(hob.runtime.store.jobs().find((j) => j.title === "A派C显式目录")?.cwd).toBe(otherDir);
 
       await hob.runtime.jobs.waitIdle();
 
-      // 2. 提示词精确对应：未绑群仅助手自身绑定 vs 单聊 / 群绑定
+      // 4. 提示词：单聊用助手自己的目录，绑定的群用群的
       const basePromptOpts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
-      const freeGroupPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
-        ...basePromptOpts,
-        group: freeGroup,
-        workspace: { cwd: dirA, source: "assistant", ownDir: "/own" },
-      });
-      expect(freeGroupPrompt).toContain(`当前工作目录：${dirA}（来源：你的设置）。命令、文件读写和你自己执行的任务都在这个目录进行。`);
-
       const dmPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
         ...basePromptOpts,
         workspace: { cwd: dirA, source: "assistant", ownDir: "/own" },

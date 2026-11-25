@@ -2,7 +2,7 @@
 import { t } from "../../../shared/i18n.ts";
 import { Select } from "./Select.tsx";
 import { DelayedText, Empty } from "./Empty.tsx";
-import { Suspense, lazy, useEffect, useRef, useState, type CSSProperties } from "react";
+import { Suspense, lazy, memo, useEffect, useRef, useState, type CSSProperties } from "react";
 import type { Job, JobFilesView, JobStatus, JobStep, ModelInfo } from "../../../shared/types.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { fileIcon } from "../file-icons.ts";
@@ -216,10 +216,10 @@ function JobDetail({ id, round, jumpApprovalId }: { id: string; round?: number; 
               ))}
             </div>
             {/* 点了别的轮次才淡入；刚打开这一页时只有整页滑进来 */}
-            <div key={current} className={picked !== round ? "jd-round-content" : undefined}><RoundBody part={parts[current]!} last={current === parts.length - 1} index={current} /></div>
+            <div key={current} className={picked !== round ? "jd-round-content" : undefined}><RoundBody part={parts[current]!} last={current === parts.length - 1} index={current} locale={s.locale} /></div>
           </>;
         })() : <>
-          <RoundBody part={{ job, instruction: job.instruction, steps }} last index={0} />
+          <RoundBody part={{ job, instruction: job.instruction, steps }} last index={0} locale={s.locale} />
         </>}
       </div>
 
@@ -248,7 +248,13 @@ function AfterList({ ids }: { ids: string[] }) {
 }
 
 /** 一轮的内容：前面几轮写明那一轮的状态和用时（最后一轮就是头部那个状态）；工作目录只跟在最后一轮下面。 */
-function RoundBody({ part, last, index }: { part: { job: Job; instruction?: string; steps?: JobStep[] }; last: boolean; index: number }) {
+type RoundProps = { part: { job: Job; instruction?: string; steps?: JobStep[] }; last: boolean; index: number; locale: string };
+const sameSteps = (a?: JobStep[], b?: JobStep[]) => a === b || (!!a && !!b && a.length === b.length && a.every((step, i) => step === b[i]));
+/** 长任务有几百步：别处一改状态（回首页、别的任务推进度）整页都会重画，这一轮的任务和步骤没变就不重画 */
+const RoundBody = memo(RoundBodyView, (a: RoundProps, b: RoundProps) =>
+  a.part.job === b.part.job && a.part.instruction === b.part.instruction && sameSteps(a.part.steps, b.part.steps) && a.last === b.last && a.index === b.index && a.locale === b.locale);
+
+function RoundBodyView({ part, last, index }: RoundProps) {
   const [expanded, setExpanded] = useState(false);
   const sedimentIndex = part.steps?.findIndex((step) => step.from === "user" && step.text === "沉淀技能") ?? -1;
   const timeline = part.steps === undefined ? undefined : groupThinking(sedimentIndex < 0 ? part.steps : part.steps.slice(0, sedimentIndex));

@@ -30,14 +30,20 @@ describe("主题和状态栏", () => {
 
   it("配色切换时状态栏取当前底色，不读过渡中的旧背景", () => {
     const meta = { getAttribute: () => "#151113", setAttribute: vi.fn() };
-    const root = { style: { setProperty: vi.fn() } };
+    const vars = new Map<string, string>();
+    const root = { style: { setProperty: vi.fn((name: string, value: string) => vars.set(name, value)), getPropertyValue: (name: string) => vars.get(name) ?? "" }, classList: { contains: () => true }, getAttribute: () => "rose" };
     vi.stubGlobal("document", { documentElement: root, querySelector: () => meta });
-    vi.stubGlobal("getComputedStyle", () => ({
+    const computed = vi.fn(() => ({
       getPropertyValue: (name: string) => name === "--bg" ? "#121117" : "rgb(18, 17, 23)",
       backgroundColor: "rgb(18, 17, 23)",
     }));
+    vi.stubGlobal("getComputedStyle", computed);
     updateStatusColor({ phase: "ready", page: "settings", sheet: false, panelStack: [] }, true);
     expect(meta.setAttribute).toHaveBeenCalledWith("content", "#121117");
+    // 底色、深浅、配色都没变：不再写根元素变量，也不逼浏览器重算整页样式
+    updateStatusColor({ phase: "ready", page: "settings", sheet: false, panelStack: [{ kind: "job" }] }, true);
+    expect(root.style.setProperty).toHaveBeenCalledTimes(1);
+    expect(computed).toHaveBeenCalledTimes(1);
   });
 
   it("按深浅主题换 manifest：iOS 的启动屏和状态栏颜色只认它", () => {

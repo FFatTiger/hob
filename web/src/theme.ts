@@ -42,12 +42,20 @@ export function updateManifest(dark: boolean) {
   document.getElementById("manifest")?.setAttribute("href", dark ? DARK_MANIFEST : LIGHT_MANIFEST);
 }
 
+let statusKey = "";
+
 export function updateStatusColor(page: StatusPage, narrow: boolean) {
   const root = document.documentElement;
-  root.style.setProperty("--status-background", `var(--${statusSurface(page, narrow)})`);
+  // 根元素上的变量一改，整页样式都要重算；没变就不写（回首页、开关右栏都会走到这里）
+  const surface = statusSurface(page, narrow);
+  const background = `var(--${surface})`;
+  if (root.style.getPropertyValue("--status-background") !== background) root.style.setProperty("--status-background", background);
+  // 读计算样式会逼浏览器当场重算整页样式；底色、深浅、配色都没变就不读
+  const key = `${background}|${root.classList.contains("dark")}|${root.getAttribute("data-palette")}`;
+  if (key === statusKey) return;
+  statusKey = key;
   // 写成 #rrggbb，和 index.html、manifest 一致（iPhone 主屏应用其实不用它画状态栏，见 styles.css 手机深色那段）
   const computed = getComputedStyle(root);
-  const surface = statusSurface(page, narrow);
   // 主题切换会暂时给背景加 CSS transition。读 backgroundColor 会拿到过渡中的旧色，
   // 让 meta theme-color 落后一套配色；直接读当前 surface 变量得到稳定的最终色。
   const color = toHex(computed.getPropertyValue(`--${surface}`).trim() || computed.backgroundColor);

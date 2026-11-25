@@ -3874,7 +3874,11 @@ html:lang(en) .screen .v {
 .panel-layer.wide { width: 100%; }
 .panel-layer.instant:not(.leaving) { animation: none; }
 .panelwrap.off .panel-layer { box-shadow: -18px 0 48px rgba(0, 0, 0, 0.1); }
-.panel-layer.leaving, .mlayer.leaving { pointer-events: none; animation: layer-out var(--t-mid) var(--ease-out) forwards; }
+/* 回首页时右栏宽度收到 0，滑出去的任务、文件页保持原来的宽度：跟着变窄的话，长任务的全文每帧都要重新排版 */
+.panelwrap.off .panel-layer.wide { width: clamp(360px, calc(100vw - 720px), 640px); }
+.panel-layer.leaving, .mlayer.leaving { animation: layer-out var(--t-mid) var(--ease-out) forwards; }
+/* 滑出去的层不接点击：盖一层透明的，不用 pointer-events（它会往下继承，长任务几千个节点都得重算样式） */
+.panel-layer.leaving::after, .mlayer.leaving::after { content: ""; position: absolute; inset: 0; z-index: 10; }
 .panel-layer .panel { width: 100%; height: 100%; }
 .mlayer { position: fixed; inset: 0; z-index: 21; animation: layer-in var(--t-slow) var(--ease-in); }
 .mlayer .mfull, .mlayer .fpwrap, .mlayer .jd-overlay .jd, .mlayer .fp { animation: none; }

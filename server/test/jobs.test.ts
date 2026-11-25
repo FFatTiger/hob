@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi } from "vitest";
@@ -646,7 +646,6 @@ describe("任务", () => {
 
   it("本机任务的工作目录是 HOB_HOME/jobs/<id>/work，显式给了 cwd 才用它", async () => {
     const hob = makeHob();
-    const externalCwd = mkdtempSync(join(tmpdir(), "hob-job-cwd-"));
     try {
       hob.faux.setResponses([call("report", { outcome: "done", result: "写好了" }), text("好")]);
       hob.faux.appendResponses([text("好了")]);
@@ -658,12 +657,11 @@ describe("任务", () => {
       const explicit = await hob.runtime.jobs.start("hob", {
         title: "在别处干活",
         instruction: "在给定目录干活",
-        cwd: externalCwd,
+        cwd: tmpdir(),
       });
-      expect(explicit.cwd).toBe(externalCwd);
+      expect(explicit.cwd).toBe(tmpdir());
       await hob.runtime.jobs.waitIdle();
     } finally {
-      rmSync(externalCwd, { recursive: true, force: true });
       hob.close();
     }
   });

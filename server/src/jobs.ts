@@ -78,9 +78,9 @@ export function hasImageFiles(files: string[] | undefined): boolean {
   return (files ?? []).some((file) => isImagePath(file));
 }
 
-/** 校验任务工作目录：必须存在且为目录、在 Hob 数据目录之外且不包含 Hob 数据目录。 */
+/** 校验任务工作目录：必须存在且为目录、在 Hob 数据目录之外。可以是数据目录的上级（比如家目录）：写保护照样挡住对数据目录的改动。 */
 export function validateJobCwd(home: string, cwd: string): string {
-  return validateWorkspaceCwd(cwd, home, { jobError: true });
+  return validateWorkspaceCwd(cwd, home, { jobError: true, allowAncestorOfHome: true });
 }
 
 /** 一张图超过这个大小就不当图片给模型（只留路径），免得把会话撑得太大。 */

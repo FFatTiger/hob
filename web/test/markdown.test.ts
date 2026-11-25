@@ -38,6 +38,7 @@ describe("renderMarkdown", () => {
       "foo$bar$baz",
       "正则 /^foo$/ 和 /^bar$/",
       "价格 $10（原价 $20）",
+      "变量以$开头，这里用$符号",
     ];
     for (const input of nonMathCases) {
       expect(hasMath(input), input).toBe(false);
@@ -70,6 +71,11 @@ describe("renderMarkdown", () => {
       "令$x=1$时",
       "$a$和$b$",
       "${x}^2$",
+      "CO$_2$",
+      "面积 100 m$^2$",
+      "转 90$^\\circ$",
+      "$利润 = 收入 - 成本$",
+      "$v = \\frac{路程}{时间}$",
       "\\(a+b\\)",
       "$$x^2$$",
     ];

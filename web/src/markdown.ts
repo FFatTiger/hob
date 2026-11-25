@@ -83,11 +83,13 @@ const markdown = new Marked({
         const paren = /^\\\((.+?)\\\)/.exec(src);
         if (paren) return { type: "inlineMath", raw: paren[0], text: paren[1] };
         const prev = tokens.at(-1)?.raw ?? "";
-        if (/[A-Za-z0-9_]$/.test(prev)) return;
+        // 紧跟在字母数字后面的 $ 多半不是公式（正则 /^foo$/），上下标和命令开头的除外（CO$_2$、m$^2$、90$^\\circ$）
+        if (/[A-Za-z0-9_]$/.test(prev) && !/^\$[\\^_]/.test(src)) return;
         // 模板字符串 / Shell 变量展开（如 ${name}、${job.cwd}）不作为公式起点
         if (/^\$\{[A-Za-z_][A-Za-z0-9_.-]*\}(?![_^])/.test(src)) return;
         const match = /^\$(?!\$|\s)([^$`\n]*?[^$`\s])\$(?!\w|\{|\$|\\[A-Za-z])/.exec(src);
-        if (match && !hasBareCjk(match[1])) return { type: "inlineMath", raw: match[0], text: match[1] };
+        // 夹着裸中文、又没有等号和上下标的，是两个 $ 之间的普通句子，不是公式
+        if (match && (/[\\=^_]/.test(match[1]) || !hasBareCjk(match[1]))) return { type: "inlineMath", raw: match[0], text: match[1] };
       },
       renderer(token) { return formula(String(token.text), false, token.raw); },
     },

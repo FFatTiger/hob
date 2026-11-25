@@ -1665,7 +1665,7 @@ svg.i {
 .qfill-options { margin-top: 8px; }
 .qfill-hint { color: var(--text3); font-size: 12.5px; line-height: 1.55; margin-top: 10px; }
 .qfill-entry-error { margin-top: 10px; padding: 8px 10px; border-radius: 8px; background: color-mix(in srgb, var(--danger) 10%, var(--card)); color: var(--danger); font-size: 13px; }
-.qfill-result { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text2); font-size: 14px; }
+.qfill-result { display: flex; align-items: center; gap: 6px; margin-top: 10px; color: var(--text2); font-size: 14px; overflow-wrap: anywhere; }
 .qfill-result svg { flex: none; }
 .qfill .qacts .hob-btn:not(.hob-btn-primary) { background: var(--card); }
 /* 文字按钮（效果图 .btn.ghost）：批准卡、录入卡的「我自己登录」，放按钮行最左边；手机上放不下就换行 */
@@ -6997,6 +6997,10 @@ button.screen,
   border-radius: 5px;
   padding: 0 5px;
   line-height: 17px;
+}
+/* 卡片（提问、登录、send_card）自己定了宽度：外层包一层时，宽度不能超过这一列，窄了就跟着缩 */
+.gblock-main > * {
+  max-width: 100%;
 }
 .gblock-main .hov.msg {
   max-width: min(548px, 100%);

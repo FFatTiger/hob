@@ -86,4 +86,122 @@ describe("CardView", () => {
     expect(html).toContain("lin");
     expect(html).toContain("hc-result-list");
   });
+
+  it("renders all options for select_static up to 5 options and uses dropdown only above 5", () => {
+    const makeSelectCard = (options: { text: string; value: string }[], extra: Record<string, unknown> = {}): CardRecord => ({
+      ...record,
+      plugin: undefined,
+      owner: { type: "assistant", assistantId: "hob" },
+      card: {
+        header: { title: "单选展示" },
+        body: {
+          elements: [
+            {
+              tag: "form",
+              name: "f",
+              elements: [
+                { tag: "select_static", name: "choice", label: "方案", options, initial_option: options[0]?.value, ...extra } as any,
+                { tag: "button", text: "提交", form_action_type: "submit" },
+              ],
+            },
+          ],
+        },
+      },
+    });
+
+    // 不超过 5 个且选项较短：画成圆角小块
+    const fiveShort = renderToStaticMarkup(
+      <CardView
+        record={makeSelectCard([
+          { text: "选项一", value: "1" },
+          { text: "选项二", value: "2" },
+          { text: "选项三", value: "3" },
+          { text: "选项四", value: "4" },
+          { text: "选项五", value: "5" },
+        ])}
+        fresh={false}
+        itemId="c-short"
+      />,
+    );
+    expect(fiveShort).toContain("hc-options");
+    expect(fiveShort).not.toContain("hc-select-button");
+    expect(fiveShort).toContain("选项五");
+
+    // 不超过 5 个但选项较长：画成整行选项行，全部摆出来不收进下拉
+    const threeLong = renderToStaticMarkup(
+      <CardView
+        record={makeSelectCard(
+          [
+            { text: "保留旧目录结构，只在导出页加上筛选栏", value: "A" },
+            { text: "新建独立导出页并迁移历史配置", value: "B" },
+            { text: "暂不改动页面，只补命令行参数", value: "C" },
+          ],
+          { hint: "决定这一版要动哪些文件。", allow_custom: true },
+        )}
+        fresh={false}
+        itemId="c-long"
+      />,
+    );
+    expect(threeLong).toContain("hc-option-rows");
+    expect(threeLong).toContain("hc-option-row active");
+    expect(threeLong).toContain("保留旧目录结构，只在导出页加上筛选栏");
+    expect(threeLong).toContain("决定这一版要动哪些文件。");
+    expect(threeLong).toContain("自己写");
+    expect(threeLong).not.toContain("hc-select-button");
+
+    // 超过 5 个（6 个）：收进下拉
+    const sixOptions = renderToStaticMarkup(
+      <CardView
+        record={makeSelectCard([
+          { text: "一", value: "1" },
+          { text: "二", value: "2" },
+          { text: "三", value: "3" },
+          { text: "四", value: "4" },
+          { text: "五", value: "5" },
+          { text: "六", value: "6" },
+        ])}
+        fresh={false}
+        itemId="c-six"
+      />,
+    );
+    expect(sixOptions).toContain("hc-select-button");
+    expect(sixOptions).not.toContain("hc-options");
+    expect(sixOptions).not.toContain("hc-option-rows");
+  });
+
+  it("renders button-only done result and disables incomplete submit when requested", () => {
+    const doneButtonOnly: CardRecord = {
+      ...record,
+      plugin: undefined,
+      owner: { type: "assistant", assistantId: "hob" },
+      status: "done",
+      result: { action: { kind: "option", key: "A" }, buttonText: "立即发布" },
+    };
+    const doneHtml = renderToStaticMarkup(<CardView record={doneButtonOnly} fresh={false} bare />);
+    expect(doneHtml).toContain("hc-done-result");
+    expect(doneHtml).toContain("立即发布");
+
+    const incomplete: CardRecord = {
+      ...record,
+      plugin: undefined,
+      owner: { type: "assistant", assistantId: "hob" },
+      card: {
+        header: { title: "填表" },
+        body: {
+          elements: [
+            {
+              tag: "form",
+              name: "f",
+              elements: [
+                { tag: "input", name: "q0", label: "主题", required: true },
+                { tag: "button", text: "提交", type: "primary_filled", form_action_type: "submit" },
+              ],
+            },
+          ],
+        },
+      },
+    };
+    const incompleteHtml = renderToStaticMarkup(<CardView record={incomplete} fresh={false} bare disableIncompleteSubmit />);
+    expect(incompleteHtml).toMatch(/<button type="submit"[^>]*disabled=""/);
+  });
 });

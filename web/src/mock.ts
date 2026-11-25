@@ -1717,9 +1717,9 @@ cp now.txt "$seen"`,
       { kind: "user", id: "te-1", at: at(0, 9, 30), text: "每月的报表想按月份导出", speaker: "user" },
       { kind: "assistant", id: "te-2", at: at(0, 9, 31), text: "有两个问题要你定：按自然月还是按账期？导出 Excel 还是 CSV？", speaker: "po" },
       // 已读：转进来的这句群主看过了，还没回
-      ...(receipt ? [{ kind: "user" as const, id: "te-3", at: at(0, 9, 55), text: "用户在综合补充：导出先用 CSV，Excel 下个月再说。按自然月还是账期还没定。", speaker: "user", forwardedFrom: { groupId: host.id, itemId: "gt-10" } }] : []),
+      ...(receipt ? [{ kind: "user" as const, id: "te-3", at: at(0, 9, 55), text: "用户在综合补充：导出先用 CSV，Excel 下个月再说。按自然月还是账期还没定。", speaker: "user", forwardedFrom: { groupId: host.id, itemId: "gt-10" }, reactions: [{ by: "po", emoji: "👀" }] }] : []),
     ];
-    if (receipt) tExport.seen = { po: "te-3" };
+
     topicItems[tUpload.id] = [
       { kind: "user", id: "tu-1", at: at(0, 9, 44), text: "上传 2 GB 的文件卡在 99%", speaker: "user" },
       { kind: "assistant", id: "tu-2", at: at(0, 9, 45), text: "看了日志：分片传完最后一块后没有合并，是我这边的问题。修好了，测试现在过两条。", speaker: "dev" },
@@ -1751,11 +1751,11 @@ cp now.txt "$seen"`,
         { kind: "note", id: "gt-9", at: at(0, 9, 52), icon: "split", text: "产品负责人开了话题「登录页加「记住我」」", speaker: "po" },
         // 已读：你在综合补了一句，群主转进话题，自己没出声
         ...(receipt ? [
-          { kind: "user" as const, id: "gt-10", at: at(0, 9, 55), text: "导出那个先用 CSV，Excel 下个月再说", speaker: "user" },
+          { kind: "user" as const, id: "gt-10", at: at(0, 9, 55), text: "导出那个先用 CSV，Excel 下个月再说", speaker: "user", reactions: [{ by: "po", emoji: "👌" }] },
           { kind: "note" as const, id: "gt-11", at: at(0, 9, 55), icon: "info" as const, text: "转到了话题「导出月度报表」", targetGroupId: tExport.id, speaker: "po" },
         ] : []),
       ];
-      if (receipt) host.seen = { po: "gt-11" };
+
     }
   }
 
@@ -1816,7 +1816,6 @@ cp now.txt "$seen"`,
       createdAt: at(3, 10, 0),
       unread: 0,
       busy: [],
-      seen: { po: "ra-1", dev: "ra-1", qa: "ra-1" },
       last: {
         at: at(0, 10, 14),
         speaker: "dev",
@@ -1917,7 +1916,7 @@ cp now.txt "$seen"`,
     // 单聊：前一条助手点了个赞；最后一条它接手了、正在想
     const hob = assistants.find((item) => item.id === "hob");
     // ?play=1 时由 store 按时间挂上 👀、换成 👍，开头先不挂
-    if (hob) { hob.busy = true; if (new URLSearchParams(location.search).get("play") !== "1") hob.seen = "rc-4"; }
+    if (hob) hob.busy = true;
     items.hob = [
       { kind: "user", id: "rc-1", at: minsAgo(6), text: "周六的露营改到周日了，提醒事项也挪一下", reactions: [{ by: "hob", emoji: "👍" }] },
       { kind: "assistant", id: "rc-2", at: minsAgo(6), text: "挪好了：周日早上 7:00 提醒你出发，周六那条删掉了。" },

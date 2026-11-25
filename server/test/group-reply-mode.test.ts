@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
 import { buildAdminTools } from "../src/admin-tools.ts";
 import { MAX_WAVE_TURNS } from "../src/groups.ts";
-import { buildSystemPrompt, GROUP_ALL_REPLY_LINE, groupPromptLine } from "../src/prompt.ts";
+import { buildSystemPrompt, GROUP_ALL_REPLY_LINE, GROUP_NO_REPLY_LINE, groupPromptLine } from "../src/prompt.ts";
 import { makeHob, text, waitFor } from "./helpers.ts";
 
 function addMember(hob: ReturnType<typeof makeHob>, id: string, name: string, duty = `${name}视角`) {
@@ -358,13 +358,13 @@ describe("群和话题的「全员回应」（replyMode）", () => {
       hob.runtime.groups.update(ownerTopicInAllGroup.id, { replyMode: "owner" });
 
       const base = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
-      const verbatim = "这个群设成了全员回应：用户没点名的消息，群主先回，其他成员按成员顺序依次轮到，前面的人说过什么你都看得到。轮到你时，你那一摊里有前面没说到的，就补上；没有要补充的，用 react 给用户的消息点个表情，不用把别人说过的再说一遍，用户看到表情就知道你看过了。";
+      const verbatim = "这个群设成了全员回应：用户没点名的消息，群主先回，其他成员按成员顺序依次轮到，前面的人说过什么你都看得到。";
       expect(GROUP_ALL_REPLY_LINE).toBe(verbatim);
 
       // 全员回应群：群主和普通成员都紧接在 groupPromptLine 后面
       for (const member of ["hob", "m1"]) {
         const prompt = buildSystemPrompt(hob.runtime.store, member, { ...base, group: hob.runtime.store.group(allGroup.id)! });
-        expect(prompt).toContain(`${groupPromptLine(hob.runtime.store, allGroup)}\n\n${verbatim}`);
+        expect(prompt).toContain(`${groupPromptLine(hob.runtime.store, allGroup)}\n\n${GROUP_NO_REPLY_LINE}\n\n${verbatim}`);
       }
 
       // 群主回应群：不含
@@ -375,7 +375,7 @@ describe("群和话题的「全员回应」（replyMode）", () => {
 
       // 话题各自按自己的 replyMode 判断
       const topicAllPrompt = buildSystemPrompt(hob.runtime.store, "m1", { ...base, group: hob.runtime.store.group(allTopicInOwnerGroup.id)! });
-      expect(topicAllPrompt).toContain(`${groupPromptLine(hob.runtime.store, ownerGroup)}\n\n${verbatim}`);
+      expect(topicAllPrompt).toContain(`${groupPromptLine(hob.runtime.store, ownerGroup)}\n\n${GROUP_NO_REPLY_LINE}\n\n${verbatim}`);
 
       const topicOwnerPrompt = buildSystemPrompt(hob.runtime.store, "m1", { ...base, group: hob.runtime.store.group(ownerTopicInAllGroup.id)! });
       expect(topicOwnerPrompt).not.toContain(verbatim);

@@ -599,7 +599,6 @@ export interface AssistantSummary extends Assistant {
   activity?: RouterActivity | null;
   todos?: TodoItem[]; // 这个助手单聊里的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
-  seen?: string; // 单聊里助手接手到哪一条（条目 id）：你的消息下面显示已读
 }
 
 /**
@@ -671,7 +670,6 @@ export interface GroupSummary extends Group {
   todos?: TodoItem[]; // 这个会话（综合、话题）的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
   activity?: Record<string, RouterActivity>; // 正在说话的成员现在在做什么：页面刚打开时用，之后跟 group-activity 事件
-  seen?: Record<string, string>; // 每个成员接手到时间线的哪一条（条目 id）：你的消息下面显示「谁已读」
 }
 
 /**

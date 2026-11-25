@@ -65,6 +65,8 @@ interface RunningTurn {
   /** 事件那一轮：文字先攒着，这一轮结束再写进时间线（以 NO_REPLY 收尾就不写） */
   event?: true;
   held?: string[];
+  /** 这一轮以 NO_REPLY 收尾：收到了用户消息的话，替它挂 👀 */
+  silent?: boolean;
 }
 
 /** 这一轮该给它的条目，和给到哪一条（seen 存它）。 */
@@ -158,7 +160,6 @@ export class GroupManager {
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
       ...(this.runtime.router.suggestionsFor(group.ownerId, group.id)?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, group.id) } : {}),
       ...(Object.keys(activity).length ? { activity } : {}),
-      ...(this.store.groupState(group.id).seen ? { seen: this.store.groupState(group.id).seen } : {}),
     };
   }
 
@@ -790,6 +791,9 @@ export class GroupManager {
     } finally {
       this.turns.delete(key);
     }
+    // 这一轮收到了用户的消息、回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
+    const userItem = input?.items.findLast((item) => item.kind === "user");
+    if (userItem && turn.silent && !turn.lastId && !this.store.groupState(gid).reactions?.[userItem.id]?.[assistantId]) this.react(gid, assistantId, "👀", userItem.id);
     if ((this.epochs.get(gid) ?? 0) !== epoch) return;
     // 回复里 @ 了别的成员：接着轮到他们（用这一轮最后一条的 id 当触发条目）
     if (!turn.lastId) return;
@@ -834,7 +838,6 @@ export class GroupManager {
     if (!item) return;
     const seen = this.store.groupState(gid).seen ?? {};
     this.store.saveGroupState(gid, { seen: { ...seen, [assistantId]: item.id } });
-    this.publish(gid);
   }
 
   /** 时间线里的一条写成一行事实，卡片也写成一句。 */
@@ -931,6 +934,7 @@ export class GroupManager {
     turn.itemId = undefined;
     // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说
     const visible = stripNoReply(text);
+    if (saysNoReply(text)) turn.silent = true;
     if (!visible) {
       // 只流出了空白（工具调用前的换行）：把那条流式条目收掉，重启时才不会当成中断
       if (id) this.bus.emit({ type: "group-item", groupId: gid, item: this.append(gid, { kind: "assistant", speaker: assistantId, text: "" }, id) });
@@ -951,7 +955,7 @@ export class GroupManager {
     const held = turn.held ?? [];
     turn.held = [];
     if (!held.length) return;
-    if (saysNoReply(held.at(-1)!)) return;
+    if (saysNoReply(held.at(-1)!)) { turn.silent = true; return; }
     for (const one of held) {
       const text = stripNoReply(one);
       if (!text) continue;
@@ -986,11 +990,11 @@ export class GroupManager {
     return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}), ...(targetGroupId ? { targetGroupId } : {}) });
   }
 
-  /** 给这个群（或话题）时间线上最新的一条用户消息点表情回应；再点会换掉。 */
-  react(gid: string, assistantId: string, emoji: string): { ok: true; itemId: string } | { ok: false; error: string } {
+  /** 给这个群（或话题）时间线上最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */
+  react(gid: string, assistantId: string, emoji: string, itemId?: string): { ok: true; itemId: string } | { ok: false; error: string } {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return { ok: false, error: "你不是这个群的成员。" };
-    const target = this.timeline(gid).findLast((item) => item.kind === "user");
+    const target = this.timeline(gid).findLast((item) => item.kind === "user" && (!itemId || item.id === itemId));
     if (!target || target.kind !== "user") return { ok: false, error: "这个群里还没有用户的消息，无法添加表情回应。" };
     const all = this.store.groupState(gid).reactions ?? {};
     const forItem = { ...(all[target.id] ?? {}), [assistantId]: emoji };

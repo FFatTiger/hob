@@ -312,7 +312,7 @@ describe("react 工具", () => {
       expect(reactTool.description).toBe("给用户最新的一条消息加一个表情回应，显示在那条消息的右下角，像聊天软件里的点赞。再调一次会换成新的表情。");
       expect((reactTool.parameters as { properties: { emoji: { description: string } } }).properties.emoji.description).toBe("一个 emoji，比如 👍 ✅ ❤️ 😂");
 
-      const expected = "聊天里一句「好的」「收到」本身没有信息，用户读了只知道你看到了。这类时候用 react 给他的消息点一个表情就够了：用户告诉你一件事、不需要你接话，或者交代的事你正要去办、办完会再汇报。要给结论、要用户拿主意、汇报结果，照常用文字回复。";
+      const expected = "用户的消息可以用 react 点一个表情回应，像聊天软件里朋友之间那样：赞同、开心、好笑、感谢，一个表情让对话有来有回。表情是回复之外的互动，该说的话照常用文字说。";
       const baseOpts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const singlePrompt = buildSystemPrompt(hob.runtime.store, "hob", baseOpts);
       const memberPrompt = buildSystemPrompt(hob.runtime.store, "analyst", { ...baseOpts, group });

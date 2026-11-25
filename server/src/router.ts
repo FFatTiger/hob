@@ -155,6 +155,8 @@ interface RouterState {
   turnSilent?: boolean;
   /** 这一轮成功点过表情回应：只点表情没出文字时不推「做完了」 */
   turnReacted?: boolean;
+  /** 这一轮收到的用户消息（单聊）：以 NO_REPLY 收尾时替助手在它上面挂 👀 */
+  turnUserItem?: string;
   /** agent_settled 捕获的失败原因，reportTurnFailure 会清掉 turnError */
   turnFailure?: string;
   /** 这一轮开始前或事件带来的工作状态 */
@@ -1414,6 +1416,10 @@ export class RouterManager {
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
+    // 收到了用户的消息、这一轮回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
+    if (!state.groupId && state.turnSilent && state.turnUserItem && !this.store.state(state.assistantId).reactions?.[state.turnUserItem]?.[state.assistantId]) {
+      this.react(state.assistantId, "👀", state.turnUserItem);
+    }
     const reactedOnly = Boolean(state.turnReacted && !state.turnLastText);
     const silent = Boolean(state.turnSilent || reactedOnly);
     if ((state.turnHadWork || state.turnWorkDone || error) && !state.turnDelegation && !busy && (error || !silent)) {
@@ -1436,6 +1442,7 @@ export class RouterManager {
     state.turnFailure = undefined;
     state.turnSilent = undefined;
     state.turnReacted = undefined;
+    state.turnUserItem = undefined;
     state.turnLastText = undefined;
   }
 
@@ -1566,7 +1573,7 @@ export class RouterManager {
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
     // 模型收到这条时记下来：你的消息下面挂 👀，看得出到了
-    const received = () => { this.seen.set(assistantId, id); this.publishBusy(state); };
+    const received = () => { state.turnUserItem = id; };
     void this.deliver(state, basePrompt, { ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text, received });
     return item;
   }
@@ -1775,10 +1782,10 @@ export class RouterManager {
     return this.derived(assistantId).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
   }
 
-  /** 给单聊里最新的一条用户消息点表情回应；再点会换掉。 */
-  react(assistantId: string, emoji: string): { ok: true; itemId: string } | { ok: false; error: string } {
+  /** 给单聊里最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */
+  react(assistantId: string, emoji: string, itemId?: string): { ok: true; itemId: string } | { ok: false; error: string } {
     this.assistant(assistantId);
-    const target = this.derived(assistantId).result.items.findLast((item) => item.kind === "user");
+    const target = this.derived(assistantId).result.items.findLast((item) => item.kind === "user" && (!itemId || item.id === itemId));
     if (!target || target.kind !== "user") return { ok: false, error: "对话里还没有用户的消息，无法添加表情回应。" };
     const all = this.store.state(assistantId).reactions ?? {};
     const forItem = { ...(all[target.id] ?? {}), [assistantId]: emoji };
@@ -1901,9 +1908,6 @@ export class RouterManager {
     }
   }
 
-  /** 单聊里助手接手到哪一条用户消息（进程内）：界面上那条消息下面挂 👀 */
-  private seen = new Map<string, string>();
-
   summary(assistant: Assistant): AssistantSummary {
     const last = this.last(assistant.id);
     return {
@@ -1912,7 +1916,6 @@ export class RouterManager {
       unread: this.unread(assistant.id),
       ...(this.store.state(assistant.id).readAt ? { readAt: this.store.state(assistant.id).readAt } : {}),
       busy: this.isBusy(assistant.id),
-      ...(this.seen.get(assistant.id) ? { seen: this.seen.get(assistant.id) } : {}),
       activity: this.routers.get(assistant.id)?.activity ?? null,
       todos: readTodos(assistantTodosPath(this.runtime.home, assistant.id)),
       ...(this.suggestionsFor(assistant.id)?.length ? { suggestions: this.suggestionsFor(assistant.id) } : {}),

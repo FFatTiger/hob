@@ -1097,15 +1097,11 @@ export async function start() {
   await loadBootstrap();
 }
 
-/** 效果图：消息到了先挂 👀（还在想就左右张望），想完换成 👍 */
+/** 效果图：模型在这一轮里给你的消息点了个赞（还在接着回），表情弹出来 */
 function playReceiptDemo() {
-  const hob = (patch: Partial<AssistantSummary>) => set((s) => ({ assistants: s.assistants.map((a) => (a.id === "hob" ? { ...a, ...patch } : a)) }));
-  hob({ seen: undefined });
-  setTimeout(() => hob({ seen: "rc-4" }), 1200);
   setTimeout(() => {
-    // 模型这一轮里用回应工具点了赞（还在接着回）
     set((s) => ({ items: { ...s.items, hob: (s.items.hob ?? []).map((it) => (it.id === "rc-4" && it.kind === "user" ? { ...it, reactions: [{ by: "hob", emoji: "👍" }] } : it)) } }));
-  }, 4200);
+  }, 1200);
 }
 
 export async function login(password: string) {

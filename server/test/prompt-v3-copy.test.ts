@@ -51,7 +51,11 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
       const workerSource = section("## 四、任务的工具", "## 五、沉淀时发给任务的话");
       const router = buildRouterTools(hob.runtime, "hob");
       for (const name of ["check_job", "delete_skill", "read", "start_job", "reply_job", "stop_job", "ask_user", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "send_file", "set_avatar", "generate_image", "overview", "create_assistant", "message_assistant", "search_knowledge", "find_knowledge", "web_search", "web_fetch"]) {
-        const expected = name === "create_assistant" ? "创建一个专属助手，创建后对话里出一张助手卡。" : line(routerSource, name);
+        const expected = name === "create_assistant"
+          ? "创建一个专属助手，创建后对话里出一张助手卡。"
+          : name === "ask_user"
+            ? "在对话里出一张提问卡，用户答完，答案会回到对话。问题可以是选择题（2 到 3 个选项），也可以是填空题（一行字、一段话、数字、日期、时间）。"
+            : line(routerSource, name);
         expect(router.find((tool) => tool.name === name)?.description, name).toBe(expected);
       }
       expect(router.find((tool) => tool.name === "show_page")?.description.startsWith(`${line(routerSource, "show_page")}\n`)).toBe(true);

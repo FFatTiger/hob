@@ -22,7 +22,7 @@ import {
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
-import type { Approval, ApprovalQuestion, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
+import type { Approval, ApprovalQuestion, ApprovalQuestionInput, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
 import { loginCard, prepareLogin } from "./login.ts";
 import { prepareFillNewPassword } from "./new-password.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
@@ -66,9 +66,11 @@ const checkParam = (group: boolean) => Type.Object({
   then: Type.Union([Type.Literal("notify"), Type.Literal("job")], { description: group ? "有输出时怎么办。notify：把输出原样发到群里提醒用户，不叫醒群主，任务内容不会执行；job：把输出和任务内容一起交给群主，由群主处理。要看了输出再判断、再动手的，填 job。" : "有输出时怎么办。notify：把输出原样发到对话提醒用户，不叫醒你，任务内容不会执行；job：把输出和任务内容一起交给你，由你处理。要看了输出再判断、再动手的，填 job。" }),
 }, { description: checkDescription(group) });
 
-/** ask_user 的 questions 参数说明：照抄 .scratch/v2/design-projects.md 第五节，一字不改。 */
+const QUESTION_INPUTS: readonly ApprovalQuestionInput[] = ["text", "multiline", "number", "date", "time"];
+
+/** ask_user 的 questions 参数说明。 */
 const QUESTIONS_DESCRIPTION =
-  "可选，一次问几个问题时用，每个写 `title`（问题）、`why`（为什么要定它）、`options`（2 到 3 个选项）、`recommended`（推荐哪个选项）。用户答完，答案一起回来。";
+  "可选，一次问几个问题时用。每个问题写 `title`（问题）、`why`（为什么要问它）；选择题写 `options`（2 到 3 个选项）和 `recommended`（推荐哪个选项），填空题不写 `options`，写 `input`（`text` 一行字、`multiline` 一段话、`number` 数字、`date` 日期、`time` 时间）和可选的 `placeholder`。用户答完，答案一起回来。";
 
 
 /** 单问题卡的选项列表。 */
@@ -98,6 +100,33 @@ function approvalFromParams(assistantId: string, groupId: string | undefined, pa
       const n = index + 1;
       const title = titles[index];
       if (!title) return { error: `第 ${n} 个问题缺 title：每个问题都要写清问什么。` };
+      const hasOptions = item?.options !== undefined && item?.options !== null;
+      const hasInput = item?.input !== undefined && item?.input !== null;
+      if (hasOptions && hasInput) {
+        return { error: `第 ${n} 个问题不能同时带 options 和 input：选择题只写 options，填空题只写 input。` };
+      }
+      if (!hasOptions && !hasInput) {
+        return { error: `第 ${n} 个问题缺 options 或 input：选择题写 options（2 到 3 个选项），填空题写 input（text、multiline、number、date 或 time）。` };
+      }
+      const why = typeof item?.why === "string" ? item.why.trim() : "";
+      if (hasInput) {
+        const input = typeof item.input === "string" ? item.input.trim() : "";
+        if (!QUESTION_INPUTS.includes(input as ApprovalQuestionInput)) {
+          return { error: `第 ${n} 个问题的 input 只能是 text、multiline、number、date 或 time，现在填的是「${String(item.input)}」：改成这五种之一。` };
+        }
+        if (item?.recommended !== undefined && item?.recommended !== null && String(item.recommended).trim() !== "") {
+          return { error: `第 ${n} 个问题是填空题，不能带 recommended：去掉 recommended。` };
+        }
+        const placeholder = typeof item?.placeholder === "string" ? item.placeholder.trim() : "";
+        questions.push({
+          title,
+          ...(why ? { why } : {}),
+          options: [],
+          input: input as ApprovalQuestionInput,
+          ...(placeholder ? { placeholder } : {}),
+        });
+        continue;
+      }
       const labels = Array.isArray(item?.options) ? item.options.map((option: any) => String(option?.label ?? "").trim()) : [];
       if (labels.length < 2 || labels.length > 3) {
         return { error: `第 ${n} 个问题的选项要 2 到 3 个，现在有 ${labels.length} 个：合并相近的选项，或者把它拆成两个问题。` };
@@ -108,7 +137,6 @@ function approvalFromParams(assistantId: string, groupId: string | undefined, pa
       if (recommended && !hit) {
         return { error: `第 ${n} 个问题的 recommended 要和其中一个选项的文字一字不差，现在填的是「${recommended}」：填${options.map((option) => `「${option.label}」`).join("或")}。` };
       }
-      const why = typeof item?.why === "string" ? item.why.trim() : "";
       questions.push({ title, ...(why ? { why } : {}), options, ...(hit ? { recommended: hit.key } : {}) });
     }
     return { ...base, options: [], questions };
@@ -656,7 +684,7 @@ export function buildRouterTools(
     {
       name: "ask_user",
       label: "询问用户",
-      description: "在对话里出一张选择题卡片（2 到 3 个选项），用户选完，答案会回到对话。",
+      description: "在对话里出一张提问卡，用户答完，答案会回到对话。问题可以是选择题（2 到 3 个选项），也可以是填空题（一行字、一段话、数字、日期、时间）。",
       parameters: Type.Object({
         title: Type.String({ description: "问题，一句话" }),
         detail: Type.Optional(Type.String({ description: "补充说明，写清后果。" })),
@@ -670,11 +698,19 @@ export function buildRouterTools(
           Type.Object({
             title: Type.String({ description: "问题" }),
             why: Type.Optional(Type.String({ description: "可选，写清为什么要定它" })),
-            options: Type.Array(
+            options: Type.Optional(Type.Array(
               Type.Object({ label: Type.String({ description: "选项文字" }) }),
               { description: "2 到 3 个选项", minItems: 2, maxItems: 3 },
-            ),
+            )),
             recommended: Type.Optional(Type.String({ description: "可选，推荐哪个选项，填选项的文字" })),
+            input: Type.Optional(Type.Union([
+              Type.Literal("text"),
+              Type.Literal("multiline"),
+              Type.Literal("number"),
+              Type.Literal("date"),
+              Type.Literal("time"),
+            ], { description: "填空题的类型：text 一行字、multiline 一段话、number 数字、date 日期、time 时间。不写 options 时必填。" })),
+            placeholder: Type.Optional(Type.String({ description: "可选，输入框里的提示文字。" })),
           }),
           { description: QUESTIONS_DESCRIPTION, minItems: 1, maxItems: 8 },
         )),

@@ -60,7 +60,7 @@ import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.17.0" };
 
-export type SceneId = "cards-demo" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -68,6 +68,12 @@ export const SCENE_UI: Record<
   { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
 > = {
   "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-single": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-multi": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-multi-answered": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-job": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-mobile": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "ask-cards-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "login-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
@@ -1271,6 +1277,129 @@ cp now.txt "$seen"`,
     ];
     if (scene === "todo-job") {
       items.hob.push({ kind: "job", id: "todo-job-card", at: minsAgo(6), jobId: "t-0931" });
+    }
+  }
+
+  // 票 263：提问卡改用卡片渲染（单问题带推荐和 remember、多问题混合选择与填空、已答、任务提问、手机、深色）
+  if (scene.startsWith("ask-cards-")) {
+    const hob = assistants.find((item) => item.id === "hob")!;
+    hob.busy = false;
+    const multiQuestions: ApprovalQuestion[] = [
+      {
+        title: "活动形式",
+        why: "决定预订场地还是只发会议链接。",
+        options: [{ key: "A", label: "线下沙龙" }, { key: "B", label: "线上分享" }],
+        recommended: "A",
+      },
+      {
+        title: "报名确认方式",
+        why: "人多时是否需要提前审核名额。",
+        options: [
+          { key: "A", label: "报名后自动发确认邮件并附上日程文件" },
+          { key: "B", label: "先汇总报名名单，等你核对后再统一通知" },
+        ],
+        recommended: "A",
+      },
+      { title: "主题名称", options: [], input: "text", placeholder: "例如：秋季读书分享会" },
+      { title: "预计人数", options: [], input: "number", placeholder: "填数字" },
+      { title: "活动日期", options: [], input: "date", placeholder: "选择日期" },
+      { title: "开始时间", options: [], input: "time" },
+      { title: "活动说明", why: "会直接放进邀请正文。", options: [], input: "multiline", placeholder: "简单写几句活动内容和要带的东西" },
+    ];
+
+    if (scene === "ask-cards-single") {
+      approvals["ap-263-single"] = {
+        id: "ap-263-single",
+        assistantId: "hob",
+        title: "清理旧构建缓存吗？",
+        detail: "清理后会释放约 4.2 GB 磁盘空间，不会影响当前运行的服务；下次构建需要重新拉取缓存。",
+        options: [
+          { key: "A", label: "立即清理" },
+          { key: "B", label: "暂不清理" },
+          { key: "C", label: "以后「清理旧构建缓存」直接执行", always: true },
+        ],
+        recommended: "A",
+        ruleText: "清理旧构建缓存",
+        status: "pending",
+        source: "router",
+        createdAt: minsAgo(2),
+      };
+      hob.last = { text: "找到 4.2 GB 的旧构建缓存，清理前先确认一下。", at: minsAgo(2) };
+      items.hob = [
+        { kind: "user", id: "ac-s-u", at: minsAgo(4), text: "帮忙看看构建目录占了多少空间，顺手清一下旧缓存。" },
+        asst("ac-s-a", minsAgo(3), "查了一下，过去三个月的旧构建缓存一共占了 4.2 GB，当前版本没用到。"),
+        { kind: "question", id: "ac-s-q", at: minsAgo(2), approvalId: "ap-263-single" },
+      ];
+    } else if (scene === "ask-cards-job") {
+      jobs["j-263-ask"] = {
+        id: "j-263-ask",
+        assistantId: "hob",
+        title: "批量整理季度报表",
+        instruction: "合并三个月的原始表格并生成季度汇总。",
+        status: "waiting",
+        createdAt: minsAgo(8),
+        stats: { reads: 6, commands: 2, edits: 1 },
+        activity: [
+          { at: minsAgo(7), verb: "读", text: "reports/q3-raw.csv" },
+          { at: minsAgo(5), verb: "跑", text: "node scripts/merge-report.mjs --dry-run" },
+        ],
+      };
+      approvals["ap-263-job"] = {
+        id: "ap-263-job",
+        assistantId: "hob",
+        title: "目标目录里已有旧版汇总文件，怎么处理？",
+        detail: "任务「批量整理季度报表」准备写入 `reports/q3-summary.xlsx`，但同名文件已存在（上次修改于上周五）。",
+        options: [
+          { key: "A", label: "先备份旧文件，再写入新汇总" },
+          { key: "B", label: "直接覆盖旧文件" },
+          { key: "C", label: "另存为带日期的新文件名" },
+        ],
+        recommended: "A",
+        status: "pending",
+        source: "job",
+        jobId: "j-263-ask",
+        createdAt: minsAgo(1),
+      };
+      hob.last = { text: "任务执行中需要你确认一下文件怎么处理。", at: minsAgo(1) };
+      items.hob = [
+        { kind: "user", id: "ac-j-u", at: minsAgo(9), text: "把三季度的原始报表合并成一份汇总表。" },
+        { kind: "job", id: "ac-j-job", at: minsAgo(8), jobId: "j-263-ask" },
+        { kind: "question", id: "ac-j-q", at: minsAgo(1), approvalId: "ap-263-job" },
+      ];
+    } else {
+      const answered = scene === "ask-cards-multi-answered";
+      approvals["ap-263-multi"] = {
+        id: "ap-263-multi",
+        assistantId: "hob",
+        title: "安排秋季分享会，定一下这几项",
+        detail: "填完以后我一次起草邀请和日程，发出去之前会再给你看一遍。",
+        options: [],
+        questions: multiQuestions,
+        status: answered ? "answered" : "pending",
+        ...(answered
+          ? {
+            answers: [
+              { key: "A" },
+              { key: "B" },
+              { text: "秋季读书分享会" },
+              { text: "18" },
+              { text: "2026-11-28" },
+              { text: "14:30" },
+              { text: "一起聊两本近期的书，现场备好茶点，欢迎自带一本推荐书。" },
+            ],
+            answeredAt: minsAgo(1),
+          }
+          : {}),
+        source: "router",
+        createdAt: minsAgo(3),
+      };
+      hob.last = { text: answered ? "收到，我来起草邀请和日程。" : "有几项要你定一下，填完我就去起草邀请。", at: minsAgo(2) };
+      items.hob = [
+        { kind: "user", id: "ac-m-u", at: minsAgo(5), text: "帮我安排下周末的读书分享会，顺便起草一份邀请通知。" },
+        asst("ac-m-a", minsAgo(4), "先把形式、时间和人数定一下，填好我就起草通知。"),
+        { kind: "question", id: "ac-m-q", at: minsAgo(3), approvalId: "ap-263-multi" },
+        ...(answered ? [asst("ac-m-done", minsAgo(1), "收到，我按 11 月 28 日 14:30、18 人线下沙龙起草邀请，写好发你确认。")] : []),
+      ];
     }
   }
 

@@ -8012,7 +8012,7 @@ button.screen,
 .hc-generate { flex: none; display: inline-flex; align-items: center; gap: 6px; min-height: 38px; padding: 0 12px; border-radius: 10px; background: var(--card); color: var(--text); font-size: 13px; font-weight: 500; }
 .hc-number { display: flex; align-items: center; width: fit-content; min-height: 38px; border-radius: 10px; background: var(--card); overflow: hidden; }
 .hc-number .hc-input { width: 64px; flex: none; padding-left: 4px; padding-right: 4px; text-align: center; background: transparent; }
-.hc-number button { width: 36px; height: 38px; flex: none; color: var(--text2); font-size: 18px; }
+.hc-number button { width: 36px; height: 38px; flex: none; display: grid; place-items: center; color: var(--text2); font-size: 18px; }
 .hc-number button:disabled { color: var(--text3); }
 .hc-date { position: relative; display: flex; align-items: center; justify-content: space-between; min-height: 38px; padding: 8px 12px; border-radius: 10px; background: var(--card); }
 .hc-date span { white-space: nowrap; font-size: 14px; }
@@ -8029,10 +8029,10 @@ button.screen,
 .hc-error { color: var(--danger); font-size: 12.5px; }
 .hc-field.has-error .hc-input, .hc-field.has-error .hc-input-wrap, .hc-field.has-error .hc-select-button, .hc-field.has-error .hc-date { box-shadow: inset 0 0 0 1.5px var(--danger); }
 .hc-empty { color: var(--text3); }
-.hc-result-list { display: flex; flex-direction: column; gap: 1px; margin-top: 10px; padding: 4px; background: var(--card); border-radius: 10px; }
-.hc-result-row { display: flex; align-items: baseline; gap: 10px; min-height: 34px; padding: 6px 8px; border-radius: 7px; font-size: 13.5px; }
-.hc-result-row span { min-width: 64px; max-width: 45%; flex: 0 0 auto; color: var(--text2); }
-.hc-result-row b { min-width: 0; font-weight: 500; white-space: pre-wrap; word-break: break-word; }
+.hc-result-list { display: grid; grid-template-columns: minmax(64px, max-content) minmax(0, 1fr); column-gap: 10px; row-gap: 1px; margin-top: 10px; padding: 4px; background: var(--card); border-radius: 10px; font-size: 13.5px; line-height: 1.5; }
+.hc-result-row { display: contents; }
+.hc-result-row span { max-width: 180px; padding: 6px 0 6px 8px; color: var(--text2); }
+.hc-result-row b { min-width: 0; padding: 6px 8px 6px 0; font-weight: 500; white-space: pre-wrap; word-break: break-word; }
 .hc-done-result { margin-top: 10px; }
 .hc-toast { padding: 8px 10px; border-radius: 8px; color: var(--text); background: color-mix(in srgb, var(--text) 8%, transparent); font-size: 13px; }
 .hc-toast.success { color: var(--ok); background: color-mix(in srgb, var(--ok) 12%, transparent); }

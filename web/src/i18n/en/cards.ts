@@ -17,4 +17,6 @@ export const cardsEn: Record<string, string> = {
   "最多 {count} 个字": "At most {count} characters",
   "不能小于 {value}": "Cannot be less than {value}",
   "不能大于 {value}": "Cannot be greater than {value}",
+  "补充": "Note",
+  "选择日期": "Select date",
 };

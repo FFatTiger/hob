@@ -883,12 +883,16 @@ export interface ApprovalOption {
   always?: boolean; // 选中后写一条 allow 规则
 }
 
-/** 一张卡里的一个问题（ask_user 的 questions）：选项 key 照旧 A、B、C。 */
+export type ApprovalQuestionInput = "text" | "multiline" | "number" | "date" | "time";
+
+/** 一张卡里的一个问题（ask_user 的 questions）：选择题选项 key 照旧 A、B、C；填空题带 input、options 为空数组。 */
 export interface ApprovalQuestion {
   title: string; // 问题
   why?: string; // 为什么要定它
-  options: ApprovalOption[]; // 2 到 3 个
-  recommended?: ApprovalOption["key"]; // 推荐哪个选项
+  options: ApprovalOption[]; // 选择题 2 到 3 个；填空题为空数组
+  recommended?: ApprovalOption["key"]; // 推荐哪个选项（仅选择题）
+  input?: ApprovalQuestionInput; // 填空题类型
+  placeholder?: string; // 填空题提示文字
 }
 
 /** 一个问题答了什么：选了选项（key），或者自己写了一句（text）。 */

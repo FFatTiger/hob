@@ -85,6 +85,8 @@ export interface CardInput extends CardElementBase {
   tag: "input";
   name?: string;
   label?: CardText;
+  /** Hob 扩展：字段标签下方的小号灰字说明（如多问题提问卡里的 why）。 */
+  hint?: CardText;
   placeholder?: CardText;
   default_value?: string | number;
   required?: boolean;
@@ -105,18 +107,24 @@ export interface CardSelectStatic extends CardElementBase {
   tag: "select_static";
   name?: string;
   label?: CardText;
+  /** Hob 扩展：字段标签下方的小号灰字说明。 */
+  hint?: CardText;
   options: CardSelectOption[];
   initial_option?: string;
   placeholder?: CardText;
   required?: boolean;
-  /** Hob 扩展：画成下拉还是圆角小块；不写时选项少画小块、多了画下拉。 */
+  /** Hob 扩展：画成下拉还是圆角小块；不写时选项不超过 5 个全部摆出来，超过才用下拉。 */
   display?: "dropdown" | "chips";
+  /** Hob 扩展：允许不选预设项、改为自己写一句（提问卡用）。 */
+  allow_custom?: boolean;
+  custom_placeholder?: CardText;
 }
 
 export interface CardMultiSelectStatic extends CardElementBase {
   tag: "multi_select_static";
   name?: string;
   label?: CardText;
+  hint?: CardText;
   options: CardSelectOption[];
   initial_options?: string[];
   placeholder?: CardText;
@@ -127,6 +135,8 @@ export interface CardDatePicker extends CardElementBase {
   tag: "date_picker";
   name?: string;
   label?: CardText;
+  hint?: CardText;
+  placeholder?: CardText;
   initial_date?: string;
   required?: boolean;
 }
@@ -135,6 +145,8 @@ export interface CardTimePicker extends CardElementBase {
   tag: "picker_time";
   name?: string;
   label?: CardText;
+  hint?: CardText;
+  placeholder?: CardText;
   initial_time?: string;
   required?: boolean;
 }
@@ -143,6 +155,7 @@ export interface CardDateTimePicker extends CardElementBase {
   tag: "picker_datetime";
   name?: string;
   label?: CardText;
+  hint?: CardText;
   initial_datetime?: string;
   required?: boolean;
 }

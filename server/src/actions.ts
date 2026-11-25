@@ -21,6 +21,25 @@ export interface ActionResult {
 /** 其他想法的长度上限（字）。 */
 export const MAX_ANSWER_TEXT = 1000;
 
+function isValidDate(value: string): boolean {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(value);
+  if (!match) return false;
+  const year = Number(match[1]);
+  const month = Number(match[2]);
+  const day = Number(match[3]);
+  if (month < 1 || month > 12 || day < 1 || day > 31) return false;
+  const date = new Date(Date.UTC(year, month - 1, day));
+  return date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day;
+}
+
+function isValidTime(value: string): boolean {
+  const match = /^(\d{2}):(\d{2})$/.exec(value);
+  if (!match) return false;
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  return hour >= 0 && hour <= 23 && minute >= 0 && minute <= 59;
+}
+
 /** 一张卡问了几个问题时的答案：每个问题都要有，缺一个就不收。 */
 function readAnswers(questions: ApprovalQuestion[], input: AnswerApprovalBody): { answers: ApprovalAnswer[] } | { error: string } {
   const given = Array.isArray(input.answers) ? input.answers : [];
@@ -29,9 +48,25 @@ function readAnswers(questions: ApprovalQuestion[], input: AnswerApprovalBody): 
     const n = index + 1;
     const item = given[index];
     const key = item?.key;
+    const text = typeof item?.text === "string" ? item.text.trim() : "";
+    if (question.input) {
+      if (key) return { error: `第 ${n} 个问题是填空题，不能按选项回答` };
+      if (!text) return { error: `第 ${n} 个问题还没答：请填写「${question.title}」。` };
+      if (text.length > MAX_ANSWER_TEXT) return { error: `第 ${n} 个问题的回答最多 ${MAX_ANSWER_TEXT} 字` };
+      if (question.input === "number" && !Number.isFinite(Number(text))) {
+        return { error: `第 ${n} 个问题需要填写有效数字：「${text}」不是数字。` };
+      }
+      if (question.input === "date" && !isValidDate(text)) {
+        return { error: `第 ${n} 个问题需要填写合法日期（YYYY-MM-DD）：「${text}」格式不对。` };
+      }
+      if (question.input === "time" && !isValidTime(text)) {
+        return { error: `第 ${n} 个问题需要填写合法时间（HH:MM）：「${text}」格式不对。` };
+      }
+      answers.push({ text });
+      continue;
+    }
     const option = key ? question.options.find((choice) => choice.key === key) : undefined;
     if (key && !option) return { error: `第 ${n} 个问题没有这个选项：${key}` };
-    const text = typeof item?.text === "string" ? item.text.trim() : "";
     if (!option && !text) return { error: `第 ${n} 个问题还没答：「${question.title}」要选一个选项，或者自己写一句。` };
     if (text.length > MAX_ANSWER_TEXT) return { error: `第 ${n} 个问题的回答最多 ${MAX_ANSWER_TEXT} 字` };
     answers.push(option ? { key: option.key } : { text });
@@ -39,12 +74,14 @@ function readAnswers(questions: ApprovalQuestion[], input: AnswerApprovalBody): 
   return { answers };
 }
 
-/** 多问题卡回给助手的文字：一行一个问题，没按推荐答的标出推荐的是哪个。 */
+/** 多问题卡回给助手的文字：一行一个问题，没按推荐答的标出推荐的是哪个；填空题直接写答案值。 */
 function answersText(approval: Approval, questions: ApprovalQuestion[], answers: ApprovalAnswer[], note: string): string {
   const lines = [`用户回答了「${approval.title}」：`];
   questions.forEach((question, index) => {
     const answer = answers[index]!;
-    if (answer.key) {
+    if (question.input) {
+      lines.push(`${index + 1}. ${question.title}：${answer.text ?? ""}`);
+    } else if (answer.key) {
       const label = question.options.find((option) => option.key === answer.key)?.label ?? "";
       const tip = question.recommended && question.recommended !== answer.key ? `（推荐的是 ${question.recommended}）` : "";
       lines.push(`${index + 1}. ${question.title}：选了 ${answer.key}：${label}${tip}`);

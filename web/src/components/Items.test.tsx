@@ -62,7 +62,7 @@ describe("对话卡片出处", () => {
     vi.unstubAllGlobals();
   });
 
-  it("一张卡问几个问题：待答的默认选推荐，答过的标出推荐的是哪个", () => {
+  it("一张卡问几个问题：用卡片组件渲染，待答的默认选推荐，答过和过期按卡片状态锁住", () => {
     vi.stubGlobal("window", { matchMedia: () => ({ matches: false }) });
     const questions: ApprovalQuestion[] = [
       { title: "筛选放在哪？", why: "决定改哪个页面。", options: [{ key: "A", label: "导出对话框" }, { key: "B", label: "页面上" }], recommended: "A" },
@@ -78,27 +78,27 @@ describe("对话卡片出处", () => {
     };
 
     const pending = html(ask({}));
+    expect(pending).toContain("b q hc");
     expect(pending).toContain("筛选放在哪？");
     expect(pending).toContain("决定改哪个页面。");
-    expect(pending).toContain("推荐");
     expect(pending).toContain("自己写");
     // 每题都能自己写，卡上不另设补充框
     expect(pending).not.toContain("补充说明（可选）");
-    // 推荐的那项默认选中（第一题 A「导出对话框」），另一题也是 A
-    expect(pending).toContain('class="opt chosen"');
-    expect(pending.match(/class="opt chosen"/g)).toHaveLength(2);
+    // 推荐的那项默认选中（两题默认均选中 A）
+    expect(pending.match(/class="hc-option active"/g)).toHaveLength(2);
 
     const answered = html(
       ask({ status: "answered", answers: [{ key: "B" }, { text: "按季度给" }], answerText: "先按这个做" }),
     );
-    expect(answered).toContain("B");
+    expect(answered).toContain("hc-disabled");
+    expect(answered).toContain("hc-result-list");
     expect(answered).toContain("页面上");
-    expect(answered).toContain("推荐的是 A：导出对话框");
     expect(answered).toContain("按季度给");
-    expect(answered).toContain("补充：先按这个做");
+    expect(answered).toContain("先按这个做");
     expect(answered).not.toContain("补充说明（可选）");
 
     const expired = html(ask({ status: "expired" }));
+    expect(expired).toContain("hc-disabled");
     expect(expired).toContain("已结束");
     expect(expired).not.toContain("补充说明（可选）");
     state.approvals = {};

@@ -19,7 +19,7 @@ import { Home } from "./components/Home.tsx";
 import { groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
-import { gonePages, layerList, pageKey, panelAssistant, type GonePage } from "./panel-stack.ts";
+import { gonePages, layerList, pageKey, panelDesk, type GonePage } from "./panel-stack.ts";
 import { backPanel, answer, clearNotice, closeLoginDesktop, loadDesktopWidth, saveDesktopWidth, start, tick, useApp, type PanelPage } from "./store.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
 import { useDesktopScreens } from "./desktop-screens.ts";
@@ -230,8 +230,7 @@ export function App() {
   // 桌面没打开对话就是首页：右栏收起，点开的任务、文件照样盖上来
   const home = !s.sel && !s.gsel;
   const sideHidden = s.sideCollapsed && !home;
-  const desktopId = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
-  const desktopFocus = s.nowWide && (!s.gsel || top?.kind === "member") && !!desktopId && desktop.screens.some((entry) => entry.id === desktopId && entry.running);
+  const desktopFocus = s.nowWide && (!s.gsel || !top || top.kind === "member") && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop).running;
 
   if (narrow) {
     return (

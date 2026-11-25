@@ -63,7 +63,7 @@ import {
 import { cronText, fmtElapsed, fmtWhen, parseCron, routineRunUsage, scheduleCron, timePointText, WEEK, type Schedule } from "../util.ts";
 import { CollapsePanelButton, PanelHead } from "./PanelHead.tsx";
 import { Disclosure } from "./Disclosure.tsx";
-import { panelAssistant } from "../panel-stack.ts";
+import { panelAssistant, panelDesk } from "../panel-stack.ts";
 import { DesktopWakeTracker } from "../desktop-wake.ts";
 import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./status-meta.tsx";
 import { GroupCluster, membersOf } from "./Groups.tsx";
@@ -99,13 +99,12 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   const [rootScrolled, setRootScrolled] = useState(false);
   const selectedAssistant = s.profiles[panelAssistant(s.panelStack, s.sel)]?.assistant ?? s.assistants.find((a) => a.id === (panelAssistant(s.panelStack, s.sel)));
   const desktop = useDesktopScreens();
-  const focusScreen = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
-  const focus = !mobile && kind === "now" && !group && s.nowWide && !!focusScreen && desktop.screens.some((entry) => entry.id === focusScreen && entry.running);
+  const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop).running;
   useEffect(() => setRootScrolled(false), [s.sel, s.gsel]);
   const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" ? t("执行前确认") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
     <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
-      {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
+      {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && !focus && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
         {kind === "now" && !group ? <button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button> : null}
         {kind === "now" && group ? <button className="hob-icon-btn" title={t("编辑群")} onClick={() => openGroupSettings(group.parentId ?? group.id)}><Icon name="edit" size={17} /></button> : null}
         {kind === "routines" ? <button className="hob-icon-btn" title={t("新建定时任务")} onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}
@@ -120,8 +119,8 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
           <GroupSettings id={panel.id} />
         ) : kind === "assistant" ? (
           <AssistantSettings key={panelAssistant(s.panelStack, s.sel)} />
-        ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group ? (
-          group.parentId ? <><GroupPanel g={s.groups.find((g) => g.id === group.parentId) ?? group} topic={group} /><TopicClose topic={group} /></> : <GroupPanel g={group} />
+        ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group && !focus ? (
+          group.parentId ? <><GroupPanel mobile={mobile} g={s.groups.find((g) => g.id === group.parentId) ?? group} topic={group} /><TopicClose topic={group} /></> : <GroupPanel mobile={mobile} g={group} />
         ) : (
           <PanelNow mobile={mobile} focus={focus}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails desktopRow={desktopRow} /> : null}</>}</PanelNow>
         )}
@@ -134,7 +133,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
  * 右栏：群信息——群头像和名字、群主和人数、状态、负责什么、成员（空闲 / 在办几件）、添加成员、结束这个群。
  * 成员的「设为群主 / 移出群」在成员行右边的 ⋯ 里（手机上一直看得见，桌面上悬停才出现）。
  */
-function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
+function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummary; mobile: boolean }) {
   const s = useApp();
   const members = membersOf(g, s.assistants);
   const owner = members.find((m) => m.id === g.ownerId);
@@ -185,6 +184,8 @@ function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
           <div className="gpanel-origin"><small>{t("工作目录")}</small>{g.cwd}</div>
         ) : null}
       </div>
+
+      <PanelNow mobile={mobile} focus={false} deskOnly />
 
       <PanelRootDetails
         groupId={g.id}
@@ -298,9 +299,12 @@ function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
 }
 
 /** children 拿到「云桌面 · 待机」那一行（屏幕没开时才有），放进下面定时任务那组；打开全屏仍由这里管。 */
-function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean; children?: (desktopRow: ReactNode) => ReactNode }) {
+function PanelNow({ mobile, focus, deskOnly = false, children }: { mobile: boolean; focus: boolean; deskOnly?: boolean; children?: (desktopRow: ReactNode) => ReactNode }) {
   const s = useApp();
-  const aid = panelAssistant(s.panelStack, s.sel);
+  // 群信息页上讲的是屏幕在跑的那个成员，其余就是右栏讲的那个助手
+  const desktop = useDesktopScreens();
+  const deskOf = panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop);
+  const aid = deskOf.aid;
   const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
   const jobs = Object.values(s.jobs);
   const { running: job, last } = sidebarJobs(jobs, aid);
@@ -308,19 +312,18 @@ function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean
   const next = nextRoutine(s.routines.filter((r) => r.assistantId === aid && !r.groupId), s.settings.settings.general.timezone);
 
   // 只有当前助手的屏幕运行时显示小屏，屏幕关闭后恢复命令行。
-  const desktop = useDesktopScreens();
-  const screenId = desktop.profiles[panelAssistant(s.panelStack, s.sel)];
-  const desk = !!screenId && desktop.screens.some((entry) => entry.id === screenId && entry.running);
+  const screenId = deskOf.screenId;
+  const desk = deskOf.running;
   // 配了云桌面、这个助手的屏幕还没开：定时任务那组里留一行，点开全屏看（打开时会启动屏幕），比如先替助手登录网站
   const deskIdle = !desk && !!screenId && desktop.screens.some((entry) => entry.id === screenId && !entry.running);
   const desktopRow = deskIdle ? <button onClick={() => setScreen("view")}><Icon name="monitor" size={15} /><span>{t("云桌面")}</span><small>{t("待机")}</small><b>›</b></button> : null;
   const currentPanel = s.panelStack.at(-1);
   const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
   useEffect(() => {
-    const action = desktopWakeTracker.observe(desktop.screens, screenId, wakeEligible, s.collapsed, s.nowWide);
+    const action = desktopWakeTracker.observe(desktop.screens, deskOf.watch, wakeEligible, s.collapsed, s.nowWide);
     if (action === "restore") setNowWide(false);
     else if (action === "expand") showNowWide();
-  }, [desktop.screens, screenId, wakeEligible, s.collapsed, s.nowWide]);
+  }, [desktop.screens, deskOf.watch.join(), wakeEligible, s.collapsed, s.nowWide]);
   useEffect(() => () => desktopWakeTracker.unwatch(), []);
   const [screen, setScreen] = useState<null | "view" | "take">(null);
   const wide = desk && s.nowWide;
@@ -355,6 +358,30 @@ function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean
     </button>
   );
 
+  const deskBlock = <>
+      {desk ? (
+        <div className="now-desk">
+          <div className="now-screen">
+            <button className="now-hit" title={wide ? t("缩小右栏") : t("在侧栏展开")} aria-label={wide ? t("缩小右栏") : t("在侧栏展开")} onClick={toggleNowWide} />
+            <Suspense fallback={null}><DesktopMini key={screenId} screen={screenId!} /></Suspense>
+            <span className="now-live">{deskOnly && assistant ? `${assistant.name} · ` : ""}{t("实时")}</span>
+            <div className="now-acts">
+              {wide ? <button className="now-btn" title={t("缩小右栏")} aria-label={t("缩小右栏")} onClick={toggleNowWide}><Icon name="shrink" size={15} /></button> : null}
+              {!mobile && !wide ? <button className="now-btn" title={t("在侧栏展开")} aria-label={t("在侧栏展开")} onClick={toggleNowWide}><Icon name="panel" size={15} /></button> : null}
+              <button className="now-btn" title={t("全屏")} aria-label={t("全屏查看云桌面")} onClick={() => setScreen("view")}><Icon name="expand" size={15} /></button>
+              <button className="now-btn txt" title={t("接管云桌面")} onClick={() => setScreen("take")}><Icon name="pointer" size={14} />{t("接管")}</button>
+            </div>
+          </div>
+          {job ? log("strip", wide ? t("缩小右栏") : t("在侧栏展开"), toggleNowWide) : null}
+        </div>
+      ) : null}
+      {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
+      {desktop.error ? <div className="badline">{t("云桌面状态读取失败：{error}", { error: desktop.error })}</div> : null}
+    </>;
+
+  // 群信息页：只放屏幕在跑的那个成员的小屏，身份和任务由群信息自己讲
+  if (deskOnly) return desk ? <div className="group-card sidebar-card">{deskBlock}</div> : deskBlock;
+
   if (focus && desk) return <div className="focus-desktop">
     <div className="focus-head"><strong>{assistant?.name}</strong><span className="focus-live">{t("实时")}</span><span className="sp" />
       <button className="hob-icon-btn" title={t("缩小右栏")} aria-label={t("缩小右栏")} onClick={toggleNowWide}><Icon name="shrink" size={17} /></button>
@@ -374,24 +401,7 @@ function PanelNow({ mobile, focus, children }: { mobile: boolean; focus: boolean
       {!assistant?.primary && assistant?.cwd ? (
         <div className="gpanel-origin"><small>{t("工作目录")}</small>{assistant.cwd}</div>
       ) : null}
-      {desk ? (
-        <div className="now-desk">
-          <div className="now-screen">
-            <button className="now-hit" title={wide ? t("缩小右栏") : t("在侧栏展开")} aria-label={wide ? t("缩小右栏") : t("在侧栏展开")} onClick={toggleNowWide} />
-            <Suspense fallback={null}><DesktopMini key={screenId} screen={screenId!} /></Suspense>
-            <span className="now-live">{t("实时")}</span>
-            <div className="now-acts">
-              {wide ? <button className="now-btn" title={t("缩小右栏")} aria-label={t("缩小右栏")} onClick={toggleNowWide}><Icon name="shrink" size={15} /></button> : null}
-              {!mobile && !wide ? <button className="now-btn" title={t("在侧栏展开")} aria-label={t("在侧栏展开")} onClick={toggleNowWide}><Icon name="panel" size={15} /></button> : null}
-              <button className="now-btn" title={t("全屏")} aria-label={t("全屏查看云桌面")} onClick={() => setScreen("view")}><Icon name="expand" size={15} /></button>
-              <button className="now-btn txt" title={t("接管云桌面")} onClick={() => setScreen("take")}><Icon name="pointer" size={14} />{t("接管")}</button>
-            </div>
-          </div>
-          {job ? log("strip", wide ? t("缩小右栏") : t("在侧栏展开"), toggleNowWide) : null}
-        </div>
-      ) : null}
-      {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
-      {desktop.error ? <div className="badline">{t("云桌面状态读取失败：{error}", { error: desktop.error })}</div> : null}
+      {deskBlock}
       {!desk ? <div className={`now-log${job ? " open" : ""}`} inert={!job}><div>{logPresence.mounted && job ? log("jd-open", t("打开任务详情"), () => openJob(job.id)) : logPresence.mounted ? log("jd-open", t("打开任务详情"), () => {}) : null}</div></div> : null}
       {job ? (
         <>

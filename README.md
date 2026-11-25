@@ -50,7 +50,7 @@ Hob works in a mobile browser and can be added to the home screen as an app. Pus
 
 ## Plugin marketplace
 
-Install tool plugins from the marketplace—starting with GitHub, Cloudflare, Gmail, an IMAP/SMTP mailbox and Bitwarden—to give assistants and jobs new tools. Each plugin gets its own settings page, sign-in when needed, per-tool switches and a choice of which assistants may use it. The marketplace also carries community provider plugins (Copilot, ChatGPT, the GLM Coding Plan, Antigravity and OpenCode Zen Free; compatible with OpenCode provider plugins, unofficial integrations) so you can use subscriptions or accounts you already have. Any MCP server can be added as a custom plugin, and you can host your own plugin source by forking [hob-plugins](https://github.com/FFatTiger/hob-plugins).
+Install tool plugins from the marketplace—starting with GitHub, Cloudflare, Gmail, an IMAP/SMTP mailbox and Bitwarden—to give assistants and jobs new tools. Each plugin gets its own settings page, sign-in when needed, per-tool switches and a choice of which assistants may use it. The marketplace also carries community provider plugins (Copilot, ChatGPT, the GLM Coding Plan, Antigravity and OpenCode Zen Free; compatible with OpenCode provider plugins, unofficial integrations) so you can use subscriptions or accounts you already have. Any MCP server can be added as a custom plugin; to host your own source or submit a plugin to the official marketplace, see [hob-plugins](https://github.com/FFatTiger/hob-plugins) and its [contributing guide](https://github.com/FFatTiger/hob-plugins/blob/main/CONTRIBUTING.md).
 
 ![Plugin marketplace: installed tool and provider plugins on the left, category filters and installable plugins on the right](docs/screenshots/en/plugins.png)
 
@@ -133,6 +133,10 @@ npm run typecheck
 Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend, with no model or server needed. The screenshots in this README are taken that way by `scripts/readme-screenshots.mjs`.
 
 Stack: Node 22 + TypeScript, Hono with SSE, Vite + React with hand-written CSS. The agent engine is the [pi](https://github.com/earendil-works/pi) SDK, running in-process. See [docs/architecture.md](docs/architecture.md) for the design, data layout and tool list (in Chinese).
+
+### Writing and contributing plugins
+
+Official tool plugins (MCP) and OpenCode-compatible provider plugins live in [FFatTiger/hob-plugins](https://github.com/FFatTiger/hob-plugins). To contribute one, fork that repository, add your plugin directory (`plugin.json` plus `mcp.json` or pinned `providers` with `package.json` and `bun.lock`), run `node scripts/build-index.mjs`, test it in Hob as a custom plugin source, and open a pull request. Full schema details and security review rules are in the [plugin contributing guide](https://github.com/FFatTiger/hob-plugins/blob/main/CONTRIBUTING.md).
 
 ## License
 

@@ -50,7 +50,7 @@
 
 ## 插件市场
 
-从插件市场安装工具插件（目前有 GitHub、Cloudflare、Gmail、支持 IMAP/SMTP 的邮箱和 Bitwarden），助手和任务就多了一批趁手的工具。每个插件有自己的配置页，需要登录的服务可以直接登录，工具能逐个开关，也能指定给哪些助手用。市场里还有社区维护的供应商插件（Copilot、ChatGPT 订阅、GLM 编程套餐、Antigravity、OpenCode Zen Free，兼容 OpenCode 供应商插件，属于非官方接入），能直接复用你已有的订阅或账号。任意 MCP 服务都能作为自定义插件加进来；fork [hob-plugins](https://github.com/FFatTiger/hob-plugins) 就能建自己的插件源。
+从插件市场安装工具插件（目前有 GitHub、Cloudflare、Gmail、支持 IMAP/SMTP 的邮箱和 Bitwarden），助手和任务就多了一批趁手的工具。每个插件有自己的配置页，需要登录的服务可以直接登录，工具能逐个开关，也能指定给哪些助手用。市场里还有社区维护的供应商插件（Copilot、ChatGPT 订阅、GLM 编程套餐、Antigravity、OpenCode Zen Free，兼容 OpenCode 供应商插件，属于非官方接入），能直接复用你已有的订阅或账号。任意 MCP 服务都能作为自定义插件加进来；自建插件源或向官方市场提交新插件，见 [hob-plugins](https://github.com/FFatTiger/hob-plugins) 及[插件贡献指南](https://github.com/FFatTiger/hob-plugins/blob/main/CONTRIBUTING.zh-CN.md)。
 
 ![插件市场：左栏是已安装的工具和供应商插件，右侧可按分类浏览和一键安装](docs/screenshots/plugins.png)
 
@@ -133,6 +133,10 @@ npm run typecheck
 前端地址加上 `?mock=1` 会改用浏览器里的模拟后端，不需要模型和服务端，README 里的截图就是这样拍的（`scripts/readme-screenshots.mjs`）。
 
 技术栈：Node 22 + TypeScript，Hono + SSE，Vite + React，CSS 全部手写；智能体引擎是进程内运行的 [pi](https://github.com/earendil-works/pi) SDK。设计、数据布局和工具列表见 [docs/architecture.md](docs/architecture.md)。
+
+### 编写和贡献插件
+
+官方工具插件（MCP）和兼容 OpenCode 的供应商插件统一维护在 [FFatTiger/hob-plugins](https://github.com/FFatTiger/hob-plugins)。贡献插件时，fork 该仓库并新建插件目录（`plugin.json` 配 `mcp.json`，或配锁死依赖的 `providers`、`package.json` 与 `bun.lock`），运行 `node scripts/build-index.mjs` 更新索引，在 Hob 里添加为自定义插件源实测通过后提 PR。完整字段规范和安全审核要求见[插件贡献指南](https://github.com/FFatTiger/hob-plugins/blob/main/CONTRIBUTING.zh-CN.md)。
 
 ## 许可证
 

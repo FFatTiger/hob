@@ -7,7 +7,7 @@ import { pluginOAuthLoggedIn, pluginOAuthNeedsRelogin, pluginOAuthProvider, type
 import { McpOAuthAuthorizationRequiredError } from "@earendil-works/pi-mcp/oauth";
 import { McpAuthRequiredError, McpClient, McpHttpError, StdioTransport, StreamableHttpTransport, limitMcpContent, normalizeMcpInputSchema, toLlmContent, validateMcpServerConfig, type Tool } from "@earendil-works/pi-mcp";
 import type { Card } from "../../shared/cards.ts";
-import type { PluginCredentialRole } from "../../shared/types.ts";
+import type { PluginCredentialRole, PluginLoginRole, PluginToolLoginPollResult, PluginToolLoginStartResult, PluginToolLoginStatus, PluginToolLoginView } from "../../shared/types.ts";
 import { t } from "../../shared/i18n.ts";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { cardTitle, validateCard } from "./cards.ts";
@@ -17,8 +17,9 @@ import { PluginStore } from "./plugin-store.ts";
 import { proxyEnvironment, type ProxyEnvironmentSettings } from "./network-proxy.ts";
 
 export type PluginConnectionStatus = "pending_config" | "connecting" | "idle" | "connected" | "needs_login" | "needs_relogin" | "error";
-export interface PluginServiceState { pluginId: string; name: string; status: PluginConnectionStatus; missing?: string[]; error?: string; tools: Tool[]; toolErrors?: { name: string; reason: string }[]; oauth?: { declared: boolean; loggedIn: boolean } }
+export interface PluginServiceState { pluginId: string; name: string; status: PluginConnectionStatus; missing?: string[]; error?: string; tools: Tool[]; toolErrors?: { name: string; reason: string }[]; oauth?: { declared: boolean; loggedIn: boolean }; login?: { roles: PluginLoginRole[]; status?: PluginToolLoginStatus } }
 export interface CredentialProvider { pluginId: string; providerName: string; service: string; tool: string; role: PluginCredentialRole }
+export interface LoginToolProvider { pluginId: string; service: string; tool: string; role: PluginLoginRole }
 type Connection = {
   state: PluginServiceState;
   client?: McpClient;
@@ -38,6 +39,101 @@ type Connection = {
 export const PLUGIN_IDLE_MS = 10 * 60 * 1000;
 const execSecret = promisify(execCallback);
 const isObject = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
+const LOGIN_ROLES = new Set<PluginLoginRole>(["status", "start", "poll", "logout"]);
+
+function loginToolsIn(tools: Tool[]): Partial<Record<PluginLoginRole, Tool>> {
+  const found: Partial<Record<PluginLoginRole, Tool>> = {};
+  for (const tool of tools) {
+    const meta = isObject(tool._meta) ? tool._meta : undefined;
+    const role = meta?.["hob/login"];
+    if (typeof role === "string" && LOGIN_ROLES.has(role as PluginLoginRole) && !found[role as PluginLoginRole]) {
+      found[role as PluginLoginRole] = tool;
+    }
+  }
+  return found;
+}
+
+function parseLoginPayload(
+  response: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean },
+  redact: (text: string) => string,
+  fallbackError: string,
+): Record<string, unknown> {
+  const text = (response.content ?? [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text ?? "")
+    .join("\n")
+    .trim();
+  if (response.isError) {
+    const structuredMessage = isObject(response.structuredContent) && typeof response.structuredContent.message === "string"
+      ? response.structuredContent.message.trim()
+      : "";
+    throw new Error(redact(text || structuredMessage || fallbackError));
+  }
+  if (isObject(response.structuredContent)) return response.structuredContent;
+  if (text) {
+    try {
+      const parsed: unknown = JSON.parse(text);
+      if (isObject(parsed)) return parsed;
+    } catch { /* ignore non-JSON text */ }
+  }
+  return {};
+}
+
+function parseLoginStatus(
+  response: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean },
+  redact: (text: string) => string,
+): PluginToolLoginStatus {
+  const data = parseLoginPayload(response, redact, "查询登录状态失败");
+  if (typeof data.signedIn !== "boolean") throw new Error("插件登录状态工具返回格式无效");
+  return {
+    signedIn: data.signedIn,
+    ...(typeof data.account === "string" && data.account ? { account: redact(data.account) } : {}),
+    ...(typeof data.detail === "string" && data.detail ? { detail: redact(data.detail) } : {}),
+  };
+}
+
+function parseLoginStart(
+  response: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean },
+  redact: (text: string) => string,
+): PluginToolLoginStartResult {
+  const data = parseLoginPayload(response, redact, "启动登录失败");
+  if (data.kind === "done") return { kind: "done" };
+  if (data.kind === "device_code") {
+    if (typeof data.url !== "string" || !data.url || typeof data.userCode !== "string" || !data.userCode) {
+      throw new Error("插件设备码登录缺少验证网址或验证码");
+    }
+    const expiresAt = typeof data.expiresAt === "string" && data.expiresAt
+      ? data.expiresAt
+      : typeof data.expiresAt === "number" && Number.isFinite(data.expiresAt)
+        ? new Date(data.expiresAt > 1e12 ? data.expiresAt : data.expiresAt * 1000).toISOString()
+        : undefined;
+    const interval = typeof data.interval === "number" && Number.isFinite(data.interval) && data.interval > 0
+      ? data.interval
+      : undefined;
+    return {
+      kind: "device_code",
+      url: data.url,
+      userCode: data.userCode,
+      ...(expiresAt ? { expiresAt } : {}),
+      ...(interval !== undefined ? { interval } : {}),
+    };
+  }
+  throw new Error("插件登录启动返回了不支持的类型");
+}
+
+function parseLoginPoll(
+  response: { content?: { type: string; text?: string }[]; structuredContent?: unknown; isError?: boolean },
+  redact: (text: string) => string,
+): PluginToolLoginPollResult {
+  const data = parseLoginPayload(response, redact, "查询登录结果失败");
+  if (data.state !== "pending" && data.state !== "done" && data.state !== "error") {
+    throw new Error("插件登录轮询返回格式无效");
+  }
+  return {
+    state: data.state,
+    ...(typeof data.message === "string" && data.message ? { message: redact(data.message) } : {}),
+  };
+}
 
 /** Owns one connection per enabled, configured service; all sessions share these clients. */
 export class PluginHost {
@@ -109,6 +205,97 @@ export class PluginHost {
     }
     if (!isObject(response.structuredContent)) throw new Error("凭据工具没有返回结构化结果");
     return response.structuredContent;
+  }
+  private findLoginTool(pluginId: string, role: PluginLoginRole, service?: string): { connection: Connection; tool: Tool } | undefined {
+    const plugin = this.store.list().find(item => item.id === pluginId);
+    if (!plugin?.enabled) return undefined;
+    for (const connection of this.connections.values()) {
+      const { state } = connection;
+      if (state.pluginId !== pluginId || (service && state.name !== service)) continue;
+      if (!["connected", "idle", "connecting"].includes(state.status)) continue;
+      const tool = loginToolsIn(state.tools)[role];
+      if (tool) return { connection, tool };
+    }
+    return undefined;
+  }
+  loginView(pluginId: string): PluginToolLoginView | undefined {
+    const plugin = this.store.list().find(item => item.id === pluginId);
+    if (!plugin?.enabled) return undefined;
+    for (const connection of this.connections.values()) {
+      const { state } = connection;
+      if (state.pluginId !== pluginId || !state.login) continue;
+      return {
+        service: state.name,
+        roles: [...state.login.roles],
+        ...(state.login.status ? { status: { ...state.login.status } } : {}),
+      };
+    }
+    return undefined;
+  }
+  private setLoginStatus(connection: Connection, status: PluginToolLoginStatus): void {
+    const roles = (Object.keys(loginToolsIn(connection.state.tools)) as PluginLoginRole[]);
+    connection.state.login = { roles, status };
+  }
+  private async refreshLoginStatus(pluginId: string, service: string, fallbackSignedIn: boolean): Promise<PluginToolLoginStatus | undefined> {
+    const statusTarget = this.findLoginTool(pluginId, "status", service);
+    if (statusTarget) {
+      try {
+        return await this.loginStatus(pluginId, service);
+      } catch {
+        const fallback: PluginToolLoginStatus = { signedIn: fallbackSignedIn };
+        this.setLoginStatus(statusTarget.connection, fallback);
+        return fallback;
+      }
+    }
+    const connection = this.connections.get(this.key(pluginId, service));
+    if (connection?.state.login) {
+      const fallback: PluginToolLoginStatus = { signedIn: fallbackSignedIn };
+      connection.state.login = { ...connection.state.login, status: fallback };
+      return fallback;
+    }
+    return undefined;
+  }
+  async loginStatus(pluginId: string, service?: string): Promise<PluginToolLoginStatus> {
+    const target = this.findLoginTool(pluginId, "status", service);
+    if (!target) throw new Error("这个插件没有声明登录状态工具");
+    try {
+      const response = await this.call(pluginId, target.connection.state.name, target.tool.name, {});
+      const status = parseLoginStatus(response, (text) => this.redact(pluginId, text));
+      this.setLoginStatus(target.connection, status);
+      return status;
+    } catch (error) {
+      const message = this.redact(pluginId, error instanceof Error ? error.message : String(error));
+      this.setLoginStatus(target.connection, { signedIn: false, error: message });
+      throw new Error(message, { cause: error });
+    }
+  }
+  async loginStart(pluginId: string, service?: string): Promise<PluginToolLoginStartResult> {
+    const target = this.findLoginTool(pluginId, "start", service);
+    if (!target) throw new Error("这个插件没有声明开始登录工具");
+    const response = await this.call(pluginId, target.connection.state.name, target.tool.name, {});
+    const result = parseLoginStart(response, (text) => this.redact(pluginId, text));
+    if (result.kind === "done") {
+      await this.refreshLoginStatus(pluginId, target.connection.state.name, true);
+    }
+    return result;
+  }
+  async loginPoll(pluginId: string, service?: string): Promise<PluginToolLoginPollResult> {
+    const target = this.findLoginTool(pluginId, "poll", service);
+    if (!target) throw new Error("这个插件没有声明登录轮询工具");
+    const response = await this.call(pluginId, target.connection.state.name, target.tool.name, {});
+    const result = parseLoginPoll(response, (text) => this.redact(pluginId, text));
+    if (result.state === "done") {
+      await this.refreshLoginStatus(pluginId, target.connection.state.name, true);
+    }
+    return result;
+  }
+  async loginLogout(pluginId: string, service?: string): Promise<{ ok: true; status?: PluginToolLoginStatus }> {
+    const target = this.findLoginTool(pluginId, "logout", service);
+    if (!target) throw new Error("这个插件没有声明退出登录工具");
+    const response = await this.call(pluginId, target.connection.state.name, target.tool.name, {});
+    parseLoginPayload(response, (text) => this.redact(pluginId, text), "退出登录失败");
+    const status = await this.refreshLoginStatus(pluginId, target.connection.state.name, false);
+    return { ok: true, ...(status ? { status } : {}) };
   }
   setToolErrors(id: string, service: string, errors: { name: string; reason: string }[]): void {
     const state = this.connections.get(this.key(id, service))?.state;
@@ -233,7 +420,7 @@ export class PluginHost {
       connection.client = undefined;
       if (connection.idle) clearTimeout(connection.idle);
       connection.idle = undefined;
-      state.status = "error"; state.error = "MCP 连接已断开"; state.tools = [];
+      state.status = "error"; state.error = "MCP 连接已断开"; state.tools = []; delete state.login;
       this.onToolsChanged?.();
       this.scheduleRetry(connection, raw);
     });
@@ -251,6 +438,24 @@ export class PluginHost {
       const tools = await client.listTools();
       if (connection.stopped || this.closed) { await client.close(); return; }
       state.tools = tools; connection.retryCount = 0;
+      const loginTools = loginToolsIn(tools);
+      const loginRoles = Object.keys(loginTools) as PluginLoginRole[];
+      if (loginRoles.length) {
+        let loginStatus: PluginToolLoginStatus | undefined;
+        if (loginTools.status) {
+          try {
+            const response = await client.callTool(loginTools.status.name, {});
+            if (connection.stopped || this.closed) { await client.close(); return; }
+            loginStatus = parseLoginStatus(response, (text) => this.redact(state.pluginId, text));
+          } catch (error) {
+            if (connection.stopped || this.closed) { await client.close(); return; }
+            loginStatus = { signedIn: false, error: this.redact(state.pluginId, error instanceof Error ? error.message : String(error)) };
+          }
+        }
+        state.login = { roles: loginRoles, ...(loginStatus ? { status: loginStatus } : {}) };
+      } else {
+        delete state.login;
+      }
       // 有的服务不登录也能列出工具（如 Gmail），没登录就不算连上：工具留着给插件页看，不交给助手
       if (state.oauth?.declared && !hadCredentials) { state.status = "needs_login"; state.error = undefined; if (connection.client === client) connection.client = undefined; await client.close().catch(() => {}); }
       else { state.status = "connected"; this.armIdle(connection); }

@@ -46,6 +46,25 @@ export type {
 
 export type PluginServiceStatus = "pending_config" | "connecting" | "idle" | "connected" | "needs_login" | "needs_relogin" | "error";
 export type PluginCredentialRole = "list" | "secret" | "generate" | "save" | "delete";
+export type PluginLoginRole = "status" | "start" | "poll" | "logout";
+export interface PluginToolLoginStatus {
+  signedIn: boolean;
+  account?: string;
+  detail?: string;
+  error?: string;
+}
+export type PluginToolLoginStartResult =
+  | { kind: "device_code"; url: string; userCode: string; expiresAt?: Iso; interval?: number }
+  | { kind: "done" };
+export interface PluginToolLoginPollResult {
+  state: "pending" | "done" | "error";
+  message?: string;
+}
+export interface PluginToolLoginView {
+  service: string;
+  roles: PluginLoginRole[];
+  status?: PluginToolLoginStatus;
+}
 export interface PluginToolView {
   name: string;
   toolName: string;
@@ -292,6 +311,8 @@ export interface PluginView {
   profiles?: PluginProfileView[];
   missing: string[];
   credentialRoles?: PluginCredentialRole[];
+  /** 工具插件通过 _meta["hob/login"] 声明的登录能力与状态 */
+  login?: PluginToolLoginView;
   skills?: string[];
   services: PluginServiceView[];
   autoLogins?: LoginAutoEntry[];

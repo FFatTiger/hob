@@ -7981,13 +7981,15 @@ button.screen,
 .hc-group > .hc-columns { padding: 9px 10px; }
 .hc-group .hc-div { font-size: 14px; line-height: 1.6; }
 .hc-group > .hc-columns > .hc-column:first-child .hc-div { color: var(--text2); font-size: 13.5px; }
-.hc-group > .hc-collapse .disclosure-row { background: transparent; }
+.hc-group > .hc-collapse .disclosure-row { padding-left: 10px; padding-right: 10px; background: transparent; }
 /* 折叠段整块是一个白组，和表格、选项行一样：展开的内容和标题行同一个缩进，看得出属于这一段 */
 .hc-collapse { border-radius: 10px; background: var(--card); }
 .hc-collapse > .disclosure-row { background: transparent; }
 .hc-collapse-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
 .hc-group > .hc-collapse { background: transparent; }
 .hc-group > .hc-collapse .hc-collapse-body { padding: 8px 0 0; }
+/* 折叠里的行和折叠外的行对齐：里面那层组不再缩进 */
+.hc-group .hc-group { padding: 0; }
 .hc-interactive .hc-div + .hc-div { flex: none; }
 /* 整块可点的行：有 behaviors 才给手型光标 */
 .hc-interactive { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 9px 10px; border-radius: 9px; background: var(--card); }

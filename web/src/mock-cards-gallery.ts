@@ -79,7 +79,10 @@ export const GALLERY: Entry[] = [
   { label: "可点的行（插件列表）", plugin: { id: "github", name: "GitHub" }, card: { schema: "2.0", header: { title: "等你审的合并请求", subtitle: "acme/notes-app" }, body: { elements: [
     { tag: "interactive_container", elements: [{ tag: "div", text: "修复同步时偶尔丢失最后一条笔记\n#128 · 小林 · 2 小时前" }, { tag: "div", text: "✓ 已合并" }] },
     { tag: "interactive_container", elements: [{ tag: "div", text: "笔记列表支持按标签筛选\n#131 · 阿周 · 昨天" }, { tag: "button", text: "合并" }] },
-    { tag: "collapsible_panel", header: { title: "其余开着的 2" }, expanded: false, elements: [] },
+    { tag: "collapsible_panel", header: { title: "其余开着的 2" }, expanded: true, elements: [
+      { tag: "interactive_container", elements: [{ tag: "div", text: "导出时保留图片尺寸\n#133 · 小林 · 3 天前" }, { tag: "button", text: "合并" }] },
+      { tag: "interactive_container", elements: [{ tag: "div", text: "设置页加深色模式开关\n#135 · 阿周 · 上周" }, { tag: "button", text: "合并" }] },
+    ] },
   ] } } },
   { label: "表单：所有输入（文字、一段话、数字、日期、时间、日期时间、开关）", card: { schema: "2.0", header: { title: "读书会报名", subtitle: "周六下午 · 名额 20" }, body: { elements: [{ tag: "form", name: "signup", elements: [
     { tag: "input", name: "name", label: "姓名", placeholder: "怎么称呼你", required: true },

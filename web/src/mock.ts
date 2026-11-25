@@ -63,10 +63,11 @@ import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
+import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.3" };
 
-export type SceneId = "cards-demo" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -74,6 +75,8 @@ export const SCENE_UI: Record<
   { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
 > = {
   "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "cards-gallery": { sel: "hob", panel: "now", collapsed: true, dark: false, mobile: "chat" },
+  "cards-gallery-dark": { sel: "hob", panel: "now", collapsed: true, dark: true, mobile: "chat" },
   "ask-cards-single": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "ask-cards-multi": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "ask-cards-multi-answered": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -1847,6 +1850,18 @@ cp now.txt "$seen"`,
       { kind: "assistant", id: "mock-card-assistant", at: minsAgo(2), text: assistantTexts[variant] ?? assistantTexts.plugin },
       ...(variant === "plugin-done" ? [{ kind: "card" as const, id: "mock-card-item", at: minsAgo(1), cardId: record.id }, { kind: "assistant" as const, id: "mock-card-after", at: minsAgo(1), text: "存好了：Example 论坛（lin@example.com），在 Bitwarden 的「论坛账号」文件夹里。" }] : [{ kind: "card" as const, id: "mock-card-item", at: minsAgo(1), cardId: record.id }]),
     ];
+  }
+
+  if (scene === "cards-gallery" || scene === "cards-gallery-dark") {
+    const now = new Date().toISOString();
+    const records = galleryRecords(now);
+    for (const record of records) cards[record.id] = record;
+    const hob = assistants.find((item) => item.id === "hob");
+    if (hob) hob.busy = false;
+    items.hob = records.flatMap((record, index) => [
+      { kind: "assistant" as const, id: `gallery-label-${index}`, at: minsAgo(60 - index), text: `${index + 1}. ${GALLERY[index]!.label}` },
+      { kind: "card" as const, id: `gallery-item-${index}`, at: minsAgo(60 - index), cardId: record.id },
+    ]);
   }
 
   if (scene === "readme-interactive-cards") {

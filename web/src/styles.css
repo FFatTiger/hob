@@ -1536,12 +1536,12 @@ svg.i {
 .b code, .md code {
   font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace;
   font-size: 13px;
-  background: var(--field);
+  background: color-mix(in srgb, var(--text) 6%, transparent);
   border-radius: 5px;
   padding: 1px 5px;
 }
 .b pre, .md pre {
-  background: var(--field);
+  background: color-mix(in srgb, var(--text) 5%, transparent);
   border-radius: 10px;
   padding: 9px 11px;
   overflow-x: auto;
@@ -1819,7 +1819,7 @@ svg.i {
   line-height: 1.45;
 }
 /* 代码块：右上角复制，有语言标记时左上角小字 */
-.code-block { position: relative; margin-top: 6px; border-radius: 10px; background: var(--field); }
+.code-block { position: relative; margin-top: 6px; border-radius: 10px; background: color-mix(in srgb, var(--text) 5%, transparent); }
 .code-block + p { margin-top: 6px; }
 .code-head { padding: 7px 44px 0 11px; font: 11px/16px "JetBrains Mono", monospace; color: var(--text3); }
 .b .code-block pre, .fp-md .code-block pre { margin: 0; background: none; padding-right: 40px; }
@@ -7398,6 +7398,24 @@ button.screen,
   margin: 12px 0 4px;
 }
 .md h1 { font-size: 15px; }
+/* 气泡和卡片里的标题和正文一样大，只加粗：层级靠粗细和间距，不靠字号压过卡片标题 */
+.b h1,
+.b h2,
+.b h3,
+.b h4 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 10px 0 2px;
+}
+.b :is(h1, h2, h3, h4):first-child { margin-top: 0; }
+.b blockquote,
+.md blockquote {
+  margin-top: 6px;
+  padding: 6px 12px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text) 5%, transparent);
+  color: var(--text2);
+}
 /* ── 群话题（票 152）────────────────────────────────────────────
    桌面左栏的群二级页、话题行、综合的话题卡、话题页头部和右栏话题信息。
    视觉照 .scratch/v2/topics 的效果图；颜色只用现有变量。 */
@@ -7945,16 +7963,18 @@ button.screen,
 .hc-hr { width: 100%; border: 0; border-top: 1px solid var(--line); }
 .hc-img { display: block; max-width: 100%; max-height: 360px; object-fit: contain; border-radius: 10px; }
 .hc-table-wrap { overflow-x: auto; background: var(--card); border-radius: 10px; }
-.hc-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-.hc-table th, .hc-table td { padding: 8px 10px; text-align: left; white-space: nowrap; }
-.hc-table th { color: var(--text3); font-weight: 500; }
-.hc-table td { border-top: 1px solid var(--line); font-family: "JetBrains Mono", ui-monospace, monospace; font-size: 12.5px; }
+.hc-table { width: 100%; border-collapse: collapse; font-size: 13.5px; line-height: 1.5; }
+.hc-table th, .hc-table td { padding: 8px 10px; text-align: left; vertical-align: top; }
+.hc-table th { color: var(--text3); font-weight: 500; white-space: nowrap; }
+/* 长内容在格子里按词和标点换行，不把短词拆成一字一行；再放不下就在框内左右滑 */
+.hc-table td { border-top: 1px solid var(--line); max-width: 16em; word-break: keep-all; overflow-wrap: break-word; }
 .hc-table-switch { width: 32px; height: 19px; padding: 0; border-radius: 999px; background: var(--text3); }
 .hc-table-switch span { display: block; width: 14px; height: 14px; margin: 2.5px; border-radius: 50%; background: var(--bg); transition: transform .15s ease; }
 .hc-table-switch.on { background: var(--text); }
 .hc-table-switch.on span { transform: translateX(13px); }
 .hc-columns { display: flex; gap: 8px; }
-.hc-column { flex: 1; min-width: 0; }
+.hc-column { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.hc-column:has(> .hc-actions:only-child) { justify-content: center; }
 /* 行组：白底圆角块，里面的行之间留 8px；分栏行（结果行的样子）第一栏是标签 */
 .hc-group { display: flex; flex-direction: column; gap: 8px; padding: 4px; border-radius: 12px; background: var(--card); overflow: hidden; }
 .hc-group > * { border-radius: 9px; background: transparent; }
@@ -7962,7 +7982,12 @@ button.screen,
 .hc-group .hc-div { font-size: 14px; line-height: 1.6; }
 .hc-group > .hc-columns > .hc-column:first-child .hc-div { color: var(--text2); font-size: 13.5px; }
 .hc-group > .hc-collapse .disclosure-row { background: transparent; }
-.hc-collapse-body { display: flex; flex-direction: column; gap: 8px; padding-top: 8px; }
+/* 折叠段整块是一个白组，和表格、选项行一样：展开的内容和标题行同一个缩进，看得出属于这一段 */
+.hc-collapse { border-radius: 10px; background: var(--card); }
+.hc-collapse > .disclosure-row { background: transparent; }
+.hc-collapse-body { display: flex; flex-direction: column; gap: 8px; padding: 0 12px 12px; }
+.hc-group > .hc-collapse { background: transparent; }
+.hc-group > .hc-collapse .hc-collapse-body { padding: 8px 0 0; }
 .hc-interactive .hc-div + .hc-div { flex: none; }
 /* 整块可点的行：有 behaviors 才给手型光标 */
 .hc-interactive { display: flex; align-items: center; gap: 8px; min-height: 58px; padding: 9px 10px; border-radius: 9px; background: var(--card); }
@@ -8000,7 +8025,7 @@ button.screen,
 .hc-option-custom-label { display: inline-flex; align-items: center; gap: 6px; }
 .hc-custom-input { margin-top: 4px; }
 .hc-input, .hc-select, .hc-select-button { width: 100%; min-height: 38px; border: 0; border-radius: 10px; padding: 8px 12px; background: var(--card); color: var(--text); font: inherit; font-size: 14px; line-height: 1.5; outline: none; }
-.hc-select-button { display: flex; align-items: center; justify-content: space-between; text-align: left; }
+.hc-select-button { display: flex; align-items: center; justify-content: space-between; gap: 8px; text-align: left; }
 .hc-select-button .i { color: var(--text2); }
 .hc-select-button span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc-card-menu { min-width: 180px; }

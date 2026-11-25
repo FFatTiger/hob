@@ -4,6 +4,7 @@ import { useMenu } from "./use-menu.ts";
 import { t } from "../../../shared/i18n.ts";
 import type { StarredMessage } from "../../../shared/types.ts";
 import { copyText } from "../clipboard.ts";
+import { SetNavHead } from "./SettingsParts.tsx";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
 import { goHome, jumpToHistory, setNotice, toggleStar, useApp } from "../store.ts";
@@ -53,12 +54,12 @@ export function Stars({ narrow }: { narrow: boolean }) {
   return <main className={`setpage stars-page${narrow ? " narrow" : ""}`}>
     {narrow ? <div className="sethead"><button className="hob-icon-btn" title={t("返回")} onClick={goHome}><Icon name="left" size={17} /></button><span className="t">{t("收藏")}</span></div> : (
       <nav className="setnav" aria-label={t("收藏")}>
-        <div className="setnavtitle">{t("收藏")}</div>
+        <SetNavHead title={t("收藏")} onBack={goHome} />
+        <div className="setnav-scroll">
         <button className={`navrow${only ? "" : " sel"}`} onClick={() => setOnly(null)}><span>{t("全部")}</span><span className="knowledge-count">{s.stars.length || ""}</span></button>
         {conversations.length ? <div className="knowledge-label">{t("来自")}</div> : null}
         {conversations.map((star) => <button key={conversationKey(star)} className={`navrow${only === conversationKey(star) ? " sel" : ""}`} onClick={() => setOnly(conversationKey(star))}><span>{nameOf(star)}</span><span className="knowledge-count">{count(conversationKey(star))}</span></button>)}
-        <span className="sp" />
-        <button className="navrow" onClick={goHome}>{t("返回 Hob")}</button>
+        </div>
       </nav>
     )}
     <section className="stars-main">

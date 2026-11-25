@@ -118,3 +118,13 @@ export function LinkRow({ icon, label, value, href }: { icon?: IconName; label: 
 export function Group({ children }: { children: ReactNode }) {
   return <div className="group">{children}</div>;
 }
+
+/** 整页左栏的头：左上角返回 Hob + 页名。设置、知识库、插件、收藏共用。 */
+export function SetNavHead({ title, onBack }: { title: string; onBack: () => void }) {
+  return <div className="setnav-head">
+    <button type="button" className="hob-icon-btn" title={t("返回 Hob")} aria-label={t("返回 Hob")} onClick={onBack}>
+      <Icon name="left" size={17} />
+    </button>
+    <span className="setnav-title">{title}</span>
+  </div>;
+}

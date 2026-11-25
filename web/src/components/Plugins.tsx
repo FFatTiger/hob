@@ -4,6 +4,7 @@ import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginsView } from "../../../shared/types.ts";
 import { BrandIcon } from "../brand-icons.tsx";
 import type { Brand } from "../brand-recognition.ts";
+import { SetNavHead } from "./SettingsParts.tsx";
 import { Icon, type IconName } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { addCustomPlugin, addPluginSource, clearPluginInstallProgress, deletePluginSource, refreshPluginSources, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
@@ -60,7 +61,8 @@ function PluginNav({ narrow, page, pluginId, view, onSelectMarket }: { narrow: b
     <button className={`home-filter${page === "market" ? " on" : ""}`} onClick={() => choose("market")}>{t("市场")}</button>
   </nav>;
   return <nav className="setnav" aria-label={t("插件分类")}>
-    <div className="setnavtitle">{t("插件")}</div>
+    <SetNavHead title={t("插件")} onBack={closePlugins} />
+    <div className="setnav-scroll">
     <button className={`navrow plugin-market-nav${!pluginId && page !== "new" ? " sel" : ""}`} onClick={() => choose("market")}><Icon name="plugin" size={18} />{t("市场")}</button>
     <div className="knowledge-label">{t("已安装的插件")}</div>
     {sortInstalled(view?.plugins ?? []).map((item) => {
@@ -72,8 +74,7 @@ function PluginNav({ narrow, page, pluginId, view, onSelectMarket }: { narrow: b
       </button>;
     })}
     <button className={`navrow plugin-new${!pluginId && page === "new" ? " sel" : ""}`} onClick={() => choose("new")}>＋ {t("添加自定义 MCP")}</button>
-    <span className="sp" />
-    <button className="navrow" onClick={closePlugins}>{t("返回 Hob")}</button>
+    </div>
   </nav>;
 }
 

@@ -109,7 +109,7 @@ import {
   type SettingsSection,
   type Theme,
 } from "../store.ts";
-import { PageHead, Group, PalettePicker, Seg, LinkRow, UpdateDot, availableVersion } from "./SettingsParts.tsx";
+import { PageHead, Group, PalettePicker, Seg, LinkRow, SetNavHead, UpdateDot, availableVersion } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
@@ -326,18 +326,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
         </div>
       ) : (
         <nav className="setnav" aria-label={t("设置")}>
-          <div className="setnav-head">
-            <button
-              type="button"
-              className="hob-icon-btn setnav-back"
-              title={t("返回 Hob")}
-              aria-label={t("返回 Hob")}
-              onClick={closeSettings}
-            >
-              <Icon name="left" size={17} />
-            </button>
-            <span className="setnav-title">{t("设置")}</span>
-          </div>
+          <SetNavHead title={t("设置")} onBack={closeSettings} />
           <div className="setnav-scroll">
             {groups.map((group) => (
               <div className="setnav-group" key={group.id}>

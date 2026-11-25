@@ -85,20 +85,7 @@ export function approvalToCard(approval: Approval): Card {
         behaviors: [{ type: "callback", value: { kind: "option", key: option.key } }],
       });
     }
-    elements.push({
-      tag: "form",
-      name: "other",
-      elements: [
-        { tag: "input", name: "text", placeholder: t("其他想法…"), required: true },
-        {
-          tag: "button",
-          text: t("发送"),
-          type: "primary_filled",
-          form_action_type: "submit",
-          behaviors: [{ type: "callback", value: { kind: "other" } }],
-        },
-      ],
-    });
+    // 不另放输入框：想说别的，用户直接在对话框里写，发出去这张卡就结束
   }
 
   return {
@@ -188,12 +175,6 @@ export function approvalAnswerFromAction(approval: Approval, request: CardAction
 
   if (action.kind === "option" && (action.key === "A" || action.key === "B" || action.key === "C")) {
     return { key: action.key };
-  }
-
-  if (action.kind === "other" || action.name === "other") {
-    const text = String(formValue.text ?? "").trim();
-    if (!text) return undefined;
-    return { text };
   }
 
   return undefined;

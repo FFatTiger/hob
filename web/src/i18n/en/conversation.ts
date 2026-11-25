@@ -170,7 +170,6 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "自己写这个问题的答案": "Write your answer to this question",
   "自己写": "Write your own",
   "提交": "Submit",
-  "其他想法…": "Other idea…",
   "发送": "Send",
   "重试": "Retry",
   "未送达，重试": "Not delivered, retry",

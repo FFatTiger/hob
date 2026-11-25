@@ -23,7 +23,7 @@ const base: Approval = {
 };
 
 describe("approvalToCard & approvalToCardRecord", () => {
-  it("translates a single-question approval with recommended primary button and custom input", () => {
+  it("translates a single-question approval with recommended primary button and no free-text input", () => {
     const card = approvalToCard(base);
     expect(card.schema).toBe("2.0");
     expect(card.header).toEqual({ title: base.title });
@@ -43,25 +43,9 @@ describe("approvalToCard & approvalToCardRecord", () => {
         type: "default",
         behaviors: [{ type: "callback", value: { kind: "option", key: "B" } }],
       },
-      {
-        tag: "form",
-        name: "other",
-        elements: [
-          { tag: "input", name: "text", placeholder: "其他想法…", required: true },
-          {
-            tag: "button",
-            text: "发送",
-            type: "primary_filled",
-            form_action_type: "submit",
-            behaviors: [{ type: "callback", value: { kind: "other" } }],
-          },
-        ],
-      },
     ]);
 
     expect(approvalAnswerFromAction(base, { action: { kind: "option", key: "A" } })).toEqual({ key: "A" });
-    expect(approvalAnswerFromAction(base, { action: { kind: "other" }, form_value: { text: "  只清一个月前的  " } })).toEqual({ text: "只清一个月前的" });
-    expect(approvalAnswerFromAction(base, { action: { kind: "other" }, form_value: { text: "   " } })).toBeUndefined();
   });
 
   it("includes remember option as a button on single-question approval", () => {

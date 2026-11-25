@@ -1,3 +1,4 @@
+import { isAbsolute } from "node:path";
 import { isSemver } from "../../shared/plugin-version.ts";
 import type { PluginProviderSpec } from "../../shared/types.ts";
 
@@ -90,6 +91,19 @@ export function diffCapabilities(before: PluginCapabilitySnapshot, after: Plugin
   return changes;
 }
 
+export function binDeclaration(manifest: unknown): string | undefined {
+  if (!isRecord(manifest)) return undefined;
+  const extensions = manifest.extensions;
+  const hob = isRecord(extensions) ? extensions["com.hob.plugins"] : undefined;
+  if (!isRecord(hob) || hob.bin === undefined) return undefined;
+  if (typeof hob.bin !== "string") throw new Error("extensions.com.hob.plugins.bin 必须是相对目录路径");
+  const value = hob.bin.replace(/\/+$/, "");
+  if (!value || value.includes("\\") || isAbsolute(value) || value.split("/").some((part) => !part || part === "." || part === "..") || /[?#\x00-\x1f]/.test(value)) {
+    throw new Error("extensions.com.hob.plugins.bin 必须是插件内的相对目录");
+  }
+  return value;
+}
+
 export function profileDeclaration(manifest: unknown): PluginProfilesDeclaration | null {
   if (!isRecord(manifest)) return null;
   const extensions = manifest.extensions;
@@ -108,6 +122,7 @@ export function pluginConfig(manifest: unknown, mcp: unknown): PluginConfig {
   if (!isRecord(resolvedMcp) || !isRecord(resolvedMcp.mcpServers)) throw new Error("插件清单和 mcpServers 必须是对象");
   const raw = manifest.userConfig ?? {};
   if (!isRecord(raw)) throw new Error("userConfig 必须是对象");
+  binDeclaration(manifest);
   const profiles = profileDeclaration(manifest);
   if (profiles && isRecord(resolvedMcp.mcpServers) && Object.values(resolvedMcp.mcpServers).some(server => isRecord(server) && server.oauth !== undefined)) throw new Error("支持多个 profile 的插件暂时不能用 OAuth 登录");
   const config: PluginConfig = Object.create(null);

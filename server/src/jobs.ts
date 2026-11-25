@@ -25,7 +25,8 @@ import { resolveMovedPath } from "./layout.ts";
 import { availableDesktopTools, browserShellEnv, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
-import { pluginToolDisplayNames, pluginToolsForAssistant } from "./plugin-host.ts";
+import { pluginCommandToolsForAssistant, pluginToolDisplayNames, pluginToolsForAssistant } from "./plugin-host.ts";
+import { engineDir } from "./config.ts";
 import { jobModel, assistantInGroup } from "./models.ts";
 import { duration, jobProcessLines, reviewedSkillsText } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
@@ -549,7 +550,13 @@ export class JobManager {
       },
       bashSpawnHook: ({ command, cwd, env }) => {
         const credential = this.runtime.scriptTools.issue({
-          tools: async () => scriptToolList(customTools, !!(await boundKnowledge(this.runtime, job.assistantId)).length, pluginTools),
+          tools: async () => {
+            const reserved = new Set(existingNames);
+            const livePlugins = pluginToolsForAssistant(this.runtime.plugins, job.assistantId, reserved);
+            for (const tool of livePlugins) reserved.add(tool.name);
+            const commandTools = pluginCommandToolsForAssistant(this.runtime.plugins, job.assistantId, reserved);
+            return scriptToolList(customTools, !!(await boundKnowledge(this.runtime, job.assistantId)).length, livePlugins, commandTools);
+          },
           onCall: (tool) => {
             const current = this.store.job(job.id);
             if (!current) return;
@@ -559,7 +566,8 @@ export class JobManager {
           },
         });
         scriptRevokes.add(credential.revoke);
-        return { command, cwd, env: this.runtime.scriptTools.environment(proxyEnvironment(browserShellEnv(env, cliEnvironment), this.runtime.settings.settings.general), credential.token) };
+        const binDirs = [join(engineDir(this.runtime.home), "bin"), ...this.runtime.plugins.binDirsForAssistant(job.assistantId)];
+        return { command, cwd, env: this.runtime.scriptTools.environment(proxyEnvironment(browserShellEnv(env, cliEnvironment), this.runtime.settings.settings.general), credential.token, binDirs) };
       },
       toolSearch,
     });

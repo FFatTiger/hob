@@ -67,7 +67,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.17.1" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -85,6 +85,9 @@ export const SCENE_UI: Record<
   "ask-cards-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "login-cards": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "plugin-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "tool-login-signed-out": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "tool-login-device": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "tool-login-signed-in": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-install-progress": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-install-done": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
@@ -2083,7 +2086,7 @@ cp now.txt "$seen"`,
       revision: 1,
       settings: {
         general: {
-          theme: scene.endsWith("-dark") ? "dark" : "system",
+          theme: scene.endsWith("-dark") || (typeof location !== "undefined" && new URLSearchParams(location.search).get("dark") === "1") ? "dark" : "system",
           timezone: "Asia/Tokyo",
           proxy: scene === "s1" || scene === "h-settings" ? "http://demo-user:demo-pass@proxy.example.test:8080" : "",
           noProxy: "localhost,127.0.0.1,::1",
@@ -2907,6 +2910,67 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       makeConnected(readmeCatalog[4]!, "vault"),
       readmeCopilot,
     );
+  } else if (scene === "tool-login-signed-out" || scene === "tool-login-device" || scene === "tool-login-signed-in") {
+    const codeforgePlugin: PluginView = {
+      plugin: {
+        id: "codeforge",
+        version: "1.2.0",
+        source: "official",
+        sourceName: "Hob 官方",
+        enabled: true,
+        assistants: ["hob", "page"],
+        tools: {},
+        config: { SIGN_COMMITS: true },
+      },
+      manifest: {
+        name: "codeforge",
+        displayName: "CodeForge",
+        version: "1.2.0",
+        description: L(
+          "连接 CodeForge 代码托管与流水线，查看合并请求与构建状态，并在命令行中自动携带已登录身份。",
+          "Connect CodeForge repositories and pipelines, inspect merge requests and builds, and carry your signed-in identity in CLI commands.",
+        ),
+        extensions: { "com.hob.plugins": { publisher: "CodeForge", categories: ["development"], bin: "bin" } },
+      },
+      config: {
+        SIGN_COMMITS: {
+          type: "boolean",
+          title: L("提交时自动署名", "Sign commits automatically"),
+          description: L("通过自带命令行提交代码时附带协作署名。", "Append a co-author trailer when committing via the bundled CLI."),
+          default: true,
+          value: true,
+        },
+      },
+      missing: [],
+      login: {
+        service: "codeforge",
+        roles: ["status", "start", "poll", "logout"],
+        status: scene === "tool-login-signed-in"
+          ? {
+              signedIn: true,
+              account: "lin-dev",
+              detail: L(
+                "已登录 lin-dev · 应用已装在 2 个工作区上 · [管理授权](https://codeforge.example/apps)",
+                "Signed in as lin-dev · Installed on 2 workspaces · [Manage access](https://codeforge.example/apps)",
+              ),
+            }
+          : { signedIn: false },
+      },
+      services: [
+        {
+          pluginId: "codeforge",
+          name: "codeforge",
+          status: "connected",
+          tools: [
+            { name: "list_repos", toolName: "codeforge_list_repos", enabled: true, description: L("列出当前账号可访问的代码仓库。", "List repositories accessible to the signed-in account."), inputSchema: {}, annotations: { readOnlyHint: true } },
+            { name: "list_merge_requests", toolName: "codeforge_list_merge_requests", enabled: true, description: L("按状态查看仓库的合并请求与评审意见。", "Inspect open merge requests and review comments."), inputSchema: {}, annotations: { readOnlyHint: true } },
+            { name: "create_merge_request", toolName: "codeforge_create_merge_request", enabled: true, description: L("为指定分支创建新的合并请求。", "Create a new merge request for a branch."), inputSchema: {}, annotations: { readOnlyHint: false } },
+            { name: "trigger_pipeline", toolName: "codeforge_trigger_pipeline", enabled: true, description: L("在目标分支触发一次持续集成流水线。", "Trigger a CI pipeline run on the target branch."), inputSchema: {}, annotations: { readOnlyHint: false } },
+          ],
+        },
+      ],
+    };
+    pluginViews.push(codeforgePlugin, email, vault);
   } else if (isProviderScene) {
     if (scene === "provider-install-progress") {
       pluginViews.push(github, vault);
@@ -3405,6 +3469,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     addCustomPlugin: async id => { const p = makePlugin(id, "custom"); pluginViews.push(p); return clone(p); },
     startPluginOAuth: async (id, name) => { const service = mockPlugin(id).services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = true; service.status = "connected"; } return { authorized: true, callbackUrl: `${globalThis.location?.origin ?? "http://localhost"}/api/plugins/oauth/callback` }; },
     disconnectPluginOAuth: async (id, name) => { const p = mockPlugin(id); const service = p.services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = false; service.status = "needs_login"; } return clone(p); },
+    pluginLoginStatus: async (id) => clone(mockPlugin(id).login?.status ?? { signedIn: false }),
+    startPluginToolLogin: async () => ({
+      kind: "device_code" as const,
+      url: "https://codeforge.example/login/device",
+      userCode: "F7K2-9QMX",
+      expiresAt: new Date(Date.now() + 14 * 60_000).toISOString(),
+      interval: 5,
+    }),
+    pollPluginToolLogin: async () => ({ state: "pending" as const }),
+    logoutPluginToolLogin: async (id) => {
+      const p = mockPlugin(id);
+      if (p.login) p.login.status = { signedIn: false };
+      return { ok: true as const, status: { signedIn: false } };
+    },
     removePluginLoginAuto: async (id, host, username) => { const p = mockPlugin(id); p.autoLogins = (p.autoLogins ?? []).filter(entry => entry.host !== host || entry.username !== username); return clone(p); },
     pluginLogins: async id => { const p = mockPlugin(id); const logins = id === "vault" ? mockVaultLogins : []; return { service: p.services[0]?.name ?? id, logins: clone(logins), folders: [...new Set(logins.flatMap(login => login.folder ? [login.folder] : []))] }; },
     pluginLoginSecret: async (_id, loginId) => ({ username: mockVaultLogins.find(login => login.id === loginId)?.username ?? "", password: "mock-vault-secret" }),

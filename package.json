@@ -30,6 +30,7 @@
     "start": "tsx server/src/boot.ts",
     "test": "vitest run",
     "update-lore": "node scripts/update-lore.mjs",
+    "update-default-plugins": "node scripts/update-default-plugins.mjs",
     "layout": "tsx server/src/layout-cli.ts",
     "prepack": "npm run build"
   },

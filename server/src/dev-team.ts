@@ -3,13 +3,14 @@
 // 这 5 个是 hidden，平时从群成员里找；主助手的提示词只列没收起的助手，不会把它们当成转交对象。
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
 import type { Assistant, Group } from "../../shared/types.ts";
 import { archiveAssistantsDir, systemDir } from "./config.ts";
 import type { CreateGroupInput } from "./groups.ts";
 import type { Store } from "./store.ts";
-import { PluginStore } from "./plugin-store.ts";
+import type { PluginStore } from "./plugin-store.ts";
 
 export interface DevTeamRole {
   id: string;
@@ -130,6 +131,50 @@ export function seedBuiltinVault(plugins: PluginStore, onUpdated?: (id: string) 
   }
 }
 
+export const DEFAULT_BUNDLED_PLUGINS = ["github"] as const;
+
+export function defaultPluginsRoot(): string {
+  return fileURLToPath(new URL("../../vendor/default-plugins", import.meta.url));
+}
+
+export function markDefaultPluginUninstalled(home: string, id: string): void {
+  const seeded = readSeeded(home);
+  const existing = seeded.plugins ?? {};
+  const isDefault = (DEFAULT_BUNDLED_PLUGINS as readonly string[]).includes(id);
+  if (!isDefault && !Object.hasOwn(existing, id)) return;
+  if (existing[id] === "uninstalled") return;
+  writeSeeded(home, { plugins: { ...existing, [id]: "uninstalled" } });
+}
+
+export function seedDefaultPlugins(
+  plugins: PluginStore,
+  options: { root?: string; ids?: readonly string[] } = {},
+): void {
+  const root = options.root ?? defaultPluginsRoot();
+  const ids = options.ids ?? DEFAULT_BUNDLED_PLUGINS;
+  const seeded = readSeeded(plugins.home);
+  const recorded: Record<string, "installed" | "uninstalled"> = { ...(seeded.plugins ?? {}) };
+  let changed = false;
+  for (const id of ids) {
+    if (recorded[id]) continue;
+    if (plugins.list().some((plugin) => plugin.id === id)) {
+      recorded[id] = "installed";
+      changed = true;
+      continue;
+    }
+    const sourceDir = join(root, id);
+    if (!existsSync(join(sourceDir, "plugin.json"))) continue;
+    try {
+      plugins.installBundled(id, sourceDir);
+      recorded[id] = "installed";
+      changed = true;
+    } catch (error) {
+      console.error(`安装默认自带插件 ${id} 失败，下次启动再试：`, error instanceof Error ? error.message : error);
+    }
+  }
+  if (changed) writeSeeded(plugins.home, { plugins: recorded });
+}
+
 /** 默认建的那个群：自带的敏捷团队走「软件开发」这一套。 */
 export const DEV_TEAM_GROUP = {
   name: "敏捷团队",
@@ -158,6 +203,7 @@ interface SeededFile {
   devTeam?: boolean;
   hacker?: boolean;
   vault?: boolean;
+  plugins?: Record<string, "installed" | "uninstalled">;
 }
 
 function seededPath(home: string): string {

@@ -1,21 +1,81 @@
 import { Children, useEffect, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { newerPluginVersion } from "../../../shared/plugin-version.ts";
-import type { PluginCatalogView, PluginServiceStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
+import type { PluginCatalogView, PluginServiceStatus, PluginToolLoginStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
 import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
-import { deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, openPlugins, patchPlugin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
+import { MOCK, deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, logoutPluginToolLogin, openPlugins, patchPlugin, pollPluginToolLogin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, startPluginToolLogin, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
-import { approvePlugin, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
+import { approvePlugin, DeviceCodeLoginCard, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
 import { hasProviderContribution, isUnofficialPlugin, pluginDetailText, pluginReviewedVersion } from "./plugin-meta.ts";
 
-function Description({ text }: { text: string }) {
-  return <div className="plugin-sub">{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
+export function InlineLinks({ text }: { text: string }) {
+  return <>{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
     const match = /^\[([^\]]+)\]\((https?:\/\/[^)]+)\)$/.exec(part);
-    return match ? <a key={index} href={match[2]} target="_blank" rel="noreferrer">{match[1]}</a> : part;
-  })}</div>;
+    return match ? <a key={index} className="link" href={match[2]} target="_blank" rel="noreferrer">{match[1]}</a> : part;
+  })}</>;
+}
+
+function Description({ text }: { text: string }) {
+  return <div className="plugin-sub"><InlineLinks text={text} /></div>;
+}
+
+export function ToolPluginLoginRow({
+  status,
+  toolSummary,
+  canStart,
+  canLogout,
+  busy = false,
+  inDeviceFlow = false,
+  configButton,
+  onStart,
+  onLogout,
+}: {
+  status?: PluginToolLoginStatus;
+  toolSummary?: React.ReactNode;
+  canStart: boolean;
+  canLogout: boolean;
+  busy?: boolean;
+  inDeviceFlow?: boolean;
+  configButton?: React.ReactNode;
+  onStart: () => void;
+  onLogout: () => void;
+}) {
+  if (status?.signedIn) {
+    const text = status.detail || (status.account ? t("已登录 {account}", { account: status.account }) : t("已登录"));
+    return (
+      <div className="plugin-connection-top plugin-connection-detail">
+        <span><InlineLinks text={text} /></span>
+        <span className="sp" />
+        {canLogout ? <button type="button" className="hob-btn plugin-btn-white" disabled={busy} onClick={onLogout}>{t("退出登录")}</button> : null}
+      </div>
+    );
+  }
+  return (
+    <>
+      <div className="plugin-connection-top">
+        <span className="plugin-state needs_login"><span className="plugin-state-dot" />{t("未登录")}</span>
+        {toolSummary}
+        <span className="sp" />
+        {configButton}
+        {canStart && !inDeviceFlow ? <button type="button" className="hob-btn hob-btn-primary" disabled={busy} onClick={onStart}>{t("登录")}</button> : null}
+      </div>
+      {status?.error && !inDeviceFlow ? <div className="badline" role="alert">{status.error}</div> : null}
+    </>
+  );
+}
+
+interface ToolDeviceFlowState {
+  service: string;
+  url: string;
+  userCode: string;
+  expiresAt?: string;
+  interval: number;
+  status: "waiting" | "failed" | "expired";
+  error?: string;
+  pollTick: number;
 }
 
 export function MoreSettings({ initialOpen, children }: { initialOpen: boolean; children: React.ReactNode }) {
@@ -72,6 +132,7 @@ export function PluginDetail({ id }: { id: string }) {
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const [loginData, setLoginData] = useState<LoginData | null>(null);
+  const [deviceFlow, setDeviceFlow] = useState<ToolDeviceFlowState | null>(null);
 
   const refresh = async () => {
     const [view, entries] = await Promise.all([loadPlugins(), loadPluginCatalog()]);
@@ -84,9 +145,57 @@ export function PluginDetail({ id }: { id: string }) {
   };
   useEffect(() => {
     // 换一个插件时上一个插件的报错一起清掉，不然会挂到别的插件页上
-    setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false); setError("");
+    setItem(null); setValues({}); setProfileId(undefined); setProfileName(""); setConfigOpen(false); setMenuOpen(false); setError(""); setDeviceFlow(null);
     void refresh().catch(e => setError(e instanceof Error ? e.message : String(e)));
   }, [id]);
+  useEffect(() => {
+    if (!MOCK || !item?.login || item.login.status?.signedIn || deviceFlow) return;
+    const scene = typeof window !== "undefined" ? new URLSearchParams(window.location.search).get("scene") : null;
+    if (scene !== "tool-login-device") return;
+    let active = true;
+    void startPluginToolLogin(id, item.login.service).then((started) => {
+      if (!active || started.kind !== "device_code") return;
+      setDeviceFlow({
+        service: item.login!.service,
+        url: started.url,
+        userCode: started.userCode,
+        expiresAt: started.expiresAt,
+        interval: started.interval ?? 5,
+        status: "waiting",
+        pollTick: 0,
+      });
+    }).catch(() => {});
+    return () => { active = false; };
+  }, [id, item?.login?.service, item?.login?.status?.signedIn]);
+  useEffect(() => {
+    if (!deviceFlow || deviceFlow.status !== "waiting") return;
+    let active = true;
+    const delayMs = Math.max(200, deviceFlow.interval * 1000);
+    const timer = window.setTimeout(() => {
+      if (!active) return;
+      if (deviceFlow.expiresAt && Date.parse(deviceFlow.expiresAt) <= Date.now()) {
+        setDeviceFlow((cur) => (cur ? { ...cur, status: "expired" } : null));
+        return;
+      }
+      void pollPluginToolLogin(id, deviceFlow.service)
+        .then(async (res) => {
+          if (!active) return;
+          if (res.state === "done") {
+            setDeviceFlow(null);
+            await refresh();
+          } else if (res.state === "error") {
+            setDeviceFlow((cur) => (cur ? { ...cur, status: "failed", error: res.message || t("未知错误") } : null));
+          } else {
+            setDeviceFlow((cur) => (cur ? { ...cur, pollTick: cur.pollTick + 1 } : null));
+          }
+        })
+        .catch((err) => {
+          if (!active) return;
+          setDeviceFlow((cur) => (cur ? { ...cur, status: "failed", error: err instanceof Error ? err.message : String(err) } : null));
+        });
+    }, delayMs);
+    return () => { active = false; window.clearTimeout(timer); };
+  }, [id, deviceFlow?.status, deviceFlow?.pollTick, deviceFlow?.service, deviceFlow?.interval, deviceFlow?.expiresAt]);
   useEffect(() => {
     if (pluginProviderTick > 0) void refresh().catch(() => {});
   }, [pluginProviderTick]);
@@ -199,7 +308,46 @@ export function PluginDetail({ id }: { id: string }) {
       {typeof field.description === "string" && <Description text={field.description} />}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
-  const statusBlock = serviceStatus === "connected" || serviceStatus === "idle" ? <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span><span className="sp" />{configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null}</div>
+  const toolLogin = item.login;
+  const toolLoginReady = Boolean(toolLogin) && (serviceStatus === "connected" || serviceStatus === "idle");
+  const toolLoginSignedIn = toolLogin?.status?.signedIn === true;
+  const effectiveTone = toolLoginReady && !toolLoginSignedIn ? "warn" : statusTone(serviceStatus);
+  const handleStartToolLogin = async () => {
+    if (!toolLogin) return;
+    setBusy(true);
+    setError("");
+    try {
+      const started = await startPluginToolLogin(id, toolLogin.service);
+      if (started.kind === "done") {
+        setDeviceFlow(null);
+        await refresh();
+      } else {
+        setDeviceFlow({
+          service: toolLogin.service,
+          url: started.url,
+          userCode: started.userCode,
+          expiresAt: started.expiresAt,
+          interval: started.interval ?? 5,
+          status: "waiting",
+          pollTick: 0,
+        });
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+  const handleLogoutToolLogin = async () => {
+    if (!toolLogin) return;
+    await run(async () => {
+      setDeviceFlow(null);
+      await logoutPluginToolLogin(id, toolLogin.service);
+    });
+  };
+  const toolSummary = tools.total > 0 ? <span className="plugin-connection-tools">{t("{n} 个工具", { n: tools.total })}{tools.disabled ? `，${t("{n} 个已关", { n: tools.disabled })}` : ""}</span> : null;
+  const configButton = configFields ? <button className="hob-icon-btn" title={t("修改配置")} aria-label={t("修改配置")} onClick={() => setConfigOpen(value => !value)}><Icon name="edit" size={16} /></button> : null;
+  const statusBlock = serviceStatus === "connected" || serviceStatus === "idle" ? <div className="plugin-connection-top"><PluginStatus status={serviceStatus} />{toolSummary}<span className="sp" />{configButton}</div>
     : <div className="plugin-connection-top"><PluginStatus status={serviceStatus} /><span className="sp" />{serviceStatus === "error" ? <button className="hob-icon-btn plugin-retry" title={t("重试")} aria-label={t("重试")} onClick={() => void refresh()}><Icon name="retry" size={16} /></button> : serviceOAuth.length ? <button className="hob-btn hob-btn-primary" disabled={busy || missing.length > 0} onClick={() => connect(serviceOAuth[0]!.name)}>{serviceStatus === "needs_relogin" ? t("重新连接") : serviceStatus === "needs_login" ? t("登录") : t("连接")}</button> : null}</div>;
 
   const assistantSection = <section className="plugin-section"><h2>{t("给哪些助手用")} <span className="plugin-state">{chosenSummary(assistants.filter(a => selected.includes(a.id)).map(a => a.name), assistants.length)}</span></h2><div className="plugin-assistants">{assistants.map(a => <button type="button" role="switch" aria-label={a.name} aria-checked={selected.includes(a.id)} className={`plugin-assistant${selected.includes(a.id) ? " selected" : ""}`} key={a.id} title={a.name} onClick={() => { const next = selected.includes(a.id) ? selected.filter(value => value !== a.id) : [...selected, a.id]; void run(() => patchPlugin(id, { assistants: next })); }}><Avatar sprite={a.sprite ?? "hob"} prop={a.prop} size={40} />{selected.includes(a.id) ? <span className="avatar-check"><Icon name="check" size={11} /></span> : null}</button>)}</div></section>;
@@ -222,17 +370,60 @@ export function PluginDetail({ id }: { id: string }) {
       />
     ) : null}
 
-    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${statusTone(serviceStatus)}`}>
-      {statusBlock}
-      {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
-      {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}
-      {serviceStatus === "error" ? <><div className="plugin-connection-detail">{t("服务返回的原话：")}</div><div className="plugin-connection-error">{service?.error ?? t("没有返回具体原因")}</div></> : null}
+    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${effectiveTone}`}>
+      {toolLoginReady && toolLogin && !toolLoginSignedIn ? (
+        <ToolPluginLoginRow
+          status={toolLogin.status}
+          toolSummary={toolSummary}
+          canStart={toolLogin.roles.includes("start")}
+          canLogout={toolLogin.roles.includes("logout")}
+          busy={busy}
+          inDeviceFlow={Boolean(deviceFlow)}
+          configButton={configButton}
+          onStart={() => void handleStartToolLogin()}
+          onLogout={() => void handleLogoutToolLogin()}
+        />
+      ) : (
+        <>
+          {statusBlock}
+          {serviceStatus === "pending_config" ? <div className="plugin-connection-detail">{missingText || t("请填写配置后保存，服务会自动连接。")} </div> : null}
+          {serviceStatus === "needs_login" || serviceStatus === "needs_relogin" ? <div className="plugin-connection-detail">{service?.error ?? t("完成登录后，助手才能使用这个插件。")}</div> : null}
+          {serviceStatus === "error" ? <><div className="plugin-connection-detail">{t("服务返回的原话：")}</div><div className="plugin-connection-error">{service?.error ?? t("没有返回具体原因")}</div></> : null}
+          {toolLoginReady && toolLogin && toolLoginSignedIn ? (
+            <ToolPluginLoginRow
+              status={toolLogin.status}
+              canStart={toolLogin.roles.includes("start")}
+              canLogout={toolLogin.roles.includes("logout")}
+              busy={busy}
+              onStart={() => void handleStartToolLogin()}
+              onLogout={() => void handleLogoutToolLogin()}
+            />
+          ) : null}
+        </>
+      )}
       {configFields && configOpen ? <div className="plugin-config-form">
         {required.map(renderField)}
         {optional.length > 0 && <MoreSettings key={`${id}:single`} initialOpen={initialOpen}>{optional.map(renderField)}</MoreSettings>}
         <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
     </section> : null}
+
+    {deviceFlow ? (
+      <section className="plugin-section">
+        <h2>{t("登录账号")}</h2>
+        <DeviceCodeLoginCard
+          userCode={deviceFlow.userCode}
+          url={deviceFlow.url}
+          expiresAt={deviceFlow.expiresAt}
+          status={deviceFlow.status}
+          error={deviceFlow.error}
+          busy={busy}
+          verbatimError
+          onRestart={() => void handleStartToolLogin()}
+          onCancel={() => setDeviceFlow(null)}
+        />
+      </section>
+    ) : null}
 
     {hasProviders ? (
       <PluginProvidersSection

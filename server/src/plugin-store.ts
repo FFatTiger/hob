@@ -1,14 +1,15 @@
 import { validateMcpEntry, mcpConfigPath } from "./mcp.ts";
 import { newerPluginVersion } from "../../shared/plugin-version.ts";
-import { cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, cpSync, existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { randomUUID } from "node:crypto";
 import { PluginSources, OFFICIAL_SOURCE } from "./plugin-sources.ts";
 import type { ProxyEnvironmentSettings } from "./network-proxy.ts";
-import { diffCapabilities, pluginCapabilities, pluginConfig, profileDeclaration, providerDeclarations, validatePluginValues, type PluginCapabilitySnapshot, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
+import { binDeclaration, diffCapabilities, pluginCapabilities, pluginConfig, profileDeclaration, providerDeclarations, validatePluginValues, type PluginCapabilitySnapshot, type PluginConfig, type PluginConfigValue } from "./plugin-config.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
 import { systemDir } from "./config.ts";
+import { markDefaultPluginUninstalled } from "./dev-team.ts";
 
 export interface PluginProfile {
   id: string;
@@ -107,6 +108,23 @@ export class PluginStore {
   }
   pluginDir(id: string): string {
     return this.dir(id);
+  }
+  binDir(id: string): string | null {
+    try {
+      const { manifest } = this.files(id);
+      const rel = binDeclaration(manifest);
+      if (!rel) return null;
+      const root = realpathSync(this.dir(id));
+      const target = resolve(root, rel);
+      if (!existsSync(target) || lstatSync(target).isSymbolicLink()) return null;
+      const actual = realpathSync(target);
+      const checked = relative(root, actual);
+      if (!checked || checked === ".." || checked.startsWith(`..${sep}`) || isAbsolute(checked)) return null;
+      if (!statSync(actual).isDirectory()) return null;
+      return actual;
+    } catch {
+      return null;
+    }
   }
   skills(id: string): string[] {
     this.get(id);
@@ -239,6 +257,7 @@ export class PluginStore {
     let moved = false;
     try {
       cpSync(source, temp, { recursive: true, errorOnExist: true });
+      this.ensureBinExecutable(temp, manifest);
       if (existsSync(dir)) { renameSync(dir, backup); moved = true; }
       try {
         renameSync(temp, dir);
@@ -252,6 +271,65 @@ export class PluginStore {
       }
       rmSync(backup, { recursive: true, force: true });
     } finally { rmSync(temp, { recursive: true, force: true }); }
+    return next;
+  }
+  private ensureBinExecutable(rootDir: string, manifest: unknown): void {
+    const binRel = binDeclaration(manifest);
+    if (!binRel) return;
+    const root = realpathSync(rootDir);
+    const binTarget = resolve(root, binRel);
+    if (!existsSync(binTarget) || lstatSync(binTarget).isSymbolicLink()) return;
+    const actualBin = realpathSync(binTarget);
+    const checked = relative(root, actualBin);
+    if (!checked || checked === ".." || checked.startsWith(`..${sep}`) || isAbsolute(checked) || !statSync(actualBin).isDirectory()) return;
+    for (const entry of readdirSync(actualBin)) {
+      const entryPath = join(actualBin, entry);
+      const stat = lstatSync(entryPath);
+      if (!stat.isSymbolicLink() && stat.isFile()) {
+        const mode = stat.mode & 0o777;
+        chmodSync(entryPath, mode | ((mode & 0o444) >> 2));
+      }
+    }
+  }
+  /** Install a bundled default plugin from a local directory while recording its source as official. */
+  installBundled(id: string, sourceDir: string): InstalledPlugin {
+    const doc = this.read();
+    const existing = doc.plugins.find(p => p.id === id);
+    if (existing) return existing;
+    const manifest = readJson(join(sourceDir, "plugin.json"));
+    if (!object(manifest) || typeof manifest.version !== "string" || !manifest.version) throw new Error(`插件 ${id} 清单无效`);
+    const providers = providerDeclarations(manifest);
+    const mcpPath = join(sourceDir, "mcp.json");
+    const mcp = existsSync(mcpPath) ? readJson(mcpPath) : providers.length > 0 ? { mcpServers: {} } : (() => { throw new Error(`插件 ${id} 缺少 mcp.json`); })();
+    pluginConfig(manifest, mcp);
+    const nextCapabilities = pluginCapabilities(manifest, mcp);
+    const declaration = profileDeclaration(manifest);
+    const next: InstalledPlugin = {
+      id,
+      version: manifest.version,
+      source: OFFICIAL_SOURCE,
+      sourceName: "Hob 官方",
+      enabled: true,
+      tools: {},
+      approvedCapabilities: nextCapabilities,
+      ...(declaration ? { profiles: [] } : { config: {} }),
+    };
+    const dir = this.dir(id);
+    mkdirSync(join(this.home, "plugins"), { recursive: true });
+    const temp = `${dir}.${randomUUID()}.tmp`;
+    try {
+      cpSync(sourceDir, temp, { recursive: true, errorOnExist: true });
+      this.ensureBinExecutable(temp, manifest);
+      renameSync(temp, dir);
+      try {
+        this.write({ plugins: [...doc.plugins, next] });
+      } catch (error) {
+        rmSync(dir, { recursive: true, force: true });
+        throw error;
+      }
+    } finally {
+      rmSync(temp, { recursive: true, force: true });
+    }
     return next;
   }
   /** Adds a custom MCP server without storing header or environment values in its files. */
@@ -392,6 +470,7 @@ export class PluginStore {
     this.write({ plugins: doc.plugins.filter(p => p.id !== id) });
     rmSync(this.dir(id), { recursive: true, force: true });
     for (const key of Object.keys(readSecrets(this.home))) if (key.startsWith(`plugin:${id}:`)) writeSecret(this.home, key, "");
+    markDefaultPluginUninstalled(this.home, id);
   }
   private profile(id: string, profileId: string): { plugin: InstalledPlugin; profile: PluginProfile; config: PluginConfig } {
     const plugin = this.get(id);

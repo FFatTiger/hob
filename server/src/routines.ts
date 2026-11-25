@@ -1,7 +1,7 @@
 import { buildRouterTools } from "./router-tools.ts";
 import { boundKnowledge } from "./knowledge-tools.ts";
 import { scriptToolList } from "./script-tools.ts";
-import { pluginToolsForAssistant } from "./plugin-host.ts";
+import { pluginCommandToolsForAssistant, pluginToolsForAssistant } from "./plugin-host.ts";
 import { t } from "../../shared/i18n.ts";
 import { exec } from "node:child_process";
 import { mkdirSync } from "node:fs";
@@ -11,7 +11,7 @@ import type { Routine, RoutineCheck, RoutineChecks, RoutineTick } from "../../sh
 import type { HobRuntime } from "./runtime.ts";
 import { timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
-import { assistantDir, groupDir } from "./config.ts";
+import { assistantDir, engineDir, groupDir } from "./config.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 
 /** 检查脚本最多跑这么久。 */
@@ -277,13 +277,17 @@ export class RoutineScheduler {
     const credential = this.runtime.scriptTools.issue({
       tools: async () => {
         const builtin = buildRouterTools(this.runtime, routine.assistantId, routine.groupId, dir);
-        const plugins = pluginToolsForAssistant(this.runtime.plugins, routine.assistantId, new Set(builtin.map((tool) => tool.name)));
-        return scriptToolList(builtin, !!(await boundKnowledge(this.runtime, routine.assistantId)).length, plugins);
+        const reserved = new Set(builtin.map((tool) => tool.name));
+        const plugins = pluginToolsForAssistant(this.runtime.plugins, routine.assistantId, reserved);
+        for (const tool of plugins) reserved.add(tool.name);
+        const commands = pluginCommandToolsForAssistant(this.runtime.plugins, routine.assistantId, reserved);
+        return scriptToolList(builtin, !!(await boundKnowledge(this.runtime, routine.assistantId)).length, plugins, commands);
       },
       onCall: (tool) => calls.push(tool.label),
     });
+    const binDirs = [join(engineDir(this.runtime.home), "bin"), ...this.runtime.plugins.binDirsForAssistant(routine.assistantId)];
     return new Promise((resolve) => {
-      exec(script, { cwd: dir, shell: "/bin/bash", env: this.runtime.scriptTools.environment(proxyEnvironment(process.env, this.runtime.settings.settings.general), credential.token), timeout: this.checkTimeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+      exec(script, { cwd: dir, shell: "/bin/bash", env: this.runtime.scriptTools.environment(proxyEnvironment(process.env, this.runtime.settings.settings.general), credential.token, binDirs), timeout: this.checkTimeoutMs, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
         credential.revoke();
         if (error) {
           const reason = error.killed

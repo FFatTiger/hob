@@ -179,6 +179,9 @@ export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null 
     return { tone: "connected", label: t("已开启"), rank: 9 };
   }
   const status = pluginServiceStatusOf(item);
+  if (item.login && item.login.status?.signedIn === false && status !== "pending_config" && status !== "error") {
+    return { tone: "needs_login", label: t("未登录"), rank: 1 };
+  }
   if (!status) return null;
   const labels: Record<PluginServiceStatus, string> = {
     pending_config: t("待配置"),

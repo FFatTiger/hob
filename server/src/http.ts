@@ -349,6 +349,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return Array.isArray(visibility) && visibility.includes("app") && !visibility.includes("model");
     };
     const credentialRoles = runtime.plugins.credentialRolesForPlugin(id);
+    const login = runtime.plugins.loginView(id);
     const providers = runtime.providerPlugins.pluginProvidersView(id);
     const hasDeclaredProviders = (() => {
       try { return runtime.plugins.store.providersOf(id).length > 0; } catch { return false; }
@@ -356,9 +357,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return {
       ...view,
       credentialRoles,
+      ...(login ? { login } : {}),
       skills: runtime.plugins.store.skills(id),
       autoLogins: readLoginAuto(options.home).filter((entry) => entry.provider === id),
-      services: services.map(service => ({ ...service, tools: service.tools.filter(tool => !appOnly(tool)).map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })),
+      services: services.map(({ login: _login, ...service }) => ({ ...service, tools: service.tools.filter(tool => !appOnly(tool)).map(tool => ({ ...tool, toolName: pluginToolName(id, tool.name), enabled: view.plugin.tools[tool.name]?.enabled !== false })) })),
       ...(hasDeclaredProviders ? { providers, providerHost: runtime.providerPlugins.hostStatus() } : {}),
     };
   };
@@ -771,6 +773,33 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.delete("/api/plugins/:id/services/:service/oauth", async c => {
     try { const id = c.req.param("id"); disconnectPluginOAuth(runtime.plugins.oauthTarget(id, c.req.param("service"))); await runtime.plugins.reload(id); return c.json(pluginView(id)); }
     catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.get("/api/plugins/:id/login/status", async c => {
+    try {
+      const status = await runtime.plugins.loginStatus(c.req.param("id"), c.req.query("service") || undefined);
+      return c.json(status);
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/login/start", async c => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { service?: unknown };
+      const service = typeof body.service === "string" && body.service ? body.service : undefined;
+      return c.json(await runtime.plugins.loginStart(c.req.param("id"), service));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/login/poll", async c => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { service?: unknown };
+      const service = typeof body.service === "string" && body.service ? body.service : undefined;
+      return c.json(await runtime.plugins.loginPoll(c.req.param("id"), service));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
+  });
+  app.post("/api/plugins/:id/login/logout", async c => {
+    try {
+      const body = await c.req.json().catch(() => ({})) as { service?: unknown };
+      const service = typeof body.service === "string" && body.service ? body.service : undefined;
+      return c.json(await runtime.plugins.loginLogout(c.req.param("id"), service));
+    } catch (error) { return c.json({ error: pluginError(error) }, 400); }
   });
   app.delete("/api/plugins/:id/login-auto", async c => {
     try {

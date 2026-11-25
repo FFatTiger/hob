@@ -71,7 +71,7 @@ import type { KnowledgeCollection, KnowledgeEntry, KnowledgeGroup, KnowledgeOrig
 
 import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportView, SkillsView } from "../../shared/skills.ts";
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
-import type { PluginCatalogView, PluginLoginsView, PluginPatch, PluginView, PluginsView } from "../../shared/types.ts";
+import type { PluginCatalogView, PluginLoginsView, PluginPatch, PluginToolLoginPollResult, PluginToolLoginStartResult, PluginToolLoginStatus, PluginView, PluginsView } from "../../shared/types.ts";
 
 export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; q?: string; before?: string; limit?: number };
 
@@ -188,6 +188,10 @@ export interface HobApi {
   addCustomPlugin(id: string, server: Record<string, unknown>): Promise<PluginView>;
   startPluginOAuth(id: string, service: string): Promise<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>;
   disconnectPluginOAuth(id: string, service: string): Promise<PluginView>;
+  pluginLoginStatus(id: string, service?: string): Promise<PluginToolLoginStatus>;
+  startPluginToolLogin(id: string, service?: string): Promise<PluginToolLoginStartResult>;
+  pollPluginToolLogin(id: string, service?: string): Promise<PluginToolLoginPollResult>;
+  logoutPluginToolLogin(id: string, service?: string): Promise<{ ok: true; status?: PluginToolLoginStatus }>;
   removePluginLoginAuto(id: string, host: string, username: string): Promise<PluginView>;
   pluginLogins(id: string, service?: string): Promise<PluginLoginsView>;
   pluginLoginSecret(id: string, loginId: string, service?: string): Promise<{ username: string; password: string; totp?: string }>;
@@ -381,6 +385,10 @@ export const realApi: HobApi = {
   addCustomPlugin: (id, server) => req<PluginView>("/api/plugins/custom", json({ id, server })),
   startPluginOAuth: (id, service) => req<{ callbackUrl: string; authorizationUrl?: string; authorized?: boolean }>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, json({})),
   disconnectPluginOAuth: (id, service) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/services/${encodeURIComponent(service)}/oauth`, { method: "DELETE" }),
+  pluginLoginStatus: (id, service) => req<PluginToolLoginStatus>(`/api/plugins/${encodeURIComponent(id)}/login/status${service ? `?service=${encodeURIComponent(service)}` : ""}`),
+  startPluginToolLogin: (id, service) => req<PluginToolLoginStartResult>(`/api/plugins/${encodeURIComponent(id)}/login/start`, json(service ? { service } : {})),
+  pollPluginToolLogin: (id, service) => req<PluginToolLoginPollResult>(`/api/plugins/${encodeURIComponent(id)}/login/poll`, json(service ? { service } : {})),
+  logoutPluginToolLogin: (id, service) => req<{ ok: true; status?: PluginToolLoginStatus }>(`/api/plugins/${encodeURIComponent(id)}/login/logout`, json(service ? { service } : {})),
   removePluginLoginAuto: (id, host, username) => req<PluginView>(`/api/plugins/${encodeURIComponent(id)}/login-auto`, json({ host, username }, "DELETE")),
   pluginLogins: (id, service) => req<PluginLoginsView>(`/api/plugins/${encodeURIComponent(id)}/logins${service ? `?service=${encodeURIComponent(service)}` : ""}`),
   pluginLoginSecret: (id, loginId, service) => req<{ username: string; password: string; totp?: string }>(`/api/plugins/${encodeURIComponent(id)}/logins/secret`, json({ id: loginId, ...(service ? { service } : {}) })),

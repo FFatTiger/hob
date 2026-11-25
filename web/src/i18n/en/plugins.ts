@@ -98,6 +98,8 @@ export const pluginsEn = {
   "修改配置": "Edit configuration",
   "停用": "Disable",
   "登录": "Sign in",
+  "退出登录": "Sign out",
+  "已登录 {account}": "Signed in as {account}",
   "还差：{fields}。填好保存后自动连接。": "Missing: {fields}. Save the fields to connect automatically.",
   "「{name}」还差：{fields}。填好保存后自动连接。": "“{name}” is missing: {fields}. Save the fields to connect automatically.",
   "请填写配置后保存，服务会自动连接。": "Save the configuration to connect automatically.",

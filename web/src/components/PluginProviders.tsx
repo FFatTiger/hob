@@ -501,6 +501,119 @@ export function ProviderModelsSection({
   );
 }
 
+export function DeviceCodeLoginCard({
+  userCode,
+  url,
+  expiresAt,
+  status,
+  error,
+  actionError,
+  busy = false,
+  verbatimError = false,
+  onRestart,
+  onCancel,
+}: {
+  userCode?: string;
+  url?: string;
+  expiresAt?: string;
+  status: "pending" | "waiting" | "failed" | "expired";
+  error?: string;
+  actionError?: string;
+  busy?: boolean;
+  verbatimError?: boolean;
+  onRestart?: () => void;
+  onCancel: () => void;
+}) {
+  const [copiedField, setCopiedField] = useState<"code" | "url" | null>(null);
+  const copyText = (field: "code" | "url", text: string) => {
+    void navigator.clipboard?.writeText(text).catch(() => {});
+    setCopiedField(field);
+    window.setTimeout(() => setCopiedField((cur) => (cur === field ? null : cur)), 1800);
+  };
+  const minsLeft = remainingMinutes(expiresAt);
+  return (
+    <div className="plugin-login-card">
+      <div className="plugin-login-title">{t("通过设备码登录")}</div>
+      <div className="plugin-login-desc">
+        {t("在浏览器中打开下方网址并输入设备码完成授权。成功后会自动变成已登录状态，远程部署的 Hob 也可直接使用。")}
+      </div>
+      <div className="plugin-code-group">
+        {userCode ? (
+          <div className="plugin-code-row">
+            <div className="plugin-code-main">
+              <div className="plugin-code-k">{t("设备码")}</div>
+              <div className="plugin-code-val">{userCode}</div>
+            </div>
+            <button
+              type="button"
+              className="hob-icon-btn"
+              title={copiedField === "code" ? t("已复制") : t("复制设备码")}
+              aria-label={t("复制设备码")}
+              onClick={() => copyText("code", userCode)}
+            >
+              <Icon name={copiedField === "code" ? "check" : "copy"} size={15} />
+            </button>
+          </div>
+        ) : null}
+        {url ? (
+          <div className="plugin-code-row">
+            <div className="plugin-code-main">
+              <div className="plugin-code-k">{t("验证网址")}</div>
+              <div className="plugin-url-val">{url}</div>
+            </div>
+            <button
+              type="button"
+              className="hob-icon-btn"
+              title={copiedField === "url" ? t("已复制") : t("复制网址")}
+              aria-label={t("复制网址")}
+              onClick={() => copyText("url", url)}
+            >
+              <Icon name={copiedField === "url" ? "check" : "copy"} size={15} />
+            </button>
+          </div>
+        ) : null}
+      </div>
+      {actionError ? <div className="badline" role="alert">{actionError}</div> : null}
+      <div className="plugin-actions">
+        {url ? (
+          <a className="hob-btn hob-btn-primary" href={url} target="_blank" rel="noreferrer">
+            {t("打开网页")}
+            <Icon name="out" size={14} />
+          </a>
+        ) : null}
+        {(status === "expired" || status === "failed") && onRestart ? (
+          <button type="button" className="hob-btn hob-btn-primary" disabled={busy} onClick={onRestart}>
+            {t("重新发起")}
+          </button>
+        ) : null}
+        <button type="button" className="hob-btn plugin-btn-white" disabled={busy} onClick={onCancel}>
+          {t("取消")}
+        </button>
+      </div>
+      {status === "expired" ? (
+        <div className="plugin-wait bad" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{error || t("登录已过期，请重新发起登录。")}</span>
+        </div>
+      ) : status === "failed" ? (
+        <div className="plugin-wait bad" role="alert">
+          <Icon name="alert" size={15} />
+          <span>{verbatimError ? (error || t("未知错误")) : t("登录失败：{reason}", { reason: error || t("未知错误") })}</span>
+        </div>
+      ) : (
+        <div className="plugin-wait">
+          <Icon name="spin" size={15} className="spin" />
+          <span>
+            {minsLeft !== null && minsLeft > 0
+              ? t("{text} · 约 {mins} 分钟后过期", { text: t("等你在网页上确认…"), mins: minsLeft })
+              : t("等你在网页上确认…")}
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function ProviderSignInCard({
   pluginId,
   provider,
@@ -881,66 +994,17 @@ export function ProviderSignInCard({
         <section className="plugin-section">
           <h2>{t("登录账号")}</h2>
           {switcher}
-          <div className="plugin-login-card">
-            <div className="plugin-login-title">{t("通过设备码登录")}</div>
-            <div className="plugin-login-desc">
-              {t("在浏览器中打开下方网址并输入设备码完成授权。成功后会自动变成已登录状态，远程部署的 Hob 也可直接使用。")}
-            </div>
-            <div className="plugin-code-group">
-              {session.userCode ? (
-                <div className="plugin-code-row">
-                  <div className="plugin-code-main">
-                    <div className="plugin-code-k">{t("设备码")}</div>
-                    <div className="plugin-code-val">{session.userCode}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="hob-icon-btn"
-                    title={copiedField === "code" ? t("已复制") : t("复制设备码")}
-                    aria-label={t("复制设备码")}
-                    onClick={() => copyText("code", session.userCode!)}
-                  >
-                    <Icon name={copiedField === "code" ? "check" : "copy"} size={15} />
-                  </button>
-                </div>
-              ) : null}
-              {session.url ? (
-                <div className="plugin-code-row">
-                  <div className="plugin-code-main">
-                    <div className="plugin-code-k">{t("验证网址")}</div>
-                    <div className="plugin-url-val">{session.url}</div>
-                  </div>
-                  <button
-                    type="button"
-                    className="hob-icon-btn"
-                    title={copiedField === "url" ? t("已复制") : t("复制网址")}
-                    aria-label={t("复制网址")}
-                    onClick={() => copyText("url", session.url!)}
-                  >
-                    <Icon name={copiedField === "url" ? "check" : "copy"} size={15} />
-                  </button>
-                </div>
-              ) : null}
-            </div>
-            {error ? <div className="badline" role="alert">{error}</div> : null}
-            <div className="plugin-actions">
-              {session.url ? (
-                <a className="hob-btn hob-btn-primary" href={session.url} target="_blank" rel="noreferrer">
-                  {t("打开网页")}
-                  <Icon name="out" size={14} />
-                </a>
-              ) : null}
-              {session.status === "expired" || session.status === "failed" ? (
-                <button type="button" className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void beginOAuth(methodIdx)}>
-                  {t("重新发起")}
-                </button>
-              ) : null}
-              <button type="button" className="hob-btn plugin-btn-white" disabled={busy} onClick={() => void handleCancel()}>
-                {t("取消")}
-              </button>
-            </div>
-            {renderSessionFooter(session, t("等你在网页上确认…"))}
-          </div>
+          <DeviceCodeLoginCard
+            userCode={session.userCode}
+            url={session.url}
+            expiresAt={session.expiresAt}
+            status={session.status === "expired" ? "expired" : session.status === "failed" ? "failed" : "waiting"}
+            error={session.error}
+            actionError={error || undefined}
+            busy={busy}
+            onRestart={() => void beginOAuth(methodIdx)}
+            onCancel={() => void handleCancel()}
+          />
         </section>
       );
     }

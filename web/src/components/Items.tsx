@@ -743,6 +743,7 @@ function ItemView({
   mentions,
   quoteWho,
   forwarded,
+  readBy,
 }: {
   item: Item;
   inlineDraft?: Draft;
@@ -754,6 +755,8 @@ function ItemView({
   quoteWho?: (itemId: string) => string | undefined;
   /** 从综合转进话题的用户消息：气泡上方加一行小字 */
   forwarded?: GroupItem["forwardedFrom"];
+  /** 群里你最后一条消息还没人回：接手了它的成员名字，气泡下面写「谁已读」 */
+  readBy?: string[];
 }) {
   const s = useApp();
   const enter = fresh ? " enter" : "";
@@ -826,6 +829,7 @@ function ItemView({
             <button onClick={() => discardPending(pend)}>{t("删除")}</button>
           </div>
         ) : null}
+        {readBy?.length && !pend ? <div className="read-receipt">{t("{names} 已读", { names: readBy.join("、") })}</div> : null}
         {pend ? null : <Tools text={item.text} itemId={item.id} />}
         </div>
       </div>
@@ -1152,6 +1156,12 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
   };
   const rows: ReactNode[] = [];
   if (items.length && !isToday(items[0].at)) rows.push(<div className="div" key="first-div">{fmtWhen(items[0].at)}</div>);
+  // 你最后一条消息后面还没有成员说话：接手了它的成员写在气泡下面，不出声也看得出消息到了
+  const lastUser = items.findLastIndex((item) => item.kind === "user");
+  const unanswered = lastUser >= 0 && !items.slice(lastUser + 1).some((item) => item.kind === "assistant");
+  // 下标按完整时间线算：成员接手到的那条可能是界面不显示的条目
+  const indexOf = (id: string | undefined) => (id ? all.findIndex((item) => item.id === id) : -1);
+  const readBy = unanswered ? members.filter((m) => indexOf(g.seen?.[m.id]) >= indexOf(items[lastUser].id)).map((m) => m.name) : [];
   let previous: GroupItem | undefined;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];
@@ -1163,7 +1173,7 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
       rows.push(
         <Fragment key={item.id}>
           {divider}
-          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} /></GestureCard>
+          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} readBy={i === lastUser ? readBy : undefined} /></GestureCard>
         </Fragment>,
       );
       continue;

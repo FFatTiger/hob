@@ -180,6 +180,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "、": ", ",
   "转自 {name}": "From {name}",
   "未送达": "Not delivered",
+  "{names} 已读": "Read by {names}",
   "删除": "Delete",
   "文件路径缺失，无法预览": "File path is missing and cannot be previewed",
   "文件": "Files",

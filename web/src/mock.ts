@@ -67,7 +67,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.3" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "workspace-cwd" | "workspace-cwd-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -163,6 +163,8 @@ export const SCENE_UI: Record<
   "todo-job": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   // 话题（票 152）：一个敏捷团队群、一个家用群
   topics: { sel: null, gsel: "g-topics", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "read-receipt": { sel: null, gsel: "t-export", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "read-receipt-hub": { sel: null, gsel: "g-topics", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "topics-plain": { sel: null, gsel: "g-home", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   // 工作目录绑定演示：群绑定 / 话题跟随 / 独立话题绑定 / 助手绑定
   "workspace-cwd": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -1585,7 +1587,8 @@ cp now.txt "$seen"`,
     ];
   }
 
-  if (scene === "topics" || scene === "topics-plain" || scene === "todo-topic") {
+  const receipt = scene === "read-receipt" || scene === "read-receipt-hub";
+  if (scene === "topics" || scene === "topics-plain" || scene === "todo-topic" || receipt) {
     const software = scene !== "topics-plain";
     const host: GroupSummary = software
       ? {
@@ -1709,7 +1712,10 @@ cp now.txt "$seen"`,
     topicItems[tExport.id] = [
       { kind: "user", id: "te-1", at: at(0, 9, 30), text: "每月的报表想按月份导出", speaker: "user" },
       { kind: "assistant", id: "te-2", at: at(0, 9, 31), text: "有两个问题要你定：按自然月还是按账期？导出 Excel 还是 CSV？", speaker: "po" },
+      // 已读：转进来的这句群主看过了，还没回
+      ...(receipt ? [{ kind: "user" as const, id: "te-3", at: at(0, 9, 55), text: "用户在综合补充：导出先用 CSV，Excel 下个月再说。按自然月还是账期还没定。", speaker: "user", forwardedFrom: { groupId: host.id, itemId: "gt-10" } }] : []),
     ];
+    if (receipt) tExport.seen = { po: "te-3" };
     topicItems[tUpload.id] = [
       { kind: "user", id: "tu-1", at: at(0, 9, 44), text: "上传 2 GB 的文件卡在 99%", speaker: "user" },
       { kind: "assistant", id: "tu-2", at: at(0, 9, 45), text: "看了日志：分片传完最后一块后没有合并，是我这边的问题。修好了，测试现在过两条。", speaker: "dev" },
@@ -1739,7 +1745,13 @@ cp now.txt "$seen"`,
         { kind: "topic", id: "gt-7", at: at(0, 9, 44), topicId: tUpload.id, speaker: "po" },
         { kind: "assistant", id: "gt-8", at: at(0, 9, 46), text: "对不上。慢的是 09:10 以后，是备份任务把磁盘占满了，和发版无关；已经告诉服务器那边。", speaker: "arch" },
         { kind: "note", id: "gt-9", at: at(0, 9, 52), icon: "split", text: "产品负责人开了话题「登录页加「记住我」」", speaker: "po" },
+        // 已读：你在综合补了一句，群主转进话题，自己没出声
+        ...(receipt ? [
+          { kind: "user" as const, id: "gt-10", at: at(0, 9, 55), text: "导出那个先用 CSV，Excel 下个月再说", speaker: "user" },
+          { kind: "note" as const, id: "gt-11", at: at(0, 9, 55), icon: "info" as const, text: "转到了话题「导出月度报表」", targetGroupId: tExport.id, speaker: "po" },
+        ] : []),
       ];
+      if (receipt) host.seen = { po: "gt-11" };
     }
   }
 

@@ -148,6 +148,7 @@ export class GroupManager {
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
       ...(this.runtime.router.suggestionsFor(group.ownerId, group.id)?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, group.id) } : {}),
       ...(Object.keys(activity).length ? { activity } : {}),
+      ...(this.store.groupState(group.id).seen ? { seen: this.store.groupState(group.id).seen } : {}),
     };
   }
 
@@ -908,9 +909,9 @@ export class GroupManager {
   }
 
   /** 一行系统提示（停下、重启、无响应、记忆已更新）。 */
-  note(gid: string, speaker: string, text: string, icon: NoteIcon = "info", detail?: string): GroupItem {
+  note(gid: string, speaker: string, text: string, icon: NoteIcon = "info", detail?: string, targetGroupId?: string): GroupItem {
     const visibleText = text === RELAY_NOTE ? t("群内转交次数过多，已在此暂停。") : text === RESTART_NOTE ? t("服务已重启，本轮已中断。") : text;
-    return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}) });
+    return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}), ...(targetGroupId ? { targetGroupId } : {}) });
   }
 
   /** 这一个群的时间线（去掉没说完的空回复）。 */

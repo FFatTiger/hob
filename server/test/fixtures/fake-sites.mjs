@@ -26,10 +26,10 @@ export async function startFakeSites({ port = 0, host = "127.0.0.1", expected = 
     const body = req.method === "POST" ? await readBody(req) : {};
     const record = (kind, values) => { const entry = { site, kind, at: new Date().toISOString(), ...values }; received.push(entry); onReceived(entry); return entry; };
 
-    // ---------- forum.example.net：一步登录 ----------
+    // ---------- forum.example.net：一步登录（表单最前面有个隐藏的 csrf 框，像很多真实网站那样） ----------
     if (site === "forum.example.net") {
       const want = expected.forum ?? {};
-      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 论坛 · 登录", form("/login", [["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
+      if (url.pathname === "/login" && req.method === "GET") return send(200, page("Example 论坛 · 登录", form("/login", [["", `<input type="hidden" name="authenticity_token" value="csrf-7QhV">`], ["邮箱", `<input type="email" name="email" autocomplete="username" required>`], ["密码", `<input type="password" name="password" autocomplete="current-password" required>`]])));
       if (url.pathname === "/login" && req.method === "POST") {
         const usernameOk = body.email === want.username;
         const passwordOk = Boolean(want.password) && body.password === want.password;

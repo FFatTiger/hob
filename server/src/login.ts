@@ -81,12 +81,13 @@ export async function pageInfo(page: Page): Promise<PageInfo> {
   const url = page.url();
   const host = hostOf(url);
   if (!host) throw new Error(`当前页面（${url}）没有网站地址。先打开登录页再调 login。`);
-  const inputs = await page.locator("input").evaluateAll((elements) => elements.flatMap((element) => {
+  // index 是在页面全部 input 里的位置（含隐藏的），填写时用 locator("input").nth(index) 按它找回同一个框
+  const inputs = await page.locator("input").evaluateAll((elements) => elements.flatMap((element, index) => {
     const input = element as HTMLInputElement;
     const style = window.getComputedStyle(input);
     if (input.type === "hidden" || input.disabled || style.display === "none" || style.visibility === "hidden" || input.getClientRects().length === 0) return [];
-    return [{ type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), id: input.id.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value }];
-  }).map((input, index) => ({ ...input, index })));
+    return [{ type: input.type.toLowerCase(), autocomplete: input.autocomplete.toLowerCase(), name: input.name.toLowerCase(), id: input.id.toLowerCase(), value: input.type.toLowerCase() === "password" ? "" : input.value, index }];
+  }));
   const password = inputs.find((input) => input.type === "password" && input.autocomplete === "current-password") ?? inputs.find((input) => input.type === "password");
   const passwordIndex = password?.index;
   const usernameCandidates = inputs.filter((input) => input.type === "email" || input.autocomplete === "username" || /user|email|login|account/i.test(`${input.name} ${input.id} ${input.type}`));

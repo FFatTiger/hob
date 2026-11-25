@@ -63,7 +63,7 @@ describeE2E("login / 新密码端到端（真 Chrome）", () => {
   const approvals = () => hob.runtime.store.approvals().filter((approval) => approval.login);
   const pending = () => approvals().filter((approval) => approval.status === "pending");
   const goto = async (url: string) => { await page.goto(url); await page.waitForLoadState("domcontentloaded"); };
-  const inputs = () => page.locator("input").evaluateAll((elements) => elements.map((element) => { const input = element as HTMLInputElement; return { type: input.type, name: input.name, autocomplete: input.autocomplete, value: input.value }; }));
+  const inputs = () => page.locator("input:not([type=hidden])").evaluateAll((elements) => elements.map((element) => { const input = element as HTMLInputElement; return { type: input.type, name: input.name, autocomplete: input.autocomplete, value: input.value }; }));
   const submit = async () => { await page.locator('button[type="submit"], button:not([type])').first().click(); await page.waitForLoadState("domcontentloaded"); await page.waitForTimeout(200); return { url: page.url(), text: await page.locator("body").innerText() }; };
   const eventText = (messages: unknown[]): string => {
     const last = (messages as Array<{ role?: string; content?: unknown }>).filter((message) => message.role === "user").at(-1);

@@ -29,7 +29,7 @@ export interface PromptSettings {
   /** 在哪个群里说话：提示词把「一对一」那段换成群里的规矩 */
   group?: Group;
   /** 绑定的外部工作目录信息（未绑定时不填，提示词零改动） */
-  workspace?: { cwd: string; source: "topic" | "group" | "assistant" };
+  workspace?: { cwd: string; source: "topic" | "group" | "assistant"; ownDir: string };
   /** 绑定的外部工作目录运行时不存在或不可访问时的告警路径 */
   workspaceWarning?: string;
   /** 任务带着技能（任何一档）：提示词里让它先读对得上的那份 */
@@ -161,7 +161,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   if (settings.workspace) {
     const sourceLabel = settings.workspace.source === "topic" ? "本话题" : settings.workspace.source === "group" ? "本群" : "你的设置";
     const taskScope = group && settings.workspace.source === "assistant" ? "和你自己执行的任务" : "和派出的任务";
-    lines.push(`当前工作目录：${settings.workspace.cwd}（来源：${sourceLabel}）。命令、文件读写${taskScope}都在这个目录进行。`);
+    lines.push(`当前工作目录：${settings.workspace.cwd}（来源：${sourceLabel}）。命令、文件读写${taskScope}都在这个目录进行。你自己的目录是 ${settings.workspace.ownDir}：技能草稿、临时文件和中间产物放在那里，项目目录里只留项目要的改动。`);
   } else if (settings.workspaceWarning) {
     lines.push(`注意：配置的工作目录「${settings.workspaceWarning}」当前不存在或不可访问，本轮已临时回落到默认目录，请核实该目录是否已被移动或删除。`);
   }

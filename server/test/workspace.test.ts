@@ -1242,22 +1242,22 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const freeGroupPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
         ...basePromptOpts,
         group: freeGroup,
-        workspace: { cwd: dirA, source: "assistant" },
+        workspace: { cwd: dirA, source: "assistant", ownDir: "/own" },
       });
       expect(freeGroupPrompt).toContain(`当前工作目录：${dirA}（来源：你的设置）。命令、文件读写和你自己执行的任务都在这个目录进行。`);
 
       const dmPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
         ...basePromptOpts,
-        workspace: { cwd: dirA, source: "assistant" },
+        workspace: { cwd: dirA, source: "assistant", ownDir: "/own" },
       });
       expect(dmPrompt).toContain(`当前工作目录：${dirA}（来源：你的设置）。命令、文件读写和派出的任务都在这个目录进行。`);
 
       const lockedGroupPrompt = buildSystemPrompt(hob.runtime.store, memberA.id, {
         ...basePromptOpts,
         group: lockedGroup,
-        workspace: { cwd: grpDir, source: "group" },
+        workspace: { cwd: grpDir, source: "group", ownDir: "/own" },
       });
-      expect(lockedGroupPrompt).toContain(`当前工作目录：${grpDir}（来源：本群）。命令、文件读写和派出的任务都在这个目录进行。`);
+      expect(lockedGroupPrompt).toContain(`当前工作目录：${grpDir}（来源：本群）。命令、文件读写和派出的任务都在这个目录进行。你自己的目录是 /own：技能草稿、临时文件和中间产物放在那里，项目目录里只留项目要的改动。`);
     } finally {
       hob.close();
     }

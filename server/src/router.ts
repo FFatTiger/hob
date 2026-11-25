@@ -511,13 +511,13 @@ export class RouterManager {
     mkdirSync(ownWorkDir, { recursive: true });
     const resolved = resolveWorkspaceCwd(this.store, this.runtime.home, assistant.id, state.groupId);
     let sessionCwd = resolved.sessionCwd;
-    let workspacePrompt: { cwd: string; source: "topic" | "group" | "assistant" } | undefined;
+    let workspacePrompt: { cwd: string; source: "topic" | "group" | "assistant"; ownDir: string } | undefined;
     let workspaceWarning: string | undefined;
     let agentsFiles: Array<{ path: string; content: string }> = [];
     if (resolved.bound && resolved.source !== "default") {
       try {
         sessionCwd = validateWorkspaceCwd(resolved.bound, this.runtime.home);
-        workspacePrompt = { cwd: sessionCwd, source: resolved.source };
+        workspacePrompt = { cwd: sessionCwd, source: resolved.source, ownDir: ownWorkDir };
         agentsFiles = loadWorkspaceAgentsFile(sessionCwd);
       } catch {
         sessionCwd = ownWorkDir;

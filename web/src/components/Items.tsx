@@ -2,7 +2,7 @@
 import { t } from "../../../shared/i18n.ts";
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import type { Approval, ApprovalOption, Delegation, Draft, GroupItem, GroupSummary, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
+import type { Approval, ApprovalOption, AssistantSummary, Delegation, Draft, GroupItem, GroupSummary, Item, Job, NoteIcon, SedimentStatus } from "../../../shared/types.ts";
 import { attachmentName, isImagePath } from "../../../shared/media.ts";
 import { plainText as plain } from "../../../shared/plain-text.ts";
 import { isRoutineDueNote } from "../../../shared/routine-note.ts";
@@ -755,8 +755,8 @@ function ItemView({
   quoteWho?: (itemId: string) => string | undefined;
   /** 从综合转进话题的用户消息：气泡上方加一行小字 */
   forwarded?: GroupItem["forwardedFrom"];
-  /** 群里你最后一条消息还没人回：接手了它的成员名字，气泡下面写「谁已读」 */
-  readBy?: string[];
+  /** 你最后一条消息还没人回：接手了它的助手，气泡下面标出来 */
+  readBy?: AssistantSummary[];
 }) {
   const s = useApp();
   const enter = fresh ? " enter" : "";
@@ -829,7 +829,7 @@ function ItemView({
             <button onClick={() => discardPending(pend)}>{t("删除")}</button>
           </div>
         ) : null}
-        {readBy?.length && !pend ? <div className="read-receipt">{t("{names} 已读", { names: readBy.join("、") })}</div> : null}
+        {!pend && (readBy?.length || item.reactions?.length) ? <ReadReceipt readers={readBy ?? []} reactions={item.reactions ?? []} group={Boolean(mentions)} /> : null}
         {pend ? null : <Tools text={item.text} itemId={item.id} />}
         </div>
       </div>
@@ -1098,9 +1098,35 @@ export function visibleItems<T extends Item>(items: T[]): T[] {
   });
 }
 
+type ReceiptStyle = "text" | "avatar" | "check" | "react";
+const RECEIPT: ReceiptStyle = (["text", "avatar", "check", "react"] as const).find((v) => v === new URLSearchParams(location.search).get("receipt")) ?? "text";
+
+/** 你消息下面的一行：谁已读，以及助手给这条的表情回应 */
+function ReadReceipt({ readers, reactions, group }: { readers: AssistantSummary[]; reactions: { by: string; emoji: string }[]; group: boolean }) {
+  const s = useApp();
+  const who = (id: string) => s.assistants.find((a) => a.id === id);
+  const names = readers.map((a) => a.name).join("、");
+  const label = group ? t("{names} 已读", { names }) : t("已读");
+  // 表情回应：已经回应过的按回应显示，接手了还没回应的挂 👀
+  if (RECEIPT === "react" || reactions.length) {
+    const list = [...reactions, ...(RECEIPT === "react" ? readers.filter((a) => !reactions.some((r) => r.by === a.id)).map((a) => ({ by: a.id, emoji: "👀" })) : [])];
+    return <div className="read-receipt reactions">{list.map((r) => { const a = who(r.by); return <span className="reaction" key={r.by} title={a?.name}><span className="reaction-emoji">{r.emoji}</span>{a ? <Avatar sprite={a.sprite} prop={a.prop} size={16} /> : null}</span>; })}</div>;
+  }
+  if (!readers.length) return null;
+  if (RECEIPT === "avatar") return <div className="read-receipt" title={label}>{readers.map((a) => <Avatar key={a.id} sprite={a.sprite} prop={a.prop} size={16} />)}</div>;
+  if (RECEIPT === "check") return <div className="read-receipt" title={label}><Icon name="check" size={14} />{group ? <span>{names}</span> : null}</div>;
+  return <div className="read-receipt">{label}</div>;
+}
+
 export function ItemList({ items: all }: { items: Item[] }) {
   const s = useApp();
   const items = visibleItems(all);
+  // 你最后一条消息后面助手还没说话、它已经接手了这条：气泡下面标已读
+  const me = s.assistants.find((a) => a.id === s.sel);
+  const lastUser = items.findLastIndex((item) => item.kind === "user");
+  const unanswered = lastUser >= 0 && !items.slice(lastUser + 1).some((item) => item.kind === "assistant");
+  const seenAt = me?.seen ? all.findIndex((item) => item.id === me.seen) : -1;
+  const readBy = me && unanswered && seenAt >= all.findIndex((item) => item.id === items[lastUser].id) ? [me] : undefined;
   const { toolsFor, popup } = useItemGestures();
   const rows: ReactNode[] = [];
   if (items.length && !isToday(items[0].at) && items[0].kind !== "note") {
@@ -1124,7 +1150,7 @@ export function ItemList({ items: all }: { items: Item[] }) {
         ) : opensGroup(prev, item) ? (
           <div className="g" />
         ) : null}
-        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} /></GestureCard>
+        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} readBy={i === lastUser ? readBy : undefined} /></GestureCard>
       </Fragment>,
     );
   }
@@ -1161,7 +1187,7 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
   const unanswered = lastUser >= 0 && !items.slice(lastUser + 1).some((item) => item.kind === "assistant");
   // 下标按完整时间线算：成员接手到的那条可能是界面不显示的条目
   const indexOf = (id: string | undefined) => (id ? all.findIndex((item) => item.id === id) : -1);
-  const readBy = unanswered ? members.filter((m) => indexOf(g.seen?.[m.id]) >= indexOf(items[lastUser].id)).map((m) => m.name) : [];
+  const readBy = unanswered ? members.filter((m) => indexOf(g.seen?.[m.id]) >= indexOf(items[lastUser].id)) : [];
   let previous: GroupItem | undefined;
   for (let i = 0; i < items.length; i++) {
     const item = items[i];

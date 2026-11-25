@@ -278,7 +278,8 @@ export function App() {
       {/* 右栏宽度跟根页走（收起、云桌面展开），宽页（任务、文件）打开时变宽、把对话区挤窄；上面的页一层层盖在右栏里 */}
       <div ref={panelwrap} className={`panelwrap${fullPage ? " full" : widePage ? " wide page" : home || s.collapsed ? " off" : desktopFocus ? " wide focus" : s.nowWide ? " wide" : ""}`} style={desktopWidth ? { ["--desk-w" as string]: `${desktopWidth}px` } : undefined}>
         {desktopFocus && !widePage && !fullPage && !home && !s.collapsed ? <div className="panel-resize" role="separator" aria-orientation="vertical" aria-label={t("拖动调整云桌面宽度")} onPointerDown={startResize} /> : null}
-        <Panel page={null} />
+        {/* 首页右栏是收起的：不渲染根页，免得回首页那一刻在滑出去的面板里重画一遍主助手的资料 */}
+        {home ? null : <Panel page={null} />}
         {layers.map(({ page, leaving }) => (
           <div key={pageKey(page)} className={`panel-layer${page.kind === "file" || page.kind === "job" || page.kind === "jobs" ? " wide" : ""}${page.kind === "job" && page.instant ? " instant" : ""}${leaving ? " leaving" : ""}`}>
             {page.kind === "file" ? <FilePreviewOverlay embedded page={page} />

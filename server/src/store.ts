@@ -67,15 +67,25 @@ export function publicDelegation(record: StoredDelegation): Delegation {
   return visible;
 }
 
-/** 助手的本地状态（不属于前后端契约，只存未读位置）。 */
-export interface AssistantState {
-  readAt?: string;
+export type StoredReactions = Record<string, Record<string, string>>;
+
+export function reactionsList(map: Record<string, string> | undefined): { by: string; emoji: string }[] | undefined {
+  if (!map) return undefined;
+  const list = Object.entries(map).map(([by, emoji]) => ({ by, emoji }));
+  return list.length ? list : undefined;
 }
 
-/** 群的本地状态：已读到哪条；每个成员上一轮给到时间线的哪一条（assistantId → 条目 id）。 */
+/** 助手的本地状态（不属于前后端契约，存未读位置和单聊表情回应）。 */
+export interface AssistantState {
+  readAt?: string;
+  reactions?: StoredReactions;
+}
+
+/** 群的本地状态：已读到哪条；每个成员上一轮给到时间线的哪一条（assistantId → 条目 id）；表情回应。 */
 export interface GroupState {
   readAt?: string;
   seen?: Record<string, string>;
+  reactions?: StoredReactions;
 }
 
 /**
@@ -230,8 +240,9 @@ export class Store {
     return readJson<AssistantState>(join(this.assistantDir(id), "state.json"), {});
   }
 
-  saveState(id: string, state: AssistantState): void {
-    writeJsonAtomic(join(this.assistantDir(id), "state.json"), state);
+  /** 只改给出的字段，别的照旧。 */
+  saveState(id: string, patch: AssistantState): void {
+    writeJsonAtomic(join(this.assistantDir(id), "state.json"), { ...this.state(id), ...patch });
   }
 
   routerFile(id: string): string {
@@ -308,6 +319,7 @@ export class Store {
       members: parent.members,
       ...(parent.models ? { models: parent.models } : {}),
       ...(parent.memberModels ? { memberModels: parent.memberModels } : {}),
+      ...(own.replyMode ? { replyMode: own.replyMode } : {}),
       createdAt: own.createdAt,
       parentId: own.parentId,
       ...(own.cwd ? { cwd: own.cwd } : {}),
@@ -330,6 +342,7 @@ export class Store {
       id: group.id,
       parentId: group.parentId,
       name: group.name,
+      ...(group.replyMode ? { replyMode: group.replyMode } : {}),
       createdAt: group.createdAt,
       ...(group.cwd ? { cwd: group.cwd } : {}),
       ...(existing && Object.prototype.hasOwnProperty.call(existing, "workflow") ? { workflow: existing.workflow } : {}),

@@ -147,12 +147,20 @@ function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
   const [adding, setAdding] = useState(false);
   const [ending, setEnding] = useState(false);
   const menu = useMenu();
+  const replyMenu = useMenu();
   const picked = menu.menu ? s.assistants.find((a) => a.id === menu.menu!.id) : undefined;
+  const target = topic ?? g;
+  const replyMode = target.replyMode ?? "owner";
 
   const change = async (patch: { ownerId?: string; members?: string[] }) => {
     const failure = await patchGroup(g.id, patch);
     if (failure) setNotice(t("保存失败：{error}", { error: failure }));
     return !failure;
+  };
+
+  const changeReplyMode = async (mode: "owner" | "all") => {
+    const failure = await patchGroup(target.id, { replyMode: mode });
+    if (failure) setNotice(t("保存失败：{error}", { error: failure }));
   };
 
   return (
@@ -178,7 +186,23 @@ function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
         ) : null}
       </div>
 
-      <PanelRootDetails groupId={g.id} part="info" />
+      <PanelRootDetails
+        groupId={g.id}
+        part="info"
+        replyModeRow={(
+          <button
+            type="button"
+            aria-haspopup="menu"
+            aria-expanded={replyMenu.menu !== null}
+            onClick={(event) => replyMenu.toggle("replyMode", event.currentTarget)}
+          >
+            <Icon name="reply" size={15} />
+            <span>{t("没点名时")}</span>
+            <small>{replyMode === "all" ? t("全员回应") : t("群主回应")}</small>
+            <b>›</b>
+          </button>
+        )}
+      />
 
       <PlaceJobs ids={ids} />
 
@@ -241,6 +265,31 @@ function GroupPanel({ g, topic }: { g: GroupSummary; topic?: GroupSummary }) {
         <div className="amenu" ref={menu.box}>
           <button onClick={() => { menu.close(); void change({ ownerId: picked.id }); }}>{t("设为群主")}</button>
           <button onClick={() => { menu.close(); void change({ members: g.members.filter((id) => id !== picked.id) }); }}>{t("移出群")}</button>
+        </div>,
+        document.body,
+      ) : null}
+
+      {replyMenu.menu ? createPortal(
+        <div className="amenu select-popup" ref={replyMenu.box} role="menu" style={{ minWidth: 160 }}>
+          {([
+            { mode: "owner" as const, label: t("群主回应") },
+            { mode: "all" as const, label: t("全员回应") },
+          ]).map(({ mode, label }) => (
+            <button
+              key={mode}
+              type="button"
+              role="menuitemradio"
+              aria-checked={replyMode === mode}
+              aria-selected={replyMode === mode}
+              onClick={() => {
+                replyMenu.close();
+                if (replyMode !== mode) void changeReplyMode(mode);
+              }}
+            >
+              <span>{label}</span>
+              {replyMode === mode ? <Icon name="check" size={15} /> : null}
+            </button>
+          ))}
         </div>,
         document.body,
       ) : null}

@@ -577,7 +577,11 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
           className="ta"
           rows={1}
           value={s.text}
-          placeholder={g ? (g.parentId ? t("在此话题中发言，未点名时由{owner}接手", { owner: sendName(owner?.name ?? "") }) : t("在综合中发言，未点名时由{owner}接手", { owner: sendName(owner?.name ?? "") })) : t("给{assistant}发消息", { assistant: sendName(a?.name ?? "") })}
+          placeholder={g ? (
+            g.replyMode === "all"
+              ? (g.parentId ? t("在此话题中发言，未点名时全员依次回应") : t("在综合中发言，未点名时全员依次回应"))
+              : (g.parentId ? t("在此话题中发言，未点名时由{owner}接手", { owner: sendName(owner?.name ?? "") }) : t("在综合中发言，未点名时由{owner}接手", { owner: sendName(owner?.name ?? "") }))
+          ) : t("给{assistant}发消息", { assistant: sendName(a?.name ?? "") })}
           onChange={(e) => {
             setText(e.target.value);
             setCaret(e.target.selectionStart ?? e.target.value.length);

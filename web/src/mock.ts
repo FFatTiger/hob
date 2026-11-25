@@ -67,7 +67,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.16.3" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -170,6 +170,9 @@ export const SCENE_UI: Record<
   // 工作目录绑定演示：群绑定 / 话题跟随 / 独立话题绑定 / 助手绑定
   "workspace-cwd": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "workspace-cwd-dark": { sel: null, gsel: "t-dev-cwd", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  // 全员回应群演示（票 266）：用户没点名提问，群主回了，一个成员补充，另一个成员只挂 👀
+  "group-reply-all": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "group-reply-all-dark": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: true, mobile: "chat" },
 };
 
 const uid = (() => {
@@ -1714,9 +1717,9 @@ cp now.txt "$seen"`,
       { kind: "user", id: "te-1", at: at(0, 9, 30), text: "每月的报表想按月份导出", speaker: "user" },
       { kind: "assistant", id: "te-2", at: at(0, 9, 31), text: "有两个问题要你定：按自然月还是按账期？导出 Excel 还是 CSV？", speaker: "po" },
       // 已读：转进来的这句群主看过了，还没回
-      ...(receipt ? [{ kind: "user" as const, id: "te-3", at: at(0, 9, 55), text: "用户在综合补充：导出先用 CSV，Excel 下个月再说。按自然月还是账期还没定。", speaker: "user", forwardedFrom: { groupId: host.id, itemId: "gt-10" } }] : []),
+      ...(receipt ? [{ kind: "user" as const, id: "te-3", at: at(0, 9, 55), text: "用户在综合补充：导出先用 CSV，Excel 下个月再说。按自然月还是账期还没定。", speaker: "user", forwardedFrom: { groupId: host.id, itemId: "gt-10" }, reactions: [{ by: "po", emoji: "👀" }] }] : []),
     ];
-    if (receipt) tExport.seen = { po: "te-3" };
+
     topicItems[tUpload.id] = [
       { kind: "user", id: "tu-1", at: at(0, 9, 44), text: "上传 2 GB 的文件卡在 99%", speaker: "user" },
       { kind: "assistant", id: "tu-2", at: at(0, 9, 45), text: "看了日志：分片传完最后一块后没有合并，是我这边的问题。修好了，测试现在过两条。", speaker: "dev" },
@@ -1748,11 +1751,11 @@ cp now.txt "$seen"`,
         { kind: "note", id: "gt-9", at: at(0, 9, 52), icon: "split", text: "产品负责人开了话题「登录页加「记住我」」", speaker: "po" },
         // 已读：你在综合补了一句，群主转进话题，自己没出声
         ...(receipt ? [
-          { kind: "user" as const, id: "gt-10", at: at(0, 9, 55), text: "导出那个先用 CSV，Excel 下个月再说", speaker: "user" },
+          { kind: "user" as const, id: "gt-10", at: at(0, 9, 55), text: "导出那个先用 CSV，Excel 下个月再说", speaker: "user", reactions: [{ by: "po", emoji: "👌" }] },
           { kind: "note" as const, id: "gt-11", at: at(0, 9, 55), icon: "info" as const, text: "转到了话题「导出月度报表」", targetGroupId: tExport.id, speaker: "po" },
         ] : []),
       ];
-      if (receipt) host.seen = { po: "gt-11" };
+
     }
   }
 
@@ -1799,6 +1802,50 @@ cp now.txt "$seen"`,
     topicItems[tHomeCwd.id] = [
       { kind: "user", id: "wc-3", at: at(1, 14, 5), text: L("帮我看下定时同步脚本为什么漏了隐藏目录。", "Check why the sync script skipped hidden folders."), speaker: "user" },
       { kind: "assistant", id: "wc-4", at: at(1, 14, 20), text: L("在 /srv/home-nas/scripts 找到了 rsync 过滤规则问题，修好后重跑正常。", "Found the rsync filter rule issue in /srv/home-nas/scripts and verified the fix."), speaker: "server" },
+    ];
+  }
+
+  if (scene === "group-reply-all" || scene === "group-reply-all-dark") {
+    const advisors: GroupSummary = {
+      id: "g-advisors",
+      name: L("产品评审团", "Product review"),
+      purpose: L("从产品、工程和测试三个视角同步评审需求方案", "Review proposals from product, engineering, and QA perspectives"),
+      ownerId: "po",
+      members: ["po", "dev", "qa"],
+      replyMode: "all",
+      createdAt: at(3, 10, 0),
+      unread: 0,
+      busy: [],
+      last: {
+        at: at(0, 10, 14),
+        speaker: "dev",
+        text: L("工程这边补一条：同一条件并发点击需要做去重，另外大报表切分批查询，避免把主库读连接打满。", "From engineering: deduplicate concurrent requests with identical filters, and paginate large queries so exports don't saturate primary DB connections."),
+      },
+    };
+    groups.unshift(advisors);
+    topicItems[advisors.id] = [
+      {
+        kind: "user",
+        id: "ra-1",
+        at: at(0, 10, 10),
+        text: L("下个版本想把导出报表改成后台异步生成，完成后通知用户下载，大家觉得有什么遗漏？", "For the next release, I want to move report exports to an async background job and notify users when ready. Anything we're missing?"),
+        speaker: "user",
+        reactions: [{ by: "qa", emoji: "👀" }],
+      },
+      {
+        kind: "assistant",
+        id: "ra-2",
+        at: at(0, 10, 12),
+        text: L("主流程没问题，建议补两个产品细节：一是导出记录里保留 7 天下载链接，用户关了通知也能再找；二是生成中给一个预计耗时，避免重复点导出。", "The core flow looks good. Two product details to add: keep download links for 7 days in export history so users can find them later, and show an estimated wait time while generating to avoid duplicate clicks."),
+        speaker: "po",
+      },
+      {
+        kind: "assistant",
+        id: "ra-3",
+        at: at(0, 10, 14),
+        text: L("工程这边补一条：同一条件并发点击需要做去重，另外大报表切分批查询，避免把主库读连接打满。", "From engineering: deduplicate concurrent requests with identical filters, and paginate large queries so exports don't saturate primary DB connections."),
+        speaker: "dev",
+      },
     ];
   }
 
@@ -1869,7 +1916,7 @@ cp now.txt "$seen"`,
     // 单聊：前一条助手点了个赞；最后一条它接手了、正在想
     const hob = assistants.find((item) => item.id === "hob");
     // ?play=1 时由 store 按时间挂上 👀、换成 👍，开头先不挂
-    if (hob) { hob.busy = true; if (new URLSearchParams(location.search).get("play") !== "1") hob.seen = "rc-4"; }
+    if (hob) hob.busy = true;
     items.hob = [
       { kind: "user", id: "rc-1", at: minsAgo(6), text: "周六的露营改到周日了，提醒事项也挪一下", reactions: [{ by: "hob", emoji: "👍" }] },
       { kind: "assistant", id: "rc-2", at: minsAgo(6), text: "挪好了：周日早上 7:00 提醒你出发，周六那条删掉了。" },
@@ -3764,6 +3811,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         purpose: group.purpose,
         ownerId: group.ownerId,
         members: [...group.members],
+        ...(group.replyMode ? { replyMode: group.replyMode } : {}),
         ...(cwd ? { cwd } : {}),
         createdAt: now,
         parentId: group.id,
@@ -3837,6 +3885,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         group.models = models;
       }
       if (patch.name !== undefined) group.name = patch.name.trim() || group.name;
+      if (patch.replyMode === "owner" || patch.replyMode === "all") group.replyMode = patch.replyMode;
       if (patch.purpose !== undefined) {
         group.purpose = patch.purpose;
         for (const topic of db.groups.filter((g) => g.parentId === groupId)) topic.purpose = patch.purpose;

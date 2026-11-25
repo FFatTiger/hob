@@ -203,7 +203,7 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["cards-demo", "cards-gallery", "cards-gallery-dark", "ask-cards-single", "ask-cards-multi", "ask-cards-multi-answered", "ask-cards-job", "ask-cards-mobile", "ask-cards-dark", "login-cards", "plugin-demo", "provider-demo", "provider-install-progress", "provider-install-done", "provider-errors", "provider-login-device", "provider-login-web", "provider-login-paste", "provider-login-apikey", "provider-login-cli", "provider-update-confirm", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-interactive-cards", "readme-plugins", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain", "read-receipt", "read-receipt-hub", "read-receipt-chat", "workspace-cwd", "workspace-cwd-dark"];
+const SCENES: SceneId[] = ["cards-demo", "cards-gallery", "cards-gallery-dark", "ask-cards-single", "ask-cards-multi", "ask-cards-multi-answered", "ask-cards-job", "ask-cards-mobile", "ask-cards-dark", "login-cards", "plugin-demo", "provider-demo", "provider-install-progress", "provider-install-done", "provider-errors", "provider-login-device", "provider-login-web", "provider-login-paste", "provider-login-apikey", "provider-login-cli", "provider-update-confirm", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-interactive-cards", "readme-plugins", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain", "read-receipt", "read-receipt-hub", "read-receipt-chat", "workspace-cwd", "workspace-cwd-dark", "group-reply-all", "group-reply-all-dark"];
 const sceneParam = params.get("scene") as SceneId | null;
 const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
@@ -1097,15 +1097,11 @@ export async function start() {
   await loadBootstrap();
 }
 
-/** 效果图：消息到了先挂 👀（还在想就左右张望），想完换成 👍 */
+/** 效果图：模型在这一轮里给你的消息点了个赞（还在接着回），表情弹出来 */
 function playReceiptDemo() {
-  const hob = (patch: Partial<AssistantSummary>) => set((s) => ({ assistants: s.assistants.map((a) => (a.id === "hob" ? { ...a, ...patch } : a)) }));
-  hob({ seen: undefined });
-  setTimeout(() => hob({ seen: "rc-4" }), 1200);
   setTimeout(() => {
-    // 模型这一轮里用回应工具点了赞（还在接着回）
     set((s) => ({ items: { ...s.items, hob: (s.items.hob ?? []).map((it) => (it.id === "rc-4" && it.kind === "user" ? { ...it, reactions: [{ by: "hob", emoji: "👍" }] } : it)) } }));
-  }, 4200);
+  }, 1200);
 }
 
 export async function login(password: string) {

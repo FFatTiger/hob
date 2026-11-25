@@ -825,7 +825,7 @@ export function clearPluginInstallProgress(pluginId: string) {
   });
 }
 export const loadSearch = () => api.search();
-export const testSearch = (name: string, baseUrl?: string, apiKey?: string) => api.testSearch(name, baseUrl, apiKey);
+export const testSearch = (name: string, baseUrl?: string, apiKey?: string, extra?: { providerId?: string; model?: string }) => api.testSearch(name, baseUrl, apiKey, extra);
 export async function saveSearch(providers: SearchSettings, keys?: Record<string, string>) {
   try { const saved = await api.putSearch(state.settings.revision, providers, keys); set({ settings: saved }); return null; }
   catch (e) { if (e instanceof ApiError && e.status === 409) set({ settings: await api.settings() }); return errText(e); }

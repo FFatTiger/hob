@@ -495,7 +495,7 @@ export class JobManager {
     ];
     if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, job.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, job.id));
-    customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search));
+    customTools.push(...searchTools(this.runtime.home, () => this.runtime.settings.settings.search, () => this.runtime.settings.settings.providers));
     const desktop = await availableDesktopTools(this.runtime, job.assistantId, !!this.runtime.models.find(job.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"), job.title, join(this.store.workDir(job.id), "screenshots"));
     const credentialsEnabled = !!desktop && this.runtime.plugins.hasCredentialProvider(job.assistantId);
     customTools.push(registerLoginTool(this.runtime, job.id, sediment, credentialsEnabled));

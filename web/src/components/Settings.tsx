@@ -34,7 +34,14 @@ import type {
   SettingsPatch,
   ThinkingLevel,
 } from "../../../shared/types.ts";
-import type { SearchProviderName, SearchProviderSetting, SearchView } from "../../../shared/search.ts";
+import {
+  DEFAULT_OPENAI_SEARCH_BASE_URL,
+  DEFAULT_OPENAI_SEARCH_MODEL,
+  type SearchProviderName,
+  type SearchProviderSetting,
+  type SearchProviderView,
+  type SearchView,
+} from "../../../shared/search.ts";
 import type { Palette } from "../palette.ts";
 import type { SkillImportSource, SkillImportView, SkillsView, SkillView } from "../../../shared/skills.ts";
 import { Markdown } from "./Markdown.tsx";
@@ -3120,6 +3127,7 @@ const SEARCH_INFO: Record<SearchProviderName, { label: string; url?: boolean; ke
   perplexity: { label: "Perplexity" },
   youcom: { label: "You.com" },
   ollama: { label: "Ollama", url: true },
+  openai: { label: "OpenAI", url: true },
 };
 function searchDesc(name: SearchProviderName): string {
   switch (name) {
@@ -3133,7 +3141,12 @@ function searchDesc(name: SearchProviderName): string {
     case "perplexity": return t("带摘要的搜索结果");
     case "youcom": return t("You.com 搜索接口");
     case "ollama": return t("Ollama 的网页搜索");
+    case "openai": return t("使用 OpenAI Responses API 原生联网搜索，可复用已有 OpenAI 服务商");
   }
+}
+
+function isReusableOpenAIProvider(p: ProviderSettings): boolean {
+  return (p.kind === "builtin" && p.id === "openai") || (p.kind === "custom" && p.api === "openai-responses");
 }
 
 /** 联网搜索页：上面是已启用的（按顺序使用，可上下移），下面是其余服务商；整行点进详情配置。 */
@@ -3141,13 +3154,22 @@ function SearchSection() {
   const s = useApp();
   const sub = s.sub;
   const providers = s.settings.settings.search;
+  const modelProviders = s.settings.settings.providers;
   const [view, setView] = useState<SearchView | null>(null);
+  const [providersView, setProvidersView] = useState<ProvidersView | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const refresh = async () => setView(await loadSearch());
-  useEffect(() => { void refresh().catch((e) => setNotice(errText(e))); }, []);
+  useEffect(() => {
+    void refresh().catch((e) => setNotice(errText(e)));
+    void loadProviders().then((res) => { if (res.ok) setProvidersView(res.view); });
+  }, []);
   useEffect(() => { if (sub) setNotice(null); }, [sub]);
-  const configured = (name: SearchProviderName) => view?.providers.find((p) => p.name === name)?.keyConfigured ?? false;
+  const reusableOpenAI: ProviderView[] = (
+    providersView?.providers ?? modelProviders.map((p) => ({ ...p, keyConfigured: false }))
+  ).filter(isReusableOpenAIProvider);
+  const viewItem = (name: SearchProviderName) => view?.providers.find((p) => p.name === name);
+  const configured = (name: SearchProviderName) => viewItem(name)?.keyConfigured ?? false;
   const persist = async (next: SearchProviderSetting[], keys?: Record<string, string>) => {
     setBusy(true);
     try {
@@ -3170,11 +3192,27 @@ function SearchSection() {
   if (sub?.kind === "searchProvider") {
     const provider = providers.find((p) => p.name === sub.name);
     if (!provider) return <><SubBack label={t("联网搜索")} /><div className="note">{t("没有这个服务商。")}</div></>;
-    return <SearchProviderDetail provider={provider} configured={configured(provider.name)} busy={busy}
-      save={(next, key) => persist(providers.map((p) => (p.name === next.name ? next : p)), key === undefined ? undefined : { [next.name]: key })} />;
+    const saveOne = (next: SearchProviderSetting, key?: string) =>
+      persist(providers.map((p) => (p.name === next.name ? next : p)), key === undefined ? undefined : { [next.name]: key });
+    if (provider.name === "openai") {
+      return <OpenAISearchDetail provider={provider} viewItem={viewItem("openai")} reusableProviders={reusableOpenAI} busy={busy} save={saveOne} />;
+    }
+    return <SearchProviderDetail provider={provider} configured={configured(provider.name)} busy={busy} save={saveOne} />;
   }
 
-  const status = (p: SearchProviderSetting) => configured(p.name) ? t("已配置 Key") : p.baseUrl ? t("已填服务地址") : t("未配置");
+  const status = (p: SearchProviderSetting) => {
+    if (p.name === "openai") {
+      const item = viewItem("openai");
+      if (p.providerId) {
+        const matched = modelProviders.find((mp) => mp.id === p.providerId && isReusableOpenAIProvider(mp));
+        if (!matched || item?.resolvedProviderMissing || !item?.keyConfigured) return t("服务商未就绪");
+        const label = matched.kind === "builtin" ? "OpenAI" : matched.name;
+        return t("复用 {name}", { name: label });
+      }
+      return item?.keyConfigured ? t("已配置 Key") : p.baseUrl ? t("已填服务地址") : t("未配置");
+    }
+    return configured(p.name) ? t("已配置 Key") : p.baseUrl ? t("已填服务地址") : t("未配置");
+  };
   return (
     <>
       <PageHead title={t("联网搜索")} desc={t("助手和任务通过这里的服务商搜索网页、读取正文。可以启用多个，按顺序使用，前一个失败时自动换下一个。")} />
@@ -3210,6 +3248,197 @@ function SearchSection() {
               <Icon name="chev" size={15} className="rgo" />
             </button>
           ))}
+        </div>
+      </Group>
+    </>
+  );
+}
+
+function OpenAISearchDetail({
+  provider,
+  viewItem,
+  reusableProviders,
+  busy,
+  save,
+}: {
+  provider: SearchProviderSetting;
+  viewItem?: SearchProviderView;
+  reusableProviders: ProviderView[];
+  busy: boolean;
+  save: (p: SearchProviderSetting, key?: string) => Promise<string | null>;
+}) {
+  const standaloneConfigured = viewItem?.standaloneKeyConfigured ?? (!provider.providerId && Boolean(viewItem?.keyConfigured));
+  const [sourceId, setSourceId] = useState(provider.providerId ?? "");
+  const [sourceTouched, setSourceTouched] = useState(false);
+  const [model, setModel] = useState(provider.model ?? "");
+  const [url, setUrl] = useState(provider.baseUrl ?? "");
+  const [key, setKey] = useState("");
+  const [test, setTest] = useState<{ ok: boolean; text: string } | null>(null);
+  const [testing, setTesting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => { setSourceId(provider.providerId ?? ""); setSourceTouched(false); }, [provider.providerId]);
+  useEffect(() => setModel(provider.model ?? ""), [provider.model]);
+  useEffect(() => setUrl(provider.baseUrl ?? ""), [provider.baseUrl]);
+  // 首次尚未配置独立地址/Key 时，若已有可用的 OpenAI 服务商则默认选中复用模式
+  useEffect(() => {
+    if (sourceTouched || provider.providerId || provider.baseUrl || standaloneConfigured || sourceId) return;
+    const preferred = reusableProviders.find((p) => p.keyConfigured);
+    if (preferred) setSourceId(preferred.id);
+  }, [reusableProviders, sourceTouched, provider.providerId, provider.baseUrl, standaloneConfigured, sourceId]);
+
+  const selectedReusable = sourceId ? reusableProviders.find((p) => p.id === sourceId) : undefined;
+  const reuseMissing = Boolean(sourceId && !selectedReusable);
+  const reuseNoKey = Boolean(sourceId && selectedReusable && !selectedReusable.keyConfigured);
+  const reuseInvalid = reuseMissing || reuseNoKey;
+
+  const sourceOptions = [
+    ...reusableProviders.map((p) => ({
+      value: p.id,
+      label: p.kind === "builtin" ? t("复用：OpenAI（内置）") : t("复用：{name}", { name: p.name }),
+      meta: p.keyConfigured ? undefined : t("未配置 Key"),
+    })),
+    ...(reuseMissing ? [{ value: sourceId, label: t("已移除的服务商（{id}）", { id: sourceId }) }] : []),
+    { value: "", label: t("自定义配置（单独填写地址和 Key）") },
+  ];
+
+  const dirty = sourceId !== (provider.providerId ?? "")
+    || model.trim() !== (provider.model ?? "")
+    || (!sourceId && (url.trim() !== (provider.baseUrl ?? "") || !!key.trim()));
+  const savedReady = provider.providerId
+    ? Boolean(!viewItem?.resolvedProviderMissing && viewItem?.keyConfigured)
+    : standaloneConfigured;
+  const canToggleEnable = provider.enabled || (savedReady && !dirty);
+
+  const customModels = selectedReusable?.kind === "custom" ? selectedReusable.models.map((m) => m.id) : [];
+  const effectiveModel = model.trim() || DEFAULT_OPENAI_SEARCH_MODEL;
+  const showCustomModelsHint = customModels.length > 0 && !customModels.includes(effectiveModel);
+
+  const runTest = async () => {
+    setTesting(true); setTest(null);
+    try {
+      const result = await testSearch(
+        "openai",
+        sourceId ? "" : url.trim(),
+        sourceId ? undefined : (key.trim() || undefined),
+        { providerId: sourceId, model: model.trim() },
+      );
+      setTest({ ok: result.ok, text: result.ok ? t("搜索成功，返回 {n} 条结果", { n: result.count ?? 0 }) : result.error ?? t("搜索失败") });
+      return result.ok;
+    } catch (e) { setTest({ ok: false, text: errText(e) }); return false; }
+    finally { setTesting(false); }
+  };
+
+  const apply = async (next: SearchProviderSetting, nextKey?: string) => {
+    setError(null); setSaved(false);
+    const message = await save(next, nextKey);
+    if (message) { setError(message); return false; }
+    setSaved(true); return true;
+  };
+
+  const commit = async () => {
+    if (await runTest()) {
+      const next: SearchProviderSetting = {
+        ...provider,
+        providerId: sourceId || undefined,
+        model: model.trim() || undefined,
+        baseUrl: sourceId ? undefined : (url.trim() || undefined),
+      };
+      if (await apply(next, !sourceId && key.trim() ? key.trim() : undefined)) setKey("");
+    }
+  };
+
+  return (
+    <>
+      <SubBack label={t("联网搜索")} />
+      <PageHead title="OpenAI" desc={searchDesc("openai")} />
+      <Group>
+        <div className="ctl">
+          <span style={{ fontSize: 14 }}>{t("启用")}</span>
+          <span className="sp" />
+          <button
+            className={`tog${provider.enabled ? "" : " off"}`}
+            aria-label={t("{name}启用", { name: "OpenAI" })}
+            aria-pressed={provider.enabled}
+            disabled={busy || !canToggleEnable}
+            onClick={() => void apply({ ...provider, enabled: !provider.enabled })}
+          />
+        </div>
+        {!provider.enabled && !canToggleEnable ? (
+          <div className="note">
+            {reusableProviders.length ? t("选择可用服务商或填写 API Key 并保存后即可启用。") : t("填写 API Key 并保存后即可启用。")}
+          </div>
+        ) : null}
+      </Group>
+      <Group>
+        <div className="formcard">
+          <div className="lbl">{t("服务商来源")}</div>
+          <div className="field">
+            <Select
+              className="grow"
+              aria-label={t("服务商来源")}
+              value={sourceId}
+              disabled={busy}
+              onChange={(value) => { setSourceId(value); setSourceTouched(true); setTest(null); }}
+              options={sourceOptions}
+            />
+          </div>
+          {!reusableProviders.length && !sourceId ? (
+            <div className="note">{t("尚未在「设置 → 服务商」配置 OpenAI 或 OpenAI Responses 服务商，可先前往添加，或直接使用下方自定义配置。")}</div>
+          ) : null}
+          {reuseInvalid ? (
+            <div className="badline">{t("所选 OpenAI 服务商已移除或未配置 Key，请重新选择或改用自定义配置。")}</div>
+          ) : null}
+
+          <div className="lbl">{t("模型名称")}</div>
+          <div className="field">
+            <input
+              value={model}
+              onChange={(e) => { setModel(e.target.value); setTest(null); }}
+              placeholder={DEFAULT_OPENAI_SEARCH_MODEL}
+              disabled={busy}
+            />
+          </div>
+          <div className="note">{t("建议使用轻量模型（如 gpt-4.1-mini、gpt-4o-mini）以控制延迟和费用。")}</div>
+          {showCustomModelsHint ? (
+            <div className="note">{t("当前服务商配置的模型：{models}。", { models: customModels.slice(0, 6).join(", ") })}</div>
+          ) : null}
+
+          {!sourceId ? (
+            <>
+              <div className="lbl">{t("服务地址")}</div>
+              <div className="field">
+                <input
+                  value={url}
+                  onChange={(e) => { setUrl(e.target.value); setTest(null); }}
+                  placeholder={DEFAULT_OPENAI_SEARCH_BASE_URL}
+                  disabled={busy}
+                />
+              </div>
+              <div className="lbl">{t("API Key")}</div>
+              <div className="field">
+                <input
+                  type="password"
+                  value={key}
+                  onChange={(e) => { setKey(e.target.value); setTest(null); }}
+                  placeholder={standaloneConfigured ? t("已保存，留空不变") : t("填写 API Key")}
+                  disabled={busy}
+                />
+              </div>
+              <div className="note">{t("API Key 只保存在本机，保存后不再显示。")}</div>
+            </>
+          ) : null}
+
+          <div className="testrow">
+            <button className="hob-btn" onClick={() => void runTest()} disabled={busy || testing}>{testing ? t("正在搜索…") : t("测试搜索")}</button>
+            {test ? <span className={test.ok ? "okline" : "badline"}>{test.text}</span> : null}
+          </div>
+          <SaveRow saved={saved && !dirty} error={error}>
+            {!sourceId && standaloneConfigured ? <button className="hob-btn" disabled={busy} onClick={() => void apply(provider, "")}>{t("删除 Key")}</button> : null}
+            <button className="hob-btn hob-btn-primary" disabled={busy || testing || !dirty} onClick={() => void commit()}>{t("保存")}</button>
+          </SaveRow>
+          <div className="note">{t("按 OpenAI API 用量计费（含模型 token 与联网搜索调用费）；自定义服务地址需支持 Responses API（/v1/responses）。")}</div>
         </div>
       </Group>
     </>

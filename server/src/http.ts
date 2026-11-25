@@ -51,6 +51,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
 import { SEARCH_PROVIDERS } from "../../shared/search.ts";
 import { WebSearch } from "./search.ts";
+import { inspectOpenAISearchStatus } from "./openai-search.ts";
 import { archiveSkill, groupSkillsDir, listAssistantSkills, listSkills, rollbackAssistantSkill, rollbackSkill, setAssistantSkillEnabled, setSkillEnabled } from "./assistant-skills.ts";
 import { generalSkillsDir, importSkills, listImportSkills, skillViews, visibleSkills } from "./skills.ts";
 import { deleteSkill } from "./delete-skill.ts";
@@ -935,7 +936,13 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.get("/api/search", (c) => {
     const keys = readSecrets(options.home);
-    return c.json({ providers: runtime.settings.settings.search.map((p) => ({ ...p, keyConfigured: Boolean(keys[`search:${p.name}`]) })) });
+    const modelProviders = runtime.settings.settings.providers;
+    return c.json({
+      providers: runtime.settings.settings.search.map((p) =>
+        p.name === "openai"
+          ? { ...p, ...inspectOpenAISearchStatus(p, modelProviders, keys) }
+          : { ...p, keyConfigured: Boolean(keys[`search:${p.name}`]) }),
+    });
   });
 
   app.put("/api/search", async (c) => {
@@ -949,13 +956,24 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   app.post("/api/search/test", async (c) => {
-    const body = await c.req.json().catch(() => ({})) as { name?: string; baseUrl?: string; apiKey?: string };
+    const body = await c.req.json().catch(() => ({})) as { name?: string; baseUrl?: string; apiKey?: string; providerId?: string; model?: string };
     const saved = runtime.settings.settings.search.find((p) => p.name === body.name);
-    const provider = saved && { ...saved, ...(typeof body.baseUrl === "string" ? { baseUrl: body.baseUrl.trim() } : {}) };
+    const provider = saved && {
+      ...saved,
+      ...(typeof body.baseUrl === "string" ? { baseUrl: body.baseUrl.trim() || undefined } : {}),
+      ...(saved.name === "openai" && typeof body.providerId === "string" ? { providerId: body.providerId.trim() || undefined } : {}),
+      ...(saved.name === "openai" && typeof body.model === "string" ? { model: body.model.trim() || undefined } : {}),
+    };
     if (!provider) return c.json({ ok: false, error: "服务商不存在。" });
     try {
       const overrides = typeof body.apiKey === "string" && body.apiKey.trim() ? { [`search:${provider.name}`]: body.apiKey.trim() } : {};
-      const result = await new WebSearch(options.home, () => [{ ...provider, enabled: true }], undefined, overrides).search("hob");
+      const result = await new WebSearch(
+        options.home,
+        () => [{ ...provider, enabled: true }],
+        undefined,
+        overrides,
+        () => runtime.settings.settings.providers,
+      ).search("hob");
       return c.json(result.errors.length ? { ok: false, error: result.errors[0].error } : { ok: true, count: result.results.length });
     } catch (error) { return c.json({ ok: false, error: error instanceof Error ? error.message : String(error) }); }
   });

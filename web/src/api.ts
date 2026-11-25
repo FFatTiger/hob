@@ -212,7 +212,7 @@ export interface HobApi {
   installPluginProviderCli(id: string, providerId: string): Promise<PluginCliStatusView>;
   search(): Promise<SearchView>;
   putSearch(revision: number, providers: SearchSettings, keys?: Record<string, string>): Promise<SettingsFile>;
-  testSearch(name: string, baseUrl?: string, apiKey?: string): Promise<{ ok: boolean; count?: number; error?: string }>;
+  testSearch(name: string, baseUrl?: string, apiKey?: string, extra?: { providerId?: string; model?: string }): Promise<{ ok: boolean; count?: number; error?: string }>;
   imageKey(): Promise<ImageKeyView>;
   putImage(revision: number, image: ImageSettings, apiKey?: string): Promise<ImageSettingsSaved>;
   imageTest(body: { image?: ImageSettings; apiKey?: string }): Promise<ImageTestResult>;
@@ -405,7 +405,13 @@ export const realApi: HobApi = {
   installPluginProviderCli: (id, providerId) => req<PluginCliStatusView>(`/api/plugins/${encodeURIComponent(id)}/providers/${encodeURIComponent(providerId)}/cli/install`, json({})),
   search: () => req<SearchView>("/api/search"),
   putSearch: (revision, providers, keys) => req<SettingsFile>("/api/search", json({ revision, providers, keys }, "PUT")),
-  testSearch: (name, baseUrl, apiKey) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({ name, baseUrl, apiKey })),
+  testSearch: (name, baseUrl, apiKey, extra) => req<{ ok: boolean; count?: number; error?: string }>("/api/search/test", json({
+    name,
+    baseUrl,
+    apiKey,
+    ...(extra?.providerId !== undefined ? { providerId: extra.providerId } : {}),
+    ...(extra?.model !== undefined ? { model: extra.model } : {}),
+  })),
   imageKey: () => req<ImageKeyView>("/api/image"),
   putImage: (revision, image, apiKey) =>
     req<ImageSettingsSaved>("/api/image", json({ revision, image, ...(apiKey ? { apiKey } : {}) }, "PUT")),

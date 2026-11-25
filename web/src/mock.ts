@@ -3578,7 +3578,22 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (prov) prov.cli = next;
       return clone(next);
     },
-    search: async () => ({ providers: db.settings.settings.search.map((p) => ({ ...p, keyConfigured: p.name === "exa" || p.name === "tavily" })) }),
+    search: async () => ({
+      providers: db.settings.settings.search.map((p) => {
+        if (p.name === "openai") {
+          const matched = p.providerId
+            ? db.settings.settings.providers.find((mp) => mp.id === p.providerId && ((mp.kind === "builtin" && mp.id === "openai") || (mp.kind === "custom" && mp.api === "openai-responses")))
+            : undefined;
+          return {
+            ...p,
+            keyConfigured: p.providerId ? Boolean(matched) : false,
+            ...(p.providerId ? { resolvedProviderMissing: !matched } : {}),
+            standaloneKeyConfigured: false,
+          };
+        }
+        return { ...p, keyConfigured: p.name === "exa" || p.name === "tavily" };
+      }),
+    }),
     putSearch: async (revision, providers) => {
       if (revision !== db.settings.revision) throw new ApiError(409, "设置已在别处修改，已刷新");
       db.settings = { revision: revision + 1, settings: { ...db.settings.settings, search: providers } };

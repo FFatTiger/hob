@@ -1275,7 +1275,7 @@ export function buildRouterTools(
     }
   }
 
-  tools.push(updateTodosTool(runtime, { assistantId, ...(groupId ? { groupId } : {}) }), findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search));
+  tools.push(updateTodosTool(runtime, { assistantId, ...(groupId ? { groupId } : {}) }), findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search, () => runtime.settings.settings.providers));
   return tools;
 }
 

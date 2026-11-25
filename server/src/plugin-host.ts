@@ -676,7 +676,7 @@ export function pluginToolsForAssistant(host: PluginHost, assistantId: string, r
             return {
               content,
               details: response.structuredContent,
-              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent } : {}),
+              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent as never } : {}),
               isError: response.isError,
             };
           },
@@ -722,7 +722,7 @@ export function pluginCommandToolsForAssistant(host: PluginHost, assistantId: st
             return {
               content: [...limited.content],
               details: response.structuredContent,
-              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent } : {}),
+              ...(response.structuredContent !== undefined ? { structuredContent: response.structuredContent as never } : {}),
               isError: response.isError,
             };
           },

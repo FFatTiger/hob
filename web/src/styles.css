@@ -8018,6 +8018,8 @@ button.screen,
 .hc-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: center; gap: 8px; }
 .hc-actions .hob-btn { width: auto; min-width: 0; max-width: 100%; height: auto; min-height: 32px; padding: 6px 13px; line-height: 1.4; text-align: left; }
 .hc-actions .hob-btn:not(.hob-btn-primary) { background: var(--card); }
+.hc-actions.stack { flex-direction: column; align-items: stretch; gap: 6px; }
+.hc-actions.stack .hob-btn { width: 100%; justify-content: flex-start; padding: 8px 13px; }
 .hc-recipient { display: flex; align-items: center; justify-content: space-between; }
 .hc-recipient span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hc-form > .hob-btn, .hc-elements > .hob-btn { align-self: flex-end; width: auto; min-width: 0; }

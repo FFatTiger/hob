@@ -299,7 +299,9 @@ function CardElementList({ elements, values, setValue, errors, disabled, submit,
     if (elements[index]?.tag === "button") {
       const buttons: any[] = [];
       while (elements[index]?.tag === "button") buttons.push(elements[index++]);
-      result.push(<div className="hc-actions" key={`actions-${index}`}>{buttons.map((element, buttonIndex) => <CardElementView key={element.element_id ?? buttonIndex} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} formIncomplete={formIncomplete} disableIncompleteSubmit={disableIncompleteSubmit} />)}</div>);
+      // 三个以上、或字多到一行放不下的按钮：竖着排成一列，不让它们折成参差的两行
+      const textLength = buttons.reduce((sum, element) => sum + String(typeof element.text === "string" ? element.text : element.text?.content ?? "").length, 0);
+      result.push(<div className={`hc-actions${buttons.length >= 3 || textLength > 20 ? " stack" : ""}`} key={`actions-${index}`}>{buttons.map((element, buttonIndex) => <CardElementView key={element.element_id ?? buttonIndex} element={element} values={values} setValue={setValue} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} formElements={formElements} formIncomplete={formIncomplete} disableIncompleteSubmit={disableIncompleteSubmit} />)}</div>);
       continue;
     }
     if (isRow(elements[index])) {

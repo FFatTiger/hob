@@ -1,8 +1,15 @@
 {
   "mcpServers": {
     "github": {
-      "url": "https://api.githubcopilot.com/mcp/",
-      "headers": { "Authorization": "Bearer ${user_config.GITHUB_PERSONAL_ACCESS_TOKEN}" }
+      "command": "node",
+      "args": ["${hob.plugin_root}/server.mjs"],
+      "env": {
+        "GITHUB_PLUGIN_DATA": "${hob.plugin_data}",
+        "GITHUB_APP_ID": "${user_config.GITHUB_APP_ID}",
+        "GITHUB_APP_PRIVATE_KEY_PATH": "${user_config.GITHUB_APP_PRIVATE_KEY_PATH}",
+        "GITHUB_PERSONAL_ACCESS_TOKEN": "${user_config.GITHUB_PERSONAL_ACCESS_TOKEN}",
+        "GITHUB_ATTRIBUTION": "${user_config.ATTRIBUTION}"
+      }
     }
   }
 }

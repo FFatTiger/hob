@@ -1,11 +1,48 @@
 {
   "name": "github",
   "displayName": "GitHub",
-  "version": "1.0.0",
-  "description": "Connect GitHub tools using a personal access token.",
+  "version": "2.0.0",
+  "description": "Connect official GitHub tools and bundled git/gh commands with hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution.",
   "homepage": "https://github.com/github/github-mcp-server",
   "userConfig": {
-    "GITHUB_PERSONAL_ACCESS_TOKEN": { "type": "string", "title": "个人访问令牌", "description": "在 [GitHub](https://github.com/settings/personal-access-tokens) 创建个人访问令牌。", "required": true, "sensitive": true }
+    "GITHUB_APP_ID": {
+      "type": "string",
+      "title": "GitHub App ID",
+      "description": "可选。填写自有 GitHub App 的 ID（需配合私钥路径使用），操作和提交完全以该 App 机器人身份执行（优先级最高）。Optional: your GitHub App ID (paired with private key path) to act as that App bot (highest priority)."
+    },
+    "GITHUB_APP_PRIVATE_KEY_PATH": {
+      "type": "file",
+      "title": "GitHub App 私钥路径 / Private Key Path",
+      "description": "可选。GitHub App 的 .pem 私钥文件路径，仅在本机签发 JWT，不上传。Optional: local path to your GitHub App .pem private key file used to sign JWTs locally."
+    },
+    "GITHUB_PERSONAL_ACCESS_TOKEN": {
+      "type": "string",
+      "title": "个人访问令牌 / Personal Access Token",
+      "description": "可选。在 [GitHub](https://github.com/settings/personal-access-tokens) 创建个人访问令牌；兼容 1.0，仅在未配置 App 或 App 未装在目标仓库且未用 hob-bot 登录时使用。Optional: personal access token (1.0-compatible fallback when neither App nor hob-bot sign-in applies).",
+      "sensitive": true
+    },
+    "ATTRIBUTION": {
+      "type": "boolean",
+      "title": "署名 Hob / Hob Attribution",
+      "description": "默认开启。开 PR 和 Issue 时在正文末尾附加「Generated with Hob」，git commit 时附加 hob-bot 共同作者（身份已是 hob-bot 机器人本人时除外）。Enabled by default: appends 'Generated with Hob' to new PRs/issues and adds hob-bot as a git co-author.",
+      "default": true
+    }
   },
-  "extensions": { "com.hob.plugins": { "icon": "icon.svg", "publisher": "GitHub", "categories": ["development"] } }
+  "extensions": {
+    "com.hob.plugins": {
+      "icon": "icon.svg",
+      "publisher": "GitHub",
+      "categories": ["development"],
+      "bin": "bin",
+      "permissions": ["network", "subprocess"],
+      "summary": {
+        "zh": "连接 GitHub 官方工具与 git/gh 命令行，支持 hob-bot 登录、自有 GitHub App 或个人访问令牌，自动带 Hob 署名。",
+        "en": "Connect official GitHub tools and git/gh commands via hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution."
+      },
+      "description": {
+        "zh": "通过官方 GitHub 远程 MCP 与内置 git/gh 命令行封装操作仓库、Issue 与 PR，并自动附带 Hob 署名。支持三种身份（按优先级依次回退）：\n1. 自有 GitHub App（填写 App ID 与私钥路径）：完全以该 App 机器人身份操作，提交作者也是该机器人；未安装到目标仓库时自动回退。\n2. hob-bot 登录（点击上方「登录」完成设备码授权，无需手动建令牌）：GitHub 显示「用户头像 + hob-bot 徽标」，提交作者为你、hob-bot 为共同作者。\n3. 个人访问令牌（GITHUB_PERSONAL_ACCESS_TOKEN）：完全兼容 1.0，升级后无需改动即可继续使用。",
+        "en": "Operate GitHub repositories, issues, and pull requests via the official GitHub remote MCP server and bundled git/gh wrappers with automatic Hob attribution. Supports three identities in priority order:\n1. Your own GitHub App (App ID + private key path): acts completely as your App bot, including commit author; automatically falls back on repositories where the App is not installed.\n2. hob-bot sign-in (click Sign In above for device-code login, no token setup needed): shows your avatar with the hob-bot badge on GitHub, with you as commit author and hob-bot as co-author.\n3. Personal Access Token (GITHUB_PERSONAL_ACCESS_TOKEN): fully backwards-compatible with 1.0."
+      }
+    }
+  }
 }

@@ -3278,19 +3278,17 @@ html:lang(en) .screen .v {
   font-size: 12px;
   color: var(--danger);
 }
-.read-receipt {
-  display: flex;
-  justify-content: flex-end;
-  align-items: center;
-  gap: 4px;
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--text3);
-}
-/* 表情回应：贴着气泡右下的小胶囊，表情 + 回应的助手头像（Telegram 的样子） */
-.read-receipt.reactions { margin-top: -8px; margin-right: 8px; position: relative; }
-.reaction { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 4px 0 7px; border-radius: 999px; background: var(--bubble); box-shadow: 0 0 0 2px var(--bg); }
-.reaction-emoji { font-size: 13px; line-height: 1; }
+/* 表情回应：贴着气泡右下的小胶囊（Telegram 的样子）；新挂上、换表情时弹一下 */
+.reactions { position: relative; display: flex; justify-content: flex-end; gap: 4px; margin: -8px 8px 0 0; }
+.reaction { display: inline-flex; align-items: center; gap: 3px; height: 24px; padding: 0 7px; border-radius: 999px; background: var(--bubble); box-shadow: 0 0 0 2px var(--bg); }
+.reaction:has(.av) { padding-right: 4px; }
+.reaction-emoji { display: inline-block; font-size: 13px; line-height: 1; }
+.reaction-emoji.pop { animation: reaction-pop .45s cubic-bezier(.3, 1.6, .5, 1) both; }
+@keyframes reaction-pop { from { transform: scale(.2) rotate(-20deg); opacity: 0; } 60% { transform: scale(1.25) rotate(6deg); opacity: 1; } to { transform: none; } }
+/* 还在想：👀 左右张望 */
+.reaction-emoji.looking:not(.pop) { animation: reaction-look 2.4s ease-in-out infinite; }
+@keyframes reaction-look { 0%, 30%, 100% { transform: none; } 40%, 55% { transform: translateX(-1.5px); } 70%, 85% { transform: translateX(1.5px); } }
+@media (prefers-reduced-motion: reduce) { .reaction-emoji.pop, .reaction-emoji.looking { animation: none; } }
 .send-status button {
   font-size: 12px;
   color: var(--text2);

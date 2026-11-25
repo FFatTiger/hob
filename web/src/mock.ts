@@ -1868,7 +1868,8 @@ cp now.txt "$seen"`,
   if (scene === "read-receipt-chat") {
     // 单聊：前一条助手点了个赞；最后一条它接手了、正在想
     const hob = assistants.find((item) => item.id === "hob");
-    if (hob) { hob.busy = true; hob.seen = "rc-4"; }
+    // ?play=1 时由 store 按时间挂上 👀、换成 👍，开头先不挂
+    if (hob) { hob.busy = true; if (new URLSearchParams(location.search).get("play") !== "1") hob.seen = "rc-4"; }
     items.hob = [
       { kind: "user", id: "rc-1", at: minsAgo(6), text: "周六的露营改到周日了，提醒事项也挪一下", reactions: [{ by: "hob", emoji: "👍" }] },
       { kind: "assistant", id: "rc-2", at: minsAgo(6), text: "挪好了：周日早上 7:00 提醒你出发，周六那条删掉了。" },

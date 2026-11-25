@@ -1557,7 +1557,9 @@ export class RouterManager {
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
-    void this.deliver(state, basePrompt, { ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text });
+    // 模型收到这条时记下来：你的消息下面挂 👀，看得出到了
+    const received = () => { this.seen.set(assistantId, id); this.publishBusy(state); };
+    void this.deliver(state, basePrompt, { ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text, received });
     return item;
   }
 
@@ -1873,6 +1875,9 @@ export class RouterManager {
     }
   }
 
+  /** 单聊里助手接手到哪一条用户消息（进程内）：界面上那条消息下面挂 👀 */
+  private seen = new Map<string, string>();
+
   summary(assistant: Assistant): AssistantSummary {
     const last = this.last(assistant.id);
     return {
@@ -1881,6 +1886,7 @@ export class RouterManager {
       unread: this.unread(assistant.id),
       ...(this.store.state(assistant.id).readAt ? { readAt: this.store.state(assistant.id).readAt } : {}),
       busy: this.isBusy(assistant.id),
+      ...(this.seen.get(assistant.id) ? { seen: this.seen.get(assistant.id) } : {}),
       activity: this.routers.get(assistant.id)?.activity ?? null,
       todos: readTodos(assistantTodosPath(this.runtime.home, assistant.id)),
       ...(this.suggestionsFor(assistant.id)?.length ? { suggestions: this.suggestionsFor(assistant.id) } : {}),

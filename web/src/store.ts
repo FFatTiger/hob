@@ -1081,6 +1081,7 @@ export async function start() {
   if (MOCK) {
     if (scene === "boot") return;
     await loadBootstrap();
+    if (scene === "read-receipt-chat" && params.get("play") === "1") playReceiptDemo();
     return;
   }
   try {
@@ -1094,6 +1095,17 @@ export async function start() {
     return;
   }
   await loadBootstrap();
+}
+
+/** 效果图：消息到了先挂 👀（还在想就左右张望），想完换成 👍 */
+function playReceiptDemo() {
+  const hob = (patch: Partial<AssistantSummary>) => set((s) => ({ assistants: s.assistants.map((a) => (a.id === "hob" ? { ...a, ...patch } : a)) }));
+  hob({ seen: undefined });
+  setTimeout(() => hob({ seen: "rc-4" }), 1200);
+  setTimeout(() => {
+    // 模型这一轮里用回应工具点了赞（还在接着回）
+    set((s) => ({ items: { ...s.items, hob: (s.items.hob ?? []).map((it) => (it.id === "rc-4" && it.kind === "user" ? { ...it, reactions: [{ by: "hob", emoji: "👍" }] } : it)) } }));
+  }, 4200);
 }
 
 export async function login(password: string) {

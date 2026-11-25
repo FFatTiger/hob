@@ -744,6 +744,7 @@ function ItemView({
   quoteWho,
   forwarded,
   readBy,
+  thinking,
 }: {
   item: Item;
   inlineDraft?: Draft;
@@ -757,6 +758,8 @@ function ItemView({
   forwarded?: GroupItem["forwardedFrom"];
   /** 你最后一条消息还没人回：接手了它的助手，气泡下面标出来 */
   readBy?: AssistantSummary[];
+  /** 接手了还在想的助手：它的 👀 左右张望 */
+  thinking?: string[];
 }) {
   const s = useApp();
   const enter = fresh ? " enter" : "";
@@ -829,7 +832,7 @@ function ItemView({
             <button onClick={() => discardPending(pend)}>{t("删除")}</button>
           </div>
         ) : null}
-        {!pend && (readBy?.length || item.reactions?.length) ? <ReadReceipt readers={readBy ?? []} reactions={item.reactions ?? []} group={Boolean(mentions)} /> : null}
+        {pend ? null : <Reactions itemId={item.id} readers={readBy ?? []} reactions={item.reactions ?? []} group={Boolean(mentions)} thinking={thinking ?? []} />}
         {pend ? null : <Tools text={item.text} itemId={item.id} />}
         </div>
       </div>
@@ -1098,24 +1101,28 @@ export function visibleItems<T extends Item>(items: T[]): T[] {
   });
 }
 
-type ReceiptStyle = "text" | "avatar" | "check" | "react";
-const RECEIPT: ReceiptStyle = (["text", "avatar", "check", "react"] as const).find((v) => v === new URLSearchParams(location.search).get("receipt")) ?? "text";
+/** 这一页上已经出现过的回应：第一次画出来的不弹，之后新挂上、换了表情的才弹一下 */
+const shownReactions = new Set<string>();
 
-/** 你消息下面的一行：谁已读，以及助手给这条的表情回应 */
-function ReadReceipt({ readers, reactions, group }: { readers: AssistantSummary[]; reactions: { by: string; emoji: string }[]; group: boolean }) {
+/**
+ * 你消息下面贴着气泡的小胶囊：助手的表情回应。接手了还没回应的挂 👀，看得出消息到了。
+ * 群里每个助手一个，带它的头像；单聊只有一个助手，只放表情。
+ */
+function Reactions({ itemId, readers, reactions, group, thinking }: { itemId: string; readers: AssistantSummary[]; reactions: { by: string; emoji: string }[]; group: boolean; thinking: string[] }) {
   const s = useApp();
-  const who = (id: string) => s.assistants.find((a) => a.id === id);
-  const names = readers.map((a) => a.name).join("、");
-  const label = group ? t("{names} 已读", { names }) : t("已读");
-  // 表情回应：已经回应过的按回应显示，接手了还没回应的挂 👀
-  if (RECEIPT === "react" || reactions.length) {
-    const list = [...reactions, ...(RECEIPT === "react" ? readers.filter((a) => !reactions.some((r) => r.by === a.id)).map((a) => ({ by: a.id, emoji: "👀" })) : [])];
-    return <div className="read-receipt reactions">{list.map((r) => { const a = who(r.by); return <span className="reaction" key={r.by} title={a?.name}><span className="reaction-emoji">{r.emoji}</span>{a ? <Avatar sprite={a.sprite} prop={a.prop} size={16} /> : null}</span>; })}</div>;
-  }
-  if (!readers.length) return null;
-  if (RECEIPT === "avatar") return <div className="read-receipt" title={label}>{readers.map((a) => <Avatar key={a.id} sprite={a.sprite} prop={a.prop} size={16} />)}</div>;
-  if (RECEIPT === "check") return <div className="read-receipt" title={label}><Icon name="check" size={14} />{group ? <span>{names}</span> : null}</div>;
-  return <div className="read-receipt">{label}</div>;
+  const mounted = useRef(false);
+  const list = [...reactions, ...readers.filter((a) => !reactions.some((r) => r.by === a.id)).map((a) => ({ by: a.id, emoji: "👀" }))];
+  const keys = list.map((r) => `${itemId}:${r.by}:${r.emoji}`);
+  const pop = new Set(mounted.current ? keys.filter((key) => !shownReactions.has(key)) : []);
+  useEffect(() => { mounted.current = true; for (const key of keys) shownReactions.add(key); });
+  if (!list.length) return null;
+  return <div className="reactions">{list.map((r, i) => {
+    const a = s.assistants.find((x) => x.id === r.by);
+    return <span className="reaction" key={r.by} title={a?.name}>
+      <span className={`reaction-emoji${pop.has(keys[i]) ? " pop" : ""}${r.emoji === "👀" && thinking.includes(r.by) ? " looking" : ""}`} key={r.emoji}>{r.emoji}</span>
+      {group && a ? <Avatar sprite={a.sprite} prop={a.prop} size={16} /> : null}
+    </span>;
+  })}</div>;
 }
 
 export function ItemList({ items: all }: { items: Item[] }) {
@@ -1150,7 +1157,7 @@ export function ItemList({ items: all }: { items: Item[] }) {
         ) : opensGroup(prev, item) ? (
           <div className="g" />
         ) : null}
-        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} readBy={i === lastUser ? readBy : undefined} /></GestureCard>
+        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} readBy={i === lastUser ? readBy : undefined} thinking={me?.busy ? [me.id] : undefined} /></GestureCard>
       </Fragment>,
     );
   }
@@ -1199,7 +1206,7 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
       rows.push(
         <Fragment key={item.id}>
           {divider}
-          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} readBy={i === lastUser ? readBy : undefined} /></GestureCard>
+          <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} fresh={fresh} tools={toolsFor(item)} mentions={names} quoteWho={quoteWho} forwarded={item.forwardedFrom} readBy={i === lastUser ? readBy : undefined} thinking={g.busy} /></GestureCard>
         </Fragment>,
       );
       continue;

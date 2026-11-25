@@ -763,6 +763,7 @@ export class GroupManager {
     if (!item) return;
     const seen = this.store.groupState(gid).seen ?? {};
     this.store.saveGroupState(gid, { seen: { ...seen, [assistantId]: item.id } });
+    this.publish(gid);
   }
 
   /** 时间线里的一条写成一行事实，卡片也写成一句。 */

@@ -791,6 +791,10 @@ export const deletePluginProfile = (id: string, profileId: string) => api.delete
 export const savePluginProfileConfig = (id: string, profileId: string, values: Record<string, unknown>) => api.savePluginProfileConfig(id, profileId, values);
 export const startPluginOAuth = (id: string, service: string) => api.startPluginOAuth(id, service);
 export const disconnectPluginOAuth = (id: string, service: string) => api.disconnectPluginOAuth(id, service);
+export const loadPluginToolLoginStatus = (id: string, service?: string) => api.pluginLoginStatus(id, service);
+export const startPluginToolLogin = (id: string, service?: string) => api.startPluginToolLogin(id, service);
+export const pollPluginToolLogin = (id: string, service?: string) => api.pollPluginToolLogin(id, service);
+export const logoutPluginToolLogin = (id: string, service?: string) => api.logoutPluginToolLogin(id, service);
 export const removePluginLoginAuto = (id: string, host: string, username: string) => api.removePluginLoginAuto(id, host, username);
 export const loadPluginLogins = (id: string, service?: string) => api.pluginLogins(id, service);
 export const loadPluginLoginSecret = (id: string, loginId: string, service?: string) => api.pluginLoginSecret(id, loginId, service);

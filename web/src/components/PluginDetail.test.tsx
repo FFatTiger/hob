@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import { renderToStaticMarkup } from 'react-dom/server';
-vi.mock('../store.ts', () => ({ useApp: () => ({ assistants: [] }) }));
+import type { PluginView } from '../../../shared/types.ts';
+vi.mock('../store.ts', () => ({ MOCK: false, useApp: () => ({ assistants: [] }) }));
 vi.mock('./Plugins.tsx', () => ({}));
-import { configGroups, MoreSettings } from './PluginDetail.tsx';
+import { configGroups, MoreSettings, ToolPluginLoginRow } from './PluginDetail.tsx';
+import { DeviceCodeLoginCard } from './PluginProviders.tsx';
+import { pluginOverallStatus } from './plugin-meta.ts';
 
 describe('optional plugin settings', () => {
   it('starts closed when required fields exist and optional fields are empty', () => {
@@ -18,5 +21,98 @@ describe('optional plugin settings', () => {
   });
   it('does not provide a more-settings section when all fields are required', () => {
     expect(configGroups({ token: { required: true } }, {}).optional).toHaveLength(0);
+  });
+});
+
+describe('tool plugin login UI', () => {
+  const noop = () => {};
+
+  it('shows 未登录 and 登录 button when signed out, plus verbatim error if present', () => {
+    const html = renderToStaticMarkup(
+      <ToolPluginLoginRow
+        status={{ signedIn: false, error: '上游接口返回 502' }}
+        canStart
+        canLogout
+        onStart={noop}
+        onLogout={noop}
+      />,
+    );
+    expect(html).toContain('未登录');
+    expect(html).toContain('登录');
+    expect(html).toContain('上游接口返回 502');
+    expect(html).not.toContain('退出登录');
+  });
+
+  it('shows status.detail with Markdown links and 退出登录 when signed in', () => {
+    const html = renderToStaticMarkup(
+      <ToolPluginLoginRow
+        status={{ signedIn: true, account: 'alex', detail: '已登录 alex · [管理授权](https://codeforge.example/apps)' }}
+        canStart
+        canLogout
+        onStart={noop}
+        onLogout={noop}
+      />,
+    );
+    expect(html).toContain('已登录 alex');
+    expect(html).toContain('href="https://codeforge.example/apps"');
+    expect(html).toContain('管理授权');
+    expect(html).toContain('退出登录');
+  });
+
+  it('reuses DeviceCodeLoginCard and renders verbatim poll error without rewriting', () => {
+    const waiting = renderToStaticMarkup(
+      <DeviceCodeLoginCard
+        userCode="F7K2-9QMX"
+        url="https://codeforge.example/login/device"
+        status="waiting"
+        verbatimError
+        onRestart={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(waiting).toContain('F7K2-9QMX');
+    expect(waiting).toContain('https://codeforge.example/login/device');
+    expect(waiting).toContain('打开网页');
+    expect(waiting).toContain('取消');
+    expect(waiting.match(/class="hob-icon-btn"/g)?.length).toBe(2);
+
+    const failed = renderToStaticMarkup(
+      <DeviceCodeLoginCard
+        userCode="F7K2-9QMX"
+        url="https://codeforge.example/login/device"
+        status="failed"
+        error="authorization_declined: user cancelled"
+        verbatimError
+        onRestart={noop}
+        onCancel={noop}
+      />,
+    );
+    expect(failed).toContain('authorization_declined: user cancelled');
+    expect(failed).not.toContain('登录失败：');
+    expect(failed).toContain('重新发起');
+  });
+
+  it('reports 未登录 badge in plugins list when tool plugin login is signed out', () => {
+    const base: PluginView = {
+      plugin: { id: 'codeforge', version: '1.0.0', source: 'official', enabled: true, tools: {}, config: {} },
+      manifest: { name: 'codeforge', displayName: 'CodeForge' },
+      config: {},
+      missing: [],
+      services: [{ pluginId: 'codeforge', name: 'cf', status: 'connected', tools: [] }],
+      login: { service: 'cf', roles: ['status', 'start', 'poll', 'logout'], status: { signedIn: false } },
+    };
+    expect(pluginOverallStatus(base)).toEqual({ tone: 'needs_login', label: '未登录', rank: 1 });
+
+    const signedIn: PluginView = {
+      ...base,
+      login: { service: 'cf', roles: ['status', 'start', 'poll', 'logout'], status: { signedIn: true, account: 'alex' } },
+    };
+    expect(pluginOverallStatus(signedIn)).toEqual({ tone: 'connected', label: '已连接', rank: 9 });
+
+    const pendingConfig: PluginView = {
+      ...base,
+      services: [{ pluginId: 'codeforge', name: 'cf', status: 'pending_config', tools: [] }],
+    };
+    expect(pluginOverallStatus(pendingConfig)).toEqual({ tone: 'pending_config', label: '待配置', rank: 0 });
   });
 });

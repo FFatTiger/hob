@@ -3405,6 +3405,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     addCustomPlugin: async id => { const p = makePlugin(id, "custom"); pluginViews.push(p); return clone(p); },
     startPluginOAuth: async (id, name) => { const service = mockPlugin(id).services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = true; service.status = "connected"; } return { authorized: true, callbackUrl: `${globalThis.location?.origin ?? "http://localhost"}/api/plugins/oauth/callback` }; },
     disconnectPluginOAuth: async (id, name) => { const p = mockPlugin(id); const service = p.services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = false; service.status = "needs_login"; } return clone(p); },
+    pluginLoginStatus: async (id) => clone(mockPlugin(id).login?.status ?? { signedIn: false }),
+    startPluginToolLogin: async () => ({
+      kind: "device_code" as const,
+      url: "https://codeforge.example/login/device",
+      userCode: "F7K2-9QMX",
+      expiresAt: new Date(Date.now() + 14 * 60_000).toISOString(),
+      interval: 5,
+    }),
+    pollPluginToolLogin: async () => ({ state: "pending" as const }),
+    logoutPluginToolLogin: async (id) => {
+      const p = mockPlugin(id);
+      if (p.login) p.login.status = { signedIn: false };
+      return { ok: true as const, status: { signedIn: false } };
+    },
     removePluginLoginAuto: async (id, host, username) => { const p = mockPlugin(id); p.autoLogins = (p.autoLogins ?? []).filter(entry => entry.host !== host || entry.username !== username); return clone(p); },
     pluginLogins: async id => { const p = mockPlugin(id); const logins = id === "vault" ? mockVaultLogins : []; return { service: p.services[0]?.name ?? id, logins: clone(logins), folders: [...new Set(logins.flatMap(login => login.folder ? [login.folder] : []))] }; },
     pluginLoginSecret: async (_id, loginId) => ({ username: mockVaultLogins.find(login => login.id === loginId)?.username ?? "", password: "mock-vault-secret" }),

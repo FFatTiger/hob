@@ -43,6 +43,22 @@ describe('tool plugin login UI', () => {
     expect(html).not.toContain('退出登录');
   });
 
+  it('offers sign-in as an add-on without 未登录 when login is optional', () => {
+    const html = renderToStaticMarkup(
+      <ToolPluginLoginRow
+        status={{ signedIn: false, optional: true, detail: '正在用个人访问令牌（alex）' }}
+        canStart
+        canLogout
+        onStart={noop}
+        onLogout={noop}
+      />,
+    );
+    expect(html).toContain('正在用个人访问令牌（alex）');
+    expect(html).toContain('登录');
+    expect(html).not.toContain('未登录');
+    expect(html).not.toContain('退出登录');
+  });
+
   it('shows status.detail with Markdown links and 退出登录 when signed in', () => {
     const html = renderToStaticMarkup(
       <ToolPluginLoginRow
@@ -108,6 +124,13 @@ describe('tool plugin login UI', () => {
       login: { service: 'cf', roles: ['status', 'start', 'poll', 'logout'], status: { signedIn: true, account: 'alex' } },
     };
     expect(pluginOverallStatus(signedIn)).toEqual({ tone: 'connected', label: '已连接', rank: 9 });
+
+    // Sign-in is an add-on when the plugin already works (e.g. a token is filled in)
+    const optional: PluginView = {
+      ...base,
+      login: { service: 'cf', roles: ['status', 'start', 'poll', 'logout'], status: { signedIn: false, optional: true } },
+    };
+    expect(pluginOverallStatus(optional)).toEqual({ tone: 'connected', label: '已连接', rank: 9 });
 
     const pendingConfig: PluginView = {
       ...base,

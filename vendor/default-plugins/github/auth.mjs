@@ -428,16 +428,30 @@ export function createAuthManager(env = process.env, options = {}) {
     return { state: "done" };
   }
 
+  // Not signed in to hob-bot: if an App or a token is configured the plugin already works,
+  // so sign-in is only an add-on and Hob should not report the plugin as signed out.
+  async function signedOutStatus() {
+    if (appConfigured) {
+      const slug = (await getAppInfo().catch(() => null))?.slug;
+      return { signedIn: false, optional: true, detail: `正在用 GitHub App${slug ? `（${slug}）` : ""}。也可以再用 hob-bot 登录，App 没装的仓库会改用登录的身份。` };
+    }
+    if (pat) {
+      const login = (await getUserForToken(pat))?.login;
+      return { signedIn: false, optional: true, detail: `正在用个人访问令牌${login ? `（${login}）` : ""}。也可以改用 hob-bot 登录，PR 和评论会带上 hob-bot 标识。` };
+    }
+    return { signedIn: false };
+  }
+
   async function loginStatus() {
     const token = await getLoginToken();
-    if (!token) return { signedIn: false };
+    if (!token) return await signedOutStatus();
 
     let user;
     try {
       user = await githubApi("/user", { token });
     } catch (error) {
       if (error instanceof AuthError && error.status === 401) {
-        return { signedIn: false };
+        return await signedOutStatus();
       }
       throw error;
     }

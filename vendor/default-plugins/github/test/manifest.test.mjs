@@ -11,7 +11,7 @@ test("plugin.json 与 mcp.json 符合 2.0.0 规范且 bin 命令可执行", () =
   const mcp = JSON.parse(readFileSync(join(GITHUB_DIR, "mcp.json"), "utf8"));
 
   assert.equal(manifest.name, "github");
-  assert.equal(manifest.version, "2.0.0");
+  assert.equal(manifest.version, "2.0.1");
   assert.equal(manifest.extensions["com.hob.plugins"].bin, "bin");
   assert.ok(manifest.extensions["com.hob.plugins"].summary.zh);
   assert.ok(manifest.extensions["com.hob.plugins"].summary.en);

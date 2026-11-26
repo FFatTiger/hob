@@ -53,6 +53,15 @@ export function ToolPluginLoginRow({
       </div>
     );
   }
+  if (status?.optional) {
+    return (
+      <div className="plugin-connection-top plugin-connection-detail">
+        <span>{status.detail ? <InlineLinks text={status.detail} /> : null}</span>
+        <span className="sp" />
+        {canStart && !inDeviceFlow ? <button type="button" className="hob-btn plugin-btn-white" disabled={busy} onClick={onStart}>{t("登录")}</button> : null}
+      </div>
+    );
+  }
   return (
     <>
       <div className="plugin-connection-top">
@@ -310,7 +319,7 @@ export function PluginDetail({ id }: { id: string }) {
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
   const toolLogin = item.login;
   const toolLoginReady = Boolean(toolLogin) && (serviceStatus === "connected" || serviceStatus === "idle");
-  const toolLoginSignedIn = toolLogin?.status?.signedIn === true;
+  const toolLoginSignedIn = toolLogin?.status?.signedIn === true || toolLogin?.status?.optional === true;
   const effectiveTone = toolLoginReady && !toolLoginSignedIn ? "warn" : statusTone(serviceStatus);
   const handleStartToolLogin = async () => {
     if (!toolLogin) return;

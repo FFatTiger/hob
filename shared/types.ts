@@ -49,6 +49,8 @@ export type PluginCredentialRole = "list" | "secret" | "generate" | "save" | "de
 export type PluginLoginRole = "status" | "start" | "poll" | "logout";
 export interface PluginToolLoginStatus {
   signedIn: boolean;
+  /** 不登录插件也能用（比如已经填了令牌）：登录只是附加选项，不提示「未登录」 */
+  optional?: boolean;
   account?: string;
   detail?: string;
   error?: string;

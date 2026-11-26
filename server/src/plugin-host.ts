@@ -87,6 +87,7 @@ function parseLoginStatus(
   if (typeof data.signedIn !== "boolean") throw new Error("插件登录状态工具返回格式无效");
   return {
     signedIn: data.signedIn,
+    ...(data.optional === true ? { optional: true } : {}),
     ...(typeof data.account === "string" && data.account ? { account: redact(data.account) } : {}),
     ...(typeof data.detail === "string" && data.detail ? { detail: redact(data.detail) } : {}),
   };

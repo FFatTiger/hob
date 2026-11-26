@@ -270,3 +270,25 @@ test("三种身份优先级：App > hob-bot 登录 > 个人访问令牌", async 
     tmp.cleanup();
   }
 });
+
+test("没登录 hob-bot 但填了个人令牌：登录只是附加选项，状态带 optional 和当前身份", async () => {
+  const fake = await startFakeGitHub({
+    usersByToken: { ghp_existing_pat: { id: 7, login: "octocat" } },
+  });
+  const tmp = makeTempDir();
+  const client = await startMcpTestClient({
+    ...fake.env(),
+    GITHUB_PLUGIN_DATA: tmp.dir,
+    GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_existing_pat",
+  });
+  try {
+    const status = await client.callTool("hob_login_status", {});
+    assert.equal(status.structuredContent.signedIn, false);
+    assert.equal(status.structuredContent.optional, true);
+    assert.match(status.structuredContent.detail, /个人访问令牌（octocat）/);
+  } finally {
+    await client.close();
+    await fake.close();
+    tmp.cleanup();
+  }
+});

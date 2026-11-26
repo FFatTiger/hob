@@ -19,9 +19,9 @@ export function sessionKey(assistantId: string, place?: Place | null): string {
   return scope ? `${assistantId}@${scope}` : assistantId;
 }
 
-/** 校验话题 ID 合法性（拒绝空值、`.`、`..`、`/`、`\\` 等路径别名或穿越字符）。 */
-export function isValidTopicId(tid: string): boolean {
-  return Boolean(tid) && tid !== "." && !tid.includes("/") && !tid.includes("\\") && !tid.includes("..");
+/** 校验话题 ID 合法性（拒绝非字符串、空值、`.`、`..`、`/`、`\\` 等路径别名或穿越字符）。 */
+export function isValidTopicId(tid: unknown): tid is string {
+  return typeof tid === "string" && Boolean(tid) && tid !== "." && !tid.includes("/") && !tid.includes("\\") && !tid.includes("..");
 }
 
 /** 展开成记录上的字段（都不填时返回空对象，不写入 undefined 字段）。 */

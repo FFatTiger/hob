@@ -508,7 +508,7 @@ export class JobManager {
       registerReportTool(this.runtime, job.id, sediment),
       registerAskTool(this.runtime, job.id, sediment),
       findKnowledgeTool(this.runtime),
-      saveSkillTool(this.runtime, job.assistantId, job.groupId, workerCwd, job.id, [workerCwd, ownDir]),
+      saveSkillTool(this.runtime, job.assistantId, placeOf(job), workerCwd, job.id, [workerCwd, ownDir]),
     ];
     if (knowledge.length) customTools.push(searchKnowledgeTool(this.runtime, job.assistantId));
     if (abilities.image) customTools.push(registerImageTool(this.runtime, job.id));

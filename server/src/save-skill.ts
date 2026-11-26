@@ -2,7 +2,7 @@ import { cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, re
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { Group } from "../../shared/types.ts";
+import type { Group, Place } from "../../shared/types.ts";
 import type { SkillOrigin } from "../../shared/skills.ts";
 import { t } from "../../shared/i18n.ts";
 import { assistantSkillsDir, groupSkillsDir, isSkillName, saveAssistantSkillsIndex, skillHead, skillIndex } from "./assistant-skills.ts";
@@ -109,7 +109,8 @@ export function saveSkillDirectory(runtime: HobRuntime, assistantId: string, gro
   } finally { rmSync(stage, { recursive: true, force: true }); }
 }
 
-export function saveSkillTool(runtime: HobRuntime, assistantId: string, groupId: string | undefined, cwd: string, jobId?: string, allowedFromDirs?: string[]): ToolDefinition<any, any> {
+export function saveSkillTool(runtime: HobRuntime, assistantId: string, place: Place | undefined, cwd: string, jobId?: string, allowedFromDirs?: string[]): ToolDefinition<any, any> {
+  const groupId = place?.groupId;
   const group = groupId ? runtime.store.group(groupId) : undefined;
   const english = userReadsEnglish(runtime.settings.settings.general);
   return {
@@ -130,7 +131,7 @@ export function saveSkillTool(runtime: HobRuntime, assistantId: string, groupId:
         const saved = saveSkillDirectory(runtime, target, group, cwd, params, origin, allowedFromDirs);
         if (jobId) runtime.jobs.recordSavedSkill(jobId, { name: saved.name, title: saved.title, version: saved.version, updated: saved.updated });
         runtime.bus.emit({ type: "skills", assistantId: target });
-        await runtime.router.addItem(assistantId, { kind: "note", icon: "skill", text: t("已存技能「{title}」第 {version} 版", { title: saved.title, version: saved.version }) }, groupId ? { groupId } : undefined);
+        await runtime.router.addItem(assistantId, { kind: "note", icon: "skill", text: t("已存技能「{title}」第 {version} 版", { title: saved.title, version: saved.version }) }, place);
         const text = saved.movedOnly ? `已把「${saved.title}」换成${saved.scope}。` : `已存技能「${saved.title}」（${saved.name}），第 ${saved.version} 版，是${saved.scope}。`;
         return { content: [{ type: "text" as const, text }], details: undefined };
       } catch (error) { return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true }; }

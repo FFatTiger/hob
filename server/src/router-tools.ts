@@ -440,7 +440,7 @@ export function buildRouterTools(
         } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
     },
-    saveSkillTool(runtime, assistantId, groupId, cwd, undefined, [cwd, ownWorkDir]),
+    saveSkillTool(runtime, assistantId, place, cwd, undefined, [cwd, ownWorkDir]),
     searchPluginsTool(runtime.plugins, assistantId),
     {
       name: "check_job",

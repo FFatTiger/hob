@@ -426,7 +426,7 @@ export class RoutineScheduler {
       if (!group) throw new Error("群不存在");
       input = { ...input, assistantId: group.ownerId };
       this.validateGroup(input.groupId!, input.assistantId);
-    } else if (input.topicId) {
+    } else if (input.topicId !== undefined) {
       if (!this.runtime.store.assistant(input.assistantId)) throw new Error(`助手不存在：${input.assistantId}`);
       if (!isValidTopicId(input.topicId)) throw new Error("话题不存在");
       const topic = this.runtime.store.assistantTopic(input.assistantId, input.topicId);

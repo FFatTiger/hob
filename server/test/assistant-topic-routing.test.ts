@@ -14,7 +14,7 @@ import type {
   Job,
 } from "../../shared/types.ts";
 import { answerApproval, answerCard } from "../src/actions.ts";
-import { assistantTopicTodosPath } from "../src/config.ts";
+import { assistantTopicTodosPath, assistantWorkDir } from "../src/config.ts";
 import { searchHistory } from "../src/history.ts";
 import { createApp } from "../src/http.ts";
 import { nowBlock } from "../src/now.ts";
@@ -83,13 +83,19 @@ async function loggedIn(runtime: HobRuntime, home: string) {
       headers: { cookie, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
+  const patch = (path: string, body?: unknown) =>
+    app.request(path, {
+      method: "PATCH",
+      headers: { cookie, "content-type": "application/json" },
+      ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    });
   const del = (path: string, body?: unknown) =>
     app.request(path, {
       method: "DELETE",
       headers: { cookie, "content-type": "application/json" },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     });
-  return { app, get, post, del };
+  return { app, get, post, patch, del };
 }
 
 describe("票 D 回流：任务、提问、超时与跨会话管理", () => {
@@ -959,6 +965,176 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       expect(finishedOnce).toMatchObject({ active: false, stopReason: "finished" });
       expect(finishedOnce.pausedBy).toBeUndefined();
       await waitFor(() => hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some((i) => i.kind === "note" && i.text === "定时任务「九点提醒」已完成最后一次运行，已停止"));
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("save_skill 在助手话题及其任务里把「已存技能」note 落回原话题而非主对话", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, "写作助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { topic: topicA } = await hob.runtime.assistantTopics.create(aid, { title: "技能沉淀" });
+
+      // 1. Router 在话题 A 直接调 save_skill
+      const workDir = assistantWorkDir(hob.home, aid);
+      const routerSkillSrc = join(workDir, "topic-direct-skill");
+      mkdirSync(routerSkillSrc, { recursive: true });
+      writeFileSync(
+        join(routerSkillSrc, "SKILL.md"),
+        "---\nname: topic-direct-skill\ndescription: 话题内直接沉淀的技能\nmetadata:\n  title: 话题直存技能\n---\n\n步骤一\n",
+      );
+      const directRes = await buildRouterTools(hob.runtime, aid, { topicId: topicA.id }, workDir, workDir)
+        .find((item) => item.name === "save_skill")!
+        .execute("ss1", { name: "topic-direct-skill", from: "topic-direct-skill" });
+      expect(directRes.isError).not.toBe(true);
+      expect(
+        hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some(
+          (i) => i.kind === "note" && i.icon === "skill" && i.text.includes("话题直存技能"),
+        ),
+      ).toBe(true);
+      expect(hob.runtime.router.items(aid).items.some((i) => i.kind === "note" && i.icon === "skill")).toBe(false);
+
+      // 2. 话题 A 派出的任务回顾时调 save_skill
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "先完成了正文" }),
+        text("话题任务已完成"),
+      ]);
+      const job = await hob.runtime.jobs.start(aid, {
+        title: "话题任务存技能",
+        instruction: "完成并沉淀",
+        topicId: topicA.id,
+      });
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topicA.id });
+
+      const jobCwd = hob.runtime.store.job(job.id)!.cwd!;
+      const jobSkillSrc = join(jobCwd, "topic-job-skill");
+      mkdirSync(jobSkillSrc, { recursive: true });
+      writeFileSync(
+        join(jobSkillSrc, "SKILL.md"),
+        "---\nname: topic-job-skill\ndescription: 话题任务沉淀的技能\nmetadata:\n  title: 话题任务技能\n---\n\n步骤二\n",
+      );
+      hob.faux.setResponses([
+        call("save_skill", { name: "topic-job-skill", from: "topic-job-skill" }),
+        call("report", { outcome: "done", result: "已沉淀技能" }),
+        text("回顾完成"),
+      ]);
+      const reviewRes = await toolIn(hob, aid, "review_job", topicA.id).execute("rv1", { jobId: job.id });
+      expect(reviewRes.isError).not.toBe(true);
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topicA.id });
+
+      expect(
+        hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some(
+          (i) => i.kind === "note" && i.icon === "skill" && i.text.includes("话题任务技能"),
+        ),
+      ).toBe(true);
+      expect(hob.runtime.router.items(aid).items.some((i) => i.kind === "note" && i.icon === "skill")).toBe(false);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("HTTP POST/PATCH /api/routines 对非法、非字符串、跨助手或篡改 topicId 返回 400", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      const otherAid = "coder";
+      addAssistant(hob, aid, "写作助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      addAssistant(hob, otherAid, "编程助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { topic: writerTopic } = await hob.runtime.assistantTopics.create(aid, { title: "写作话题" });
+      const { topic: coderTopic } = await hob.runtime.assistantTopics.create(otherAid, { title: "编程话题" });
+      const { post, patch } = await loggedIn(hob.runtime, hob.home);
+
+      for (const badTopicId of [123, { id: "x" }, "", "../bad", "tp-nonexistent", coderTopic.id]) {
+        const res = await post("/api/routines", {
+          assistantId: aid,
+          topicId: badTopicId,
+          name: "异常定时",
+          instruction: "测试校验",
+          schedules: ["0 9 * * *"],
+        });
+        expect(res.status).toBe(400);
+        const body = (await res.json()) as { error: string };
+        expect(body.error).toBe("话题不存在");
+      }
+
+      const okMain = await post("/api/routines", {
+        assistantId: aid,
+        name: "主对话定时",
+        instruction: "正常建",
+        schedules: ["0 9 * * *"],
+      });
+      expect(okMain.status).toBe(200);
+      const { routine: mainRoutine } = (await okMain.json()) as { routine: { id: string } };
+
+      const okTopic = await post("/api/routines", {
+        assistantId: aid,
+        topicId: writerTopic.id,
+        name: "话题定时",
+        instruction: "正常建",
+        schedules: ["0 10 * * *"],
+      });
+      expect(okTopic.status).toBe(200);
+      const { routine: topicRoutine } = (await okTopic.json()) as { routine: { id: string } };
+
+      const tamperMain = await patch(`/api/routines/${mainRoutine.id}`, { topicId: writerTopic.id });
+      expect(tamperMain.status).toBe(400);
+      expect((await tamperMain.json()) as { error: string }).toEqual({ error: "个人定时任务不能更改归属" });
+
+      const tamperTopic = await patch(`/api/routines/${topicRoutine.id}`, { topicId: coderTopic.id });
+      expect(tamperTopic.status).toBe(400);
+      expect((await tamperTopic.json()) as { error: string }).toEqual({ error: "个人定时任务不能更改归属" });
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("reopenForResult 并发到达已关闭话题时共享重开过程，确保重开 note 先于所有结果事件落盘", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, "写作助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { topic } = await hob.runtime.assistantTopics.create(aid, { title: "并发重开" });
+      await hob.runtime.assistantTopics.close(aid, topic.id, "先关闭");
+
+      const timelineOrder: string[] = [];
+      const origAddItem = hob.runtime.router.addItem.bind(hob.runtime.router);
+      let releaseFirstNote!: () => void;
+      const firstNoteGate = new Promise<void>((resolve) => {
+        releaseFirstNote = resolve;
+      });
+      let noteEntered = false;
+      vi.spyOn(hob.runtime.router, "addItem").mockImplementation(async (assistantId, item, place) => {
+        if (item.kind === "note" && item.icon === "info" && place?.topicId === topic.id && !noteEntered) {
+          noteEntered = true;
+          await firstNoteGate;
+          timelineOrder.push(`note:${item.text}`);
+        }
+        return origAddItem(assistantId, item, place);
+      });
+      const origEvent = hob.runtime.router.event.bind(hob.runtime.router);
+      vi.spyOn(hob.runtime.router, "event").mockImplementation(async (assistantId, body, details, place) => {
+        if (place?.topicId === topic.id) timelineOrder.push(`event:${body}`);
+        return origEvent(assistantId, body, details, place);
+      });
+
+      hob.faux.setResponses([text("已收到两条并发结果")]);
+      const p1 = hob.runtime.router.answerEvent(aid, "结果一", { topicId: topic.id });
+      const p2 = hob.runtime.router.answerEvent(aid, "结果二", { topicId: topic.id });
+      await Promise.resolve();
+      releaseFirstNote();
+      await Promise.all([p1, p2]);
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topic.id });
+
+      expect(timelineOrder[0]).toBe("note:提问有了回答，话题已重新打开");
+      expect(timelineOrder.slice(1)).toEqual(["event:结果一", "event:结果二"]);
+      const notes = hob.runtime.router.items(aid, {}, { topicId: topic.id }).items.filter(
+        (i) => i.kind === "note" && i.icon === "info" && i.text === "提问有了回答，话题已重新打开",
+      );
+      expect(notes).toHaveLength(1);
     } finally {
       hob.close();
     }

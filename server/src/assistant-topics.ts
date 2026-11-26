@@ -67,6 +67,8 @@ function cleanGeneratedTitle(raw: string): string {
  * 与主对话和群话题隔离，不涉及话题配置覆盖层和路由工具。
  */
 export class AssistantTopicManager {
+  private reopening = new Map<string, Promise<boolean>>();
+
   constructor(private readonly runtime: HobRuntime) {}
 
   private get store() {
@@ -376,15 +378,24 @@ export class AssistantTopicManager {
     return this.configView(aid, tid);
   }
 
-  /** 已关闭的话题收到外部结果时自动重开，在时间线落一行说明后交由调用方投递事件。 */
-  async reopenForResult(aid: string, tid: string, noteText: string): Promise<boolean> {
-    if (!isValidTopicId(tid)) return false;
+  /** 已关闭的话题收到外部结果时自动重开，在时间线落一行说明后交由调用方投递事件；并发到达共享同一次重开，确保说明先落盘。 */
+  reopenForResult(aid: string, tid: string, noteText: string): Promise<boolean> {
+    if (!isValidTopicId(tid)) return Promise.resolve(false);
+    const key = `${aid}:${tid}`;
+    const inflight = this.reopening.get(key);
+    if (inflight) return inflight;
     const assistant = this.store.assistant(aid);
-    if (!assistant) return false;
+    if (!assistant) return Promise.resolve(false);
     const topic = this.store.assistantTopic(aid, tid);
-    if (!topic || topic.assistantId !== aid || topic.id !== tid || !topic.closedAt) return false;
-    this.reopen(aid, tid);
-    await this.runtime.router.addItem(aid, { kind: "note", icon: "info", text: noteText }, { topicId: tid });
-    return true;
+    if (!topic || topic.assistantId !== aid || topic.id !== tid || !topic.closedAt) return Promise.resolve(false);
+    const promise = (async () => {
+      this.reopen(aid, tid);
+      await this.runtime.router.addItem(aid, { kind: "note", icon: "info", text: noteText }, { topicId: tid });
+      return true;
+    })().finally(() => {
+      if (this.reopening.get(key) === promise) this.reopening.delete(key);
+    });
+    this.reopening.set(key, promise);
+    return promise;
   }
 }

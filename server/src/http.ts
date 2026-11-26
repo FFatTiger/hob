@@ -1929,7 +1929,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const routine = routines.create({
         assistantId: body.assistantId ?? "",
         ...(body.groupId ? { groupId: body.groupId } : {}),
-        ...(body.topicId ? { topicId: body.topicId } : {}),
+        ...(body.topicId !== undefined ? { topicId: body.topicId } : {}),
         name: body.name,
         instruction: body.instruction,
         // 界面上建的：「要做的事」是用户自己写的，也没有助手转述时那一轮的原话

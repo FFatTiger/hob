@@ -131,20 +131,31 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
       mkdirSync(join(hob.home, "assistants", "multi", "work"), { recursive: true });
       writeFileSync(attachPath, "打包箱子");
 
+      const events: HobEvent[] = [];
+      const off = hob.runtime.bus.subscribe((ev) => events.push(ev));
       const eventSpy = vi.spyOn(hob.runtime.router, "event").mockResolvedValue(true);
       const openTool = findTool(hob, "multi", "open_topic")!;
-      // verify open_topic rollback when addTopicHandoff fails
+      // verify open_topic rollback when addTopicHandoff fails (no ghost assistant_topic SSE)
       vi.spyOn(hob.runtime.router, "addTopicHandoff").mockRejectedValueOnce(new Error("写入交接条目失败"));
       const rolledBack = await openTool.execute("rb1", { title: "应回滚话题", note: "说明" });
       expect(rolledBack.isError).toBe(true);
       expect(hob.runtime.assistantTopics.list("multi")).toHaveLength(0);
+      expect(events.some((ev) => ev.type === "assistant_topic")).toBe(false);
+
+      // verify open_topic rollback when addItem fails (no ghost assistant_topic SSE, disk & session cleaned)
+      vi.spyOn(hob.runtime.router, "addItem").mockRejectedValueOnce(new Error("主对话落卡失败"));
+      const rolledBackItem = await openTool.execute("rb2", { title: "落卡失败回滚", note: "说明" });
+      expect(rolledBackItem.isError).toBe(true);
+      expect(hob.runtime.assistantTopics.list("multi")).toHaveLength(0);
+      expect(events.some((ev) => ev.type === "assistant_topic")).toBe(false);
 
       const res = (await openTool.execute("c1", {
         title: "下月搬家",
         note: "整理下个月搬家的步骤和箱子数量。",
-        files: [attachPath],
+        files: [attachPath, "   ", ""],
         cwd: topicCwd,
       })) as { terminate?: boolean; content: { type: string; text: string }[]; isError?: boolean };
+      off();
 
       expect(res.isError).not.toBe(true);
       expect(res.terminate).toBe(true);
@@ -154,6 +165,10 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
       expect(created.createdBy).toBe("assistant");
       expect(created.cwd).toBe(topicCwd);
       expect(textOf(res)).toBe(`话题「下月搬家」（${created.id}）已创建，交接说明已转过去，接下来在话题里处理。`);
+      const publishedTopic = events.find((ev) => ev.type === "assistant_topic" && ev.topic.id === created.id);
+      expect(publishedTopic && publishedTopic.type === "assistant_topic" ? publishedTopic.topic.last?.text : undefined).toContain(
+        "整理下个月搬家的步骤和箱子数量。",
+      );
 
       // 主对话落话题卡
       const mainItems = hob.runtime.router.items("multi").items;
@@ -758,6 +773,222 @@ describe("转交挪进话题完整状态机", () => {
       hob2?.jobs.disposeAll();
       hob2?.routines.stop();
       hob2?.scriptTools.close();
+      hob.close();
+    }
+  });
+
+  it("转交已接管或有 pendingResult 时调 open_topic 不覆盖 toTopicId、不走 relay", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "multi", { name: "写作", topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      vi.spyOn(hob.runtime.router, "delegationResult").mockResolvedValue(true);
+      const events: HobEvent[] = [];
+      const off = hob.runtime.bus.subscribe((ev) => events.push(ev));
+      const relaySpy = vi.spyOn(hob.runtime.router, "relay");
+      const eventSpy = vi.spyOn(hob.runtime.router, "event");
+
+      const toolEndEvents: string[] = [];
+      const multiState = await hob.runtime.router.ensure("multi");
+      multiState.session!.subscribe((ev) => {
+        if (ev.type === "tool_execution_end" && ev.toolName === "open_topic") {
+          toolEndEvents.push((ev.result?.content?.[0] as { text?: string } | undefined)?.text ?? "");
+        }
+      });
+
+      hob.faux.setResponses([
+        () => {
+          // 模拟用户在窗口期内接管转交，随后模型才执行 open_topic
+          hob.runtime.delegations.takeOver("multi");
+          return call("open_topic", { title: "窗口期话题", note: "转过去继续" });
+        },
+        text("话题普通事件收到"),
+      ]);
+
+      const delegation = await hob.runtime.delegations.start("hob", "multi", "写一篇分析");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("multi");
+      const topic = hob.runtime.assistantTopics.list("multi")[0]!;
+      await hob.runtime.router.waitIdle("multi", 10_000, { topicId: topic.id });
+      off();
+
+      const storedDelegation = hob.runtime.store.delegation(delegation.id);
+      expect(storedDelegation?.status).toBe("takenOver");
+      expect(storedDelegation?.toTopicId).toBeUndefined();
+      // moveToTopic 守卫拒绝后，不发带 toTopicId 的 delegation SSE，也不走 topic relay
+      expect(
+        events.some((ev) => ev.type === "delegation" && ev.delegation.id === delegation.id && ev.delegation.toTopicId !== undefined),
+      ).toBe(false);
+      // relay 只在 delegations.start() 进主对话时调过一次
+      expect(relaySpy).toHaveBeenCalledTimes(1);
+      expect(eventSpy).toHaveBeenCalledWith(
+        "multi",
+        expect.stringContaining("这个话题是你从主对话创建的"),
+        expect.objectContaining({ workDone: true }),
+        { topicId: topic.id },
+      );
+      expect(toolEndEvents[0]).toBe(`话题「窗口期话题」（${topic.id}）已创建，交接说明已转过去，接下来在话题里处理。`);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("目标话题 relay reject 时自动调用 delegations.turnEnded(..., true) 不卡死 running", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "multi", { name: "写作", topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const resultSpy = vi.spyOn(hob.runtime.router, "delegationResult").mockResolvedValue(true);
+      const realRelay = hob.runtime.router.relay.bind(hob.runtime.router);
+      let relayCount = 0;
+      vi.spyOn(hob.runtime.router, "relay").mockImplementation(async (...args) => {
+        relayCount += 1;
+        if (relayCount === 2) throw new Error("目标话题会话启动失败");
+        return realRelay(...args);
+      });
+
+      hob.faux.setResponses([call("open_topic", { title: "故障话题", note: "转过去处理" })]);
+
+      const delegation = await hob.runtime.delegations.start("hob", "multi", "写一段说明");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("multi");
+
+      const finalDelegation = hob.runtime.store.delegation(delegation.id)!;
+      expect(finalDelegation).toMatchObject({
+        status: "stuck",
+        turnFailed: true,
+        turnFinished: true,
+      });
+      expect(finalDelegation.reply).toContain("目标话题会话启动失败");
+      expect(resultSpy).toHaveBeenCalledTimes(1);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("转交挪进话题后主对话以 success=false 收尾时，不误结已迁出的转交", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "multi", { name: "写作", topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const resultSpy = vi.spyOn(hob.runtime.router, "delegationResult").mockResolvedValue(true);
+      const routerAny = hob.runtime.router as unknown as {
+        pushEvent: (...args: unknown[]) => Promise<boolean>;
+      };
+      const realPushEvent = routerAny.pushEvent.bind(hob.runtime.router);
+      vi.spyOn(routerAny, "pushEvent").mockImplementation(async (...args: unknown[]) => {
+        const res = await realPushEvent(...args);
+        const placeArg = args[4] as { topicId?: string } | undefined;
+        // 模拟主对话本轮虽已把转交迁出到话题，但主对话收尾返回 false
+        if (!placeArg?.topicId) return false;
+        return res;
+      });
+
+      hob.faux.setResponses([
+        call("open_topic", { title: "迁出收尾验证", note: "在话题里写完" }),
+        text("已在话题内完成。"),
+      ]);
+
+      const delegation = await hob.runtime.delegations.start("hob", "multi", "整理纪要");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("multi");
+      const topic = hob.runtime.assistantTopics.list("multi")[0]!;
+      await hob.runtime.router.waitIdle("multi", 10_000, { topicId: topic.id });
+
+      const finalDelegation = hob.runtime.store.delegation(delegation.id);
+      expect(finalDelegation).toMatchObject({
+        toTopicId: topic.id,
+        status: "done",
+      });
+      expect(finalDelegation?.turnFailed).toBeUndefined();
+      expect(resultSpy).toHaveBeenCalledTimes(1);
+      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("已在话题内完成。"), false);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("转交回合中主对话已有进行中任务或待答审批时，open_topic 被明确拦截且不建话题", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "multi", { name: "写作", topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      vi.spyOn(hob.runtime.router, "delegationResult").mockResolvedValue(true);
+
+      // 场景 A：同转交回合主对话已有进行中任务时，调 open_topic 被拦截
+      let releaseWorker!: () => void;
+      const workerGate = new Promise<void>((resolve) => { releaseWorker = resolve; });
+      const toolErrors: string[] = [];
+      const multiState = await hob.runtime.router.ensure("multi");
+      multiState.session!.subscribe((ev) => {
+        if (ev.type === "tool_execution_end" && ev.toolName === "open_topic" && (ev.isError || (ev.result as { isError?: boolean } | undefined)?.isError)) {
+          toolErrors.push((ev.result?.content?.[0] as { text?: string } | undefined)?.text ?? "");
+        }
+      });
+
+      let workerReported = false;
+      let triedOpenTopic = false;
+      const response = async (ctx: { messages?: unknown[] }) => {
+        const sys = JSON.stringify(ctx.messages?.[0] ?? "");
+        const all = JSON.stringify(ctx.messages ?? []);
+        if (sys.includes("派出的后台任务")) {
+          await workerGate;
+          if (!workerReported) {
+            workerReported = true;
+            return call("report", { outcome: "done", result: "任务做完了" });
+          }
+          return text("已报告。");
+        }
+        if (all.includes("任务做完了")) {
+          return text("主对话任务也做完了。");
+        }
+        if (!hob.runtime.store.jobs().length) {
+          return call("start_job", { title: "主对话任务", note: "先跑一个任务" });
+        }
+        if (!triedOpenTopic) {
+          triedOpenTopic = true;
+          return call("open_topic", { title: "不应创建", note: "尝试挪进话题" });
+        }
+        return text("好，我继续在主对话跟进。");
+      };
+      hob.faux.setResponses(Array.from({ length: 10 }, () => response));
+
+      const dJob = await hob.runtime.delegations.start("hob", "multi", "主对话先派任务再试图建话题");
+      await waitFor(() => toolErrors.length === 1);
+      expect(toolErrors[0]).toContain("进行中的任务");
+      expect(hob.runtime.assistantTopics.list("multi")).toHaveLength(0);
+      expect(hob.runtime.store.delegation(dJob.id)?.toTopicId).toBeUndefined();
+      releaseWorker();
+      await waitFor(() => Boolean(hob.runtime.store.delegation(dJob.id)?.reportedAt));
+      await hob.runtime.jobs.waitIdle();
+      await hob.runtime.router.waitIdle("multi");
+
+      // 场景 B：主对话转交存在待答审批时，open_topic 被拦截
+      const dWait: Delegation = {
+        id: "dg-main-pending-approval",
+        from: "hob",
+        to: "multi",
+        text: "等审批的转交",
+        status: "waiting",
+        approvalIds: ["q-main-pending"],
+        createdAt: new Date().toISOString(),
+        jobIds: [],
+      };
+      hob.runtime.store.saveDelegation(dWait);
+      hob.runtime.store.saveApproval({
+        id: "q-main-pending",
+        assistantId: "multi",
+        title: "主对话待答提问",
+        options: [{ key: "A", label: "继续" }, { key: "B", label: "取消" }],
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      const stateB = await hob.runtime.router.ensure("multi");
+      stateB.currentDelegationId = dWait.id;
+      const openTool = findTool(hob, "multi", "open_topic")!;
+      const blocked = await openTool.execute("blocked-approval", { title: "不应创建", note: "尝试挪进话题" });
+      expect(blocked.isError).toBe(true);
+      expect(textOf(blocked)).toContain("待答提问");
+      expect(hob.runtime.assistantTopics.list("multi")).toHaveLength(0);
+      expect(hob.runtime.store.delegation(dWait.id)?.toTopicId).toBeUndefined();
+    } finally {
       hob.close();
     }
   });

@@ -37,6 +37,7 @@ export interface CreateAssistantTopicInput {
   quote?: unknown;
   files?: unknown;
   createdBy?: string;
+  publish?: boolean;
 }
 
 export interface CreateAssistantTopicResult {
@@ -192,6 +193,7 @@ export class AssistantTopicManager {
       createdAt: new Date().toISOString(),
       createdBy: input.createdBy ?? "user",
     };
+    const shouldPublish = input.publish !== false;
     this.store.saveAssistantTopic(topic);
 
     if (text || files.length) {
@@ -208,7 +210,7 @@ export class AssistantTopicManager {
           { topicId: topic.id },
         );
         const summary = this.summaryOf(topic);
-        this.bus.emit({ type: "assistant_topic", topic: summary });
+        if (shouldPublish) this.bus.emit({ type: "assistant_topic", topic: summary });
         if (nameAuto && text) {
           void this.autoName(aid, topic.id, text).catch(() => undefined);
         }
@@ -221,7 +223,7 @@ export class AssistantTopicManager {
     }
 
     const summary = this.summaryOf(topic);
-    this.bus.emit({ type: "assistant_topic", topic: summary });
+    if (shouldPublish) this.bus.emit({ type: "assistant_topic", topic: summary });
     return { topic: summary };
   }
 

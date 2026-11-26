@@ -2316,7 +2316,7 @@ export class RouterManager {
     const targetPlace = topicId ? { topicId } : undefined;
     const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery, targetPlace);
     const latest = this.store.delegation(delegationId);
-    const moved = success && (latest?.toTopicId || undefined) !== (targetPlace?.topicId || undefined);
+    const moved = (latest?.toTopicId || undefined) !== (targetPlace?.topicId || undefined);
     if (!moved && (!success || !latest?.turnFinished)) {
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }

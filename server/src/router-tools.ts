@@ -1469,13 +1469,42 @@ export function buildRouterTools(
           if (topicId && normalizedCwd) return fail(CWD_IMMUTABLE);
           if (liveAssistant.cwd && normalizedCwd) return fail(topicCwdLockedByAssistant(liveAssistant.cwd));
 
-          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
+          const files = Array.isArray(params.files)
+            ? params.files.flatMap((file: unknown) => {
+                const trimmed = typeof file === "string" ? file.trim() : "";
+                return trimmed ? [resolve(cwd, trimmed)] : [];
+              })
+            : [];
           const origin = router.turnOrigin(assistantId, place);
           const delegationId = router.currentDelegation(assistantId, place);
-          const delegation = delegationId ? store.delegation(delegationId) : undefined;
-          const delegationSuffix = delegation
-            ? `这件转交的事接下来在话题里处理，结果从话题回给「${nameOf(delegation.from)}」。`
-            : "";
+          const delegationConflict = (): string | undefined => {
+            if (!delegationId) return undefined;
+            const current = store.delegation(delegationId);
+            const hasMainJob = store.jobs().some(
+              (job) =>
+                !job.topicId &&
+                (job.delegationId === delegationId || current?.jobIds.includes(job.id)) &&
+                ["queued", "running", "waiting"].includes(job.status),
+            );
+            if (hasMainJob) {
+              return "这件转交已经在主对话派了进行中的任务，等任务结束后再决定是否转到话题，或继续在主对话处理。";
+            }
+            const hasMainApproval = store.approvals().some(
+              (approval) =>
+                approval.status === "pending" &&
+                !approval.topicId &&
+                !approval.groupId &&
+                (current?.approvalIds?.includes(approval.id) ||
+                  (approval.jobId && (current?.jobIds.includes(approval.jobId) || store.job(approval.jobId)?.delegationId === delegationId)) ||
+                  (approval.source === "router" && approval.assistantId === assistantId)),
+            );
+            if (hasMainApproval) {
+              return "这件转交已经在主对话向用户发了待答提问，等用户答复后再决定是否转到话题，或继续在主对话处理。";
+            }
+            return undefined;
+          };
+          const conflict = delegationConflict();
+          if (conflict) return fail(conflict);
 
           try {
             let targetTopic: AssistantTopic;
@@ -1488,6 +1517,7 @@ export function buildRouterTools(
               const created = await runtime.assistantTopics.create(assistantId, {
                 title,
                 createdBy: "assistant",
+                publish: false,
                 ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
               });
               targetTopic = created.topic;
@@ -1495,7 +1525,14 @@ export function buildRouterTools(
             }
 
             try {
+              const postCreateConflict = delegationConflict();
+              if (postCreateConflict) throw new Error(postCreateConflict);
               await router.addTopicHandoff(assistantId, targetTopic.id, noteText, files);
+              if (createdNew) {
+                await router.addItem(assistantId, { kind: "topic", topicId: targetTopic.id }, place);
+              } else {
+                await router.addItem(assistantId, { kind: "note", icon: "info", text: t("转到了话题「{name}」", { name: targetTopic.name }) }, place);
+              }
             } catch (error) {
               if (createdNew) {
                 router.forgetSession(assistantId, { topicId: targetTopic.id });
@@ -1505,24 +1542,27 @@ export function buildRouterTools(
             }
 
             if (createdNew) {
-              await router.addItem(assistantId, { kind: "topic", topicId: targetTopic.id }, place);
-            } else {
-              await router.addItem(assistantId, { kind: "note", icon: "info", text: t("转到了话题「{name}」", { name: targetTopic.name }) }, place);
+              runtime.assistantTopics.publish(assistantId, targetTopic.id);
             }
 
-            if (delegationId) {
-              runtime.delegations.moveToTopic(delegationId, targetTopic.id);
+            const movedDelegation = delegationId ? runtime.delegations.moveToTopic(delegationId, targetTopic.id) : undefined;
+            if (movedDelegation) {
               router.clearCurrentDelegation(assistantId, place);
             }
+            const delegationSuffix = movedDelegation
+              ? `这件转交的事接下来在话题里处理，结果从话题回给「${nameOf(movedDelegation.from)}」。`
+              : "";
 
             const filesSuffix = files.length ? `（附件：${files.join("、")}）` : "";
             const eventText = createdNew
               ? `这个话题是你从主对话创建的。交接说明：${noteText}${filesSuffix}`
               : `你从主对话把一件事转到了这个话题。交接说明：${noteText}${filesSuffix}`;
-            if (delegationId) {
+            if (movedDelegation) {
               void router
-                .relay(assistantId, eventText, delegationId, { workDone: true, ...origin }, undefined, { topicId: targetTopic.id })
-                .catch((error) => console.error("转到话题的转交事件没送到：", error));
+                .relay(assistantId, eventText, movedDelegation.id, { workDone: true, ...origin }, undefined, { topicId: targetTopic.id })
+                .catch((error: unknown) => {
+                  runtime.delegations.turnEnded(movedDelegation.id, error instanceof Error ? error.message : String(error), true);
+                });
             } else {
               void router
                 .event(assistantId, eventText, { workDone: true, ...origin }, { topicId: targetTopic.id })

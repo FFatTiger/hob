@@ -38,13 +38,13 @@ describe("react 工具", () => {
     try {
       const group = hob.runtime.groups.create({ name: "研发组", purpose: "开发协作", ownerId: "hob", members: ["hob"] });
       const singleTools = buildRouterTools(hob.runtime, "hob");
-      const groupTools = buildRouterTools(hob.runtime, "hob", group.id);
+      const groupTools = buildRouterTools(hob.runtime, "hob", { groupId: group.id });
 
       expect(singleTools.some((tool) => tool.name === "react")).toBe(true);
       expect(groupTools.some((tool) => tool.name === "react")).toBe(true);
 
       // 群成员会话实际放行的工具里也包含 react
-      const memberSession = await hob.runtime.router.ensure("hob", group.id);
+      const memberSession = await hob.runtime.router.ensure("hob", { groupId: group.id });
       expect(memberSession.session?.getActiveToolNames()).toContain("react");
 
       // 任务（Worker）会话里没有 react
@@ -137,8 +137,8 @@ describe("react 工具", () => {
     try {
       addMember(hob, "analyst", "分析员");
       const group = hob.runtime.groups.create({ name: "项目群", purpose: "推进项目", ownerId: "hob", members: ["hob", "analyst"] });
-      const hobTool = buildRouterTools(hob.runtime, "hob", group.id).find((entry) => entry.name === "react")!;
-      const analystTool = buildRouterTools(hob.runtime, "analyst", group.id).find((entry) => entry.name === "react")!;
+      const hobTool = buildRouterTools(hob.runtime, "hob", { groupId: group.id }).find((entry) => entry.name === "react")!;
+      const analystTool = buildRouterTools(hob.runtime, "analyst", { groupId: group.id }).find((entry) => entry.name === "react")!;
 
       // 群里还没有用户消息时报错
       const empty = await hobTool.execute("g0", { emoji: "👍" }, undefined, undefined, undefined as never);
@@ -175,7 +175,7 @@ describe("react 工具", () => {
       // 从综合转进话题的用户消息也能点，且与综合分开存储
       const topic = hob.runtime.groups.createTopic(group.id, "周报节奏", "hob");
       const forwarded = hob.runtime.groups.forwardUserItem(group.id, topic.id, userItem)!;
-      const topicTool = buildRouterTools(hob.runtime, "hob", topic.id).find((entry) => entry.name === "react")!;
+      const topicTool = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).find((entry) => entry.name === "react")!;
       await topicTool.execute("t1", { emoji: "👀" }, undefined, undefined, undefined as never);
 
       expect(hob.runtime.groups.items(topic.id).items.find((item) => item.id === forwarded.id)).toMatchObject({

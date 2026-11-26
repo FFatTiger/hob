@@ -72,7 +72,7 @@ async function loggedIn(hob: TestHob) {
 }
 
 function toolOf(hob: TestHob, name: string, gid?: string) {
-  const tool = buildRouterTools(hob.runtime, "hob", gid).find((item) => item.name === name);
+  const tool = buildRouterTools(hob.runtime, "hob", gid ? { groupId: gid } : undefined).find((item) => item.name === name);
   if (!tool) throw new Error(`没有这个工具：${name}`);
   return tool;
 }
@@ -478,7 +478,7 @@ describe("工具和提示词按话题会话分开", () => {
   it("普通群：群主有开话题和关闭话题工具，人人都有 update_todos", () => {
     const { hob, group } = setup();
     try {
-      const names = buildRouterTools(hob.runtime, "hob", group.id).map((tool) => tool.name);
+      const names = buildRouterTools(hob.runtime, "hob", { groupId: group.id }).map((tool) => tool.name);
       expect(names).toContain("open_topic");
       expect(names).toContain("close_topic");
       expect(names).toContain("update_todos");
@@ -488,7 +488,7 @@ describe("工具和提示词按话题会话分开", () => {
       expect(shown).toContain(TOPIC_OPEN_LINE);
       expect(shown).not.toContain("## 这个群的话题");
       // 成员没有开话题的工具，但有 update_todos
-      const member = buildRouterTools(hob.runtime, "ops", group.id).map((tool) => tool.name);
+      const member = buildRouterTools(hob.runtime, "ops", { groupId: group.id }).map((tool) => tool.name);
       expect(member).not.toContain("open_topic");
       expect(member).toContain("update_todos");
     } finally {
@@ -512,7 +512,7 @@ describe("工具和提示词按话题会话分开", () => {
       expect(inside).not.toContain(TOPIC_OPEN_LINE);
       expect(inside).not.toContain("## 这个群的话题");
       // 群主的工具：话题里有 open_topic，close_topic 照旧
-      const names = buildRouterTools(hob.runtime, "hob", topic.id).map((tool) => tool.name);
+      const names = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).map((tool) => tool.name);
       expect(names).not.toContain("open_topic");
       expect(names).toContain("close_topic");
 

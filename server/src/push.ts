@@ -4,8 +4,9 @@ import { plainText } from "../../shared/plain-text.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
-import type { Approval, PushDevice, PushSubscriptionJson, PushView } from "../../shared/types.ts";
+import type { Approval, Place, PushDevice, PushSubscriptionJson, PushView } from "../../shared/types.ts";
 import { systemDir } from "./config.ts";
+import { placeOf } from "./place.ts";
 import type { Store } from "./store.ts";
 
 const requirePush = createRequire(import.meta.url);
@@ -386,26 +387,26 @@ export interface NotifyDeps {
 /** 一轮结束后通知助手：完成通知和失败通知共用这一条入口。 */
 export interface AssistantTurnEnd {
   assistantId: string;
-  groupId?: string;
+  place?: Place;
   text?: string;
   error?: string;
 }
 
 /** 点开推送去哪：群里提的问题、群里开的任务去群聊页，其余去这个助手的单聊。 */
-function openUrl(assistantId: string, groupId?: string): string {
-  return groupId ? `/#/group/${encodeURIComponent(groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
+function openUrl(assistantId: string, place?: Place): string {
+  return place?.groupId ? `/#/group/${encodeURIComponent(place.groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
 }
 
 /** 规范化会话目标标识，与前端上报的 ClientVisibility.target 保持一致。 */
-export function pushTarget(assistantId: string, groupId?: string): string {
-  return groupId ? `group:${groupId}` : `assistant:${assistantId}`;
+export function pushTarget(assistantId: string, place?: Place): string {
+  return place?.groupId ? `group:${place.groupId}` : `assistant:${assistantId}`;
 }
 
 /** 一轮结束后推送；是否需要推送由 Router 按本轮面向用户状态与分派任务/已推标记判断。 */
 export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
   const assistant = deps.store.assistant(turn.assistantId);
   if (!assistant?.notify) return;
-  const group = turn.groupId ? deps.store.group(turn.groupId) : undefined;
+  const group = turn.place?.groupId ? deps.store.group(turn.place.groupId) : undefined;
   const title = group?.name ?? assistant.name;
   const body = turn.error
     ? t("执行失败：{reason}", { reason: plainText(turn.error) })
@@ -413,14 +414,14 @@ export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): 
       ? plainText(turn.text).replace(/\s+/g, " ").slice(0, 160)
       : t("已完成");
   void deps.push
-    .send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }, pushTarget(turn.assistantId, turn.groupId))
+    .send({ title, body, url: openUrl(turn.assistantId, turn.place) }, pushTarget(turn.assistantId, turn.place))
     .catch(() => undefined);
 }
 
 /** 交互卡片推送参数。 */
 export interface InteractiveCardPush {
   assistantId: string;
-  groupId?: string;
+  place?: Place;
   title?: string;
 }
 
@@ -428,12 +429,12 @@ export interface InteractiveCardPush {
 export function pushInteractiveCard(deps: NotifyDeps, card: InteractiveCardPush): void {
   const assistant = deps.store.assistant(card.assistantId);
   if (!assistant?.notify) return;
-  const group = card.groupId ? deps.store.group(card.groupId) : undefined;
+  const group = card.place?.groupId ? deps.store.group(card.place.groupId) : undefined;
   const title = card.title?.trim() ? plainText(card.title) : (group?.name ?? assistant.name);
   void deps.push
     .send(
-      { title, body: t("{assistant} · 等待你的操作", { assistant: assistant.name }), url: openUrl(card.assistantId, card.groupId) },
-      pushTarget(card.assistantId, card.groupId),
+      { title, body: t("{assistant} · 等待你的操作", { assistant: assistant.name }), url: openUrl(card.assistantId, card.place) },
+      pushTarget(card.assistantId, card.place),
     )
     .catch(() => undefined);
 }
@@ -442,12 +443,13 @@ export function pushInteractiveCard(deps: NotifyDeps, card: InteractiveCardPush)
 export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   const assistant = deps.store.assistant(approval.assistantId);
   if (!assistant?.notify) return;
+  const place = placeOf(approval);
   // 推送失败不能影响审批本身（也不能变成未处理的 rejection 把进程带走）
   // 推送的标题是卡片标题（一张卡可能问几个问题），正文写谁在等、等什么
   void deps.push
     .send(
-      { title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) },
-      pushTarget(approval.assistantId, approval.groupId),
+      { title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, place) },
+      pushTarget(approval.assistantId, place),
     )
     .catch(() => undefined);
 }

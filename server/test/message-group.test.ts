@@ -36,7 +36,7 @@ function appendUser(hob: TestHob, gid: string, text: string, id: string): GroupI
 }
 
 function toolOf(hob: TestHob, name: string, gid?: string) {
-  const tool = buildRouterTools(hob.runtime, "hob", gid).find((item) => item.name === name);
+  const tool = buildRouterTools(hob.runtime, "hob", gid ? { groupId: gid } : undefined).find((item) => item.name === name);
   if (!tool) throw new Error(`没有这个工具：${name}`);
   return tool;
 }
@@ -227,11 +227,11 @@ describe("message_group", () => {
       expect(forwardedText).toBe("把两张票据整理成一张表。");
 
       // 群主会话是主助手：话题里能关话题
-      const tools = buildRouterTools(hob.runtime, "hob", topic.id).map((item) => item.name);
+      const tools = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).map((item) => item.name);
       expect(tools).toContain("close_topic");
       await waitFor(() => inputBody(hob, topic.id, "hob").includes("[hob-event]"));
 
-      const close = buildRouterTools(hob.runtime, "hob", topic.id).find((item) => item.name === "close_topic")!;
+      const close = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).find((item) => item.name === "close_topic")!;
       const closed = await close.execute("c", { note: "整理成了一列，缺一张等用户补" });
       expect(isError(closed)).toBe(false);
 
@@ -254,7 +254,7 @@ describe("话题的结论回到主助手", () => {
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
       await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
 
-      const close = buildRouterTools(hob.runtime, "ops", topic.id).find((item) => item.name === "close_topic")!;
+      const close = buildRouterTools(hob.runtime, "ops", { groupId: topic.id }).find((item) => item.name === "close_topic")!;
       expect(isError(await close.execute("c", { note: "整理成 6 行，合计 1224.50" }))).toBe(false);
       const lines = await waitEvents(hob, (all) => all.length > 0);
       expect(lines).toHaveLength(1);
@@ -352,7 +352,7 @@ describe("话题的结论回到主助手", () => {
       await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "整理票据", note: "请整理票据并回报结论。" });
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
       await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
-      const close = buildRouterTools(hob.runtime, "ops", topic.id).find((item) => item.name === "close_topic")!;
+      const close = buildRouterTools(hob.runtime, "ops", { groupId: topic.id }).find((item) => item.name === "close_topic")!;
       const failed = await close.execute("c", {});
       expect(isError(failed)).toBe(true);
       expect(textOf(failed)).toBe("note 不能为空：这个话题是 Hob 交给这个群的，结论会转给 Hob，由它告诉用户；不做了的写明原因。");
@@ -360,7 +360,7 @@ describe("话题的结论回到主助手", () => {
 
       // 没列待办、也不是交来的话题：不带 note 照旧能关
       const plain = hob.runtime.groups.createTopic(group.id, "打印机连不上", "user");
-      const plainClose = buildRouterTools(hob.runtime, "ops", plain.id).find((item) => item.name === "close_topic")!;
+      const plainClose = buildRouterTools(hob.runtime, "ops", { groupId: plain.id }).find((item) => item.name === "close_topic")!;
       expect(isError(await plainClose.execute("c", {}))).toBe(false);
       expect(hob.runtime.store.group(plain.id)?.closedAt).toBeTruthy();
     } finally {

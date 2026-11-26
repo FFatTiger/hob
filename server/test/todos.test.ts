@@ -27,7 +27,7 @@ function setup(): { hob: TestHob; group: Group } {
 type Tool = ReturnType<typeof buildRouterTools>[number];
 
 function toolOf(hob: TestHob, name: string, groupId?: string, assistantId = "hob"): Tool {
-  const tool = buildRouterTools(hob.runtime, assistantId, groupId).find((item) => item.name === name);
+  const tool = buildRouterTools(hob.runtime, assistantId, groupId ? { groupId } : undefined).find((item) => item.name === name);
   if (!tool) throw new Error(`没有这个工具：${name}`);
   return tool;
 }
@@ -123,7 +123,7 @@ describe("删掉的工具和提示词", () => {
     try {
       const topic = hob.runtime.groups.createTopic(group.id, "换硬盘", "user");
       for (const [gid, aid] of [[undefined, "hob"], [group.id, "hob"], [group.id, "ops"], [topic.id, "hob"], [topic.id, "ops"]] as const) {
-        const names = buildRouterTools(hob.runtime, aid, gid).map((item) => item.name);
+        const names = buildRouterTools(hob.runtime, aid, gid ? { groupId: gid } : undefined).map((item) => item.name);
         for (const gone of ["write_brief", "plan_todos", "start_todos"]) expect(names, `${aid}@${gid ?? "私聊"}`).not.toContain(gone);
         expect(names, `${aid}@${gid ?? "私聊"}`).toContain("update_todos");
       }
@@ -397,7 +397,7 @@ describe("每轮带上手上的待办", () => {
       hob.faux.setResponses([text("接着装")]);
       await hob.runtime.groups.appendItem(topic.id, "user", { kind: "user", text: "装好了吗" });
       await hob.runtime.groups.deliverEvent(topic.id, "hob", "用户问了一句");
-      await hob.runtime.router.waitIdle("hob", 15_000, topic.id);
+      await hob.runtime.router.waitIdle("hob", 15_000, { groupId: topic.id });
       const prompt = userPrompts(hob.runtime.store.groupMemberFile(topic.id, "hob")).at(-1)!;
       expect(prompt).toContain("手上的待办 1/2，刚刚更新：\n✓ 拆旧盘\n→ 装新盘");
     } finally { hob.close(); }
@@ -618,11 +618,11 @@ describe("手上还有活就留着", () => {
       hob.faux.setResponses([async () => { await gate; return text("我说完了"); }]);
       const running = hob.runtime.groups.deliverEvent(topic.id, "ops", "用户问了一句");
       await waitFor(() => hob.runtime.router.busyMembers(topic.id).includes("ops"));
-      releaseIdleTodos(hob.runtime, "hob", topic.id);
+      releaseIdleTodos(hob.runtime, "hob", { groupId: topic.id });
       expect(topicTodos(hob, topic.id)).toEqual(items(["装新盘", "doing"]));
       release();
       await running;
-      releaseIdleTodos(hob.runtime, "ops", topic.id);
+      releaseIdleTodos(hob.runtime, "ops", { groupId: topic.id });
       expect(topicTodos(hob, topic.id)).toEqual([]);
     } finally { hob.close(); }
   });

@@ -69,7 +69,7 @@ describe("playwright-cli", () => {
       const opened: { cwd: string }[] = [];
       const open = hob.runtime.pi.open.bind(hob.runtime.pi);
       vi.spyOn(hob.runtime.pi, "open").mockImplementation(async (options) => { opened.push(options); return open(options); });
-      for (const state of [await hob.runtime.router.ensure("hob"), await hob.runtime.router.ensure("hob", group.id)]) {
+      for (const state of [await hob.runtime.router.ensure("hob"), await hob.runtime.router.ensure("hob", { groupId: group.id })]) {
         const names = state.session!.getActiveToolNames();
         expect(names).toContain("read");
         expect(names).not.toContain("bash");
@@ -95,7 +95,7 @@ describe("playwright-cli", () => {
       const assistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...assistant, abilities: { exec, write, image: false } });
       const group = hob.runtime.groups.create({ name: "协作", purpose: "测试", ownerId: "hob", members: ["hob"] });
-      for (const state of [await hob.runtime.router.ensure("hob"), await hob.runtime.router.ensure("hob", group.id)]) {
+      for (const state of [await hob.runtime.router.ensure("hob"), await hob.runtime.router.ensure("hob", { groupId: group.id })]) {
         const names = state.session!.getActiveToolNames();
         expect(names).toContain("read");
         expect(names.includes("bash")).toBe(exec);

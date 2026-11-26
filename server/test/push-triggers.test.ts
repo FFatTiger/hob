@@ -49,13 +49,13 @@ describe("推送触发全路径回归", () => {
       // 2. 并行任务 B 正常完成回流（任务 A 仍在 running）-> 不推中间进度播报
       const beforeMid = hob.faux.state.callCount;
       hob.faux.setResponses([text("任务 B 已完成，还在等任务 A。")]);
-      await hob.runtime.router.event("hob", "任务 B 已完成", { workDone: true }, topic.id);
+      await hob.runtime.router.event("hob", "任务 B 已完成", { workDone: true }, { groupId: topic.id });
       await waitFor(() => hob.faux.state.callCount > beforeMid && hob.runtime.router.busyMembers(topic.id).length === 0);
       expect(push).toHaveBeenCalledTimes(1);
 
       // 3. 并行任务 C 失败/受阻回流（任务 A 仍在 running），群主直接回报问题未重试 -> 照常推送
       hob.faux.setResponses([text("任务 C 执行受阻，需要检查凭证。")]);
-      await hob.runtime.router.event("hob", "任务 C 受阻", { workDone: true, urgent: true }, topic.id);
+      await hob.runtime.router.event("hob", "任务 C 受阻", { workDone: true, urgent: true }, { groupId: topic.id });
       await waitFor(() => push.mock.calls.length === 2);
       expect(push.mock.calls[1]).toEqual([
         expect.objectContaining({ title: "修复推送", body: "任务 C 执行受阻，需要检查凭证。" }),
@@ -69,14 +69,14 @@ describe("推送触发全路径回归", () => {
         fauxAssistantMessage([fauxText("我重新发起一次重试。"), fauxToolCall("start_job", { title: "重试任务 C", note: "重新执行" })]),
         text("已重试。"),
       ]);
-      await hob.runtime.router.event("hob", "任务 C 失败", { workDone: true, urgent: true }, topic.id);
+      await hob.runtime.router.event("hob", "任务 C 失败", { workDone: true, urgent: true }, { groupId: topic.id });
       await waitFor(() => hob.faux.state.callCount > beforeRetry && hob.runtime.router.busyMembers(topic.id).length === 0);
       expect(push).toHaveBeenCalledTimes(2);
 
       // 5. 所有在跑任务全部结束，最后一次收口汇报 -> 照常推送
       hob.runtime.store.saveJob({ ...jobA, status: "done", endedAt: new Date().toISOString() });
       hob.faux.setResponses([text("全部任务已完成，可以验收。")]);
-      await hob.runtime.router.event("hob", "任务 A 已完成", { workDone: true }, topic.id);
+      await hob.runtime.router.event("hob", "任务 A 已完成", { workDone: true }, { groupId: topic.id });
       await waitFor(() => push.mock.calls.length === 3);
       expect(push.mock.calls[2]).toEqual([
         expect.objectContaining({ title: "修复推送", body: "全部任务已完成，可以验收。" }),
@@ -399,7 +399,7 @@ describe("推送触发全路径回归", () => {
 
       // 3. 例外 3a：用户答复该确认卡（answerEvent）-> 针对用户这一轮的回复照常推送
       hob.faux.setResponses([text("收到，先保留 8080 进程。")]);
-      await hob.runtime.router.answerEvent("ops", "用户选择了「先保留」", handoverTopic.id);
+      await hob.runtime.router.answerEvent("ops", "用户选择了「先保留」", { groupId: handoverTopic.id });
       await waitFor(() => push.mock.calls.length === 2);
       expect(push.mock.calls[1]).toEqual([
         expect.objectContaining({ title: "端口排查", body: "收到，先保留 8080 进程。" }),

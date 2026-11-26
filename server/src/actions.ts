@@ -2,6 +2,7 @@ import { t } from "../../shared/i18n.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
 import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft, LoginEntryApproval } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
+import { placeOf } from "./place.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { clampDuty } from "./text.ts";
@@ -98,8 +99,7 @@ function answersText(approval: Approval, questions: ApprovalQuestion[], answers:
 async function routeAnswer(runtime: HobRuntime, approval: Approval, reply: string, delegationId?: string): Promise<void> {
   if (delegationId) {
     void runtime.router.relay(approval.assistantId, reply, delegationId).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
-  } else if (approval.groupId) await runtime.router.answerEvent(approval.assistantId, reply, approval.groupId);
-  else await runtime.router.answerEvent(approval.assistantId, reply);
+  } else await runtime.router.answerEvent(approval.assistantId, reply, placeOf(approval));
 }
 
 function cardChildren(element: CardElement): CardElement[] {
@@ -286,7 +286,7 @@ async function answerPluginCard(runtime: HobRuntime, record: CardRecord, input: 
     runtime.store.saveCard(next);
     runtime.bus.emit({ type: "card", card: next });
     const text = pluginText(response, runtime, pluginId, redact);
-    if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, record.groupId);
+    if (text) await runtime.router.answerEvent(record.owner.assistantId, `用户在 ${plugin.pluginName} 的卡片「${cardTitle(record.card) || "未命名"}」上点了「${buttonText}」，${plugin.pluginName} 返回：${text}`, placeOf(record));
     return { status: 200, body: { card: next } };
   } catch (error) {
     const message = redact(error instanceof Error ? error.message : String(error));
@@ -346,7 +346,7 @@ export async function answerCard(runtime: HobRuntime, cardId: string, input: Car
   store.saveCard(answered);
   bus.emit({ type: "card", card: answered });
   try {
-    await router.answerEvent(record.owner.assistantId, text, record.groupId);
+    await router.answerEvent(record.owner.assistantId, text, placeOf(record));
   } catch {
     return { status: 503, body: { error: "卡片操作已保存，但没有送回助手" } };
   }
@@ -615,7 +615,7 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
       kind: "note",
       icon: "rule",
       text: t("已记入{owner}的规则 · {rule}", { owner: group ? (group.parentId ? t("这个话题") : "本群") : assistant?.name ?? approval.assistantId, rule: ruleText }),
-    }, approval.groupId);
+    }, placeOf(approval));
     bus.emit({ type: "profile", assistantId: approval.assistantId });
   }
 

@@ -10,7 +10,7 @@ const NEW_SKILL = `---\nname: new-skill\ndescription: 新的一类事\nmetadata:
 
 /** 提示行说的是谁的技能或定时：自己单聊里操作时不说，别处的一定要写清。 */
 function tool(hob: ReturnType<typeof makeHob>, name: string, gid?: string) {
-  const found = buildRouterTools(hob.runtime, "hob", gid).find((item) => item.name === name);
+  const found = buildRouterTools(hob.runtime, "hob", gid ? { groupId: gid } : undefined).find((item) => item.name === name);
   if (!found) throw new Error(`没有这个工具：${name}`);
   return found;
 }

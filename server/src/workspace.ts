@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import type { Place } from "../../shared/types.ts";
 import { assistantWorkDir } from "./config.ts";
 import type { Store } from "./store.ts";
 
@@ -108,10 +109,10 @@ export function resolveWorkspaceCwd(
   store: Store,
   home: string,
   assistantId: string,
-  groupId?: string,
+  place?: Place,
 ): ResolvedWorkspace {
-  if (groupId) {
-    const group = store.group(groupId);
+  if (place?.groupId) {
+    const group = store.group(place.groupId);
     if (group?.parentId) {
       const parent = store.group(group.parentId);
       if (parent?.cwd) {

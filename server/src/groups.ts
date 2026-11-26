@@ -187,7 +187,7 @@ export class GroupManager {
       unread: this.unread(group.id, items),
       busy: this.busyOf(group.id),
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
-      ...(this.runtime.router.suggestionsFor(group.ownerId, group.id)?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, group.id) } : {}),
+      ...(this.runtime.router.suggestionsFor(group.ownerId, { groupId: group.id })?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, { groupId: group.id }) } : {}),
       ...(Object.keys(activity).length ? { activity } : {}),
     };
   }
@@ -569,7 +569,7 @@ export class GroupManager {
   }
 
   private forgetMemberSessions(groupIds: string[], assistantId: string): void {
-    for (const gid of groupIds) this.runtime.router.forgetSession(assistantId, gid);
+    for (const gid of groupIds) this.runtime.router.forgetSession(assistantId, { groupId: gid });
   }
 
   /** 结束这个群：先停下正在说话的成员，整个群目录连同各话题一起搬进 archive/groups/。 */
@@ -665,7 +665,7 @@ export class GroupManager {
       this.store.saveApproval(expired);
       this.bus.emit({ type: "approval", approval: expired });
     }
-    this.runtime.router.clearSuggestions(group.ownerId, gid);
+    this.runtime.router.clearSuggestions(group.ownerId, { groupId: gid });
     const item = this.append(gid, {
       kind: "user",
       speaker: "user",
@@ -696,9 +696,9 @@ export class GroupManager {
   /** 停掉这个群里所有成员正在进行的回合（不停任务）；排队里的回合也不再生效。 */
   async stop(gid: string, group?: Group): Promise<void> {
     const target = group ?? this.group(gid);
-    this.runtime.router.clearSuggestions(target.ownerId, gid);
+    this.runtime.router.clearSuggestions(target.ownerId, { groupId: gid });
     this.epochs.set(gid, (this.epochs.get(gid) ?? 0) + 1);
-    await Promise.all(target.members.map((id) => this.runtime.router.stop(id, gid)));
+    await Promise.all(target.members.map((id) => this.runtime.router.stop(id, { groupId: gid })));
   }
 
   /** 用户的消息明确点名了谁：@ 了谁、引用谁的消息就是谁。 */
@@ -767,10 +767,10 @@ export class GroupManager {
     // 主助手委托群办的话题未关闭/未交付前，不推群内纯文字沟通（用户亲自发言/插话/答卡片例外）
     if ((candidate.handoverPending || this.isHandoverPending(this.store.group(gid))) && !candidate.userInitiated) return;
     // 后台回流轮次在当前话题仍有其他在跑/排队/等待中的任务时，不推中间进度播报
-    if (!candidate.bypassBusy && this.runtime.router.hasPendingWork(candidate.assistantId, gid)) return;
+    if (!candidate.bypassBusy && this.runtime.router.hasPendingWork(candidate.assistantId, { groupId: gid })) return;
     pushAssistantTurnEnd(
       { push: this.runtime.push, store: this.store },
-      { assistantId: candidate.assistantId, groupId: gid, text: candidate.text },
+      { assistantId: candidate.assistantId, place: { groupId: gid }, text: candidate.text },
     );
   }
 
@@ -794,7 +794,7 @@ export class GroupManager {
     if (!wave.handedToWrapUp && (this.epochs.get(gid) ?? 0) === wave.epoch) {
       this.flushWavePush(gid, wave);
     }
-    if (wave.finalSpeaker && !wave.stopped) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, gid);
+    if (wave.finalSpeaker && !wave.stopped) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, { groupId: gid });
   }
 
   /**
@@ -941,7 +941,7 @@ export class GroupManager {
       this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
       pushAssistantTurnEnd(
         { push: this.runtime.push, store: this.store },
-        { assistantId, groupId: gid, error: message },
+        { assistantId, place: { groupId: gid }, error: message },
       );
       wave.suppressedByAction = true;
       wave.lastPushable = undefined;
@@ -962,7 +962,7 @@ export class GroupManager {
       if (outcome.error) {
         pushAssistantTurnEnd(
           { push: this.runtime.push, store: this.store },
-          { assistantId, groupId: gid, error: outcome.error },
+          { assistantId, place: { groupId: gid }, error: outcome.error },
         );
         wave.suppressedByAction = true;
         wave.lastPushable = undefined;
@@ -1014,7 +1014,7 @@ export class GroupManager {
   private inputText(assistantId: string, group: Group, input: TurnInput, event?: EventText): string {
     const lines = input.items.map((item) => this.lineOf(item, group.id)).filter(Boolean);
     const body = [lines.join("\n"), ...(event === undefined ? [] : [`[hob-event] ${typeof event === "function" ? event() : event}`])].filter(Boolean).join("\n\n");
-    return `${nowBlock(this.runtime, assistantId, group.id)}\n\n${body}`;
+    return `${nowBlock(this.runtime, assistantId, { groupId: group.id })}\n\n${body}`;
   }
 
   private inputFiles(input: TurnInput): string[] {

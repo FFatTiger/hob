@@ -19,7 +19,7 @@ const questions = [
 ];
 
 async function run(hob: TestHob, args: Record<string, unknown>, groupId?: string) {
-  const tool = buildRouterTools(hob.runtime, "hob", groupId).find((item) => item.name === "ask_user")!;
+  const tool = buildRouterTools(hob.runtime, "hob", groupId ? { groupId } : undefined).find((item) => item.name === "ask_user")!;
   const result = (await tool.execute("tool-call", args)) as { content: { text: string }[]; terminate?: boolean; isError?: boolean };
   return { text: result.content[0].text, terminate: result.terminate, isError: result.isError };
 }

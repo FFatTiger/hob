@@ -11,7 +11,7 @@ test("plugin.json 与 mcp.json 符合 2.0.0 规范且 bin 命令可执行", () =
   const mcp = JSON.parse(readFileSync(join(GITHUB_DIR, "mcp.json"), "utf8"));
 
   assert.equal(manifest.name, "github");
-  assert.equal(manifest.version, "2.0.2");
+  assert.equal(manifest.version, "2.0.3");
   assert.equal(manifest.extensions["com.hob.plugins"].bin, "bin");
   assert.ok(manifest.extensions["com.hob.plugins"].summary.zh);
   assert.ok(manifest.extensions["com.hob.plugins"].summary.en);
@@ -33,7 +33,8 @@ test("plugin.json 与 mcp.json 符合 2.0.0 规范且 bin 命令可执行", () =
   assert.equal(manifest.userConfig.ATTRIBUTION.type, "boolean");
   assert.equal(manifest.userConfig.ATTRIBUTION.default, true);
   assert.ok(manifest.userConfig.GITHUB_APP_ID);
-  assert.ok(manifest.userConfig.GITHUB_APP_PRIVATE_KEY_PATH);
+  assert.ok(manifest.userConfig.GITHUB_APP_PRIVATE_KEY);
+  assert.equal(manifest.userConfig.GITHUB_APP_PRIVATE_KEY.sensitive, true);
 
   // Every ${user_config.KEY} in mcp.json must be declared in manifest.userConfig
   const server = mcp.mcpServers.github;

@@ -159,7 +159,7 @@ test("bin/git：三种身份下的作者和 trailer、关闭署名、无身份�
     ...fake.env(),
     GITHUB_PLUGIN_DATA: dataDir,
     GITHUB_APP_ID: "300",
-    GITHUB_APP_PRIVATE_KEY_PATH: keyTmp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(keyTmp.keyPath, "utf8"),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_git_pat",
   });
   // Bridge 2: PAT only (attribution ON)
@@ -312,7 +312,7 @@ test("bin/git-credential-hob：仅对 github.com 的 get 返回令牌，对其�
   const bridge = await startHobToolsBridge({
     ...fake.env(),
     GITHUB_APP_ID: "301",
-    GITHUB_APP_PRIVATE_KEY_PATH: keyTmp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(keyTmp.keyPath, "utf8"),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_fallback_cred",
   });
 
@@ -390,7 +390,7 @@ process.stdout.write(JSON.stringify({ token: process.env.GH_TOKEN || null, args,
   const bridgeOn = await startHobToolsBridge({
     ...fake.env(),
     GITHUB_APP_ID: "302",
-    GITHUB_APP_PRIVATE_KEY_PATH: keyTmp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(keyTmp.keyPath, "utf8"),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_gh_pat",
   });
   const bridgeOff = await startHobToolsBridge({

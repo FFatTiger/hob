@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { generateKeyPairSync, verify as cryptoVerify } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -98,7 +98,8 @@ test("App 身份：按 owner/repo、仅 owner（user/org）、无 owner 选到�
   const client = await startMcpTestClient({
     ...fake.env(),
     GITHUB_APP_ID: "42",
-    GITHUB_APP_PRIVATE_KEY_PATH: kp.keyPath,
+    // Pasted into a one-line field: line breaks are gone
+    GITHUB_APP_PRIVATE_KEY: readFileSync(kp.keyPath, "utf8").replace(/\n/g, ""),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_fallback_pat",
   });
 
@@ -153,7 +154,7 @@ test("App 身份：安装令牌在过期前 5 分钟内缓存，临近过期后�
   const client = await startMcpTestClient({
     ...fake.env(),
     GITHUB_APP_ID: "77",
-    GITHUB_APP_PRIVATE_KEY_PATH: kp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(kp.keyPath, "utf8"),
   });
 
   try {
@@ -187,7 +188,7 @@ test("App 身份：未装在目标 owner 上且无登录和 PAT 时报错并给�
   const client = await startMcpTestClient({
     ...fake.env(),
     GITHUB_APP_ID: "88",
-    GITHUB_APP_PRIVATE_KEY_PATH: kp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(kp.keyPath, "utf8"),
   });
 
   try {
@@ -200,5 +201,18 @@ test("App 身份：未装在目标 owner 上且无登录和 PAT 时报错并给�
     await client.close();
     await fake.close();
     kp.cleanup();
+  }
+});
+
+test("GitHub App 私钥粘贴错了：报错说清怎么改", async () => {
+  const fake = await startFakeGitHub({});
+  const client = await startMcpTestClient({ ...fake.env(), GITHUB_APP_ID: "42", GITHUB_APP_PRIVATE_KEY: "not a key" });
+  try {
+    const res = await client.callTool("list_issues", { owner: "a", repo: "b" });
+    assert.equal(res.isError, true);
+    assert.match(res.content[0].text, /私钥不对.*-----BEGIN/);
+  } finally {
+    await client.close();
+    await fake.close();
   }
 });

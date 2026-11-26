@@ -1,6 +1,6 @@
 import { strict as assert } from "node:assert";
 import { generateKeyPairSync } from "node:crypto";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -144,7 +144,7 @@ test("hob/command 工具元数据正确，按三种身份返回 token、author �
     ...fake.env(),
     GITHUB_PLUGIN_DATA: tmp.dir,
     GITHUB_APP_ID: "99",
-    GITHUB_APP_PRIVATE_KEY_PATH: tmp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(tmp.keyPath, "utf8"),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_cmd_pat",
   });
 
@@ -221,7 +221,7 @@ test("hob/command：身份是 hob-bot 机器人本人或 ATTRIBUTION 关闭时�
   const clientBot = await startMcpTestClient({
     ...fake.env(),
     GITHUB_APP_ID: "100",
-    GITHUB_APP_PRIVATE_KEY_PATH: tmp.keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(tmp.keyPath, "utf8"),
   });
   try {
     const res = await clientBot.callTool("command_credentials", { owner: "acme" });

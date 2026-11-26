@@ -1,18 +1,25 @@
 // Identity resolution, GitHub App JWT, hob-bot device-code login, and GitHub API helpers.
 // Priority: 1. GitHub App (JWT + installation token) > 2. hob-bot login > 3. Personal Access Token.
 
-import { randomBytes, sign as cryptoSign } from "node:crypto";
+import { createPrivateKey, randomBytes, sign as cryptoSign } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 import { HOB_BOT_CO_AUTHOR } from "./attribution.mjs";
 
 export const HOB_BOT_CLIENT_ID = "Iv23liZVDEIT17Ex36pI";
+// A key pasted into a one-line field loses its line breaks; rebuild the PEM layout.
+export function normalizePem(text) {
+  const match = /-----BEGIN ([A-Z ]+)-----([\s\S]*?)-----END \1-----/.exec(text);
+  if (!match) return text;
+  const body = match[2].replace(/\s+/g, "");
+  return `-----BEGIN ${match[1]}-----\n${(body.match(/.{1,64}/g) || []).join("\n")}\n-----END ${match[1]}-----\n`;
+}
+
 export const HOB_BOT_INSTALL_URL = "https://github.com/apps/hob-bot/installations/new";
 export const REFRESH_BUFFER_MS = 5 * 60 * 1000;
 export const NO_AUTH_MESSAGE =
-  "未配置 GitHub 身份。请在插件页面点击「登录」（hob-bot），或在配置中填写 GitHub App（GITHUB_APP_ID 和 GITHUB_APP_PRIVATE_KEY_PATH），或填写个人访问令牌（GITHUB_PERSONAL_ACCESS_TOKEN）。";
+  "未配置 GitHub 身份。请在插件页面点击「登录」（hob-bot），或在配置中填写 GitHub App（App ID 和私钥），或填写个人访问令牌。";
 
 export class AuthError extends Error {
   constructor(message, { code, status } = {}) {
@@ -55,10 +62,6 @@ export function extractScopeFromArgs(args) {
   return { ...(owner ? { owner } : {}), ...(repo ? { repo } : {}) };
 }
 
-function expandHome(filePath) {
-  if (filePath.startsWith("~/")) return join(homedir(), filePath.slice(2));
-  return filePath;
-}
 
 function base64urlJson(obj) {
   return Buffer.from(JSON.stringify(obj), "utf8").toString("base64url");
@@ -102,7 +105,7 @@ function writeSecretJson(filePath, value) {
 export function createAuthManager(env = process.env, options = {}) {
   const pat = (env.GITHUB_PERSONAL_ACCESS_TOKEN || "").trim();
   const appId = (env.GITHUB_APP_ID || "").trim();
-  const privateKeyPath = (env.GITHUB_APP_PRIVATE_KEY_PATH || "").trim();
+  const privateKeyText = (env.GITHUB_APP_PRIVATE_KEY || "").trim();
   const pluginDataDir = (env.GITHUB_PLUGIN_DATA || "").trim();
   const attribution = parseBooleanConfig(env.GITHUB_ATTRIBUTION, true);
   const apiBase = (env.GITHUB_API_URL || "https://api.github.com").replace(/\/+$/, "");
@@ -112,7 +115,7 @@ export function createAuthManager(env = process.env, options = {}) {
   const now = options.now || (() => Date.now());
   const onAuthChanged = options.onAuthChanged || null;
 
-  const appConfigured = Boolean(appId && privateKeyPath);
+  const appConfigured = Boolean(appId && privateKeyText);
   let cachedPrivateKey = null;
   let cachedAppInfo = null;
   const installationTokenCache = new Map(); // installationId -> { token, expiresAtMs }
@@ -166,12 +169,14 @@ export function createAuthManager(env = process.env, options = {}) {
 
   function loadPrivateKey() {
     if (cachedPrivateKey) return cachedPrivateKey;
+    const pem = normalizePem(privateKeyText);
     try {
-      cachedPrivateKey = readFileSync(expandHome(privateKeyPath), "utf8");
-      return cachedPrivateKey;
-    } catch (error) {
-      throw new AuthError(`无法读取 GitHub App 私钥文件（${privateKeyPath}）：${error.message}`, { code: "app_key_error" });
+      createPrivateKey(pem);
+    } catch {
+      throw new AuthError("GitHub App 私钥不对：用文本编辑器打开从 GitHub 下载的 .pem 文件，全部复制粘贴进来，包括开头的 -----BEGIN 和结尾的 -----END 两行。", { code: "app_key_error" });
     }
+    cachedPrivateKey = pem;
+    return pem;
   }
 
   function createJwt() {
@@ -594,7 +599,6 @@ export function createAuthManager(env = process.env, options = {}) {
     config: {
       pat,
       appId,
-      privateKeyPath,
       appConfigured,
       pluginDataDir,
       attribution,

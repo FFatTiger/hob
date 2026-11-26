@@ -247,7 +247,7 @@ test("三种身份优先级：App > hob-bot 登录 > 个人访问令牌", async 
     ...fake.env(),
     GITHUB_PLUGIN_DATA: tmp.dir,
     GITHUB_APP_ID: "55",
-    GITHUB_APP_PRIVATE_KEY_PATH: keyPath,
+    GITHUB_APP_PRIVATE_KEY: readFileSync(keyPath, "utf8"),
     GITHUB_PERSONAL_ACCESS_TOKEN: "ghp_priority_pat",
   });
 

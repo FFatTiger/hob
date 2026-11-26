@@ -530,4 +530,13 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "跟随全局 · {model}": "Follows global · {model}",
   "跟随群（{name}）": "Follows group ({name})",
   "本话题 · {model}": "This topic · {model}",
+  "对话方式": "Conversation mode",
+  "单会话": "Single conversation",
+  "多话题": "Topics",
+  "多话题 · 开启于 {date}": "Topics · since {date}",
+  "改成多话题": "Switch to topics",
+  "现在这条对话会成为主对话，历史都保留。之后可以为不同的事创建话题，每个话题是独立的对话。改成多话题后不能改回单会话。": "This conversation becomes the main conversation and keeps its history. You can then create a topic for each separate matter; each topic is its own conversation. You can't switch back to a single conversation.",
+  "跟随助手": "Follows assistant",
+  "跟随助手 · {model}": "Follows assistant · {model}",
+  "跟随助手（{name}）": "Follows assistant ({name})",
 };

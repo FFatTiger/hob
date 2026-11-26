@@ -15,8 +15,10 @@ import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 /** 手机首页只关心这几位：切页（mobile/sel/gsel）变了不重画这一大片。 */
 const pickList = (s: State) => ({
   assistants: s.assistants,
+  assistantTopics: s.assistantTopics,
   groups: s.groups,
   groupPrefs: s.groupPrefs,
+  approvals: s.approvals,
   query: s.query,
   search: s.search,
   update: s.update,
@@ -25,7 +27,7 @@ const pickList = (s: State) => ({
 export const MobileList = memo(function MobileList() {
   const s = useAppSelect(pickList, shallow);
   const updateVersion = availableVersion(s.update);
-  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs), s.query);
+  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const layout = pinLayout(pins.length);
 

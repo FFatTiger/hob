@@ -102,6 +102,7 @@
 | 不走代理的地址 | Bypass proxy for |
 | 群 / 群主 / 成员 | group / owner / member |
 | 话题 | topic |
+| 单会话 / 多话题 / 主对话 | Single conversation / Topics / Main conversation |
 | 待办 / 一项待办 | To-dos / to-do item |
 
 | 服务商 / 对话模型 / 任务模型 / 可分派的模型 / 用途说明 / 思考档 | provider / chat model / job model / assignable models / when to use / thinking level |

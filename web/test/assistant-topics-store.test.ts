@@ -225,4 +225,54 @@ describe("助手多话题 store 状态机", () => {
     expect(store.getState().newTopic).toBeNull();
     expect(store.getState().sideHome).toBe(true);
   });
+
+  it("enableAssistantTopics 开启多话题后更新助手与档案并进入二级页/主对话；失败返回真实错误", async () => {
+    const { realApi } = await import("../src/api.ts");
+    const store = await import("../src/store.ts");
+    const { primary, single } = setupAssistants();
+    const enabled = { ...single, topics: { enabledAt: "2026-11-26T04:00:00Z" } };
+
+    vi.spyOn(realApi, "items").mockResolvedValue({ items: [], approvals: [], jobs: [], drafts: [], hasMore: false });
+    const enableSpy = vi.spyOn(realApi, "enableAssistantTopics")
+      .mockRejectedValueOnce(new Error("主助手暂不支持多话题"))
+      .mockResolvedValueOnce(enabled);
+
+    Object.assign(store.getState(), {
+      assistants: [primary, single],
+      profiles: {
+        bird: {
+          assistant: { ...single, instructions: "保留的提示词", dutyLong: "详细职责" },
+          rules: [],
+          routines: [],
+          worklog: [],
+        },
+      },
+      sel: "bird",
+      sideHome: true,
+      panelStack: [{ kind: "assistant" }],
+    });
+
+    const err = await store.enableAssistantTopics("bird");
+    expect(err).toBe("主助手暂不支持多话题");
+    expect(store.getState().assistants.find((a) => a.id === "bird")?.topics).toBeUndefined();
+
+    const ok = await store.enableAssistantTopics("bird");
+    expect(ok).toBeNull();
+    expect(enableSpy).toHaveBeenCalledTimes(2);
+    expect(store.getState().assistants.find((a) => a.id === "bird")?.topics).toEqual({ enabledAt: "2026-11-26T04:00:00Z" });
+    expect(store.getState().profiles.bird?.assistant.topics).toEqual({ enabledAt: "2026-11-26T04:00:00Z" });
+    expect(store.getState().profiles.bird?.assistant.instructions).toBe("保留的提示词");
+    expect(store.getState().sideHome).toBe(false);
+    expect(store.getState().tsel).toBeNull();
+    expect(store.getState().panelStack).toEqual([]);
+  });
+
+  it("createDraft 把 topics 开关一并提交给服务端", async () => {
+    const { realApi } = await import("../src/api.ts");
+    const store = await import("../src/store.ts");
+    const createDraftSpy = vi.spyOn(realApi, "createDraft").mockResolvedValue(undefined);
+
+    await store.createDraft("d-1", { topics: true });
+    expect(createDraftSpy).toHaveBeenCalledWith("d-1", { topics: true });
+  });
 });

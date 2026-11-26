@@ -1,7 +1,7 @@
 // 首页各组的数据筛选：手机首页（Mobile）和桌面左栏（Sidebar）共用一份规则，渲染在
 // components/HomeSections.tsx。这里只算数据，不碰界面，好单测。
 import { t } from "../../shared/i18n.ts";
-import type { Approval, AssistantSummary, Delegation, GroupSummary, Job, Routine } from "../../shared/types.ts";
+import type { Approval, AssistantSummary, AssistantTopicSummary, Delegation, GroupSummary, Job, Routine } from "../../shared/types.ts";
 import type { GroupPrefs } from "./store.ts";
 import { topicsOf } from "./topics.ts";
 import { assistantStatus } from "./sidebar-data.ts";
@@ -21,33 +21,64 @@ export type HomeOrder = "recent" | "custom";
 
 /** 首页的一行：助手或群。 */
 export type ConversationEntry =
-  | { kind: "assistant"; id: string; a: AssistantSummary; pinned: boolean; hidden: boolean; order?: number; listOrder?: number; at?: string; since: string }
+  | { kind: "assistant"; id: string; a: AssistantRowData; pinned: boolean; hidden: boolean; order?: number; listOrder?: number; at?: string; since: string }
   | { kind: "group"; id: string; g: GroupRowData; pinned: boolean; hidden: false; order?: number; listOrder?: number; at?: string; since: string };
+
+/** 首页那行多话题助手：主对话和各话题合起来——未读相加、最近一条出自哪个话题。 */
+export type AssistantRowData = AssistantSummary & { lastTopic?: string };
 
 /** 首页那行群：综合和各话题合起来——最近一条出自哪个话题、有没有话题在等你回答。 */
 export type GroupRowData = GroupSummary & { lastTopic?: string; waiting?: boolean };
 
 /**
  * 助手和群归一成一种行：置顶、位置、最近消息都取出来。
- * 话题不进首页（进群看），但群的未读和忙要把各话题的算进来：首页那行代表整个群。
+ * 话题不进首页（进群或助手二级页看），但群和多话题助手的未读、忙和最近一条要把各话题的算进来。
  */
 export function conversations(
   assistants: AssistantSummary[],
   groups: GroupSummary[],
   prefs: Record<string, GroupPrefs>,
   approvals: Record<string, Approval> = {},
+  assistantTopics: AssistantTopicSummary[] = [],
 ): ConversationEntry[] {
-  const rows: ConversationEntry[] = assistants.map((a) => ({
-    kind: "assistant",
-    id: a.id,
-    a,
-    pinned: a.pinned,
-    hidden: a.hidden,
-    since: a.createdAt,
-    ...(a.pinOrder !== undefined ? { order: a.pinOrder } : {}),
-    ...(a.listOrder !== undefined ? { listOrder: a.listOrder } : {}),
-    ...(a.last?.at ? { at: a.last.at } : {}),
-  }));
+  const rows: ConversationEntry[] = assistants.map((a) => {
+    if (!a.topics) {
+      return {
+        kind: "assistant",
+        id: a.id,
+        a,
+        pinned: a.pinned,
+        hidden: a.hidden,
+        since: a.createdAt,
+        ...(a.pinOrder !== undefined ? { order: a.pinOrder } : {}),
+        ...(a.listOrder !== undefined ? { listOrder: a.listOrder } : {}),
+        ...(a.last?.at ? { at: a.last.at } : {}),
+      };
+    }
+    const topics = assistantTopics.filter((topic) => topic.assistantId === a.id);
+    const candidates: { last: { text: string; at: string }; topicName?: string }[] = [];
+    if (a.last) candidates.push({ last: a.last });
+    for (const topic of topics) if (topic.last) candidates.push({ last: topic.last, topicName: topic.name });
+    const latest = candidates.sort((x, y) => y.last.at.localeCompare(x.last.at))[0];
+    const row: AssistantRowData = {
+      ...a,
+      ...(latest ? { last: latest.last } : {}),
+      ...(latest?.topicName ? { lastTopic: latest.topicName } : {}),
+      unread: a.unread + topics.reduce((sum, topic) => sum + topic.unread, 0),
+      busy: a.busy || topics.some((topic) => topic.busy),
+    };
+    return {
+      kind: "assistant",
+      id: a.id,
+      a: row,
+      pinned: a.pinned,
+      hidden: a.hidden,
+      since: a.createdAt,
+      ...(a.pinOrder !== undefined ? { order: a.pinOrder } : {}),
+      ...(a.listOrder !== undefined ? { listOrder: a.listOrder } : {}),
+      ...(latest?.last.at ? { at: latest.last.at } : {}),
+    };
+  });
   for (const g of groups) {
     if (g.parentId) continue;
     const topics = topicsOf(groups, g.id);
@@ -161,6 +192,7 @@ function needsAttention(a: AssistantSummary, jobs: Job[], approvals: Approval[],
 /** 分组要看的那几份数据（State 里都有）。 */
 export interface HomeSource {
   assistants: AssistantSummary[];
+  assistantTopics?: AssistantTopicSummary[];
   groups: GroupSummary[];
   groupPrefs?: Record<string, GroupPrefs>;
   jobs: Record<string, Job>;
@@ -200,7 +232,7 @@ export function homeGroups(s: HomeSource, now = Date.now()): HomeGroups {
   const order: HomeOrder = s.homeOrder ?? "recent";
   const since = new Date(now - RECENT_MS).toISOString();
   const jobs = Object.values(s.jobs);
-  const all = conversations(s.assistants ?? [], s.groups ?? [], s.groupPrefs ?? {}, s.approvals ?? {});
+  const all = conversations(s.assistants ?? [], s.groups ?? [], s.groupPrefs ?? {}, s.approvals ?? {}, s.assistantTopics ?? []);
   const pins = pinList(all, s.query);
   const statusOf = (row: ConversationEntry): "attention" | "assistant" => {
     if (row.kind === "group") {

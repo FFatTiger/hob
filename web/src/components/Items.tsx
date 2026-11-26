@@ -356,12 +356,15 @@ function JobCard({ job: current, round, fresh, itemId }: { job: Job; round?: num
 function DraftCard({ draft }: { draft: Draft }) {
   const s = useApp();
   const [showInstructions, setShowInstructions] = useState(false);
+  const [topics, setTopics] = useState(Boolean(draft.topics));
+  useEffect(() => setTopics(Boolean(draft.topics)), [draft.topics]);
   const created = draft.status === "created" && draft.createdAssistantId;
   // 建好以后：头像跟着新助手走（可能是自画的道具），细节收起来，留职责和「查看」
   const made = created ? s.assistants.find((a) => a.id === draft.createdAssistantId) : undefined;
   const prop = made?.prop ?? draft.prop;
   // 建出来的助手归档了：点过去也没这人了，就说明一下
   const archived = Boolean(created) && !made;
+  const modeValue = created ? Boolean(made?.topics ?? draft.topics) : topics;
   return (
     <div className="draft">
         <div className="top">
@@ -381,6 +384,17 @@ function DraftCard({ draft }: { draft: Draft }) {
             <span>{draft.cwd}</span>
           </div>
         ) : null}
+        <div className="kv">
+          <span className="k">{t("对话方式")}</span>
+          {created ? (
+            <span>{modeValue ? t("多话题") : t("单会话")}</span>
+          ) : (
+            <div className="seg draft-mode-seg" role="group" aria-label={t("对话方式")} style={{ "--seg-count": 2, "--seg-index": topics ? 1 : 0 } as React.CSSProperties}>
+              <button type="button" className={!topics ? "on" : undefined} aria-pressed={!topics} onClick={() => setTopics(false)}>{t("单会话")}</button>
+              <button type="button" className={topics ? "on" : undefined} aria-pressed={topics} onClick={() => setTopics(true)}>{t("多话题")}</button>
+            </div>
+          )}
+        </div>
         {draft.instructions ? <Disclosure className="draft-instructions-disclosure" label={t("补充提示词")} count={draft.instructions.split("\n").length} open={showInstructions} onToggle={() => setShowInstructions(value => !value)}><div className="draft-instructions">{draft.instructions}</div></Disclosure> : null}
         <div className={`expand${created ? "" : " open"}`} inert={Boolean(created)}>
           <div>
@@ -396,7 +410,7 @@ function DraftCard({ draft }: { draft: Draft }) {
         </div>
         <div className="acts swap" style={{ marginTop: 12 }}>
           <div className={created ? "off" : undefined}>
-            <button className="hob-btn hob-btn-primary" onClick={() => void createDraft(draft.id)}>
+            <button className="hob-btn hob-btn-primary" onClick={() => void createDraft(draft.id, { topics })}>
               {t("创建")}
             </button>
             <button

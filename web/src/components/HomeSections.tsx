@@ -4,14 +4,14 @@
 import { memo, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { t } from "../../../shared/i18n.ts";
-import type { AssistantSummary, GroupSummary, Job } from "../../../shared/types.ts";
+import type { AssistantSummary, AssistantTopicSummary, GroupSummary, Job } from "../../../shared/types.ts";
 import { plainText } from "../../../shared/plain-text.ts";
-import { homeGroups, type ConversationEntry } from "../home.ts";
+import { homeGroups, type AssistantRowData, type ConversationEntry } from "../home.ts";
 import { assistantStatus } from "../sidebar-data.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar, type AvatarMark } from "../sprites.tsx";
 import { useRows } from "../motion.ts";
-import { closePanelPages, getState, openAssistant, openJob, openJobs, openRoutine, select, selectGroup, setHomeFilter, setHomeOrder, shallow, useAppSelect, type State } from "../store.ts";
+import { assistantSessionKey, closePanelPages, getState, openAssistant, openAssistantTopic, openJob, openJobs, openRoutine, select, selectGroup, setHomeFilter, setHomeOrder, shallow, useAppSelect, type State } from "../store.ts";
 import { cronText, fmtElapsed, fmtList } from "../util.ts";
 import { useAssistantMenu } from "./AssistantMenu.tsx";
 import { useRowToPin, type PinDragTarget } from "./PinDrag.ts";
@@ -21,9 +21,10 @@ import { activityParts } from "./Panel.tsx";
 import { GroupRow } from "./Groups.tsx";
 
 /** 行里的状态只看这几份数据：切页、打开别的对话都不牵动首页这些行。 */
-type StatusSource = Pick<State, "assistants" | "jobs" | "approvals" | "delegations">;
+type StatusSource = Pick<State, "assistants" | "jobs" | "approvals" | "delegations"> & Partial<Pick<State, "assistantTopics">>;
 const pickStatus = (s: State): StatusSource => ({
   assistants: s.assistants,
+  assistantTopics: s.assistantTopics,
   jobs: s.jobs,
   approvals: s.approvals,
   delegations: s.delegations,
@@ -31,9 +32,10 @@ const pickStatus = (s: State): StatusSource => ({
 const pickJobs = (s: State) => ({ jobs: s.jobs });
 
 /** 首页那一份：分组要的数据。桌面上才关心当前选中谁（高亮用），手机上不带，切页就不重画。 */
-type HomeSlice = Pick<State, "assistants" | "groups" | "groupPrefs" | "jobs" | "approvals" | "delegations" | "routines" | "query" | "tick" | "homeFilter" | "homeOrder" | "sel" | "gsel">;
+type HomeSlice = Pick<State, "assistants" | "assistantTopics" | "groups" | "groupPrefs" | "jobs" | "approvals" | "delegations" | "routines" | "query" | "tick" | "homeFilter" | "homeOrder" | "sel" | "gsel">;
 const homeSlice = (s: State, marks: boolean): HomeSlice => ({
   assistants: s.assistants,
+  assistantTopics: s.assistantTopics,
   groups: s.groups,
   groupPrefs: s.groupPrefs,
   jobs: s.jobs,
@@ -57,7 +59,8 @@ const pickHomeMarked = (s: State) => homeSlice(s, true);
  * 任务行不动，状态那列已经有转圈；只有收起的助手折着时，由它的任务行替它动。
  */
 function isBusy(s: StatusSource, a: AssistantSummary): boolean {
-  return assistantStatus(a, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) !== "空闲";
+  const topicBusy = Boolean(a.topics && (s.assistantTopics ?? []).some((topic) => topic.assistantId === a.id && topic.busy));
+  return assistantStatus({ ...a, busy: a.busy || topicBusy }, Object.values(s.jobs), Object.values(s.approvals), Object.values(s.delegations)) !== "空闲";
 }
 
 /** 在忙吗、轮到第几个看（按助手顺序给在忙的排号，头像按号错开时间看一圈）。 */
@@ -157,7 +160,7 @@ export function AssistantRow({
   reorder = false,
   allowPin = true,
 }: {
-  a: AssistantSummary;
+  a: AssistantRowData;
   sel?: boolean;
   size?: number;
   onClick?: () => void;
@@ -169,6 +172,7 @@ export function AssistantRow({
   const mark = useMark(a, busy);
   // 没置顶的才能往上拖进置顶区（收起的助手也算日常这一组）
   const toPin = useRowToPin(a, reorder);
+  const where = "lastTopic" in a && a.lastTopic ? t("「{topic}」", { topic: a.lastTopic }) : "";
   return (
     <button
       className={`list-row home-row${sel ? " sel" : ""}${allowPin && !a.pinned ? " can-pin" : ""}${reorder && allowPin && !a.pinned ? " reorderable" : ""}`}
@@ -190,7 +194,7 @@ export function AssistantRow({
           <span className="nm">{a.name}</span>
           <span className="tm">{fmtList(a.last?.at)}</span>
         </div>
-        <div className="pv">{a.last ? plainText(a.last.text) : a.duty}</div>
+        <div className="pv">{a.last ? `${where}${plainText(a.last.text)}` : a.duty}</div>
       </div>
       {allowPin && !a.pinned ? <Icon name="grip" size={14} className="grip" /> : null}
       {toPin.ghost ? createPortal(
@@ -219,14 +223,17 @@ function liveText(job: Job, owner: AssistantSummary | undefined, groups: GroupSu
 }
 
 /**
- * 点首页的任务行：先进这个任务所在的地方——群里派的进那个群（话题），否则进助手的对话，
+ * 点首页的任务行：先进这个任务所在的地方——群里派的进那个群（话题），助手话题进那个话题，否则进助手的对话，
  * 手机上就是对话页；再展开任务详情。都不在了就只开详情。
  */
-function openJobRow(job: Job, owner: AssistantSummary | undefined, groups: GroupSummary[]) {
+function openJobRow(job: Job, owner: AssistantSummary | undefined, groups: GroupSummary[], assistantTopics: AssistantTopicSummary[]) {
   const before = getState();
-  const switching = (job.groupId ?? job.assistantId) !== (before.gsel ?? before.sel);
+  const currentKey = before.gsel ?? (before.sel ? assistantSessionKey(before.sel, before.tsel) : null);
+  const targetKey = job.groupId ?? assistantSessionKey(job.assistantId, job.topicId);
+  const switching = targetKey !== currentKey;
   closePanelPages();
   if (job.groupId && groups.some((g) => g.id === job.groupId)) void selectGroup(job.groupId, true, false, true);
+  else if (job.topicId && assistantTopics.some((topic) => topic.id === job.topicId && topic.assistantId === job.assistantId)) void openAssistantTopic(job.assistantId, job.topicId, true);
   else if (owner) void select(job.assistantId);
   const approval = Object.values(before.approvals).find((item) => item.status === "pending" && item.jobId === job.id);
   openJob(job.id, undefined, switching, approval?.id);
@@ -397,7 +404,7 @@ export const HomeSections = memo(function HomeSections({ size = 42, markSel = fa
                 time={fmtList(live ? job.startedAt ?? job.createdAt : job.endedAt ?? job.createdAt)}
                 text={live ? liveText(job, owner(job.assistantId), s.groups) : job.summary || job.statusReason || ""}
                 size={size}
-                onClick={() => openJobRow(job, owner(job.assistantId), s.groups)}
+                onClick={() => openJobRow(job, owner(job.assistantId), s.groups, s.assistantTopics ?? [])}
               />
             );
           })}
@@ -415,6 +422,7 @@ export const HomeSections = memo(function HomeSections({ size = 42, markSel = fa
                 onClick={() => {
                   closePanelPages();
                   if (r.groupId && s.groups.some((group) => group.id === r.groupId)) void selectGroup(r.groupId, true, false, true);
+                  else if (r.topicId && (s.assistantTopics ?? []).some((topic) => topic.id === r.topicId && topic.assistantId === r.assistantId)) void openAssistantTopic(r.assistantId, r.topicId, true);
                   else void select(r.assistantId);
                   openRoutine(r.id);
                 }}

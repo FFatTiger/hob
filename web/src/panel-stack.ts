@@ -12,12 +12,12 @@ export interface FilePreviewState {
 
 export type PanelPage =
   | { kind: "routine"; id: string }
-  | { kind: "newRoutine"; groupId?: string }
+  | { kind: "newRoutine"; groupId?: string; topicId?: string }
   | { kind: "assistant" }
   | { kind: "groupSettings"; id: string }
   /** 群信息里点了某个成员：右栏换成这个助手的信息页，群聊留在中间 */
   | { kind: "member"; id: string }
-  | { kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels"; groupId?: string }
+  | { kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels"; groupId?: string; topicId?: string }
   | { kind: "jobs" }
   | { kind: "job"; id: string; round?: number; full?: boolean; instant?: boolean; jumpApprovalId?: string }
   | ({ kind: "file" } & FilePreviewState);
@@ -83,6 +83,7 @@ export function panelDesk(
     users?: Record<string, readonly DesktopScreenUser[]>;
   },
   place?: Place,
+  multiTopic = false,
 ): PanelDeskState {
   const isRunning = (screenId?: string) => !!screenId && desktop.screens.some((screen) => screen.id === screenId && screen.running);
   const isKnown = (screenId?: string) => !!screenId && desktop.screens.some((screen) => screen.id === screenId);
@@ -103,6 +104,7 @@ export function panelDesk(
       return user.place.groupId === gsel && !user.place.topicId;
     }
     if (place?.topicId) return user.place.topicId === place.topicId && !user.place.groupId;
+    if (multiTopic) return !user.place.groupId;
     return !user.place.groupId && !user.place.topicId;
   };
 
@@ -141,7 +143,7 @@ export function panelDesk(
 export function desktopUserWhere(
   user: DesktopScreenUser,
   groups: readonly { id: string; parentId?: string; name: string }[],
-  assistants: readonly { id: string; name: string }[],
+  assistants: readonly { id: string; name: string; topics?: unknown }[],
   gsel: string | null,
   assistantTopics?: readonly { id: string; name: string }[],
 ): string {
@@ -163,6 +165,7 @@ export function desktopUserWhere(
     return topic?.name ?? user.place.topicId;
   }
   const assistant = assistants.find((item) => item.id === user.assistantId);
+  if (!gsel && assistant?.topics) return t("主对话");
   return t("{name} · 单聊", { name: assistant?.name ?? user.assistantId });
 }
 

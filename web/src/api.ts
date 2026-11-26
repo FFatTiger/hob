@@ -7,6 +7,7 @@ import type {
   AboutInfo,
   AnswerApprovalBody,
   Assistant,
+  AssistantSummary,
   AssistantTopicSummary,
   Bootstrap,
   ClaudeCodeSettings,
@@ -43,6 +44,7 @@ import type {
   LoreTestResult,
   MemoryConfig,
   MemoryProvider,
+  ModelPick,
   ModelThinkingPatch,
   PluginModelOverridePatch,
   ModelThinkingSaved,
@@ -64,6 +66,7 @@ import type {
   SendMessageBody,
   SettingsFile,
   SettingsPatch,
+  TopicConfigView,
   UsagePricePatch,
   UsagePriceSaved,
   UsageView,
@@ -75,7 +78,7 @@ import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportV
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
 import type { PluginCatalogView, PluginLoginsView, PluginPatch, PluginToolLoginPollResult, PluginToolLoginStartResult, PluginToolLoginStatus, PluginView, PluginsView } from "../../shared/types.ts";
 
-export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; exact?: boolean; q?: string; before?: string; limit?: number };
+export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; topicId?: string; exact?: boolean; q?: string; before?: string; limit?: number };
 
 export class ApiError extends Error {
   status: number;
@@ -249,13 +252,33 @@ export interface HobApi {
   sendAssistantTopicMessage(assistantId: string, topicId: string, body: SendMessageBody): Promise<{ item: Item }>;
   readAssistantTopic(assistantId: string, topicId: string): Promise<void>;
   stopAssistantTopic(assistantId: string, topicId: string): Promise<void>;
+  enableAssistantTopics(assistantId: string): Promise<AssistantSummary>;
+  assistantTopicConfig(assistantId: string, topicId: string): Promise<TopicConfigView>;
+  patchAssistantTopicConfig(
+    assistantId: string,
+    topicId: string,
+    patch: { models?: { conversation?: ModelPick | null; work?: ModelPick | null } },
+  ): Promise<TopicConfigView>;
+  addAssistantTopicRule(
+    assistantId: string,
+    topicId: string,
+    body: { text: string; mode: Rule["mode"] },
+  ): Promise<{ ok: true; rule: Rule }>;
+  updateAssistantTopicRule(
+    assistantId: string,
+    topicId: string,
+    ruleId: string,
+    patch: { text?: string; mode?: Rule["mode"] },
+  ): Promise<{ ok: true; rule: Rule }>;
+  deleteAssistantTopicRule(assistantId: string, topicId: string, ruleId: string): Promise<void>;
+  resetAssistantTopicRule(assistantId: string, topicId: string, ruleId: string): Promise<void>;
   patchAssistant(assistantId: string, patch: Partial<Assistant> & { rule?: { id?: string; text?: string; mode?: "ask" | "allow" } }): Promise<{ rule?: Rule } | void>;
   archiveAssistant(assistantId: string): Promise<void>;
   deleteRule(assistantId: string, ruleId: string): Promise<void>;
   retryDelegation(id: string): Promise<void>;
   answerApproval(approvalId: string, answer: AnswerApprovalBody): Promise<void>;
   answerCard(cardId: string, action: import("../../shared/cards.ts").CardActionRequest): Promise<{ card?: import("../../shared/cards.ts").CardRecord }>;
-  createDraft(draftId: string): Promise<void>;
+  createDraft(draftId: string, options?: { topics?: boolean }): Promise<void>;
   dismissDraft(draftId: string): Promise<void>;
   createRoutine(body: Omit<Routine, "id" | "createdAt" | "runs">): Promise<{ routine: Routine }>;
   patchRoutine(routineId: string, patch: Partial<Routine>): Promise<void>;
@@ -264,7 +287,7 @@ export interface HobApi {
   replyJob(jobId: string, text: string): Promise<void>;
   stopJob(jobId: string): Promise<void>;
   transcript(jobId: string): Promise<JobTranscript>;
-  jobs(query?: { assistantId?: string; groupId?: string; exact?: boolean; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
+  jobs(query?: { assistantId?: string; groupId?: string; topicId?: string; exact?: boolean; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
   upload(file: File, target: { assistantId?: string; groupId?: string }): Promise<string>;
   groupProfile(groupId: string): Promise<GroupProfile>;
   groupSkills(groupId: string): Promise<AssistantSkill[]>;
@@ -509,6 +532,37 @@ export const realApi: HobApi = {
       `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/stop`,
       { method: "POST" },
     ),
+  enableAssistantTopics: (assistantId) =>
+    req<AssistantSummary>(`/api/assistants/${encodeURIComponent(assistantId)}/topic-mode`, { method: "POST" }),
+  assistantTopicConfig: (assistantId, topicId) =>
+    req<TopicConfigView>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/config`,
+    ),
+  patchAssistantTopicConfig: (assistantId, topicId, patch) =>
+    req<TopicConfigView>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/config`,
+      json(patch, "PATCH"),
+    ),
+  addAssistantTopicRule: (assistantId, topicId, body) =>
+    req<{ ok: true; rule: Rule }>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/rules`,
+      json(body),
+    ),
+  updateAssistantTopicRule: (assistantId, topicId, ruleId, patch) =>
+    req<{ ok: true; rule: Rule }>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/rules/${encodeURIComponent(ruleId)}`,
+      json(patch, "PUT"),
+    ),
+  deleteAssistantTopicRule: (assistantId, topicId, ruleId) =>
+    req<void>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/rules/${encodeURIComponent(ruleId)}`,
+      { method: "DELETE" },
+    ),
+  resetAssistantTopicRule: (assistantId, topicId, ruleId) =>
+    req<void>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/rules/${encodeURIComponent(ruleId)}/reset`,
+      { method: "POST" },
+    ),
   patchAssistant: (assistantId, patch) =>
     req<{ rule?: Rule }>(`/api/assistants/${encodeURIComponent(assistantId)}`, {
       method: "PATCH",
@@ -526,8 +580,8 @@ export const realApi: HobApi = {
     req<void>(`/api/approvals/${encodeURIComponent(approvalId)}`, json(answer)),
   answerCard: (cardId, action) =>
     req<{ card?: import("../../shared/cards.ts").CardRecord }>(`/api/cards/${encodeURIComponent(cardId)}`, json(action)),
-  createDraft: (draftId) =>
-    req<void>(`/api/drafts/${encodeURIComponent(draftId)}/create`, { method: "POST" }),
+  createDraft: (draftId, options) =>
+    req<void>(`/api/drafts/${encodeURIComponent(draftId)}/create`, options ? json(options) : { method: "POST" }),
   dismissDraft: (draftId) =>
     req<void>(`/api/drafts/${encodeURIComponent(draftId)}/dismiss`, { method: "POST" }),
   createRoutine: (body) => req<{ routine: Routine }>("/api/routines", json(body)),
@@ -548,6 +602,7 @@ export const realApi: HobApi = {
     const params = new URLSearchParams();
     if (query.assistantId) params.set("assistantId", query.assistantId);
     if (query.groupId) params.set("groupId", query.groupId);
+    if (query.topicId) params.set("topicId", query.topicId);
     if (query.exact) params.set("exact", "1");
     if (query.status) params.set("status", query.status);
     if (query.before) params.set("before", query.before);

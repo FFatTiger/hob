@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Approval, AssistantSummary, GroupSummary, Job, Routine } from "../../shared/types.ts";
+import type { Approval, AssistantSummary, AssistantTopicSummary, GroupSummary, Job, Routine } from "../../shared/types.ts";
 import { conversations, homeGroups, pinList, RECENT } from "../src/home.ts";
 
 const NOW = Date.UTC(2026, 10, 2, 12, 0, 0);
@@ -67,6 +67,19 @@ function index<T extends { id: string }>(list: T[]): Record<string, T> {
   const out: Record<string, T> = {};
   for (const x of list) out[x.id] = x;
   return out;
+}
+
+function assistantTopic(id: string, assistantId: string, extra: Partial<AssistantTopicSummary> = {}): AssistantTopicSummary {
+  return {
+    id,
+    assistantId,
+    name: id,
+    createdAt: minsAgo(60 * 24 * 5),
+    createdBy: "user",
+    unread: 0,
+    busy: false,
+    ...extra,
+  };
 }
 
 /** 首页把助手和群归一成一种行；置顶、排先后都在这一层。 */
@@ -392,5 +405,114 @@ describe("群和助手混在一起", () => {
         "",
       ).map((entry) => entry.id),
     ).toEqual(["g-topics"]);
+  });
+
+  it("多话题助手汇总未读（含已关闭）、最新消息（带话题名）、忙碌与等你确认；单会话助手输出完全不变", () => {
+    const single = asst("solo", {
+      name: "日常管家",
+      unread: 1,
+      busy: false,
+      last: { text: "单会话最新消息", at: minsAgo(25) },
+      pinOrder: 2,
+      listOrder: 3,
+    });
+    const planner = asst("planner", {
+      name: "日程统筹",
+      topics: { enabledAt: minsAgo(60 * 24 * 10) },
+      unread: 1,
+      busy: false,
+      last: { text: "主对话较旧消息", at: minsAgo(40) },
+    });
+    const topics: AssistantTopicSummary[] = [
+      assistantTopic("tp-open", "planner", {
+        name: "搬家筹备",
+        unread: 2,
+        busy: true,
+        last: { text: "周六上午十点上门看货", at: minsAgo(2) },
+      }),
+      assistantTopic("tp-closed", "planner", {
+        name: "阳台防水",
+        closedAt: minsAgo(60 * 24),
+        unread: 3,
+        busy: false,
+        last: { text: "已选定施工方案", at: minsAgo(60 * 24) },
+      }),
+    ];
+
+    // 1. 单会话助手在传与不传 assistantTopics 时输出完全一致（即使存在同 assistantId 的孤立话题也不影响）
+    const orphanTopic = assistantTopic("tp-orphan", "solo", { name: "不应汇总", unread: 9, busy: true, last: { text: "不应出现", at: minsAgo(1) } });
+    const singleBefore = conversations([single], [], {}, {});
+    const singleAfter = conversations([single], [], {}, {}, [orphanTopic]);
+    expect(singleAfter).toEqual(singleBefore);
+    expect(singleAfter[0]).toEqual({
+      kind: "assistant",
+      id: "solo",
+      a: single,
+      pinned: false,
+      hidden: false,
+      since: single.createdAt,
+      order: 2,
+      listOrder: 3,
+      at: minsAgo(25),
+    });
+
+    // 2. 多话题助手汇总未读（1 + 2 + 3 = 6）、最新消息出自话题带 lastTopic、任一话题 busy 算在助手上
+    const result = homeGroups(
+      {
+        assistants: [single, planner],
+        assistantTopics: topics,
+        groups: [],
+        groupPrefs: {},
+        jobs: {},
+        approvals: {},
+        routines: [],
+        query: "",
+      },
+      NOW,
+    );
+    expect(result.rows.map((row) => row.id)).toEqual(["planner", "solo"]);
+    const plannerRow = result.rows.find((row) => row.id === "planner");
+    expect(plannerRow?.kind === "assistant" ? plannerRow.a.unread : null).toBe(6);
+    expect(plannerRow?.kind === "assistant" ? plannerRow.a.busy : null).toBe(true);
+    expect(plannerRow?.kind === "assistant" ? plannerRow.a.last?.text : null).toBe("周六上午十点上门看货");
+    expect(plannerRow?.kind === "assistant" ? plannerRow.a.lastTopic : null).toBe("搬家筹备");
+    expect(plannerRow?.at).toBe(minsAgo(2));
+
+    // 3. 主对话消息最新时，不设 lastTopic
+    const mainLatest = homeGroups(
+      {
+        assistants: [{ ...planner, last: { text: "主对话刚刚说的", at: minsAgo(1) } }],
+        assistantTopics: topics,
+        groups: [],
+        groupPrefs: {},
+        jobs: {},
+        approvals: {},
+        routines: [],
+        query: "",
+      },
+      NOW,
+    );
+    const mainRow = mainLatest.rows.find((row) => row.id === "planner");
+    expect(mainRow?.kind === "assistant" ? mainRow.a.last?.text : null).toBe("主对话刚刚说的");
+    expect(mainRow?.kind === "assistant" ? mainRow.a.lastTopic : null).toBeUndefined();
+
+    // 4. 话题里有 pending 提问卡（非 job），把多话题助手提进「等你处理」
+    const attentionResult = homeGroups(
+      {
+        assistants: [single, planner],
+        assistantTopics: [assistantTopic("tp-ask", "planner", { name: "报税核对", busy: false, unread: 1 })],
+        groups: [],
+        groupPrefs: {},
+        jobs: {},
+        approvals: {
+          "ap-tp": approval("ap-tp", "pending", { assistantId: "planner", topicId: "tp-ask", source: "router" }),
+        },
+        routines: [],
+        query: "",
+      },
+      NOW,
+    );
+    expect(attentionResult.attention.map((row) => row.id)).toEqual(["planner"]);
+    expect(attentionResult.rows.map((row) => row.id)).toEqual(["solo"]);
   });
 });

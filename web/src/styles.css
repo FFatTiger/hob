@@ -8373,3 +8373,37 @@ button.screen,
 .hc-loading { display: flex; align-items: center; gap: 5px; margin-top: 8px; color: var(--text2); font-size: 13px; }
 @media (max-width: 767px) { .hc { width: 100%; flex-basis: 100%; } .hc-columns { flex-direction: row; } }
 
+/* 助手草稿卡对话方式切换、助手设置对话方式与转多话题确认框 */
+.draft-mode-seg {
+  padding: 2px;
+  border-radius: 8px;
+}
+.draft-mode-seg::before {
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px - (var(--seg-count) - 1) * 2px) / var(--seg-count));
+  border-radius: 6px;
+}
+.draft-mode-seg > button {
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 6px;
+  font-size: 12.5px;
+}
+.asst-mode-row {
+  gap: 10px;
+}
+.asst-mode-val {
+  font-size: 14px;
+  color: var(--text);
+}
+.topic-mode-dialog .gcreate-card {
+  width: min(390px, calc(100vw - 32px));
+}
+.topic-mode-body {
+  font-size: 13.5px;
+  line-height: 1.6;
+  color: var(--text2);
+}
+

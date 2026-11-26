@@ -1,6 +1,7 @@
 // 右栏：进行中的任务 + 定时任务列表 / 定时任务编辑 / 助手设置 / 应用设置。
-import { t } from "../../../shared/i18n.ts";
+import { currentLocale, t } from "../../../shared/i18n.ts";
 import { Select } from "./Select.tsx";
+import { DialogShell } from "./DialogShell.tsx";
 import { DelayedText, Empty } from "./Empty.tsx";
 import { SaveMessage, useSaveMessage } from "./SaveMessage.tsx";
 import { DetailRow } from "./DetailRow.tsx";
@@ -10,7 +11,7 @@ import { useMenu } from "./use-menu.ts";
 import { skillUsage } from "../skill-usage.ts";
 import { skillOriginText } from "../skill-origin.ts";
 import { commandSummary } from "../../../shared/command.ts";
-import type { PluginView, ActivityLine, Assistant, CustomProp, EffectiveRule, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
+import type { PluginView, ActivityLine, Assistant, AssistantTopicSummary, CustomProp, EffectiveRule, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { BrandIcon, brandForRef } from "../brand-icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
@@ -22,13 +23,17 @@ import { Avatar } from "../sprites.tsx";
 import { useLeave } from "../motion.ts";
 import { useDesktopScreens } from "../desktop-screens.ts";
 import {
+  addAssistantTopicRule,
   addRule,
   archiveGroup,
+  assistantSessionKey,
   backPanel,
   changeAssistantSkill,
   createRoutine,
+  deleteAssistantTopicRule,
   deleteRule,
   deleteRoutine,
+  enableAssistantTopics,
   jumpToJob,
   jumpToDelegation,
   loadPlugins,
@@ -36,6 +41,7 @@ import {
   loadModels,
   loadKnowledge,
   loadAssistantSkills,
+  loadAssistantTopicConfig,
   loadGroupProfile,
   openKnowledge,
   openFilePreview,
@@ -49,10 +55,13 @@ import {
   openRoutine,
   openSidebarPage,
   patchAssistant,
+  patchAssistantTopicConfig,
   patchGroup,
   patchGroupMemberModels,
+  resetAssistantTopicRule,
   resetGroupRule,
   setNotice,
+  updateAssistantTopicRule,
   updateRule,
   runRoutine,
   saveRoutine,
@@ -98,17 +107,22 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   // 选中群时右栏的根页是群信息（推进了成员页时除外）
   const memberOpen = s.panelStack.some((item) => item.kind === "member");
   const group = s.gsel && !member ? s.groups.find((g) => g.id === s.gsel) : undefined;
-  const groupScope = "groupId" in panel && (panel.kind === "routines" || panel.kind === "skills" || panel.kind === "rules" || panel.kind === "topicRules" || panel.kind === "topicModels" || panel.kind === "newRoutine") ? (panel.groupId ?? (!memberOpen ? s.gsel ?? undefined : undefined)) : undefined;
+  const scopedPanel = panel.kind === "routines" || panel.kind === "skills" || panel.kind === "rules" || panel.kind === "topicRules" || panel.kind === "topicModels" || panel.kind === "newRoutine";
+  const groupScope = scopedPanel ? (("groupId" in panel ? panel.groupId : undefined) ?? (!memberOpen ? s.gsel ?? undefined : undefined)) : undefined;
+  const assistantTopic = !group && !member && s.sel && s.tsel ? (s.assistantTopics ?? []).find((item) => item.id === s.tsel && item.assistantId === s.sel) : undefined;
+  const topicScope = panel.kind === "routines" || panel.kind === "topicRules" || panel.kind === "topicModels" || panel.kind === "newRoutine"
+    ? (("topicId" in panel ? panel.topicId : undefined) ?? (!group && !memberOpen ? s.tsel ?? undefined : undefined))
+    : undefined;
   const [rootScrolled, setRootScrolled] = useState(false);
   const selectedAssistant = s.profiles[panelAssistant(s.panelStack, s.sel)]?.assistant ?? s.assistants.find((a) => a.id === (panelAssistant(s.panelStack, s.sel)));
   const desktop = useDesktopScreens();
-  const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop).running;
-  useEffect(() => setRootScrolled(false), [s.sel, s.gsel]);
+  const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop, s.tsel ? { topicId: s.tsel } : undefined, Boolean(!s.gsel && !s.tsel && selectedAssistant?.topics)).running;
+  useEffect(() => setRootScrolled(false), [s.sel, s.gsel, s.tsel]);
   const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" || kind === "topicRules" ? t("执行前确认") : kind === "topicModels" ? t("模型") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
     <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
       {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && !focus && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
-        {kind === "now" && !group ? <button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button> : null}
+        {kind === "now" && !group && !assistantTopic ? <button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button> : null}
         {kind === "now" && group ? <button className="hob-icon-btn" title={t("编辑群")} onClick={() => openGroupSettings(group.parentId ?? group.id)}><Icon name="edit" size={17} /></button> : null}
         {kind === "routines" ? <button className="hob-icon-btn" title={t("新建定时任务")} onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}
         {panel.kind === "routine" ? <button className="hob-btn hob-btn-primary hob-btn-compact" onClick={() => void runRoutine(panel.id)}>{t("立即运行")}</button> : null}
@@ -117,18 +131,37 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
         {kind === "routine" ? (
           <RoutineEditor key={panel.kind === "routine" ? panel.id : ""} id={panel.kind === "routine" ? panel.id : ""} />
         ) : kind === "newRoutine" ? (
-          <NewRoutine groupId={groupScope} />
+          <NewRoutine groupId={groupScope} topicId={topicScope} />
         ) : panel.kind === "groupSettings" ? (
           <GroupSettings id={panel.id} />
         ) : kind === "assistant" ? (
           <AssistantSettings key={panelAssistant(s.panelStack, s.sel)} />
-        ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : kind === "topicRules" ? <TopicRules topicId={groupScope ?? ""} /> : kind === "topicModels" ? <TopicModels topicId={groupScope ?? ""} /> : group && !focus ? (
+        ) : kind === "routines" ? <RoutineList groupId={groupScope} topicId={topicScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : kind === "topicRules" ? <TopicRules groupId={groupScope} assistantId={groupScope ? undefined : panelAssistant(s.panelStack, s.sel)} topicId={groupScope ? undefined : topicScope} /> : kind === "topicModels" ? <TopicModels groupId={groupScope} assistantId={groupScope ? undefined : panelAssistant(s.panelStack, s.sel)} topicId={groupScope ? undefined : topicScope} /> : group && !focus ? (
           group.parentId ? <><GroupPanel mobile={mobile} g={s.groups.find((g) => g.id === group.parentId) ?? group} topic={group} /><TopicClose topic={group} /></> : <GroupPanel mobile={mobile} g={group} />
         ) : (
-          <PanelNow mobile={mobile} focus={focus}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails desktopRow={desktopRow} /> : null}</>}</PanelNow>
+          <>
+            <PanelNow mobile={mobile} focus={focus} topic={assistantTopic}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails topicId={assistantTopic?.id} desktopRow={desktopRow} modelsRow={assistantTopic ? <TopicModelsRow assistantId={assistantTopic.assistantId} topic={assistantTopic} /> : undefined} /> : null}</>}</PanelNow>
+            {!focus && assistantTopic ? <TopicClose topic={assistantTopic} /> : null}
+          </>
         )}
       </div>
     </aside>
+  );
+}
+
+function TopicModelsRow({ assistantId, topic }: { assistantId: string; topic: AssistantTopicSummary }) {
+  const s = useApp();
+  const config = s.assistantTopicConfigs?.[assistantSessionKey(assistantId, topic.id)];
+  const hasOverrides = config?.value
+    ? config.value.models.conversation.source === "topic" || config.value.models.work.source === "topic"
+    : Boolean(topic.overrides?.models?.conversation || topic.overrides?.models?.work);
+  return (
+    <button onClick={() => openSidebarPage("topicModels", undefined, topic.id)}>
+      <Icon name="layers" size={15} />
+      <span>{t("模型")}</span>
+      <small>{hasOverrides ? t("本话题") : t("跟随助手")}</small>
+      <b>›</b>
+    </button>
   );
 }
 
@@ -410,22 +443,47 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
 }
 
 /** children 拿到云桌面行（空闲或别处正在用时才有），放进下面定时任务那组；打开全屏仍由这里管。 */
-function PanelNow({ mobile, focus, deskOnly = false, children }: { mobile: boolean; focus: boolean; deskOnly?: boolean; children?: (desktopRow: ReactNode) => ReactNode }) {
+function PanelNow({ mobile, focus, deskOnly = false, topic, children }: { mobile: boolean; focus: boolean; deskOnly?: boolean; topic?: AssistantTopicSummary; children?: (desktopRow: ReactNode) => ReactNode }) {
   const s = useApp();
   // 群信息页上讲的是屏幕在跑的那个成员，其余就是右栏讲的那个助手
   const desktop = useDesktopScreens();
-  const deskOf = panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop);
+  const panelAid = panelAssistant(s.panelStack, s.sel);
+  const panelAsst = s.profiles[panelAid]?.assistant ?? s.assistants.find((a) => a.id === panelAid);
+  const deskOf = panelDesk(
+    s.panelStack,
+    s.sel,
+    s.gsel,
+    s.groups,
+    desktop,
+    topic ? { topicId: topic.id } : undefined,
+    Boolean(!s.gsel && !topic && panelAsst?.topics),
+  );
   const aid = deskOf.aid;
   const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
-  const jobs = Object.values(s.jobs);
-  const { running: job, last } = sidebarJobs(jobs, aid);
-  const status = assistant ? assistantStatus(assistant, jobs, Object.values(s.approvals), Object.values(s.delegations)) : "空闲";
-  const next = nextRoutine(s.routines.filter((r) => r.assistantId === aid && !r.groupId), s.settings.settings.general.timezone);
+  const allJobs = Object.values(s.jobs);
+  const scopedJobs = topic ? allJobs.filter((j) => j.assistantId === aid && !j.groupId && j.topicId === topic.id) : allJobs;
+  const scopedApprovals = topic
+    ? Object.values(s.approvals).filter((ap) => !ap.groupId && ap.topicId === topic.id)
+    : Object.values(s.approvals);
+  const scopedDelegations = topic ? [] : Object.values(s.delegations);
+  const { running: job, last } = sidebarJobs(scopedJobs, aid);
+  const status = assistant
+    ? assistantStatus(topic ? { id: aid, busy: topic.busy } : assistant, scopedJobs, scopedApprovals, scopedDelegations)
+    : "空闲";
+  const next = nextRoutine(
+    s.routines.filter((r) => r.assistantId === aid && !r.groupId && (!topic || r.topicId === topic.id)),
+    s.settings.settings.general.timezone,
+  );
+  const topicTag = (topicId?: string) => {
+    if (!topicId || topic || !assistant?.topics) return "";
+    const found = (s.assistantTopics ?? []).find((item) => item.id === topicId && item.assistantId === aid);
+    return found ? t("「{name}」", { name: found.name }) : "";
+  };
 
   // 只有当前会话正在用且屏幕运行时显示小屏，别处在用或空闲时显示一行入口。
   const screenId = deskOf.screenId;
   const desk = deskOf.running;
-  const usedWhere = deskOf.status === "elsewhere" && deskOf.usedBy ? desktopUserWhere(deskOf.usedBy, s.groups, s.assistants, s.gsel) : undefined;
+  const usedWhere = deskOf.status === "elsewhere" && deskOf.usedBy ? desktopUserWhere(deskOf.usedBy, s.groups, s.assistants, s.gsel, s.assistantTopics) : undefined;
   const desktopRow = deskOf.status === "elsewhere" && usedWhere ? (
     <button onClick={() => setScreen("view")}><Icon name="monitor" size={15} /><span>{t("云桌面")}</span><small>{t("「{where}」正在用", { where: usedWhere })}</small><b>›</b></button>
   ) : deskOf.status === "idle" ? (
@@ -433,7 +491,7 @@ function PanelNow({ mobile, focus, deskOnly = false, children }: { mobile: boole
   ) : null;
   const currentPanel = s.panelStack.at(-1);
   const wakeEligible = !mobile && s.page === "main" && Boolean(s.sel ?? s.gsel) && (!currentPanel || currentPanel.kind === "member");
-  const sessionKey = s.gsel ? `g:${s.gsel}` : `a:${s.sel ?? ""}`;
+  const sessionKey = s.gsel ? `g:${s.gsel}` : `a:${s.sel ?? ""}${topic ? `@${topic.id}` : ""}`;
   useEffect(() => {
     const action = desktopWakeTracker.observe(desktop.screens, deskOf.watch, deskOf.activeWatch, wakeEligible, s.collapsed, s.nowWide, sessionKey);
     if (action === "restore") setNowWide(false);
@@ -512,21 +570,28 @@ function PanelNow({ mobile, focus, deskOnly = false, children }: { mobile: boole
   return (
     <>
     <div className="group-card sidebar-card">
-      {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
-      {!assistant?.primary && assistant?.cwd ? (
+      {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{topic ? topic.name : assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
+      {topic ? (
+        assistant?.cwd ? (
+          <div className="gpanel-origin"><small>{t("工作目录")} · {t("跟随助手")}</small>{assistant.cwd}</div>
+        ) : topic.cwd ? (
+          <div className="gpanel-origin"><small>{t("工作目录")} · {t("本话题")}</small>{topic.cwd}</div>
+        ) : null
+      ) : !assistant?.primary && assistant?.cwd ? (
         <div className="gpanel-origin"><small>{t("工作目录")}</small>{assistant.cwd}</div>
       ) : null}
       {deskBlock}
       {!desk ? <div className={`now-log${job ? " open" : ""}`} inert={!job}><div>{logPresence.mounted && job ? log("jd-open", t("打开任务详情"), () => openJob(job.id)) : logPresence.mounted ? log("jd-open", t("打开任务详情"), () => {}) : null}</div></div> : null}
       {job ? (
         <>
-          <div className="caprow"><span className="cap">{job.title}{job.routineId ? ` · ${t("定时执行")}` : ""} · {t("已进行 {time}", { time: fmtElapsed(job.startedAt ?? job.createdAt) })}</span><button className="more" onClick={() => openJob(job.id)}>{t("任务详情")} ›</button></div>
+          <div className="caprow"><span className="cap">{[job.title, topicTag(job.topicId), job.routineId ? t("定时执行") : "", t("已进行 {time}", { time: fmtElapsed(job.startedAt ?? job.createdAt) })].filter(Boolean).join(" · ")}</span><button className="more" onClick={() => openJob(job.id)}>{t("任务详情")} ›</button></div>
         </>
-      ) : <div className="sidebar-facts">{last ? <button onClick={() => openJob(last.id)}>{t("上次")} <span>{jobStatusIcon(last.status, 14)}<span>{last.title}</span></span><small>{fmtWhen(last.endedAt!)}</small></button> : null}{next ? <div>{t("下一次")} <span><span aria-hidden="true">⏱</span><span>{next.routine.name}</span></span><small>{formatNext(next.at, s.settings.settings.general.timezone)}</small></div> : null}</div>}
+      ) : <div className="sidebar-facts">{last ? <button onClick={() => openJob(last.id)}>{t("上次")} <span>{jobStatusIcon(last.status, 14)}<span>{last.title}{topicTag(last.topicId) ? ` · ${topicTag(last.topicId)}` : ""}</span></span><small>{fmtWhen(last.endedAt!)}</small></button> : null}{next ? <div>{t("下一次")} <span><span aria-hidden="true">⏱</span><span>{next.routine.name}{topicTag(next.routine.topicId) ? ` · ${topicTag(next.routine.topicId)}` : ""}</span></span><small>{formatNext(next.at, s.settings.settings.general.timezone)}</small></div> : null}</div>}
 
-      {Object.values(s.delegations).filter((delegation) => delegation.from === aid && (delegation.status === "running" || delegation.status === "waiting")).map((delegation) => {
+      {Object.values(s.delegations).filter((delegation) => delegation.from === aid && (topic ? delegation.fromTopicId === topic.id : true) && (delegation.status === "running" || delegation.status === "waiting")).map((delegation) => {
         const target = s.assistants.find((assistant) => assistant.id === delegation.to);
-        return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation(aid, delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>{t("交给「{name}」", { name: target?.name ?? delegation.to })}</span><small><StatusTag meta={DELEGATION_STATUS[delegation.status]} /></small> ›</button>;
+        const fromTopic = topicTag(delegation.fromTopicId);
+        return <button className="sidebar-delegation" key={delegation.id} onClick={() => void jumpToDelegation(aid, delegation.id, false)}>{target ? <Avatar sprite={target.sprite} prop={target.prop} size={22} /> : null}<span>{fromTopic ? `${fromTopic} · ` : ""}{t("交给「{name}」", { name: target?.name ?? delegation.to })}</span><small><StatusTag meta={DELEGATION_STATUS[delegation.status]} /></small> ›</button>;
       })}
     </div>
     {children?.(desktopRow)}
@@ -618,15 +683,17 @@ function stoppedText(routine: Routine): string | undefined {
 
 function routineDetail(r: Routine, s: ReturnType<typeof useApp>) {
   const topic = r.groupId ? s.groups.find((g) => g.id === r.groupId) : undefined;
-  return <>{r.active ? <>{cronText(r.schedules[0] ?? "")}{r.check ? r.checks?.failing ? <> · <span className="rt-bad">{t("检查失败")}</span></> : ` · ${t("检查 {total} 次 · 触发 {hits} 次", { total: r.checks?.total ?? 0, hits: r.checks?.hits ?? 0 })}` : r.runs[0] ? <> · {t("上次")} {r.runs[0].status === "handed" ? t("交给群主") : <StatusTag meta={JOB_STATUS[r.runs[0].status]} />} {fmtWhen(r.runs[0].at)}</> : null}</> : stoppedText(r) ?? t("已暂停")}{topic?.parentId ? ` · ${t("发到话题「{name}」", { name: topic.name })}` : ""}</>;
+  const assistantTopic = !r.groupId && r.topicId ? (s.assistantTopics ?? []).find((item) => item.id === r.topicId && item.assistantId === r.assistantId) : undefined;
+  const topicName = topic?.parentId ? topic.name : assistantTopic?.name;
+  return <>{r.active ? <>{cronText(r.schedules[0] ?? "")}{r.check ? r.checks?.failing ? <> · <span className="rt-bad">{t("检查失败")}</span></> : ` · ${t("检查 {total} 次 · 触发 {hits} 次", { total: r.checks?.total ?? 0, hits: r.checks?.hits ?? 0 })}` : r.runs[0] ? <> · {t("上次")} {r.runs[0].status === "handed" ? t("交给群主") : <StatusTag meta={JOB_STATUS[r.runs[0].status]} />} {fmtWhen(r.runs[0].at)}</> : null}</> : stoppedText(r) ?? t("已暂停")}{topicName ? ` · ${t("发到话题「{name}」", { name: topicName })}` : ""}</>;
 }
 
-function RoutineList({ groupId }: { groupId?: string }) {
+function RoutineList({ groupId, topicId }: { groupId?: string; topicId?: string }) {
   const s = useApp();
   const target = groupId ? s.groups.find((g) => g.id === groupId) : undefined;
   const isTopic = Boolean(target?.parentId);
-  const routines = s.routines.filter((r) => groupId ? (isTopic ? r.groupId === groupId : r.groupId === groupId || s.groups.some((g) => g.id === r.groupId && g.parentId === groupId)) : r.assistantId === panelAssistant(s.panelStack, s.sel) && !r.groupId);
-  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <DetailRow key={r.id} leading={<Icon name={r.active ? "clock" : "pause"} size={18} />} title={r.name} detail={routineDetail(r, s)} onClick={() => openRoutine(r.id)} />)}</div> : <Empty>{isTopic ? t("这个话题还没有定时任务") : groupId ? t("这个群还没有定时任务") : t("这个助手还没有定时任务")}</Empty>;
+  const routines = s.routines.filter((r) => groupId ? (isTopic ? r.groupId === groupId : r.groupId === groupId || s.groups.some((g) => g.id === r.groupId && g.parentId === groupId)) : r.assistantId === panelAssistant(s.panelStack, s.sel) && !r.groupId && (!topicId || r.topicId === topicId));
+  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <DetailRow key={r.id} leading={<Icon name={r.active ? "clock" : "pause"} size={18} />} title={r.name} detail={routineDetail(r, s)} onClick={() => openRoutine(r.id)} />)}</div> : <Empty>{isTopic || topicId ? t("这个话题还没有定时任务") : groupId ? t("这个群还没有定时任务") : t("这个助手还没有定时任务")}</Empty>;
 }
 
 function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }) {
@@ -641,15 +708,26 @@ function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }
   </>;
 }
 
-function TopicRules({ topicId }: { topicId: string }) {
+function TopicRules({ groupId, assistantId, topicId }: { groupId?: string; assistantId?: string; topicId?: string }) {
   const s = useApp();
-  const resolved = s.groupProfiles[topicId];
-  useEffect(() => { if (topicId) void loadGroupProfile(topicId); }, [topicId]);
-  if (!topicId) return null;
-  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void loadGroupProfile(topicId)}>{t("重试")}</button></div>;
+  const isGroup = Boolean(groupId);
+  const configKey = assistantId && topicId ? assistantSessionKey(assistantId, topicId) : "";
+  const resolved = isGroup ? s.groupProfiles[groupId!] : s.assistantTopicConfigs?.[configKey];
+  useEffect(() => {
+    if (groupId) void loadGroupProfile(groupId);
+    else if (assistantId && topicId) void loadAssistantTopicConfig(assistantId, topicId);
+  }, [groupId, assistantId, topicId]);
+  if (isGroup ? !groupId : !assistantId || !topicId) return null;
+  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void (isGroup ? loadGroupProfile(groupId!) : loadAssistantTopicConfig(assistantId!, topicId!))}>{t("重试")}</button></div>;
   if (!resolved?.value) return <SidebarLoading />;
   const rules = resolved.value.rules;
   const hidden = resolved.value.hiddenRules ?? [];
+  const parentLabel = isGroup ? t("跟随群") : t("跟随助手");
+  const targetAid = groupId ?? assistantId!;
+  const onUpdate = isGroup ? undefined : (id: string, patch: { text?: string; mode?: "ask" | "allow" }) => updateAssistantTopicRule(assistantId!, topicId!, { id, ...patch });
+  const onDelete = isGroup ? undefined : (id: string) => deleteAssistantTopicRule(assistantId!, topicId!, id);
+  const onAdd = isGroup ? undefined : (text: string, mode: "ask" | "allow") => addAssistantTopicRule(assistantId!, topicId!, text, mode);
+  const onResetRule = (id: string) => isGroup ? void resetGroupRule(groupId!, id) : void resetAssistantTopicRule(assistantId!, topicId!, id);
   return <>
     <div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")} {t("只在本话题生效")}</div>
     {!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}
@@ -657,13 +735,16 @@ function TopicRules({ topicId }: { topicId: string }) {
       {rules.map((rule) => (
         <RuleRow
           key={rule.id}
-          aid={topicId}
+          aid={targetAid}
           rule={rule}
           topic
-          onReset={rule.from === "parent" && rule.changed ? () => void resetGroupRule(topicId, rule.id) : undefined}
+          parentLabel={parentLabel}
+          onUpdate={onUpdate ? (patch) => onUpdate(rule.id, patch) : undefined}
+          onDelete={onDelete ? () => onDelete(rule.id) : undefined}
+          onReset={rule.from === "parent" && rule.changed ? () => onResetRule(rule.id) : undefined}
         />
       ))}
-      <RuleCreator aid={topicId} />
+      <RuleCreator aid={targetAid} onAdd={onAdd} />
     </div>
     {hidden.length ? (
       <>
@@ -674,7 +755,7 @@ function TopicRules({ topicId }: { topicId: string }) {
               <div className="rule">
                 <span className="rule-text muted">{rule.text}</span>
                 <span className="v">
-                  <button type="button" className="rule-reset" onClick={() => void resetGroupRule(topicId, rule.id)}>{t("恢复跟随")}</button>
+                  <button type="button" className="rule-reset" onClick={() => onResetRule(rule.id)}>{t("恢复跟随")}</button>
                 </span>
               </div>
             </div>
@@ -685,41 +766,56 @@ function TopicRules({ topicId }: { topicId: string }) {
   </>;
 }
 
-function TopicModels({ topicId }: { topicId: string }) {
+function TopicModels({ groupId, assistantId, topicId }: { groupId?: string; assistantId?: string; topicId?: string }) {
   const s = useApp();
-  const topic = s.groups.find((g) => g.id === topicId);
-  const parent = topic?.parentId ? s.groups.find((g) => g.id === topic.parentId) ?? topic : topic;
+  const isGroup = Boolean(groupId);
+  const groupTopic = groupId ? s.groups.find((g) => g.id === groupId) : undefined;
+  const parent = groupTopic?.parentId ? s.groups.find((g) => g.id === groupTopic.parentId) ?? groupTopic : groupTopic;
+  const assistant = !isGroup && assistantId ? s.profiles[assistantId]?.assistant ?? s.assistants.find((a) => a.id === assistantId) : undefined;
+  const assistantTopic = !isGroup && assistantId && topicId ? (s.assistantTopics ?? []).find((item) => item.id === topicId && item.assistantId === assistantId) : undefined;
   const [view, setView] = useState<ModelsView | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { void loadModels().then(setView); if (topicId) void loadGroupProfile(topicId); }, [topicId]);
-  if (!topic || !parent) return <Empty>{t("这个话题已不存在")}</Empty>;
-  const resolved = s.groupProfiles[topicId];
-  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void loadGroupProfile(topicId)}>{t("重试")}</button></div>;
+  const configKey = assistantId && topicId ? assistantSessionKey(assistantId, topicId) : "";
+  useEffect(() => {
+    void loadModels().then(setView);
+    if (groupId) void loadGroupProfile(groupId);
+    else if (assistantId && topicId) void loadAssistantTopicConfig(assistantId, topicId);
+  }, [groupId, assistantId, topicId]);
+  if (isGroup ? (!groupTopic || !parent) : (!assistant || !assistantTopic)) return <Empty>{t("这个话题已不存在")}</Empty>;
+  const resolved = isGroup ? s.groupProfiles[groupId!] : s.assistantTopicConfigs?.[configKey];
+  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void (isGroup ? loadGroupProfile(groupId!) : loadAssistantTopicConfig(assistantId!, topicId!))}>{t("重试")}</button></div>;
   if (!resolved?.value) return <SidebarLoading />;
   const profile = resolved.value;
   const settings = s.settings.settings.models;
   const nameOf = (ref: string) => view?.models.find((model) => model.ref === ref)?.name ?? ref;
-  const members = membersOf(parent, s.assistants);
+  const members = isGroup && parent ? membersOf(parent, s.assistants) : [];
 
   const saveDefault = (key: "conversation" | "work", ref: string | null) => {
     const inherited = profile.models?.[key]?.inherited;
     const thinking = ref
       ? fitThinking(view?.models.find((item) => item.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings[key].thinking)
       : undefined;
-    void patchGroup(topicId, { models: { [key]: ref ? { ref, thinking: thinking! } : null } }).then((failure) => {
-      setError(failure ?? "");
-      if (!failure) void loadGroupProfile(topicId);
-    });
+    if (isGroup) {
+      void patchGroup(groupId!, { models: { [key]: ref ? { ref, thinking: thinking! } : null } }).then((failure) => {
+        setError(failure ?? "");
+        if (!failure) void loadGroupProfile(groupId!);
+      });
+    } else {
+      void patchAssistantTopicConfig(assistantId!, topicId!, { models: { [key]: ref ? { ref, thinking: thinking! } : null } }).then((failure) => {
+        setError(failure ?? "");
+      });
+    }
   };
 
   const saveMember = (aid: string, ref: string | null) => {
+    if (!isGroup || !("memberModels" in profile) || !profile.memberModels) return;
     const inherited = profile.memberModels[aid]?.work?.inherited;
     const thinking = ref
       ? fitThinking(view?.models.find((item) => item.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings.work.thinking)
       : undefined;
-    void patchGroupMemberModels(topicId, aid, { work: ref ? { ref, thinking: thinking! } : null }).then((failure) => {
+    void patchGroupMemberModels(groupId!, aid, { work: ref ? { ref, thinking: thinking! } : null }).then((failure) => {
       setError(failure ?? "");
-      if (!failure) void loadGroupProfile(topicId);
+      if (!failure) void loadGroupProfile(groupId!);
     });
   };
 
@@ -733,12 +829,23 @@ function TopicModels({ topicId }: { topicId: string }) {
           const inherited = effective?.inherited;
           const inheritedName = inherited ? nameOf(inherited.pick.ref) : "";
           const followText = inherited
-            ? (inherited.source === "group" ? t("跟随群 · {model}", { model: inheritedName }) : t("跟随全局 · {model}", { model: inheritedName }))
-            : t("跟随群");
+            ? inherited.source === "group"
+              ? t("跟随群 · {model}", { model: inheritedName })
+              : inherited.source === "assistant"
+                ? t("跟随助手 · {model}", { model: inheritedName })
+                : t("跟随全局 · {model}", { model: inheritedName })
+            : isGroup ? t("跟随群") : t("跟随助手");
           const followOption = inherited
-            ? (inherited.source === "group" ? t("跟随群（{name}）", { name: inheritedName }) : t("跟随全局（{name}）", { name: inheritedName }))
-            : t("跟随群");
+            ? inherited.source === "group"
+              ? t("跟随群（{name}）", { name: inheritedName })
+              : inherited.source === "assistant"
+                ? t("跟随助手（{name}）", { name: inheritedName })
+                : t("跟随全局（{name}）", { name: inheritedName })
+            : isGroup ? t("跟随群") : t("跟随助手");
           const shownName = effective ? nameOf(effective.pick.ref) : "";
+          const roster = !isGroup && key === "work" && assistant?.models?.allowed?.length
+            ? settings.roster.filter((entry) => assistant.models!.allowed!.includes(entry.ref))
+            : settings.roster;
           return (
             <div key={key}>
               <div className="lbl tm-lbl">
@@ -754,7 +861,7 @@ function TopicModels({ topicId }: { topicId: string }) {
                 onChange={(ref) => saveDefault(key, ref || null)}
                 options={[
                   { value: "", label: followOption, icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> },
-                  ...rosterOptions(settings.roster, isTopicSet ? effective?.pick.ref : undefined, nameOf).map((option) => ({
+                  ...rosterOptions(roster, isTopicSet ? effective?.pick.ref : undefined, nameOf).map((option) => ({
                     ...option,
                     icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} />,
                   })),
@@ -766,11 +873,11 @@ function TopicModels({ topicId }: { topicId: string }) {
       </div>
     </div>
 
-    <div className="pgroup">
+    {isGroup && "memberModels" in profile && profile.memberModels && members.length ? <div className="pgroup">
       <div className="sech"><span>{t("成员任务模型")}</span></div>
       <div className="group-card sidebar-card-group">
         {members.map((m) => {
-          const effective = profile.memberModels[m.id]?.work;
+          const effective = profile.memberModels![m.id]?.work;
           const isTopicMember = effective?.source === "topicMember";
           const inherited = effective?.inherited;
           const follow = inherited ? followingModel(inherited.source, nameOf(inherited.pick.ref)) : undefined;
@@ -801,7 +908,7 @@ function TopicModels({ topicId }: { topicId: string }) {
         })}
       </div>
       <div className="note">{t("成员只能单设任务模型，对话模型在群设置里改")}</div>
-    </div>
+    </div> : null}
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
   </>;
 }
@@ -889,7 +996,7 @@ function ScheduleRow({
 }
 
 /** 新建定时任务：先在本地填写，名称和任务内容都有了才创建（建好后切到它的编辑页）。 */
-function NewRoutine({ groupId }: { groupId?: string }) {
+function NewRoutine({ groupId, topicId }: { groupId?: string; topicId?: string }) {
   const s = useApp();
   const selectedGroup = s.groups.find((g) => g.id === groupId);
   const group = selectedGroup?.parentId ? s.groups.find((g) => g.id === selectedGroup.parentId) ?? selectedGroup : selectedGroup;
@@ -906,6 +1013,7 @@ function NewRoutine({ groupId }: { groupId?: string }) {
     await createRoutine({
       assistantId: aid,
       ...(groupId ? { groupId: destination } : {}),
+      ...(!groupId && topicId ? { topicId } : {}),
       name: name.trim(),
       instruction: instruction.trim(),
       schedules: [schedule],
@@ -1334,7 +1442,7 @@ function SpritePicker({ aid, sprite, prop, onDone }: { aid: string; sprite: stri
   );
 }
 
-function RuleRow({ aid, rule, topic = false, onReset }: { aid: string; rule: Rule | EffectiveRule; topic?: boolean; onReset?: () => void }) {
+function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, onReset }: { aid: string; rule: Rule | EffectiveRule; topic?: boolean; parentLabel?: string; onUpdate?: (patch: { text?: string; mode?: "ask" | "allow" }) => Promise<string | null>; onDelete?: () => Promise<void>; onReset?: () => void }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(rule.text);
   const [confirming, setConfirming] = useState(false);
@@ -1347,11 +1455,11 @@ function RuleRow({ aid, rule, topic = false, onReset }: { aid: string; rule: Rul
       ? t("本话题的")
       : effective.changed
         ? t("本话题改过")
-        : t("跟随群")
+        : parentLabel ?? t("跟随群")
     : undefined;
   const save = async (patch: { text?: string; mode?: "ask" | "allow" }) => {
     setBusy(true);
-    const error = await updateRule(aid, { id: rule.id, ...patch });
+    const error = await (onUpdate ? onUpdate(patch) : updateRule(aid, { id: rule.id, ...patch }));
     setBusy(false);
     if (!error) setEditing(false);
     setMessage(error ?? t("已保存"));
@@ -1387,7 +1495,7 @@ function RuleRow({ aid, rule, topic = false, onReset }: { aid: string; rule: Rul
         <div className="rule-confirm">
           <span>{topic && effective?.from === "parent" ? t("本话题不用这条") : t("删除这条规则")}</span>
           <span className="sp" />
-          <button type="button" className="hob-btn hob-btn-danger" disabled={busy} onClick={() => { setBusy(true); void deleteRule(aid, rule.id).finally(() => { setBusy(false); setConfirming(false); }); }}>{topic && effective?.from === "parent" ? t("停用") : t("删除")}</button>
+          <button type="button" className="hob-btn hob-btn-danger" disabled={busy} onClick={() => { setBusy(true); void (onDelete ? onDelete() : deleteRule(aid, rule.id)).finally(() => { setBusy(false); setConfirming(false); }); }}>{topic && effective?.from === "parent" ? t("停用") : t("删除")}</button>
           <button type="button" className="hob-btn" disabled={busy} onClick={() => setConfirming(false)}>{t("取消")}</button>
         </div>
       ) : null}
@@ -1396,7 +1504,7 @@ function RuleRow({ aid, rule, topic = false, onReset }: { aid: string; rule: Rul
   );
 }
 
-function RuleCreator({ aid }: { aid: string }) {
+function RuleCreator({ aid, onAdd }: { aid: string; onAdd?: (text: string, mode: "ask" | "allow") => Promise<string | null> }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
   const [mode, setMode] = useState<"ask" | "allow">("ask");
@@ -1407,7 +1515,7 @@ function RuleCreator({ aid }: { aid: string }) {
     if (busy || !text.trim()) return;
     setBusy(true);
     setMessage(null);
-    const error = await addRule(aid, text.trim(), mode);
+    const error = await (onAdd ? onAdd(text.trim(), mode) : addRule(aid, text.trim(), mode));
     setBusy(false);
     if (error) { setMessage(error); return; }
     setText("");
@@ -1441,15 +1549,33 @@ function AssistantPlugins({ aid }: { aid: string }) {
   })}</div>;
 }
 
+function formatTopicModeDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return new Intl.DateTimeFormat(currentLocale() === "en" ? "en-US" : "zh-CN", { year: "numeric", month: "short", day: "numeric" }).format(date);
+}
+
 function AssistantSettings() {
   const s = useApp();
   const aid = panelAssistant(s.panelStack, s.sel);
   const profile = s.profiles[aid];
   const [picking, setPicking] = useState(false);
   const [archiving, setArchiving] = useState(false);
+  const [confirmTopics, setConfirmTopics] = useState(false);
+  const [topicModeBusy, setTopicModeBusy] = useState(false);
+  const [topicModeError, setTopicModeError] = useState("");
   const feedback = useAssistantSave(aid);
   if (!profile) return <Empty><DelayedText text={t("正在读取档案…")} /></Empty>;
   const a = profile.assistant;
+  const switchTopics = async () => {
+    if (topicModeBusy) return;
+    setTopicModeBusy(true);
+    setTopicModeError("");
+    const err = await enableAssistantTopics(aid);
+    setTopicModeBusy(false);
+    if (err) setTopicModeError(err);
+    else setConfirmTopics(false);
+  };
 
   return (
     <>
@@ -1487,8 +1613,46 @@ function AssistantSettings() {
           </>
         ) : null}
 
+        {!a.primary ? (
+          <>
+            <div className="lbl">{t("对话方式")}</div>
+            <div className="ctl asst-mode-row">
+              <span className="asst-mode-val">
+                {a.topics
+                  ? t("多话题 · 开启于 {date}", { date: formatTopicModeDate(a.topics.enabledAt) })
+                  : t("单会话")}
+              </span>
+              <span className="sp" />
+              {!a.topics ? (
+                <button type="button" className="hob-btn" onClick={() => { setTopicModeError(""); setConfirmTopics(true); }}>
+                  {t("改成多话题")}
+                </button>
+              ) : null}
+            </div>
+          </>
+        ) : null}
+
         </div>
       </div>
+
+      {confirmTopics ? (
+        <DialogShell
+          label={t("改成多话题")}
+          title={t("改成多话题")}
+          className="topic-mode-dialog"
+          onClose={() => { if (!topicModeBusy) setConfirmTopics(false); }}
+          onSubmit={(event) => { event.preventDefault(); void switchTopics(); }}
+          actions={
+            <>
+              <button type="button" className="hob-btn" disabled={topicModeBusy} onClick={() => setConfirmTopics(false)}>{t("取消")}</button>
+              <button type="submit" className="hob-btn hob-btn-primary" disabled={topicModeBusy}>{t("改成多话题")}</button>
+            </>
+          }
+        >
+          <div className="topic-mode-body">{t("现在这条对话会成为主对话，历史都保留。之后可以为不同的事创建话题，每个话题是独立的对话。改成多话题后不能改回单会话。")}</div>
+          {topicModeError ? <div className="gcreate-error">{topicModeError}</div> : null}
+        </DialogShell>
+      ) : null}
 
       <div className="pgroup">
         <div className="sech">

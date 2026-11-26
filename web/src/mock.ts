@@ -35,6 +35,7 @@ import type {
   RoutineRun,
   Rule,
   RuleOverrides,
+  TopicConfigView,
   TopicOverrides,
   ThinkingLevelMapSetting,
   ModelsView,
@@ -75,7 +76,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.19.0" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark" | "assistant-topics" | "assistant-topics-dark" | "assistant-topics-main" | "assistant-topics-new" | "assistant-topics-closed";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark" | "assistant-topics" | "assistant-topics-dark" | "assistant-topics-main" | "assistant-topics-new" | "assistant-topics-closed" | "assistant-topics-home" | "assistant-topics-rules" | "assistant-topics-models" | "assistant-topics-settings" | "assistant-topics-single-settings" | "assistant-topics-draft";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -186,12 +187,18 @@ export const SCENE_UI: Record<
   // 全员回应群演示（票 266）：用户没点名提问，群主回了，一个成员补充，另一个成员只挂 👀
   "group-reply-all": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "group-reply-all-dark": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: true, mobile: "chat" },
-  // 助手多话题（票 G）：二级页 + 话题对话 / 主对话 / 新话题空白页 / 已关闭话题
+  // 助手多话题（票 G / 票 H）：二级页 + 话题对话 / 主对话 / 新话题空白页 / 已关闭话题 / 首页汇总 / 右栏规则与模型 / 设置与草稿卡
   "assistant-topics": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "assistant-topics-dark": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "assistant-topics-main": { sel: "planner", tsel: null, sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "assistant-topics-new": { sel: "planner", tsel: null, newTopic: true, sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "assistant-topics-closed": { sel: "planner", tsel: "tp-reno", sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-home": { sel: null, sideHome: true, panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "assistant-topics-rules": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "topicRules", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-models": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "topicModels", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-settings": { sel: "planner", tsel: null, sideHome: false, panel: "assistant", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-single-settings": { sel: "house", tsel: null, sideHome: true, panel: "assistant", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-draft": { sel: "hob", tsel: null, sideHome: true, panel: "now", collapsed: false, dark: false, mobile: "chat" },
 };
 
 const uid = (() => {
@@ -2110,13 +2117,45 @@ cp now.txt "$seen"`,
         pinned: true,
         hidden: false,
         notify: true,
+        cwd: "/workspace/life-planner",
+        models: { conversation: { ref: "anthropic/claude-sonnet-4-5", thinking: "medium" }, work: { ref: "openai/gpt-5", thinking: "high" } },
         topics: { enabledAt: at(10, 9, 0) },
         createdAt: at(12, 9, 0),
         last: { text: L("已开启多话题，这里是主对话", "Topics are on. This is the main conversation."), at: at(0, 9, 15) },
         unread: 0,
         busy: false,
       };
-      assistants.splice(1, 0, planner);
+      const reading: AssistantSummary = {
+        id: "reading",
+        name: L("读书笔记", "Reading notes"),
+        duty: L("书籍摘录、章节梳理与书单", "Book excerpts, chapter notes, and reading lists"),
+        sprite: "book:teal",
+        primary: false,
+        pinned: false,
+        hidden: false,
+        notify: true,
+        topics: { enabledAt: at(7, 14, 0) },
+        createdAt: at(14, 10, 0),
+        last: { text: L("已整理完本月书单。", "Finished organizing this month's reading list."), at: at(1, 16, 0) },
+        unread: 0,
+        busy: false,
+      };
+      const travel: AssistantSummary = {
+        id: "travel",
+        name: L("旅行规划", "Trip planner"),
+        duty: L("行程安排与交通衔接", "Itineraries and transit plans"),
+        sprite: "rocket:amber",
+        primary: false,
+        pinned: false,
+        hidden: false,
+        notify: true,
+        topics: { enabledAt: at(2, 11, 0) },
+        createdAt: at(8, 10, 0),
+        last: { text: L("已开启多话题，这里是主对话", "Topics are on. This is the main conversation."), at: at(2, 11, 0) },
+        unread: 0,
+        busy: false,
+      };
+      assistants.splice(1, 0, planner, reading, travel);
       items.planner = [
         { kind: "user", id: "pm-1", at: at(0, 9, 10), text: L("下个月初要从城西搬到城东，帮我排一下搬家筹备和比价。", "I'm moving across town early next month. Help me plan and compare movers.") },
         { kind: "assistant", id: "pm-2", at: at(0, 9, 11), text: L("收到，这件事要来回确认几轮，我单独开了一个话题来跟进。", "Got it. Since this needs several rounds of follow-up, I opened a separate topic for it.") },
@@ -2125,13 +2164,23 @@ cp now.txt "$seen"`,
         { kind: "topic", id: "pm-5", at: at(0, 9, 20), topicId: "tp-checkup" },
         { kind: "topic", id: "pm-6", at: at(2, 16, 0), topicId: "tp-reno" },
       ];
+      items.reading = [
+        { kind: "note", id: "rm-1", at: at(7, 14, 0), icon: "info", text: L("已开启多话题，这里是主对话", "Topics are on. This is the main conversation.") },
+        { kind: "topic", id: "rm-2", at: at(0, 9, 25), topicId: "tp-notes" },
+      ];
+      items["reading@tp-notes"] = [
+        { kind: "user", id: "rn-1", at: at(0, 9, 25), text: L("整理一下第三章关于模块化设计的批注。", "Organize the chapter 3 notes on modular design.") },
+        { kind: "assistant", id: "rn-2", at: minsAgo(2), text: L("第三章的批注已经按接口边界和隐藏细节分成两组清单。", "Sorted the chapter 3 notes into interface boundaries and hidden details.") },
+      ];
       items["planner@tp-move"] = [
         { kind: "user", id: "tm-1", at: at(0, 9, 12), text: L("下个月初要从城西搬到城东，帮我排一下搬家筹备和比价。", "I'm moving across town early next month. Help me plan and compare movers."), forwardedFrom: { assistantId: "planner", itemId: "pm-1" } },
         { kind: "assistant", id: "tm-2", at: at(0, 9, 14), text: L("我已经整理好三家常驻搬家团队的报价和车辆规格：\n\n1. **安居厢货**：4.2 米厢车含 2 位师傅，起步价 680 元，楼层费另计。\n2. **顺心搬运**：一口价 950 元含拆装衣柜。\n3. **城际快搬**：按件计费，预估 820 元。\n\n周六上午 10 点目前前两家都可以上门看货，你倾向先约哪一家？", "I compared three local movers:\n\n1. **Anju Van**: 4.2m box truck + 2 movers, from 680.\n2. **Shunxin Moving**: 950 flat rate including wardrobe disassembly.\n3. **Metro Express**: itemized quote around 820.\n\nBoth #1 and #2 are free this Saturday at 10 AM for an on-site estimate. Which one would you like to book?") },
+        { kind: "job", id: "tm-3", at: at(0, 9, 13), jobId: "t-tp-move-1" },
       ];
       items["planner@tp-checkup"] = [
         { kind: "user", id: "tc-1", at: at(0, 9, 18), text: L("帮我看下周末上午哪家体检中心还能约基础加项。", "Check which clinic has Saturday morning slots for the standard checkup plus add-ons.") },
         { kind: "assistant", id: "tc-2", at: at(0, 9, 20), text: L("正在核对市一院和瑞和体检中心的周六号源。", "Checking Saturday availability at City First and Ruihe clinics.") },
+        { kind: "job", id: "tc-3", at: minsAgo(3), jobId: "t-tp-checkup-1" },
       ];
       items["planner@tp-tax"] = [
         { kind: "user", id: "tt-1", at: at(0, 8, 50), text: L("今年专项附加扣除需要提前核对哪些凭证？", "Which receipts should I check ahead of time for this year's deductions?") },
@@ -2141,11 +2190,95 @@ cp now.txt "$seen"`,
         { kind: "user", id: "tr-1", at: at(3, 14, 0), text: L("阳台渗水想重新做防水，帮我对比两家报价。", "Compare two quotes for redoing the balcony waterproofing.") },
         { kind: "assistant", id: "tr-2", at: at(1, 18, 0), text: L("两家施工方案和质保都核对过了：聚氨酯整刷报价 2,800 元、质保五年，性价比更稳妥。", "Compared both quotes: polyurethane coating at 2,800 with a 5-year warranty is the better value.") },
       ];
+      jobs["t-tp-move-1"] = {
+        id: "t-tp-move-1",
+        assistantId: "planner",
+        topicId: "tp-move",
+        title: L("核对三家搬家报价与车型", "Compare three moving quotes"),
+        instruction: L("整理三家搬家公司的起步价、楼层费与档期。", "Collect base rates, stair fees, and availability."),
+        status: "done",
+        createdAt: at(0, 9, 12),
+        startedAt: at(0, 9, 12),
+        endedAt: at(0, 9, 14),
+        durationMs: 95_000,
+        summary: L("三家报价已整理完毕，前两家周六上午均可上门看货。", "Compared all three quotes; #1 and #2 are available Saturday morning."),
+        stats: { reads: 2, commands: 1, edits: 1 },
+        activity: [],
+      };
+      jobs["t-tp-checkup-1"] = {
+        id: "t-tp-checkup-1",
+        assistantId: "planner",
+        topicId: "tp-checkup",
+        title: L("查询周末体检中心号源", "Check weekend clinic slots"),
+        instruction: L("核对两家体检中心周六上午的可约名额。", "Check Saturday morning slots at both clinics."),
+        status: "running",
+        createdAt: minsAgo(3),
+        startedAt: minsAgo(3),
+        stats: { reads: 2, commands: 1, edits: 0 },
+        activity: [
+          { at: minsAgo(2), verb: "搜", text: "市一院 周六 体检 加项 号源" },
+          { at: minsAgo(1), verb: "读", text: "/workspace/life-planner/checkup-clinics.md" },
+        ],
+      };
+      routines.push(
+        {
+          id: "r-planner-main",
+          assistantId: "planner",
+          name: L("每周日程梳理", "Weekly schedule digest"),
+          instruction: L("汇总下周重要预约和待确认事项。", "Summarize next week's appointments and pending items."),
+          schedules: ["0 9 * * 1"],
+          active: true,
+          createdAt: at(8, 9, 0),
+          runs: [{ at: at(1, 9, 0), status: "done", jobId: "t-tp-move-1" }],
+        },
+        {
+          id: "r-tp-move",
+          assistantId: "planner",
+          topicId: "tp-move",
+          name: L("跟进搬家报价确认", "Follow up on mover quote"),
+          instruction: L("检查预约回执并确认上门时间。", "Check booking confirmation and arrival window."),
+          schedules: ["0 10 * * *"],
+          active: true,
+          createdAt: at(0, 9, 13),
+          runs: [],
+        },
+        {
+          id: "r-tp-checkup",
+          assistantId: "planner",
+          topicId: "tp-checkup",
+          name: L("刷新周末体检退号", "Watch weekend clinic cancellations"),
+          instruction: L("检查两家医院周六上午是否有新放出号源。", "Check if Saturday morning slots opened up."),
+          schedules: ["0 */2 * * *"],
+          active: true,
+          createdAt: at(0, 9, 19),
+          runs: [],
+        },
+      );
+      if (scene === "assistant-topics-draft") {
+        Object.assign(draft, {
+          status: "pending",
+          createdAssistantId: undefined,
+          name: L("行程助理", "Itinerary assistant"),
+          duty: L("拆解出差行程、票务比对与行前准备", "Business travel itineraries and prep"),
+          dutyLong: L("负责出差与出行行程安排，对比车次航班并整理行前确认清单。", "Plans trips, compares transit options, and tracks pre-trip checklists."),
+          instructions: L("先确认出发日期与预算范围。\n关键节点保留原链接。", "Confirm travel dates and budget first.\nKeep source links for key options."),
+          cwd: "/workspace/trips",
+          topics: false,
+          routinesText: L("出行前一天提醒核对证件", "Remind to check documents the day before"),
+          askFirst: [L("下单购票", "Purchase tickets"), L("改签或退票", "Change or cancel bookings")],
+        });
+        items.hob = [
+          { kind: "user", id: "hd-1", at: minsAgo(4), text: L("帮我新建一个专门管出差和旅行行程的助手，可以按每次出行开话题。", "Create an assistant for trips that can use a topic per trip.") },
+          { kind: "assistant", id: "hd-2", at: minsAgo(3), text: L("草稿已准备好。你可以先选好对话方式，再点创建。", "The draft is ready. Pick the conversation mode below and click Create.") },
+          { kind: "draft", id: "hd-3", at: minsAgo(2), draftId: draft.id },
+        ];
+      }
       return [
         {
           id: "tp-move",
           assistantId: "planner",
           name: L("下月搬家筹备", "Next month's move"),
+          overrides: { models: { work: { ref: "deepseek/deepseek-chat", thinking: "high" } } },
           createdAt: at(0, 9, 12),
           createdBy: "planner",
           unread: 2,
@@ -2190,6 +2323,16 @@ cp now.txt "$seen"`,
           unread: 0,
           busy: false,
           last: { at: at(1, 18, 0), text: L("已选定聚氨酯方案，总价 2,800 元，下周施工", "Selected polyurethane option at 2,800; scheduled next week") },
+        },
+        {
+          id: "tp-notes",
+          assistantId: "reading",
+          name: L("第三章读书笔记", "Chapter 3 reading notes"),
+          createdAt: at(0, 9, 25),
+          createdBy: "user",
+          unread: 3,
+          busy: false,
+          last: { at: minsAgo(2), text: L("第三章的批注已经按接口边界和隐藏细节分成两组清单。", "Sorted the chapter 3 notes into interface boundaries and hidden details.") },
         },
       ];
     })(),
@@ -3163,6 +3306,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const groupRules: Record<string, Rule[]> = {};
   const groupRuleOverrides: Record<string, RuleOverrides> = {};
   const ruleOverridesOf = (id: string): RuleOverrides => (groupRuleOverrides[id] ??= { own: [], changed: {}, hidden: {} });
+  const assistantRuleOverrides: Record<string, RuleOverrides> = {};
+  const assistantRuleOverridesOf = (aid: string, tid: string): RuleOverrides => (assistantRuleOverrides[`${aid}@${tid}`] ??= { own: [], changed: {}, hidden: {} });
+  if (scene.startsWith("assistant-topics")) {
+    db.rules.planner = [
+      { id: "pl-r1", text: L("预约或付款前先确认", "Ask before booking or paying"), mode: "ask", changedAt: at(10, 9) },
+      { id: "pl-r2", text: L("对比报价时保留原始链接", "Keep original quote links when comparing"), mode: "allow", changedAt: at(10, 9) },
+      { id: "pl-r3", text: L("把中间草稿写进工作目录", "Write intermediate drafts to workspace"), mode: "allow", changedAt: at(10, 9) },
+    ];
+    assistantRuleOverrides["planner@tp-move"] = {
+      own: [{ id: "tp-r1", text: L("搬家时间只约周六上午", "Only book Saturday morning slots"), mode: "ask", changedAt: at(0, 9, 13) }],
+      changed: { "pl-r2": { text: L("对比报价时附带楼层与拆装明细", "Include stair and disassembly fees in comparisons"), mode: "ask", changedAt: at(0, 9, 13) } },
+      hidden: { "pl-r3": at(0, 9, 13) },
+    };
+  }
   let extraMockModels: ModelsView["models"] = [];
   if (scene === "g-owns" || scene === "g-owns-dark") {
     const group = db.groups.find((item) => item.id === "g-dev")!;
@@ -3327,6 +3484,38 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   }
   const hob = db.assistants.find((a) => a.id === "hob");
   if (hob) hob.knowledge = ["kc-1"];
+  if (scene.startsWith("assistant-topics")) {
+    entries.unshift(
+      {
+        id: "k-tp-move-1",
+        origin: "output",
+        name: L("搬家团队报价对比.md", "moving-quotes.md"),
+        description: L("三家搬家公司车型与报价明细", "Quotes and vehicle comparison for three movers"),
+        kind: "markdown",
+        path: "/mock/knowledge/搬家团队报价对比.md",
+        hash: "hash-tp-move-1",
+        size: 3840,
+        createdAt: minsAgo(25),
+        updatedAt: minsAgo(25),
+        source: { assistantId: "planner", jobId: "t-tp-move-1", topicId: "tp-move" },
+        collections: [],
+      },
+      {
+        id: "k-tp-checkup-1",
+        origin: "output",
+        name: L("体检中心周末号源.csv", "weekend-checkup-slots.csv"),
+        description: L("两家体检中心周六上午名额清单", "Saturday morning slot inventory"),
+        kind: "csv",
+        path: "/mock/knowledge/体检中心周末号源.csv",
+        hash: "hash-tp-checkup-1",
+        size: 2150,
+        createdAt: minsAgo(15),
+        updatedAt: minsAgo(15),
+        source: { assistantId: "planner", jobId: "t-tp-checkup-1", topicId: "tp-checkup" },
+        collections: [],
+      },
+    );
+  }
   let embeddingKeyConfigured = false;
   const listeners = new Set<(ev: HobEvent) => void>();
   const emit = (ev: HobEvent) => listeners.forEach((l) => l(ev));
@@ -3496,7 +3685,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     knowledge: async (query = {}) => {
       const q = query.q?.toLowerCase();
-      const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.groupId || matchesGroup(e.source?.jobId ? db.jobs[e.source.jobId]?.groupId : undefined, query.groupId, query.exact)) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
+      const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.groupId || matchesGroup(e.source?.jobId ? db.jobs[e.source.jobId]?.groupId : undefined, query.groupId, query.exact)) && (!query.topicId || (e.origin === "output" && (e.source?.topicId === query.topicId || (!!e.source?.jobId && db.jobs[e.source.jobId]?.topicId === query.topicId)))) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
       const limit = query.limit ?? 50;
       return { entries: clone(matches.slice(0, limit).map((e) => q ? { ...e, snippet: e.description ?? e.name } : e)), hasMore: matches.length > limit, collections: clone(collections.map((c) => ({ ...c, count: entries.filter((e) => e.collections.includes(c.id)).length, indexed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "ready").length, failed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "failed").length, unsupported: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "unsupported").length }))) };
     },
@@ -4209,6 +4398,140 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       topic.busy = false;
       emit({ type: "assistant_topic", topic: clone(topic) });
     },
+    enableAssistantTopics: async (assistantId) => {
+      const a = assistant(assistantId);
+      if (!a) throw new ApiError(404, "助手不存在");
+      if (a.primary) throw new ApiError(400, "主助手暂不支持多话题");
+      if (!a.topics) {
+        const now = new Date().toISOString();
+        a.topics = { enabledAt: now };
+        const note: Item = { kind: "note", id: uid("mock-n"), at: now, icon: "info", text: "已开启多话题，这里是主对话" };
+        pushItem(assistantId, note);
+        a.last = { at: now, text: note.text };
+        emit({ type: "assistant", assistant: clone(a) });
+      }
+      return clone(a);
+    },
+    assistantTopicConfig: async (assistantId, topicId): Promise<TopicConfigView> => {
+      const a = assistant(assistantId);
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!a || !topic) throw new ApiError(404, "话题不存在");
+      const parentRules = db.rules[assistantId] ?? [];
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      const rules: EffectiveRule[] = [
+        ...parentRules.flatMap((rule): EffectiveRule[] => {
+          if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
+          const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
+          if (!changed) return [{ ...rule, from: "parent" }];
+          return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+        }),
+        ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
+      ];
+      const hiddenRules = parentRules.filter((rule) => Object.prototype.hasOwnProperty.call(rov.hidden, rule.id));
+      const models = db.settings.settings.models;
+      const modelEntry = (key: "conversation" | "work") => {
+        const topicPick = topic.overrides?.models?.[key];
+        const assistantPick = a.models?.[key];
+        const inheritedPick = assistantPick ?? models[key];
+        const inheritedSource = assistantPick ? "assistant" : "global";
+        const pick = topicPick ?? inheritedPick;
+        const source: "topic" | "assistant" | "global" = topicPick ? "topic" : inheritedSource;
+        return { source, pick, inherited: { source: inheritedSource, pick: inheritedPick } };
+      };
+      return clone({
+        rules,
+        hiddenRules,
+        models: { conversation: modelEntry("conversation"), work: modelEntry("work") },
+        ...(a.cwd ? { cwd: { path: a.cwd, source: "assistant" as const } } : topic.cwd ? { cwd: { path: topic.cwd, source: "topic" as const } } : {}),
+      });
+    },
+    patchAssistantTopicConfig: async (assistantId, topicId, patch) => {
+      const a = assistant(assistantId);
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!a || !topic) throw new ApiError(404, "话题不存在");
+      if (patch.models) {
+        const nextModels = { ...(topic.overrides?.models ?? {}) };
+        for (const key of ["conversation", "work"] as const) {
+          if (!(key in patch.models)) continue;
+          const val = patch.models[key];
+          if (val === null) delete nextModels[key];
+          else if (val) nextModels[key] = val;
+        }
+        topic.overrides = { ...(topic.overrides ?? {}), models: nextModels };
+        emit({ type: "assistant_topic", topic: clone(topic) });
+      }
+      const parentRules = db.rules[assistantId] ?? [];
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      const rules: EffectiveRule[] = [
+        ...parentRules.flatMap((rule): EffectiveRule[] => {
+          if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
+          const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
+          if (!changed) return [{ ...rule, from: "parent" }];
+          return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+        }),
+        ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
+      ];
+      const hiddenRules = parentRules.filter((rule) => Object.prototype.hasOwnProperty.call(rov.hidden, rule.id));
+      const models = db.settings.settings.models;
+      const modelEntry = (key: "conversation" | "work") => {
+        const topicPick = topic.overrides?.models?.[key];
+        const assistantPick = a.models?.[key];
+        const inheritedPick = assistantPick ?? models[key];
+        const inheritedSource = assistantPick ? "assistant" : "global";
+        const pick = topicPick ?? inheritedPick;
+        const source: "topic" | "assistant" | "global" = topicPick ? "topic" : inheritedSource;
+        return { source, pick, inherited: { source: inheritedSource, pick: inheritedPick } };
+      };
+      return clone({
+        rules,
+        hiddenRules,
+        models: { conversation: modelEntry("conversation"), work: modelEntry("work") },
+        ...(a.cwd ? { cwd: { path: a.cwd, source: "assistant" as const } } : topic.cwd ? { cwd: { path: topic.cwd, source: "topic" as const } } : {}),
+      });
+    },
+    addAssistantTopicRule: async (assistantId, topicId, body) => {
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      const rule: Rule = { id: uid("tp-r"), text: body.text.trim(), mode: body.mode, changedAt: new Date().toISOString() };
+      rov.own.push(rule);
+      emit({ type: "profile", assistantId });
+      return { ok: true, rule: clone(rule) };
+    },
+    updateAssistantTopicRule: async (assistantId, topicId, ruleId, patch) => {
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      const now = new Date().toISOString();
+      const own = rov.own.find((r) => r.id === ruleId);
+      if (own) {
+        Object.assign(own, patch, { changedAt: now });
+        emit({ type: "profile", assistantId });
+        return { ok: true, rule: clone(own) };
+      }
+      const parent = (db.rules[assistantId] ?? []).find((r) => r.id === ruleId);
+      if (!parent) throw new ApiError(404, "规则不存在");
+      const prev = rov.changed[ruleId];
+      rov.changed[ruleId] = {
+        ...(patch.text !== undefined ? { text: patch.text } : prev?.text !== undefined ? { text: prev.text } : {}),
+        ...(patch.mode !== undefined ? { mode: patch.mode } : prev?.mode !== undefined ? { mode: prev.mode } : {}),
+        changedAt: now,
+      };
+      emit({ type: "profile", assistantId });
+      return { ok: true, rule: clone({ ...parent, ...rov.changed[ruleId] }) };
+    },
+    deleteAssistantTopicRule: async (assistantId, topicId, ruleId) => {
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      if (rov.own.some((r) => r.id === ruleId)) {
+        rov.own = rov.own.filter((r) => r.id !== ruleId);
+      } else {
+        delete rov.changed[ruleId];
+        rov.hidden[ruleId] = new Date().toISOString();
+      }
+      emit({ type: "profile", assistantId });
+    },
+    resetAssistantTopicRule: async (assistantId, topicId, ruleId) => {
+      const rov = assistantRuleOverridesOf(assistantId, topicId);
+      delete rov.changed[ruleId];
+      delete rov.hidden[ruleId];
+      emit({ type: "profile", assistantId });
+    },
     groupProfile: async (id) => {
       const selected = db.groups.find((g) => g.id === id);
       const group = db.groups.find((g) => g.id === (selected?.parentId ?? id));
@@ -4716,11 +5039,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       emit({ type: "card", card: clone(card) });
       return { card: clone(card) };
     },
-    createDraft: async (draftId) => {
+    createDraft: async (draftId, options) => {
       const d = db.drafts[draftId];
       if (!d) return;
+      const topicsEnabled = options?.topics ?? d.topics === true;
+      d.topics = topicsEnabled;
       d.status = "created";
       d.createdAssistantId = "bird";
+      if (topicsEnabled) {
+        const bird = assistant("bird");
+        if (bird && !bird.topics) {
+          bird.topics = { enabledAt: new Date().toISOString() };
+          emit({ type: "assistant", assistant: clone(bird) });
+        }
+      }
       emit({ type: "draft", draft: clone(d) });
       pushItem(d.assistantId, {
         kind: "note",
@@ -4818,6 +5150,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       let list = Object.values(db.jobs).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       if (query.assistantId) list = list.filter((job) => job.assistantId === query.assistantId);
       if (query.groupId) list = list.filter((job) => matchesGroup(job.groupId, query.groupId!, query.exact));
+      if (query.topicId) list = list.filter((job) => job.topicId === query.topicId);
       if (query.status) list = list.filter((job) => job.status === query.status);
       if (query.before) {
         const index = list.findIndex((job) => job.id === query.before);

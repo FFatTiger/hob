@@ -15,7 +15,7 @@ import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 export function Sidebar() {
   const s = useApp();
   const updateVersion = availableVersion(s.update);
-  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs), s.query);
+  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const pinRows = useRows(drag.order, (row) => row.id);
   const layout = pinLayout(pins.length);

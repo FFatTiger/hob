@@ -71,6 +71,58 @@ describe("群话题精确筛选（exact=1）", () => {
 
       const exactTopicAFiles = await getJson(`/api/knowledge?origin=output&groupId=${topicA.id}&exact=1`);
       expect(exactTopicAFiles.entries.map((e: { name: string }) => e.name)).toEqual(["a-out.md"]);
+
+      // 多话题助手：按 topicId 精确筛选单话题的任务与产出文件
+      hob.runtime.store.saveAssistant({
+        id: "planner",
+        name: "日程统筹",
+        duty: "日程与事务",
+        sprite: "page",
+        primary: false,
+        pinned: false,
+        hidden: false,
+        notify: true,
+        topics: { enabledAt: "2026-01-01T00:00:00Z" },
+        createdAt: "2026-01-01T00:00:00Z",
+      });
+      const saveAssistantJob = (id: string, title: string, topicId?: string) => {
+        hob.runtime.store.saveJob({
+          id,
+          assistantId: "planner",
+          ...(topicId ? { topicId } : {}),
+          title,
+          instruction: title,
+          status: "done",
+          createdAt: "2026-01-01T00:00:00Z",
+          endedAt: "2026-01-01T00:01:00Z",
+          stats: { reads: 0, commands: 0, edits: 0 },
+          activity: [],
+        });
+      };
+      saveAssistantJob("j-p-main", "主对话任务");
+      saveAssistantJob("j-p-t1", "话题一任务", "tp-1");
+      saveAssistantJob("j-p-t2", "话题二任务", "tp-2");
+
+      const fileMain = join(hob.home, "p-main.md");
+      const fileT1 = join(hob.home, "p-t1.md");
+      const fileT2 = join(hob.home, "p-t2.md");
+      writeFileSync(fileMain, "主对话产物");
+      writeFileSync(fileT1, "话题一产物");
+      writeFileSync(fileT2, "话题二产物");
+      await hob.runtime.knowledge.collect({ origin: "output", path: fileMain, name: "p-main.md", assistantId: "planner", jobId: "j-p-main" });
+      await hob.runtime.knowledge.collect({ origin: "output", path: fileT1, name: "p-t1.md", assistantId: "planner", jobId: "j-p-t1", topicId: "tp-1" });
+      await hob.runtime.knowledge.collect({ origin: "output", path: fileT2, name: "p-t2.md", assistantId: "planner", jobId: "j-p-t2", topicId: "tp-2" });
+      await hob.runtime.knowledge.whenIdle();
+
+      const allPlannerJobs = await getJson("/api/jobs?assistantId=planner&groupId=none");
+      expect(allPlannerJobs.jobs.map((j: { id: string }) => j.id).sort()).toEqual(["j-p-main", "j-p-t1", "j-p-t2"]);
+      const t1Jobs = await getJson("/api/jobs?assistantId=planner&groupId=none&topicId=tp-1");
+      expect(t1Jobs.jobs.map((j: { id: string }) => j.id)).toEqual(["j-p-t1"]);
+
+      const allPlannerFiles = await getJson("/api/knowledge?origin=output&assistantId=planner&groupId=none");
+      expect(allPlannerFiles.entries.map((e: { name: string }) => e.name).sort()).toEqual(["p-main.md", "p-t1.md", "p-t2.md"]);
+      const t1Files = await getJson("/api/knowledge?origin=output&assistantId=planner&groupId=none&topicId=tp-1");
+      expect(t1Files.entries.map((e: { name: string }) => e.name)).toEqual(["p-t1.md"]);
     } finally {
       await hob.runtime.knowledge.whenIdle();
       hob.close();

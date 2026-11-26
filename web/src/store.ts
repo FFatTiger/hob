@@ -37,6 +37,7 @@ import type {
   ModelsView,
   MemoryConfig,
   MemoryProvider,
+  ModelPick,
   PageLive,
   PluginInstallProgress,
   PluginSignInSessionView,
@@ -54,6 +55,7 @@ import type {
   SettingsPatch,
   ThinkingLevelMapSetting,
   TokenPrice,
+  TopicConfigView,
   UpdateCheck,
   UsageModelPrice,
   UsageView,
@@ -81,7 +83,7 @@ export type PanelState =
   | { kind: "routine"; id: string }
   | { kind: "newRoutine" } // 还没创建的定时任务：填好名称和任务内容才真正创建
   | { kind: "assistant" }
-  | { kind: "routines" | "skills" | "knowledge" | "rules" };
+  | { kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels" };
 export interface WorklogState {
   jobs: Job[];
   assistantId: string | null;
@@ -174,6 +176,7 @@ export interface State {
   itemGen: Record<string, number>; // 每次重新拉这段对话 +1，聊天区据此判断“整批换了”而不是“新到一条”
   itemPages: Record<string, { hasMore: boolean; loading: boolean; error: string | null }>;
   groupProfiles: Record<string, { value?: GroupProfile; error?: string }>;
+  assistantTopicConfigs: Record<string, { value?: TopicConfigView; error?: string }>;
   profiles: Record<string, Profile>;
   assistantSkills: Record<string, { skills: AssistantSkill[]; loaded: boolean; loading: boolean; error: string | null }>;
   sidebarJobs: Record<string, SidebarPage<Job>>;
@@ -250,7 +253,7 @@ const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice
 let watchingVisibility = false;
 
 function parsePanel(raw: string): PanelState {
-  if (raw === "assistant" || raw === "now" || raw === "routines" || raw === "skills" || raw === "knowledge" || raw === "rules" || raw === "newRoutine") return { kind: raw };
+  if (raw === "assistant" || raw === "now" || raw === "routines" || raw === "skills" || raw === "knowledge" || raw === "rules" || raw === "topicRules" || raw === "topicModels" || raw === "newRoutine") return { kind: raw };
   if (raw.startsWith("routine:")) return { kind: "routine", id: raw.slice("routine:".length) };
   return { kind: "now" };
 }
@@ -351,6 +354,7 @@ function initial(): State {
     itemPages: {},
     profiles: {},
     groupProfiles: {},
+    assistantTopicConfigs: {},
     assistantSkills: {},
     sidebarJobs: {},
     sidebarFiles: {},
@@ -1155,7 +1159,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], assistantTopics: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, composerDrafts: new Map() });
+  set({ phase: "login", assistants: [], assistantTopics: [], items: {}, profiles: {}, assistantTopicConfigs: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, composerDrafts: new Map() });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1230,12 +1234,13 @@ async function loadBootstrap(reconnect = false) {
     else if (state.gsel && state.groups.some((g) => g.id === state.gsel)) await selectGroup(state.gsel, true, false, Boolean(bootRoute.group));
     // 没指定对话就停在首页
     else if (state.page === "main" && sel && state.sel) {
+      const keepPanel = Boolean(bootRoute.panel) || (MOCK && SCENE_UI[scene].panel !== "now");
       if (state.tsel && state.assistantTopics.some((t) => t.id === state.tsel && t.assistantId === sel)) {
-        await openAssistantTopic(sel, state.tsel, mobileWantsChat());
+        await openAssistantTopic(sel, state.tsel, mobileWantsChat(), keepPanel);
       } else if (state.newTopic) {
         openNewAssistantTopic(sel);
       } else {
-        await select(sel, mobileWantsChat(), false, Boolean(bootRoute.sel) || (MOCK && SCENE_UI[scene].mobile === "chat"));
+        await select(sel, mobileWantsChat(), keepPanel, Boolean(bootRoute.sel) || (MOCK && SCENE_UI[scene].mobile === "chat"));
       }
     }
     if (state.page === "knowledge") void loadKnowledge();
@@ -1289,6 +1294,10 @@ export function applyEvent(ev: HobEvent) {
       const read = ev.topic.unread > 0 && viewingTopic(ev.topic.assistantId, ev.topic.id);
       if (read) void api.readAssistantTopic(ev.topic.assistantId, ev.topic.id).catch(() => {});
       const topic = mergeTopicEvent(current, ev.topic, read);
+      const key = assistantSessionKey(topic.assistantId, topic.id);
+      if (current && JSON.stringify(current.overrides) !== JSON.stringify(topic.overrides) && state.assistantTopicConfigs[key]) {
+        void loadAssistantTopicConfig(topic.assistantId, topic.id);
+      }
       set((s) => ({ assistantTopics: upsert(s.assistantTopics, topic) }));
       break;
     }
@@ -1308,10 +1317,14 @@ export function applyEvent(ev: HobEvent) {
         drafts.delete(ev.id);
         drafts.delete(`${ev.id}@new`);
         for (const topic of removedTopics) drafts.delete(assistantSessionKey(ev.id, topic.id));
+        const assistantTopicConfigs = Object.fromEntries(
+          Object.entries(s.assistantTopicConfigs).filter(([key]) => !key.startsWith(`${ev.id}@`)),
+        );
         const removingCurrent = s.sel === ev.id;
         return {
           assistants: s.assistants.filter((a) => a.id !== ev.id),
           assistantTopics: s.assistantTopics.filter((topic) => topic.assistantId !== ev.id),
+          assistantTopicConfigs,
           composerDrafts: drafts,
           sel: removingCurrent ? (s.assistants.find((a) => a.primary)?.id ?? null) : s.sel,
           ...(removingCurrent ? { tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true } : {}),
@@ -1456,6 +1469,7 @@ export function applyEvent(ev: HobEvent) {
       break;
     case "profile":
       void loadProfile(ev.assistantId);
+      refreshAssistantTopicConfigs(ev.assistantId);
       break;
     case "plugin-install": {
       const { type: _type, ...progress } = ev;
@@ -2464,9 +2478,9 @@ export function closeLoginDesktop() {
   set({ desktopLogin: null });
 }
 
-export async function createDraft(id: string) {
+export async function createDraft(id: string, options?: { topics?: boolean }) {
   try {
-    await api.createDraft(id);
+    await api.createDraft(id, options);
   } catch (e) {
     set({ notice: t("创建助手失败：{error}", { error: errText(e) }) });
   }
@@ -2567,7 +2581,8 @@ export async function jumpToHandback(assistantId: string, id: string, forwarded:
 }
 
 export async function jumpToDelegation(assistantId: string, id: string, forwarded: boolean) {
-  await jumpToLink(assistantId, id, forwarded ? "forward" : "delegation");
+  const fromTopicId = !forwarded ? state.delegations[id]?.fromTopicId : undefined;
+  await jumpToLink(assistantId, id, forwarded ? "forward" : "delegation", fromTopicId);
 }
 
 async function findConversationItem(assistantId: string, matches: (item: Item) => boolean, topicId?: string | null): Promise<boolean> {
@@ -2581,11 +2596,16 @@ async function findConversationItem(assistantId: string, matches: (item: Item) =
   return (state.items[key] ?? []).some(matches);
 }
 
-async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback") {
-  if (state.sel !== assistantId || !state.items[assistantId]) await select(assistantId);
+async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback", topicId?: string) {
+  const key = assistantSessionKey(assistantId, topicId);
+  if (topicId) {
+    if (state.sel !== assistantId || state.tsel !== topicId || !state.items[key]) await openAssistantTopic(assistantId, topicId, true);
+  } else if (state.sel !== assistantId || state.tsel !== null || !state.items[assistantId]) {
+    await select(assistantId, true, false, true);
+  }
   const matches = (item: Item) => kind === "forward" ? item.kind === "user" && item.from?.delegationId === id : kind === "handback" ? item.kind === "note" && item.handbackId === id : item.kind === "delegation" && item.delegationId === id;
   try {
-    if (!await findConversationItem(assistantId, matches)) { set({ notice: t("未找到对应的转交消息") }); return; }
+    if (!await findConversationItem(assistantId, matches, topicId)) { set({ notice: t("未找到对应的转交消息") }); return; }
     requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(`${kind}-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })));
   } catch (e) { set({ notice: t("无法定位转交消息：{error}", { error: errText(e) }) }); }
 }
@@ -2618,6 +2638,45 @@ export async function loadGroupProfile(id: string) {
   groupProfileRequests.set(id, request);
   try { const value = await api.groupProfile(id); if (groupProfileRequests.get(id) === request) set((s) => ({ groupProfiles: { ...s.groupProfiles, [id]: { value } } })); }
   catch (e) { if (groupProfileRequests.get(id) === request) set((s) => ({ groupProfiles: { ...s.groupProfiles, [id]: { error: errText(e) } } })); }
+}
+
+const assistantTopicConfigRequests = new Map<string, number>();
+function refreshAssistantTopicConfigs(assistantId: string) {
+  for (const key of Object.keys(state.assistantTopicConfigs)) {
+    const [aid, tid] = key.split("@");
+    if (aid === assistantId && tid) void loadAssistantTopicConfig(aid, tid);
+  }
+}
+
+export async function loadAssistantTopicConfig(assistantId: string, topicId: string) {
+  const key = assistantSessionKey(assistantId, topicId);
+  const request = (assistantTopicConfigRequests.get(key) ?? 0) + 1;
+  assistantTopicConfigRequests.set(key, request);
+  try {
+    const value = await api.assistantTopicConfig(assistantId, topicId);
+    if (assistantTopicConfigRequests.get(key) === request) {
+      set((s) => ({ assistantTopicConfigs: { ...s.assistantTopicConfigs, [key]: { value } } }));
+    }
+  } catch (e) {
+    if (assistantTopicConfigRequests.get(key) === request) {
+      set((s) => ({ assistantTopicConfigs: { ...s.assistantTopicConfigs, [key]: { error: errText(e) } } }));
+    }
+  }
+}
+
+export async function patchAssistantTopicConfig(
+  assistantId: string,
+  topicId: string,
+  patch: { models?: { conversation?: ModelPick | null; work?: ModelPick | null } },
+): Promise<string | null> {
+  const key = assistantSessionKey(assistantId, topicId);
+  try {
+    const value = await api.patchAssistantTopicConfig(assistantId, topicId, patch);
+    set((s) => ({ assistantTopicConfigs: { ...s.assistantTopicConfigs, [key]: { value } } }));
+    return null;
+  } catch (e) {
+    return errText(e);
+  }
 }
 
 const skillLoads: Record<string, number> = {};
@@ -2708,7 +2767,10 @@ export async function patchAssistant(id: string, patch: Partial<Assistant>) {
   }));
   try {
     await api.patchAssistant(id, patch);
-    if (patch.models) refreshGroupProfiles(id);
+    if (patch.models) {
+      refreshGroupProfiles(id);
+      refreshAssistantTopicConfigs(id);
+    }
     return null;
   } catch (e) {
     const message = t("保存失败：{error}", { error: errText(e) });
@@ -2718,6 +2780,30 @@ export async function patchAssistant(id: string, patch: Partial<Assistant>) {
       notice: message,
     }));
     return message;
+  }
+}
+
+export async function enableAssistantTopics(id: string): Promise<string | null> {
+  try {
+    const assistant = await api.enableAssistantTopics(id);
+    set((s) => ({
+      assistants: upsert(s.assistants, assistant),
+      profiles: s.profiles[id] ? { ...s.profiles, [id]: { ...s.profiles[id], assistant: { ...s.profiles[id].assistant, ...assistant } } } : s.profiles,
+      sel: id,
+      gsel: null,
+      tsel: null,
+      newTopic: null,
+      newTopicBusy: false,
+      newTopicError: null,
+      sideHome: false,
+      panelStack: [],
+      sheet: false,
+      mobile: (isNarrow() ? "topics" : "chat") as MobilePage,
+    }));
+    await loadItems(id);
+    return null;
+  } catch (e) {
+    return errText(e);
   }
 }
 
@@ -2884,6 +2970,47 @@ export async function resetGroupRule(groupId: string, ruleId: string): Promise<s
   }
 }
 
+export async function addAssistantTopicRule(assistantId: string, topicId: string, text: string, mode: "ask" | "allow"): Promise<string | null> {
+  try {
+    await api.addAssistantTopicRule(assistantId, topicId, { text, mode });
+    await loadAssistantTopicConfig(assistantId, topicId);
+    return null;
+  } catch (e) {
+    return t("保存失败：{error}", { error: errText(e) });
+  }
+}
+
+export async function updateAssistantTopicRule(assistantId: string, topicId: string, rule: { id: string; text?: string; mode?: "ask" | "allow" }): Promise<string | null> {
+  try {
+    await api.updateAssistantTopicRule(assistantId, topicId, rule.id, { ...(rule.text !== undefined ? { text: rule.text } : {}), ...(rule.mode !== undefined ? { mode: rule.mode } : {}) });
+    await loadAssistantTopicConfig(assistantId, topicId);
+    return null;
+  } catch (e) {
+    return t("保存失败：{error}", { error: errText(e) });
+  }
+}
+
+export async function deleteAssistantTopicRule(assistantId: string, topicId: string, ruleId: string) {
+  try {
+    await api.deleteAssistantTopicRule(assistantId, topicId, ruleId);
+    await loadAssistantTopicConfig(assistantId, topicId);
+  } catch (e) {
+    set({ notice: t("删除失败：{error}", { error: errText(e) }) });
+  }
+}
+
+export async function resetAssistantTopicRule(assistantId: string, topicId: string, ruleId: string): Promise<string | null> {
+  try {
+    await api.resetAssistantTopicRule(assistantId, topicId, ruleId);
+    await loadAssistantTopicConfig(assistantId, topicId);
+    return null;
+  } catch (e) {
+    const message = t("保存失败：{error}", { error: errText(e) });
+    set({ notice: message });
+    return message;
+  }
+}
+
 /* ---------------- 界面状态 ---------------- */
 
 /* ---------------- 任务详情 / 任务记录 ---------------- */
@@ -3010,7 +3137,8 @@ export function openRoutine(id: string) {
 export function openNewRoutine() {
   const page = state.panelStack.at(-1);
   const groupId = page?.kind === "routines" ? page.groupId : undefined;
-  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "newRoutine", groupId }) }));
+  const topicId = page?.kind === "routines" ? page.topicId : undefined;
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "newRoutine", groupId, ...(topicId ? { topicId } : {}) }) }));
 }
 
 export function openMemberPanel(id: string) {
@@ -3026,19 +3154,22 @@ export function openAssistantPanel() {
   set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "assistant" }) }));
 }
 
-export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels", groupId?: string) {
-  set((s) => ({ panelStack: pushPage(s.panelStack, { kind, groupId }) }));
+export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels", groupId?: string, topicId?: string) {
+  set((s) => ({ panelStack: pushPage(s.panelStack, { kind, groupId, ...(topicId ? { topicId } : {}) }) }));
 }
 
-async function loadSidebarPage(kind: "sidebarJobs" | "sidebarFiles", assistantId: string, more: boolean) {
+async function loadSidebarPage(kind: "sidebarJobs" | "sidebarFiles", assistantId: string, more: boolean, topicId?: string) {
+  const key = topicId ? assistantSessionKey(assistantId, topicId) : assistantId;
   const empty = { items: [], loaded: false, loading: false, loadingMore: false, hasMore: false, error: null };
-  const previous = state[kind][assistantId] ?? empty;
+  const previous = state[kind][key] ?? empty;
   if (previous.loading || (more && (!previous.loaded || !previous.hasMore))) return;
-  set((s) => ({ [kind]: { ...s[kind], [assistantId]: { ...previous, loading: true, loadingMore: more, error: null } } }));
+  set((s) => ({ [kind]: { ...s[kind], [key]: { ...previous, loading: true, loadingMore: more, error: null } } }));
   try {
     const before = more ? previous.cursor : undefined;
     const group = state.groups.find((item) => item.id === assistantId);
-    const scope = group ? { groupId: assistantId, ...(group.parentId ? { exact: true } : {}) } : { assistantId, groupId: "none" };
+    const scope = group
+      ? { groupId: assistantId, ...(group.parentId ? { exact: true } : {}) }
+      : { assistantId, groupId: "none", ...(topicId ? { topicId } : {}) };
     const page = kind === "sidebarJobs"
       ? await api.jobs({ ...scope, before, limit: 20 }).then((p) => ({ items: p.jobs, hasMore: p.hasMore }))
       : await api.knowledge({ origin: "output", ...scope, before, limit: 30 }).then((p) => ({ items: p.entries, hasMore: p.hasMore }));
@@ -3048,14 +3179,14 @@ async function loadSidebarPage(kind: "sidebarJobs" | "sidebarFiles", assistantId
     const last = page.items.at(-1);
     const cursor = more || !previous.loaded ? (last && ("createdAt" in last && kind === "sidebarJobs" ? last.id : (last as KnowledgeEntry).updatedAt)) : previous.cursor;
     const hasMore = more || !previous.loaded ? page.hasMore : previous.hasMore || page.hasMore;
-    set((s) => ({ [kind]: { ...s[kind], [assistantId]: { items, loaded: true, loading: false, loadingMore: false, hasMore, error: null, cursor } } }));
+    set((s) => ({ [kind]: { ...s[kind], [key]: { items, loaded: true, loading: false, loadingMore: false, hasMore, error: null, cursor } } }));
   } catch (e) {
-    set((s) => ({ [kind]: { ...s[kind], [assistantId]: { ...previous, loading: false, loadingMore: false, failedMore: more, error: errText(e) } } }));
+    set((s) => ({ [kind]: { ...s[kind], [key]: { ...previous, loading: false, loadingMore: false, failedMore: more, error: errText(e) } } }));
   }
 }
 
-export function loadSidebarJobs(assistantId: string, more = false) { return loadSidebarPage("sidebarJobs", assistantId, more); }
-export function loadSidebarFiles(assistantId: string, more = false) { return loadSidebarPage("sidebarFiles", assistantId, more); }
+export function loadSidebarJobs(assistantId: string, more = false, topicId?: string) { return loadSidebarPage("sidebarJobs", assistantId, more, topicId); }
+export function loadSidebarFiles(assistantId: string, more = false, topicId?: string) { return loadSidebarPage("sidebarFiles", assistantId, more, topicId); }
 
 let collectionsVersion = 0;
 let collectionsRequest: Promise<void> | undefined;

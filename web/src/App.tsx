@@ -19,7 +19,7 @@ import { Home } from "./components/Home.tsx";
 import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
-import { gonePages, layerList, pageKey, panelDesk, type GonePage } from "./panel-stack.ts";
+import { gonePages, layerList, pageKey, panelAssistant, panelDesk, type GonePage } from "./panel-stack.ts";
 import { backPanel, answer, clearNotice, closeLoginDesktop, loadDesktopWidth, saveDesktopWidth, start, tick, useApp, type PanelPage } from "./store.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
 import { useDesktopScreens } from "./desktop-screens.ts";
@@ -238,7 +238,15 @@ export function App() {
   // 桌面没打开对话就是首页：右栏收起，点开的任务、文件照样盖上来
   const home = !s.sel && !s.gsel;
   const sideHidden = s.sideCollapsed && !home;
-  const desktopFocus = s.nowWide && (!s.gsel || !top || top.kind === "member") && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop).running;
+  const desktopFocus = s.nowWide && (!s.gsel || !top || top.kind === "member") && panelDesk(
+    s.panelStack,
+    s.sel,
+    s.gsel,
+    s.groups,
+    desktop,
+    !s.gsel && s.tsel ? { topicId: s.tsel } : undefined,
+    Boolean(!s.gsel && !s.tsel && s.assistants.find((a) => a.id === panelAssistant(s.panelStack, s.sel))?.topics),
+  ).running;
 
   if (narrow) {
     return (

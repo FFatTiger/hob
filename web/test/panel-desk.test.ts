@@ -112,7 +112,7 @@ describe("panelDesk：右栏云桌面按会话呈现", () => {
     })).toMatchObject({ aid: "dev", screenId: "s-dev", running: false, status: "elsewhere", usedBy: { assistantId: "dev", place: { groupId: "t2" } } });
   });
 
-  it("助手话题通过 place.topicId 判断本会话或别处", () => {
+  it("助手话题与主对话：话题按 topicId 隔离，主对话汇总主对话和话题，desktopUserWhere 返回主对话", () => {
     expect(panelDesk([], "solo", null, groups, {
       screens: screens("s-solo"),
       profiles,
@@ -124,6 +124,26 @@ describe("panelDesk：右栏云桌面按会话呈现", () => {
       profiles,
       users: { "s-solo": [{ assistantId: "solo", place: {} }] },
     }, { topicId: "tp-1" })).toMatchObject({ status: "elsewhere", running: false });
+
+    // 主对话（multiTopic=true）汇总该助手的主对话及名下话题，但群里占用的仍算别处
+    expect(panelDesk([], "solo", null, groups, {
+      screens: screens("s-solo"),
+      profiles,
+      users: { "s-solo": [{ assistantId: "solo", place: { topicId: "tp-1" } }] },
+    }, undefined, true)).toMatchObject({ status: "active", running: true });
+
+    expect(panelDesk([], "solo", null, groups, {
+      screens: screens("s-solo"),
+      profiles,
+      users: { "s-solo": [{ assistantId: "solo", place: { groupId: "g" } }] },
+    }, undefined, true)).toMatchObject({ status: "elsewhere", running: false });
+
+    const multiAssistants = [...assistants, { id: "planner", name: "日程", topics: { enabledAt: "2026-01-01T00:00:00Z" } }];
+    setLocale("zh-CN");
+    expect(desktopUserWhere({ assistantId: "planner", place: {} }, groups, multiAssistants, null)).toBe("主对话");
+    setLocale("en");
+    expect(desktopUserWhere({ assistantId: "planner", place: {} }, groups, multiAssistants, null)).toBe("Main conversation");
+    setLocale("zh-CN");
   });
 
   it("desktopUserWhere 按当前会话格式化「正在用」来源名称（中英文）", () => {

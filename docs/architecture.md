@@ -32,13 +32,13 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 ### 工作目录（`server/src/workspace.ts`）
 
-非主助手、群、话题可以在创建时绑一个项目目录（`cwd`），之后不能改。在哪个会话里就用哪个会话的目录，全部经 `resolveWorkspaceCwd` 解析：
+非主助手、群、群话题、助手话题可以在创建时绑一个项目目录（`cwd`），创建后不能改（不进入随时可改的话题覆盖层）。在哪个会话里就用哪个会话的目录，全部经 `resolveWorkspaceCwd(store, home, assistantId, place)` 解析：
 
-- 群和话题：群绑了，群和它所有话题都用群的，话题不能另绑；群没绑，话题用自己的；都没绑就是没绑定。成员助手自己的 `cwd` 在群里不生效。
-- 单聊：用助手自己的 `cwd`。
+- 群和群话题：群绑了，群和它所有话题都用群的，话题不能另绑；群没绑，话题创建时可以绑自己的；都没绑就是没绑定。成员助手自己的 `cwd` 在群里不生效。
+- 助手和助手话题：非主助手绑了，主对话和所有助手话题都沿用助手的，话题不能另绑；助手没绑，话题创建时可以绑自己的；都没绑就是没绑定。主助手不支持绑定。
 - 没绑定：会话照旧在 `assistants/<id>/work`，任务在自己的目录。
 
-绑定后：会话的命令和文件工具默认在这个目录；会话打开时读一次目录根上的 `AGENTS.md`（没有就读 `CLAUDE.md`，最多 32,000 字），整个会话不变，保住提示词缓存；系统提示词写明绑定目录和助手自己的目录；派出的任务不填 `cwd` 就落在绑定目录，填了只能是它里面的子目录（`jobs.start` 里检查，例如并行任务各用一份 worktree）。绑定目录不能是数据目录、它里面的目录或它的上级；目录后来失效，会话回落到默认目录并在提示词里说明。
+绑定后：会话的命令和文件工具默认在这个目录；会话打开时读一次目录根上的 `AGENTS.md`（没有就读 `CLAUDE.md`，最多 32,000 字），整个会话不变，保住提示词缓存；系统提示词写明绑定目录和助手自己的目录；派出的任务不填 `cwd` 就落在绑定目录，填了只能是它里面的子目录（`jobs.start` 按 `realpathSync` 检查 `isInside`，例如并行任务各用一份 worktree）。绑定目录不能是数据目录、它里面的目录或它的上级（`allowedWorkspaceDirs` 同时纳入助手话题的绑定目录供文件读取放行）；目录后来失效，会话回落到默认目录并在提示词里说明。
 
 ### 启动时的环境隔离（`server/src/boot.ts`）
 
@@ -81,20 +81,27 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
   plugins/<id>/              已安装插件：plugin.json、mcp.json、图标和可选 skills/
   skills/                    全局技能（来源标签 hob）
   assistants/<id>/
-    profile.json             Assistant（名字、职责、头像、置顶、通知…）
+    profile.json             Assistant（名字、职责、头像、置顶、通知、topics 模式开关…）
     instructions.archived.md  旧补充说明的存档（有内容时才有）
-    rules.json               Rule[]   要先问你 / 规矩
+    rules.json               Rule[]   要先问你 / 规矩（多话题助手作为各话题的默认规则）
     worklog.jsonl            WorklogEntry 每行一条
-    router.jsonl             该助手唯一的对话（pi 会话文件）
-    state.json               未读位置
-    todos.json               单聊的待办 TodoItem[]，按做的先后
-    skills/                  本助手的技能（含 .history/、.archive/、skills.json）
-    spill/                   对话里大工具结果的全文
-    approvals.json           这个助手提的审批 Approval[]
-    routines.json            这个助手的定时定义 Routine[]
+    router.jsonl             该助手的主对话（单会话助手即唯一的对话；pi 会话文件）
+    state.json               主对话/单聊的未读位置
+    todos.json               主对话/单聊的待办 TodoItem[]，按做的先后
+    topics/<tid>/            多话题助手的独立话题（一个话题一个目录）
+      topic.json             AssistantTopic（名字、自动起名标记、cwd、overrides、创建与关闭信息）
+      router.jsonl           这个话题的独立对话（pi 会话文件）
+      state.json             这个话题的未读位置
+      todos.json             这个话题的待办 TodoItem[]
+      rule-overrides.json    RuleOverrides（本话题对助手规则的增改停覆盖）
+      spill/                 这个话题里大工具结果的全文
+    skills/                  本助手的技能（含 .history/、.archive/、skills.json），各话题共用
+    spill/                   主对话/单聊里大工具结果的全文
+    approvals.json           这个助手提的审批 Approval[]（含主对话、群和助手话题）
+    routines.json            这个助手的定时定义 Routine[]（topicId 指定到主对话或某个助手话题）
     routines/<rid>/          定时检查脚本的工作目录
     jobs/<jobId>/            这个助手的任务
-      job.json               Job
+      job.json               Job（groupId / topicId 记下开它的会话）
       worker.jsonl           任务会话（pi 会话文件）
       report.md              完整报告（Spill）
       steps/                 过程里超长输出的全文
@@ -105,10 +112,11 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
   assistants/hob/drafts.json     Draft[]（新助手草稿，只有主助手会提议）
   assistants/hob/delegations.json Delegation[]（所有助手发起的委派记录，兼容旧数据）
   groups/<gid>/
-    group.json                 Group（名字、负责什么、群主、成员）；话题的是另一个 groups/<tid>/，里面只放话题自己的字段
+    group.json                 Group（名字、负责什么、群主、成员、模型、memberModels 仅含 work）；话题的是另一个 groups/<tid>/，只存话题自己的字段与 overrides 原值（含 pinnedAt、cwd、关闭和交接信息）
     instructions.archived.md  旧补充说明的存档（有内容时才有）
-    rules.json                 本群规则，话题共用
-    routines.json              本群定时，groupId 指定结果发到群或话题
+    rules.json                 本群规则（作为各话题的默认规则）
+    rule-overrides.json        仅群话题目录有：RuleOverrides（本话题对本群规则的增改停覆盖）
+    routines.json              本群定时，groupId 指定归属的综合或话题
     routines/<rid>/            群定时检查脚本的工作目录
     skills/                    本群技能及其版本、归档，话题共用
     timeline.jsonl             群里的条目，追加写；同 id 后写的覆盖前面的
@@ -117,7 +125,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
     members/<aid>-spill/       这个群会话里大工具结果的全文
     files/uploads/             群里上传的文件
     todos.json                 这个会话（综合或话题）的待办 TodoItem[]，同一个话题里的成员共用一份
-  archive/assistants/<id>-<时间>/  归档的助手：整个目录原样移到这里（档案、规则、对话、定时、审批、任务、文件都跟着走）
+  archive/assistants/<id>-<时间>/  归档的助手：整个目录原样移到这里（档案、规则、主对话、topics/ 下各话题、定时、审批、任务、文件都跟着走）
   archive/groups/<gid>-<时间>/     归档的群：整个群目录原样移过来，各话题在它的 topics/<tid>/ 下
 ```
 
@@ -144,49 +152,59 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 ## 核心对象（契约在 `shared/types.ts`，前后端共用，改它要两边一起改）
 
-- **Assistant（助手）**：主助手 `id = "hob"` 唯一内置，首次启动自动创建；其余都是用户数据。首次启动另外带上「敏捷团队」：5 个收起的助手（产品负责人、架构师、开发、测试、发布）和一个默认群，只建一次，标记写在 `system/seeded.json`，用户删了、归档了都不补回来；这 5 个是 `hidden`（收起的助手），老用户已经占了同名 id（`po`、`dev`…）就换一个不冲突的，不覆盖原来的助手。`duty` 是职责简介，`dutyLong` 是详细职责；创建助手时从草稿复制，旧助手启动时从对应的已创建草稿幂等回填。长期记忆不属于某个助手（见下文“记忆”）。
+- **`Place`（会话地址，`server/src/place.ts`）**：`{ groupId?: string; topicId?: string }`，统一表达一件事属于哪个会话——都不填是助手的主对话（单会话助手即单聊），`groupId` 是群的综合或群话题，`topicId` 是助手自己的话题；两者不同时存在。`Job`、`Approval`、`CardRecord`、`Routine`、`PageLive`、`DesktopScreenUser` 和相关 SSE 事件都据此定位会话和回流；`Delegation` 另记 `fromTopicId` / `toTopicId`，`TopicHandover` 记 `fromTopicId`。
+- **Assistant（助手）**：主助手 `id = "hob"` 唯一内置，首次启动自动创建；其余都是用户数据。首次启动另外带上「敏捷团队」：5 个收起的助手（产品负责人、架构师、开发、测试、发布）和一个默认群，只建一次，标记写在 `system/seeded.json`，用户删了、归档了都不补回来；这 5 个是 `hidden`（收起的助手），老用户已经占了同名 id（`po`、`dev`…）就换一个不冲突的，不覆盖原来的助手。`duty` 是职责简介，`dutyLong` 是详细职责；创建助手时从草稿复制，旧助手启动时从对应的已创建草稿幂等回填。`topics?: { enabledAt: Iso }` 是多话题模式的单向开关：存在即为多话题模式，缺失为单会话；只能开启不能关回，主助手不支持。长期记忆不属于某个助手（见下文“记忆”）。
+- **AssistantTopic（助手话题）**：多话题助手名下的独立会话（id 为 `tp-` + 6 位），记录 `id`、`assistantId`、`name`（最多 40 字）、`nameAuto`（未指定标题时自动生成，改名后去掉）、`cwd`（助手未绑定目录时可在创建时绑定）、`overrides`、`createdAt`、`createdBy`、`closedAt`、`closeNote`；主对话仍是原 `router.jsonl`。摘要类型 `AssistantTopicSummary` 附带 `last`、`unread`、`busy`、`activity`、`todos`、`suggestions`。
+- **话题覆盖层（`TopicOverrides` / `RuleOverrides`）**：群话题和助手话题共用。`TopicOverrides` 存话题自己改过的配置：`models?: { conversation?: ModelPick; work?: ModelPick }`，群话题另含 `memberModels?: Record<string, { work?: ModelPick }>`（成员只单设任务模型）和 `replyMode?: GroupReplyMode`；未写的项跟随上级。`RuleOverrides`（存 `rule-overrides.json`）记录 `own: Rule[]`（仅本话题规则）、`changed`（对上级某条规则文字或 `mode` 的覆盖）和 `hidden`（本话题停用的上级规则）。
+- **Group（群与群话题）**：群记录成员、群主、职责、`replyMode`、默认 `models`、`memberModels`（仅 `{ work?: ModelPick }`，成员不再单设对话模型）、`cwd`；群话题是带 `parentId` 的 `Group`，文件只存话题自身字段及 `overrides` 原值，另带 `pinnedAt?: Iso`（进行中话题置顶时间，关闭与重开时清除）、`closedAt`、`closeNote`、`handover`。
 - **助手的补充提示词**：`Assistant.instructions` 存在助手的 `profile.json`，用户通过资料面板或 PATCH 修改，主助手可用 `update_assistant` 修改任何助手，普通助手可修改自己；创建助手时草稿 `Draft.instructions` 原样带入。只去首尾空白，空字符串视为没有。原文紧接身份那几句、原样进入单聊、群和话题的系统提示词，不加标题和别的话；任务提示词也带所属助手的补充提示词；其他助手的名单不包含它。助手和草稿的补充提示词在重启时保留，旧群说明仍归档。
-- **Item（对话条目）**：对话 = 有序的 Item 列表。用户消息、助手回复从 pi 会话的消息得出；卡片类（question / job / draft / note / file / card）用 pi 的自定义条目 `customType: "hob.item"` 存在同一个 `router.jsonl` 里，**不进模型上下文**。卡片的可变状态（审批是否已选、任务进度、草稿是否已建）在 approvals.json / jobs / drafts.json / cards.json 里，条目只存 id 引用，渲染时合并。老数据里还有 `todos` 条目（以前收起的一份待办），现在不再写入、界面也不显示。
+- **Item（对话条目）**：对话 = 有序的 Item 列表。用户消息、助手回复从 pi 会话的消息得出；卡片类（question / job / draft / note / file / card / topic）用 pi 的自定义条目 `customType: "hob.item"` 存在同一个 `router.jsonl` 里，**不进模型上下文**。其中 `{ kind: "topic", topicId }` 是群综合或多话题助手主对话里的话题卡；`forwardedFrom` 记转进话题的来源（`{ groupId, itemId }` 或 `{ assistantId, itemId? }`）。卡片的可变状态（审批是否已选、任务进度、草稿是否已建）在 approvals.json / jobs / drafts.json / cards.json 里，条目只存 id 引用，渲染时合并。历史搜索与收藏用 `ConversationRef`（`{ kind: "assistant" | "group" | "topic"; id: string }`）区分单聊/主对话、群/群话题和助手话题。老数据里还有 `todos` 条目（以前收起的一份待办），现在不再写入、界面也不显示。
 - **卡片**：卡片正文是服务端校验过的声明式 JSON 子集，完整记录按助手或群写在 `cards.json`，时间线只保存 `{ kind: "card", cardId }`。主人有两种：助手卡记 `assistantId`，插件卡同时记插件、服务、回调工具和调起它的助手。助手卡允许展示或交互；交互卡操作后锁成 `done`，结果保存在卡片记录里，并以 `[hob-event]` 系统消息回到原助手。插件卡的表单值只在一次回调调用的内存参数里经过 Hob，卡片记录、时间线、会话文件、模型消息、SSE 和日志都不写这些值；插件可以返回新卡整卡替换、toast、字段错误或文字事件，插件不可用时卡片保留并禁用操作；插件更新到新版本时，它更新前出的、还没处理的卡作废并写明原因（卡片内容是出卡时旧版定下的，字段和回调可能已经变了）。模型后续历史只接收一行标题和摘要（没有摘要时用「表单 N 项」或「表格 N 行」），不接收卡片 JSON。Hob 在飞书子集上加的扩展字段：`input` 的 `min_length`、`generate`（密码框旁的「生成」按钮）；`select_static` 的 `display`（`dropdown` 画成下拉、`chips` 画成圆角小块，不写时选项少画小块、多了画下拉）；`div` 的 `icon`（`file` / `doc` 画成文件行，`check` 画成结果行：勾 + 灰字）。`column_set` 每栏按 `weight` 分宽度。插件卡的来源行用插件自己在 `plugin.json` 里声明的图标，取不到用通用的插件图标。
-- **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/assistants/<助手id>/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手归档后任务详情照样显示。结束的任务可以接着做（续做）：上一轮结束时的状态、原因、用时存进 `rounds`，对话里再放一张带 `round`（第几轮）的任务卡。界面上同一个任务只显示最新一轮那张卡（`Items.tsx` 的 `visibleItems`），它跟着任务实时变；前几轮按 `rounds` 在任务详情里切换着看。
-- **Approval（审批）**：选择题卡片。来源可以是 Router（不阻塞，答案作为下一条用户消息回到 Router）或旧数据中的 Worker 提问（新任务只向助手提问，不生成用户审批卡）。带 `always` 的选项（"以后这类直接…"）选中后自动写一条 `mode: "allow"` 的 Rule，并在对话里出一行"已记进 X 的规矩 · …"。审批仍属于提问的助手；转交回合中助手提出的审批，也在主助手的委派卡内展示同一条审批，两处调用同一答复接口。
-- **Routine（定时）**：cron 表达式（`croner` 库）。单聊定时到点先给所属助手送一条事件，由助手自己答复或开 local Job；任务结果作为带「⏱ 名字」标签的助手消息回到对话。群定时由群主负责，到点在目标群或话题留下记录并交给群主处理，检查脚本的 notify 输出直接发送。群主变化时定时跟随变更。运行记录包括任务和交给群主、交给助手的记录。定时任务保存「要做的事」是谁写的（`instructionBy`：用户自己写的，还是哪个助手）；到点时用户自己写的直接标明，助手写的标明助手是谁写的。
-- **Draft（新助手草稿）**：Hob 提议分出助手时生成。点"创建"才真正建助手，在新助手对话开头写一行"X月X日 由 Hob 创建"。
+- **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/assistants/<助手id>/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`，以及归属字段 `groupId` / `topicId`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手归档后任务详情照样显示。结束的任务可以接着做（续做）：上一轮结束时的状态、原因、用时存进 `rounds`，对话里再放一张带 `round`（第几轮）的任务卡。界面上同一个任务只显示最新一轮那张卡（`Items.tsx` 的 `visibleItems`），它跟着任务实时变；前几轮按 `rounds` 在任务详情里切换着看。
+- **Approval（审批）**：选择题卡片，带 `groupId` / `topicId` 记明提卡的会话。来源可以是 Router（不阻塞，答案作为下一条用户消息回到提卡的会话）或旧数据中的 Worker 提问（新任务只向助手提问，不生成用户审批卡）。带 `always` 的选项（"以后这类直接…"）选中后自动写一条 `mode: "allow"` 的 Rule 到提卡的那一层（群话题或助手话题写话题覆盖层，群综合写群规则，单聊或主对话写助手规则），并在当前会话出一行"已记入 X 的规则 · …"。审批仍属于提问的助手；转交回合中助手提出的审批，也在主助手的委派卡内展示同一条审批，两处调用同一答复接口。
+- **Routine（定时）**：cron 表达式或具体时间（`croner` 库），带 `groupId`（群综合或群话题）、`topicId`（助手话题）和 `pausedBy?: "topicClosed"`（见下文“定时”）。定时任务保存「要做的事」是谁写的（`instructionBy`：`"user"` 或助手 id）；到点时区分标明。
+- **Draft（新助手草稿）**：提议创建助手时生成，可带 `cwd` 与 `topics?: boolean`（建成多话题助手）。点"创建"才真正建助手，在新助手对话开头写一行"X月X日 由 X 创建"。
 
 ## 归档助手
 
 助手可以收起，也可以归档（`POST /api/assistants/:id/archive`）。归档不往主助手转任何东西。
 
-- 拒绝：主助手（"主助手不能归档"）、助手不存在、这个助手还有进行中 / 排队 / 等待确认的任务（"请等任务结束后再归档"）。
-- 这个助手还没答复的审批记为 `expired`，卡片不再挂着。
-- 整个助手目录（档案、规则、对话、技能、审批、定时、任务、上传和生图）用同盘 rename 移进 `HOB_HOME/archive/assistants/<id>-<时间>/`，不复制、不删除，任务和文件都跟着助手走；它的定时先停掉并从还在的助手的列表里拿掉（推 `routine_removed`），定义还留在归档目录里。`Job.assistantName` 补上当时的助手名，任务详情里不会因为助手不在了而报错。
+- 拒绝：主助手（"主助手不能归档"）、助手不存在、这个助手还有进行中 / 排队 / 等待确认的任务（包括它在主对话、群或任意助手话题里派出的任务，统一按 `assistantId` 检查，提示"请等任务结束后再归档"）。
+- 这个助手还没答复的审批（含话题里的）记为 `expired`，卡片不再挂着。`router.forget(id)` 一并关闭它的主对话、群会话和全部助手话题会话，清理内存缓存与推荐提问。
+- 整个助手目录（档案、规则、主对话、`topics/` 下全部助手话题、技能、审批、定时、任务、上传和生图）用同盘 rename 移进 `HOB_HOME/archive/assistants/<id>-<时间>/`，不复制、不删除，任务、话题和文件都跟着助手走；它的定时（含话题定时）先停掉并从还在的助手的列表里拿掉（推 `routine_removed`），定义还留在归档目录里。`Job.assistantName` 补上当时的助手名，任务详情里不会因为助手不在了而报错。
 - 然后推 `assistant_removed`：前端从列表移除，正看着它的切到主助手，草稿卡里指向它的"已创建 · 查看"变成"已归档"且不能再点。
 
 ## Router（对话层）
 
-每个助手一个常驻的 pi 会话（懒加载，空闲 30 分钟释放内存，下次用再从 `router.jsonl` 打开）。
+所有会话归属统一用 `Place { groupId?: string; topicId?: string }` 表达，会话键由 `sessionKey(assistantId, place)` 生成：单聊/主对话为 `<assistantId>`，群或群话题为 `<assistantId>@<gid>`，助手话题为 `<assistantId>@<tid>`。每个会话各有一个懒加载的 pi 会话句柄（空闲 30 分钟释放内存，下次用再从对应的 `.jsonl` 打开）。
+
+- **多话题助手会话隔离与生命周期（`server/src/assistant-topics.ts`）**：
+  - 单会话助手在设置里调用 `POST /api/assistants/:id/topic-mode` 单向转为多话题（无损、幂等，主助手拒绝）：原 `router.jsonl` 直接成为主对话并在末尾追加分隔提示「已开启多话题，这里是主对话」后释放会话句柄；`PATCH /api/assistants/:id` 忽略 `topics` 字段。
+  - 每个助手话题使用独立的 `assistants/<id>/topics/<tid>/router.jsonl`、`state.json`、`todos.json`、`rule-overrides.json` 和 `spill/`，上下文、未读、待办和流式与主对话及其他话题互不干扰。
+  - 创建话题未填标题时，首句生成临时标题并标 `nameAuto: true`，发第一条消息后后台用轻量模型生成不超过 12 字的标题（仅当仍为 `nameAuto` 时替换，用户或助手改名后清除 `nameAuto`）。
+  - 关闭话题后拒绝发消息（HTTP 400），同时暂停名下启用中的定时任务、清空话题待办，并把关闭结论通过 `router.remember` 写入主对话上下文（不触发主对话新一轮）。已关闭的助手话题收到任务结果、提问卡答案、转交结果或群话题结论时，由 `reopenForResult` 自动重开（并发共享同一次重开）并在时间线落一行说明后再投递事件。
 
 - 会话最后一轮结束满 6 小时、当前上下文超过 150,000 token，且这份会话没有正在回复的回合、进行中的任务、转交或待答问题时，Router 会调用引擎的 `session.compact()` 整理一次。6 小时和 150,000 是代码常量，不进入设置；正在做事的会话不因这条规则压缩，引擎原有的接近窗口上限的自动压缩仍照常工作。
-- 每约 10 分钟检查一遍所有会话（单聊和各群成员的）。闲置满 6 小时的会话早已从内存释放，所以按会话文件找：文件 6 小时没动的打开检查一次，同一个版本的文件只查一次；一个一个整理。这样整理发生在闲置期间，不让用户隔天的第一句话等它。重启后头 10 分钟内来的消息或事件打开会话时也先检查再处理。整理期间新来的消息等整理完成后进入同一会话，失败只记日志并继续处理。
+- 每约 10 分钟检查一遍所有会话（单聊/主对话、各助手话题和各群成员的）。闲置满 6 小时的会话早已从内存释放，所以按会话文件找：文件 6 小时没动的打开检查一次，同一个版本的文件只查一次；一个一个整理。这样整理发生在闲置期间，不让用户隔天的第一句话等它。重启后头 10 分钟内来的消息或事件打开会话时也先检查再处理。整理期间新来的消息等整理完成后进入同一会话，失败只记日志并继续处理。
 - `compact()` 只追加引擎的压缩条目，`router.jsonl` 和群成员会话里的原始条目仍完整保留；界面条目和分页接口继续从完整会话记录推导，所以整理不改变聊天记录。
 
-- 系统提示词：身份和回复规格、可用及未开的能力、事件信任边界、用户信息、全局规则和助手规则、记忆、定时，以及其他助手和群（仅 Hob；群只列群主和成员，不列话题）。每次开新一轮前重建，全局规则列在助手规则之前。
-- 模型：设置 → 模型里的对话模型（没选就没有，回复时出一条说明提示去配服务商）。
-- 工具：Hob 自定义工具，以及引擎的 `read`、`bash`、`edit`、`write`。`read` 总是有，`bash` 受执行命令开关控制，`edit` / `write` 受修改文件开关控制；单聊和群会话都一样。相对路径以 `assistants/<id>/work/` 为准。
+- 系统提示词：身份和回复规格、可用及未开的能力、事件信任边界、用户信息、全局规则和当前会话生效规则（话题里为合成后的规则）、记忆、定时，以及其他助手和群（仅 Hob；群只列群主和成员，不列话题）。每次开新一轮前重建，全局规则列在会话规则之前。
+- 模型：按 `assistantForPlace` 解析当前会话生效的对话模型（单聊/主对话走助手 → 全局；助手话题走话题覆盖 → 助手 → 全局；群/群话题走四层模型覆盖，见下文「群」；没选就没有，回复时出一条说明提示去配服务商）。
+- 工具：Hob 自定义工具，以及引擎的 `read`、`bash`、`edit`、`write`。`read` 总是有，`bash` 受执行命令开关控制，`edit` / `write` 受修改文件开关控制；单聊、助手话题和群会话都一样。相对路径以当前会话解析后的工作目录（未绑定时为 `assistants/<id>/work/`）为准。
 
 | 工具 | 作用 |
 |---|---|
 | `read` / `bash` / `edit` / `write` | 读取文件、执行命令、修改或写入文件；简单明确的事由助手自己做，复杂或耗时的事交给任务 |
-| `start_job(title, note, files?, cwd?, expect_minutes?, after?)` | 开任务，立即返回 jobId；任务看到 `note` 和显式 `files` 的路径，对话里出任务卡片。`cwd` 指定工作目录，不能指定 Hob 数据目录；不填就用任务自己的目录。会话绑定了工作目录时，不填就用绑定目录，填的话只能是它里面的子目录。相对路径以助手工作目录为准；`after` 要等哪些任务做完 |
+| `start_job(title, note, files?, cwd?, expect_minutes?, after?)` | 开任务，立即返回 jobId；任务看到 `note` 和显式 `files` 的路径，对话里出任务卡片。`cwd` 指定工作目录，不能指定 Hob 数据目录；不填就用任务自己的目录。会话绑定了工作目录时，不填就用绑定目录，填的话只能是它里面的子目录。相对路径以当前工作目录为准；`after` 要等哪些任务做完 |
 | `check_job(jobId)` | 查看任务状态、过程、结果和所用技能；主助手可看所有任务，其余助手只看自己的 |
-| `update_todos(items)` | 列一份待办，整份替换：每项只有 `text` 和 `status`（todo / doing / done）。单聊存 `assistants/<id>/todos.json`，群的综合和话题存 `groups/<gid>/todos.json`；同一份清单谁后写以谁为准。每轮开头把当前这份带给模型；全做完、清掉、话题关了、手上没活了的就收起（见下文「待办」） |
+| `update_todos(items)` | 列一份待办，整份替换：每项只有 `text` 和 `status`（todo / doing / done）。单聊/主对话存 `assistants/<id>/todos.json`，助手话题存 `assistants/<id>/topics/<tid>/todos.json`，群的综合和话题存 `groups/<gid>/todos.json`；同一份清单谁后写以谁为准。每轮开头把当前这份带给模型；全做完、清掉、话题关了、手上没活了的就收起（见下文「待办」） |
 | `review_job(jobId, note?)` | 让已结束的原任务在自己的会话里回顾，任务用 `save_skill` 保存需要的技能；进度和结果显示在原任务上 |
 | `reply_job(jobId, text)` / `stop_job(jobId)` | 给在跑的任务补话 / 停掉 |
 | `ask_user(title, detail?, options[]?, questions[])` | 出选择题卡片（不阻塞）；`options` 最多 3 个，可标 `always`；一张卡问几个问题用 `questions`（每个问题 2 到 3 个选项，可标推荐哪个），用户答完答案一起回来 |
-| `set_rule(text, mode)` / `remove_rule(ruleId)` | 改要先问你；对话里出"已记进 X 的规矩 · …"。主助手多一个可选 `assistantId`，改那个助手的 |
-| `create_routine` / `update_routine` / `delete_routine` | 改定时；对话里出"新增定时 · 名字 · 时间"。主助手多一个可选 `assistantId` |
-| `create_assistant(...)` | 所有助手都能用：存草稿、落助手卡，然后立刻按草稿建好（卡片直接是「已创建」）；建失败把原因返回，草稿留着让用户在卡上点。助手管什么、不管什么写在 `dutyLong`（sprite 可填 custom + prop_art 自画一件道具） |
-| `show_assistant(assistantId?, query?, page?)` | 所有助手都能用：不填 id 列出全部助手（含收起的、按左栏顺序），填了看完整资料以及这个助手和用户的单聊消息（只读；page 第 1 页是最近的 20 条） |
+| `set_rule(text, mode, scope?)` / `remove_rule(ruleId, scope?)` | 改要先问你；在群话题和助手话题里默认写入话题规则覆盖层（只对本话题生效），传 `scope: "group"` 或 `"assistant"` 才写回上级；综合、主对话和单聊没有 `scope`。主助手单聊多一个可选 `assistantId`，改那个助手的 |
+| `create_routine` / `update_routine` / `delete_routine` | 改定时；在群话题或助手话题里创建的归该话题（记 `groupId` 或 `topicId`），修改/删除和列表返回写明所在会话。主助手单聊多一个可选 `assistantId` |
+| `create_assistant(...)` | 所有助手都能用：存草稿、落助手卡，然后立刻按草稿建好（卡片直接是「已创建」）；建失败把原因返回，草稿留着让用户在卡上点。可选 `cwd`、`topics`（是否建成多话题助手）；助手管什么、不管什么写在 `dutyLong`（sprite 可填 custom + prop_art 自画一件道具） |
+| `show_assistant(assistantId?, topic?, query?, page?)` | 所有助手都能用：不填 id 列出全部助手（含收起的、按左栏顺序）；填 `assistantId` 看完整资料（多话题助手另列进行中的全部话题与最近关闭的 5 个话题）以及单聊/主对话消息；同时填 `topic` 查看该助手指定话题的状态、工作目录与分页消息（只读；第 1 页是最近 20 条） |
 | `update_assistant(...)` | 主助手可改别的助手资料（名字、职责、详细职责、模型、知识库、置顶、收起、通知），不改能力；普通助手只有不带 assistantId 的自我修改工具，只能改自己的名字、职责和详细职责；和 `PATCH /api/assistants/:id` 共用 `updateAssistant()`。换头像不在这里，用 `set_avatar` |
 | `show_group(groupId?, query?, page?)` | 所有助手都能用：不填 id 列出全部群（群主、成员、进行中的话题数），填了看群或话题的详情和消息，带 query 在消息里找。每页 20 条 |
 | `create_group(name, purpose, members, ownerId)` | 所有助手都能用：创建群 |
@@ -194,20 +212,23 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 | `save_skill(name, from?, edits?, general?, assistantId?)` / `delete_skill(name, replaced_by?, assistantId?)` | 助手和任务都用 `save_skill` 从工作目录整份保存技能或替换已有文本；`general` 换范围，主助手单聊可指定 `assistantId`。删除会检查正在使用的任务；`replaced_by` 指定接替的技能 |
 | `set_avatar(sprite, color?, prop_art?, assistant?)` | 换头像：内置道具/颜色，或 custom（+ prop_art 自画）；主助手可传 assistant 给其他助手换；成功后推 assistant 事件，对话里出一行「已换头像」 |
 | `overview(sinceHours = 24)` | 只读，各助手这段时间的工作日志、结束的任务、在跑的任务、未答审批（写早报/汇总用） |
-| `message_assistant(assistantId, note, files?)` | 所有助手都能用：只把助手写的交接说明和显式文件交给另一个助手，创建持久化委派卡并在发起方对话显示转交记录，目标回合及关联任务结束后只向发起方回流一次结果，本轮结束；转交回合中不能再转交；普通助手不能转给主助手（主助手没法再往下转），要交给它用 `hand_back` |
-| `message_group(groupId, title, note, files?)` | 所有助手都能用：只把助手写的交接说明和显式文件交给一个群，在群里开话题并由群主接手，结论回到发起方对话 |
-| `open_topic(title? / topic?, note, files?)` | 群主在综合里开新话题或转到已有话题；只把助手写的交接说明和显式文件放进话题，本轮结束 |
+| `message_assistant(assistantId, note, files?)` | 所有助手都能用：只把助手写的交接说明和显式文件交给另一个助手（默认落到对方主对话），创建持久化委派卡并在发起方会话显示转交记录，目标回合及关联任务结束后只向发起方原会话（含助手话题）回流一次结果，本轮结束；转交回合中不能再转交；普通助手不能转给主助手（主助手没法再往下转），要交给它用 `hand_back` |
+| `message_group(groupId, title, note, files?)` | 所有助手都能用：只把助手写的交接说明和显式文件交给一个群，在群里开话题并由群主接手，结论回到发起方原会话（含助手话题） |
+| `open_topic(title? / topic?, note, files?, cwd?)` | 群主在综合里、或多话题助手在主对话里（话题内不注册，不嵌套）开新话题或转到已有话题（`title` 与 `topic` 二选一；已关闭则先重开）；只把交接说明和显式文件放进话题，新话题落话题卡、已有话题落提示行，本轮结束。上级未绑 `cwd` 且新建话题时可传 `cwd` |
+| `close_topic(topic?, note)` | 群主在群里、或多话题助手在主对话/话题里关闭话题；`note` 必填。在话题里不填 `topic` 关自己并结束本轮，在综合/主对话里必须填 `topic` |
+| `rename_topic(topic?, title)` | 多话题助手在主对话或话题里修改话题名（最多 40 字，清除 `nameAuto`）；在话题里不填 `topic` 改自己 |
 | `hand_back(text, reason)` | 仅非主助手：别人转来的事交回发起方；用户直接找你的事交回 Hob，由它转给合适的助手；本轮结束 |
-| `send_file(path)` | 把文件作为文件卡片发到对话；相对路径以助手工作目录为准。页面只读得到 Hob 自己的目录和任务工作目录，范围外的文件先复制到 `assistants/<id>/files/sent/` 再发；密钥类文件照样拒绝 |
+| `send_file(path)` | 把文件作为文件卡片发到对话；相对路径以当前工作目录为准。页面只读得到 Hob 自己的目录和任务工作目录，范围外的文件先复制到 `assistants/<id>/files/sent/` 再发；密钥类文件照样拒绝 |
 | `generate_image(prompt, size?, refs?)` | 配置图像生成且助手能力开启时可直接生图，结果自动显示在对话 |
-| `show_page(title, summary, html)` | 助手写正文 HTML 片段，Hob 套上自带样式（亮暗跟随）和离线 CSP 存为单页，发页面卡后结束本轮；对话生成时通过实时事件展示草稿；通用设置可关闭 |
+| `show_page(title, summary, html)` | 助手写正文 HTML 片段，Hob 套上自带样式（亮暗跟随）和离线 CSP 存为单页，发页面卡后结束本轮；对话生成时通过实时事件展示草稿（助手话题带 `topicId`）；群会话不注册；通用设置可关闭 |
+| `search_history(query, ...)` | 检索单聊/主对话、群/群话题和助手话题（`ConversationRef` 为 `topic`）的历史消息 |
 | `web_search(query, depth?, max?)` / `web_fetch(url, raw?)` | 已启用联网搜索时可直接搜索或读取网页，搜索服务商按设置的优先级使用 |
 
 - 事件消息（任务结束、定时结果、别的助手回复、审批答案）以用户角色进入 Router 上下文，但前缀固定的标记 `[hob-event]`，**不渲染成用户气泡**。
-- 事件那一轮可以不说话：模型最后一段回 `NO_REPLY`（`shared/no-reply.ts`），这一轮写的字一段都不给用户看，卡片、文件、提示行照常。确认语和开场白多半写在调工具之前，所以事件那一轮的文字不边写边推，到这一轮结束、或者用户插话进来（模型读到用户消息）时才出；单聊刷新后由 `walk` 按同样的分界推导，群里由 `GroupManager.settleEventTurn` 写进时间线。什么时候回 `NO_REPLY` 由提示词讲、模型判断；这个词本身任何一轮都不显示。
+- 事件那一轮可以不说话：模型最后一段回 `NO_REPLY`（`shared/no-reply.ts`），这一轮写的字一段都不给用户看，卡片、文件、提示行照常。确认语和开场白多半写在调工具之前，所以事件那一轮的文字不边写边推，到这一轮结束、或者用户插话进来（模型读到用户消息）时才出；单聊/助手话题刷新后由 `walk` 按同样的分界推导，群里由 `GroupManager.settleEventTurn` 写进时间线。什么时候回 `NO_REPLY` 由提示词讲、模型判断；这个词本身任何一轮都不显示。
 - 对话按“同一次回复”分组：组内条目贴着，组间拉开。事件之后的第一条带 `lead`（由会话条目推导，实时推送的条目算法相同）；任务提问和文件先交给助手，助手决定如何呈现。
 - 出卡片的工具（`start_job` / `ask_user` / `send_card` / `message_assistant` / `message_group`）的工具结果带 `terminate: true`：pi 在一批工具结果全部 terminate 时停止本批之后的模型请求，所以出了交互卡片这一轮就结构上结束，模型不会再补一句“卡在上面了”。展示卡片的 `send_card` 不结束本轮；同一批里混了别的工具（如 `set_rule`）就不提前结束，这是 pi 的规则。`create_assistant` 出的助手卡不结束本轮：建好之后还要说一句建了什么。
-- 所有助手的单聊都有建助手、建群、查看助手、查看群、overview、转交助手和交给群的工具；主助手能管理其他助手、群和话题，普通助手只能用 update_assistant 改自己的名字、职责和详细职责。群会话工具名单保持现状。每次成功修改资料或群，按原有规则在对话和群里落提示。
+- 所有助手的单聊和助手话题都有建助手、建群、查看助手、查看群、overview、转交助手和交给群的工具；主助手能管理其他助手、群和话题，普通助手只能用 update_assistant 改自己的名字、职责和详细职责。群会话工具名单保持现状。每次成功修改资料或群，按原有规则在对话和群里落提示。
 - Router 正在回复时你又发消息 → `steer`；Router 空闲时来事件 → 直接开新一轮；忙时来事件 → 排在 Hob 自己的队列里，等这一轮结束再送（不交给引擎的 `followUp` 队列：那样正文在入队时就定死了）。
   - 事件的正文和「现在」那一块在真正送进会话时才生成。任务的事件（结果、提问、超时提醒）带任务的轮次：送的时候任务已经进了下一轮，就只说一句「第 N 轮的结果已经被第 N+1 轮取代，现在：……」；同一个任务排着好几条，只送最新一条。群会话同理，正文在那一轮开始时才取。
   - 排着的事件算这个会话在忙：完成通知、释放会话都等它们送完。点停止、看门狗叫停时先不送，停下来以后照常送；会话挂死被丢掉时，排着的事件换到重新打开的会话里送。
@@ -215,8 +236,9 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 ## 委派给其他助手
 
-- 助手之间以发起方为中心记录委派关系：任何助手都能直接转给别的助手或群，委派结果回到发起方；转交记录存入 `assistants/hob/delegations.json`，旧数据里的 `from: "hob"` 照常读取。目标对话立即显示转来消息，目标忙时排队处理；仅转交回合创建的任务关联到委派。Router 审批记在委派记录上，Worker 提问先交给目标助手处理。
-- 委派卡内的审批与目标对话引用同一审批，答复只提交一次。目标回合和所有关联任务结束且没有待答审批后，服务端同步写入 `reportedAt`，再向发起方推一次包含回复和任务报告的事件。转交回合调用 `hand_back` 时委派标为 `returned`、记录退回原因并回流发起方；不额外生成转来消息。用户直接找普通助手时，`hand_back` 把原话转给 Hob。重启时没有在跑任务的未完成委派标为已中断，可从卡片重新转交。
+- 助手之间以发起方为中心记录委派关系：任何助手（含在助手话题内）都能直接转给别的助手或群，委派结果回到发起方的原会话（记在 `Delegation.fromTopicId` / `TopicHandover.fromTopicId`）；转交记录存入 `assistants/hob/delegations.json`，旧数据里的 `from: "hob"` 照常读取。
+- 别的助手转交默认落到目标助手的主对话，目标对话立即显示转来消息，目标忙时排队处理；仅转交回合创建的任务关联到委派。多话题目标助手在主对话处理转交回合时，若尚未在主对话派出进行中的关联任务或向用户发出待答提问，可用 `open_topic` 把这件转交挪进新话题或已有话题：`delegations.moveToTopic` 持久化 `toTopicId` 并清除主对话当前转交态，改为以 `router.relay` 在目标话题继续执行；后续任务和审批关联到该话题，最终结果从话题只向发起方回流一次。
+- Router 审批记在委派记录上，Worker 提问先交给目标助手处理。委派卡内的审批与目标对话引用同一审批，答复只提交一次。目标回合和所有关联任务结束且没有待答审批后，服务端同步写入 `reportedAt`，再向发起方推一次包含回复和任务报告的事件（发起方若是已关闭的助手话题，自动重开后再送）。转交回合调用 `hand_back` 时委派标为 `returned`、记录退回原因并回流发起方；不额外生成转来消息。用户直接找普通助手时，`hand_back` 把原话转给 Hob。重启时没有在跑任务的未完成委派标为已中断，可从卡片重新转交。
 
 ## 群
 
@@ -225,15 +247,24 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 - **成员**：一个或几个助手，收起的助手也能进群。同一位助手可以在几个群里，记忆全局共用，助手有自己的技能和规则，群也有自己的技能和规则；各群的对话分开。建群和改群都不接受空成员。
 - **话题和综合**：一个群里同时办几件事时，每件事开一个话题，各走各的。群自己的那条时间线叫「综合」，用户和群主都能在综合里开话题。
   - 话题就是挂在群下面的群：带 `parentId` 的 `Group`，存在 `groups/<tid>/`，id 也是 `g-` 开头。时间线、成员各自的会话（`aid@tid`）、轮到谁、任务和提问卡回到哪、已读、事件都复用群的机制。
-  - 话题的成员、群主、负责什么只在所属的群上存一份：`groups/<tid>/group.json` 只有 `id`、`parentId`、`name`、`createdAt`、`createdBy`、`closedAt`、`closeNote`，读的时候补上所属群的字段，群改了话题跟着变。
-  - 关了的话题不能再发消息，能重新打开；关闭时写的说明在话题卡上。群归档时话题一起搬进 `archive/groups/<gid>-<时间>/topics/`。话题不用归档，用关闭。
-  - **主助手交来的话题**：Hob 用 `message_group` 在群里开话题交给群主，话题上记着 `handover`（谁交的、什么时候）。转进去的第一条是 Hob 写的交接说明和附带文件，`forwardedFrom` 记着它来自 Hob，界面上方标「从和 Hob 的对话转来」。Hob 交来的话题关的时候要写结论（`close_topic` 没写报错），关了会送一条系统消息回 Hob 的对话：写了结论的带结论，用户在界面上没写结论关的说明这一点。先记下要送的话再送，送到了才标已送，重启补送没送到的，同一话题只送一次。
+  - 话题的成员、群主、负责什么只在所属的群上存一份：`groups/<tid>/group.json` 只写 `id`、`parentId`、`name`、`overrides`、`cwd`、`createdAt`、`createdBy`、`pinnedAt`、`closedAt`、`closeNote`、`handover`，读的时候由 `Store.group(id)` 补上所属群的字段并经 `layerOverrides` 叠出视图，群改了话题跟着变。
+  - 进行中的群话题支持置顶（`PATCH /api/groups/:id { pinned }` 写/清 `pinnedAt`，已关闭的话题拒绝置顶；关闭或重开时清除 `pinnedAt`）。二级页进行中话题按置顶时间降序排前，其余按最近活跃排。
+  - 关了的话题不能再发消息，能重新打开；关闭时暂停名下定时任务（见下文「定时」），关闭说明在话题卡上。群归档时话题一起搬进 `archive/groups/<gid>-<时间>/topics/`。话题不用归档，用关闭。
+  - **话题配置覆盖层（`server/src/topic-config.ts`，群话题和助手话题共用）**：
+    - 技能、长期记忆、补充提示词、群成员与群主（或助手的身份、能力开关与知识库绑定）由上级共用；规则、模型偏好、群话题的回应方式（`replyMode`）和定时任务归话题自己，以「上级默认值 + 话题覆盖层」叠加生效。上级修改时，未覆盖的话题自动跟随，覆盖过的不受影响。
+    - **规则层（`rule-overrides.json` + `effectiveRules`）**：`RuleOverrides` 记 `own`（本话题新增）、`changed`（覆盖上级某条规则的文字或 `mode`）和 `hidden`（本话题停用的上级规则）。合成顺序为未停用的上级规则（应用 `changed`）在前、`own` 在后；上级已删除规则在 `changed`/`hidden` 中的孤儿记录读取时忽略、写入时清理。支持单条恢复跟随（`resetTopicRule` 移除 `changed`/`hidden`）。话题内调 `set_rule` / `remove_rule` 默认写话题层，传 `scope: "group"` 或 `"assistant"` 才写回上级；提问卡（`ask_user`）带 `always` 的选项写进提卡的那一层（话题内写话题层，综合写群层，单聊/主对话写助手层）。系统提示词和任务提示词均使用当前会话合成后的规则。
+    - **模型层（`overrides.models` / `overrides.memberModels` + `server/src/models.ts`）**：成员层不再单设对话模型（`PATCH /api/groups/:id/members/:assistantId/models` 拒绝 `conversation`，`Store.saveGroup` 写入时自动清理老数据残留的 `memberModels[*].conversation`）。生效优先级：
+      - 群/群话题对话模型（四层）：话题对话模型（`overrides.models.conversation`）→ 群对话模型（`group.models.conversation`）→ 助手对话模型 → 全局对话模型（不经成员层）；
+      - 群/群话题成员任务模型（六层）：话题内该成员任务模型（`overrides.memberModels[aid].work`，`topicMember`）→ 群内该成员任务模型（`group.memberModels[aid].work`，`member`）→ 话题默认任务模型（`overrides.models.work`，`topic`）→ 群默认任务模型（`group.models.work`，`group`）→ 助手任务模型 → 全局任务模型；
+      - 助手话题模型（三层）：话题覆盖（`overrides.models[conversation|work]`）→ 助手自身模型 → 全局模型（`assistantTopicModelPick`）。各层传 `null` 删除对应覆盖键以恢复跟随。
+    - **不固化继承值与老数据迁移**：`Store.saveGroup` 存群话题时只写话题自身字段与 `overrides` 原值，绝不把读视图里叠出的继承 `replyMode`/`models`/`memberModels` 固化回文件，因此改话题名、置顶或开关话题不会产生多余覆盖。启动时 `Store.migrateTopicOverrides()` 为尚无 `overrides` 键的旧群话题做一次幂等迁移（顶层 `replyMode` 与父群不同才迁入 `overrides.replyMode`，相同或缺失写 `{}` 并移除顶层 `replyMode`）。
+  - **主助手或助手话题交来的话题**：助手用 `message_group` 在群里开话题交给群主，话题上记着 `handover`（谁交的、什么时候；若从助手话题发起还记 `fromTopicId`）。转进去的第一条是交接说明和附带文件，`forwardedFrom` 记着来源，界面上方标明转来出处。交来的话题关的时候要写结论（`close_topic` 没写报错），关了会送一条系统消息回发起方原会话（若原助手话题已关闭则先自动重开）：写了结论的带结论，用户在界面上没写结论关的说明这一点。先记下要送的话再送，送到了才标已送，重启补送没送到的，同一话题只送一次。
 - **待办（所有会话通用）**：每个会话（单聊、群的综合、每个话题）一份待办，`TodoItem { text, status }`，`status` 只有 `todo`、`doing`、`done`。存在单聊的 `assistants/<id>/todos.json` 和群（综合、话题）的 `groups/<gid>/todos.json`。待办只归助手，任务没有：交给后台任务的一步就是助手那份里的一项。只有模型调 `update_todos` 改，每次传完整的一份整份替换，同一份谁后写以谁为准；不跟任务状态联动、不自动开任务。
   - **每轮带给模型**：会话里有待办时，这一轮的用户消息里带上「手上的待办 k/n，多久以前更新」和每项做到哪儿（`now.ts`，跟【现在】走同一条路）；没有就不带。还有没做完的项、距上次更新已经好几轮时，后面再接一句「这份待办已经 n 轮没更新了……」；轮数从这个会话的记录里数（上次更新以后的用户消息条数），提醒过以后要再过 `TODO_REMINDER_ROUNDS` 轮才再说。系统提示词里没有这一段（它每轮一样，缓存才命中）。收起的待办不进上下文，所以聊多久也只有当前这一份。
   - **有头有尾**：当前这份遇到这几种情况就清空——传进来的每一项都是 `done`（工具返回「待办 n/n，都做完了，已经清掉。」）、传空列表而原来还有没做完的（「待办清掉了。」）、话题关了还有没做完的、手上没活了（见下一条）、用 `message_assistant` 把整件事转给别的助手而这份还有没做完的（「已经清掉」；没做完的那几项另写进发给接手的助手的内容里）。收起的那些**不再写进时间线、不进对话**：对话里只放用户需要看的东西，清单是助手自己的进度。`TodoArchiveWhy` 和 `kind: "todos"` 条目 只为读老数据保留，不再写入，界面不显示（`Items.tsx` 直接返回 `null`）。转交时没替接手的助手写它的 `todos.json`。老数据（只有清单的 `todos.json`）照常读成当前那份，更新时间取文件时间。
   - **手上没活就收起**：清单只在这一轮还有活的时候存在。查的时机是两个——每一轮结束时（`agent_settled`，用户那一轮、事件那一轮都算）和服务启动时（`main.ts` 里任务和转交都按中断处理过以后）；清空后用和 `update_todos` 清掉时同一条路告诉界面。这个会话里还有下面任意一样就留着：跑着、排着或等着的任务（`busyHere`，状态取 running / queued / waiting）；从这个会话发出、还没结束的转交（running 或 waiting）；交给群、话题还没关的（`message_group` 开出来的话题，关话题才有结论回来）；还在等用户回答的提问卡；群会话里别的成员还在这个会话里跑着一轮（`busyMembers`）。一轮因为调用模型失败结束时不清，留到下一轮；下一轮正常结束再按同样的规则查。逻辑在 `todos.ts` 的 `todosBusy` / `releaseIdleTodos` / `releaseIdleTodosAtStartup`。模型没把最后几项标成 done 也算手上没活：这一轮说完清单就收，下一件事重新列。不另起定时器，也没有按时间的兜底。
   - **界面只显示进度**：会话输入框上方一条（正在做的那项、`k/n`、细进度条，点开只读清单），左栏话题行一个 `k/n` 小标签。老数据里时间线那些 `kind: "todos"` 条目不再显示。以前的 `projects/` 老文件不读也不删，时间线里老的 `kind: "project"` 条目不显示。
-- **话题的接口**：`GET /api/groups` 返回群和话题（话题带 `parentId`，状态由 `closedAt` 和待办推出）；`POST /api/groups/:gid/topics {title}` 开话题；`POST /api/groups/:tid/close {note?}` 关闭；`POST /api/groups/:tid/reopen` 重新打开；关闭后 `POST /api/groups/:tid/messages` 回 400。`POST /api/groups` 和 `PATCH /api/groups/:id` 忽略传入的旧 `workflow` 字段并保留文件原值，话题只能改名。
+- **话题的接口**：`GET /api/groups` 返回群和话题（话题带 `parentId`、`overrides`、`pinnedAt` 和 `todos`）；`GET /api/groups/:id/profile` 返回合成规则、`hiddenRules`、`replyMode` 来源、群/话题默认模型与各成员生效模型；`POST /api/groups/:gid/topics {title, cwd?}` 开话题；`POST /api/groups/:tid/close {note?}` 关闭；`POST /api/groups/:tid/reopen` 重新打开；关闭后 `POST /api/groups/:tid/messages` 回 400。`POST /api/groups` 和 `PATCH /api/groups/:id` 忽略传入的旧 `workflow` 字段并保留文件原值；群话题支持改名、`pinned`、`replyMode`、`models` 和 `{ rule }`（写话题覆盖层），成员/群主/职责随父群不可单独改。
 - **每个成员一份群会话**：会话键是 `<assistantId>@<gid>`（话题是 `@<tid>`），单聊还是 `assistantId`。文件分别落在 `groups/<gid>/members/<aid>.jsonl` 和 `assistants/<aid>/router.jsonl`，上下文互不搅扰。群会话的工具包括做事和沟通用的工具，以及管理本群规则、定时和技能的工具；主助手在群里还可管理助手、群和话题，改其他助手的规则、定时和技能在单聊里做。展示页面按助手存，进群要另做，先不给（`show_page`）。系统提示词把「一对一」那段换成群里的规矩，群主在综合里能开话题、多一段开话题的说明。话题会话在群那段后面接一句「这里是群「…」的话题「…」」，群名写所属的群。云桌面一个助手只有一个屏幕，单聊和它的群会话共用一个。
 - **卡片和结果都留在群里**：`start_job`、`ask_user`、`send_card`、`send_file`、`generate_image` 的卡片进群的时间线（发言人是这个成员），任务卡、提问卡和助手卡带 `groupId`；插件卡也记录调起它的成员。任务结果、任务提问、超时提醒、沉淀结果作为事件送进派它的成员在这个群里的会话，由它在群里说，回复里 @ 了别人照常接力。审批答案和助手卡答案也回到群会话。群归档了、或者成员已经被移出，卡片和事件落回单聊，不报错。群里派的任务带的是这一轮的来由（见下面「交接」）。
 - **谁说话由代码定**：用户的消息 @ 了谁、引用谁的消息，就轮到谁；都没有就轮到群主。成员的回复里 @ 了别的成员，接着轮到他们（被 @ 的本人不算）。没轮到的成员不调模型。同一成员同时被叫两次就排队；排到时它上次之后已经没有新条目（前面那一轮已经带上了要给的），这一轮就不跑、不调模型。一条用户消息引出的助手回合超过 20 个就停，时间线里留一行「群里接力太多次，先停在这里」，并给群主发一个事件。事件送进群会话时也算新的一串回合。
@@ -241,7 +272,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 - **一轮的输入**：这个群时间线里它上次说完以后的条目，按「名字：内容」一行行列出，最后是叫到它的那条；卡片写成一句事实。给到哪一条记在 `state.json` 的 `seen`（只调了工具没说话的回合也不重复给）。单聊那套转交接管和「过期待答提问」不跑（那是单聊的）。
 - **交接**：一件事从一个会话交给下一个会话（定时 → 综合 → 话题 → 任务）时，带什么、归谁、给对方看什么，各只有一处定义：
   - **来由**：群里的时间线仍记录用户消息和定时到点记录，供群内轮转使用；交接工具不再从时间线或 Router 推测来由。定时到点记录的全文仍记在记录的 `request` 上，界面不显示。交接内容只来自调用工具时助手填写的 `note` 和显式传入的 `files`。
-  - **出处**：任务和提问卡属于开它的会话（`groupId`，没有就是单聊），结果回到那里。给模型看的地方，不是这个会话开的都写明在哪（`origin.ts` 的 `sessionOrigin`：单聊、综合、话题「…」、群「…」）。每条消息前的【现在】只在「进行中」「等用户选」「最近结束」里列这个会话自己的，别处的另起「别处进行中」「别处等用户选」两行，范围和它管得了的任务一致（群和话题里是同一个群，单聊里是全部）。`check_job`、`reply_job`、`stop_job` 碰到别处开的任务，返回和停止原因里带出处。
+  - **出处**：任务和提问卡属于开它的会话（`Place`：`groupId` 或 `topicId`，都没有就是单聊/主对话），结果回到那里。给模型看的地方，不是这个会话开的都写明在哪（`origin.ts` 的 `sessionOrigin`：单聊、主对话、综合、话题「…」、群「…」、群「…」的话题「…」）。每条消息前的【现在】只在「进行中」「等用户选」「最近结束」里列这个会话自己的，别处的另起「别处进行中」「别处等用户选」两行，范围和它管得了的任务一致（群和话题里是同一个群，单聊/主对话和助手话题里是全部）。`check_job`、`reply_job`、`stop_job` 碰到别处开的任务，返回和停止原因里带出处。
   - **原样的事实**：给模型看的任务过程（`jobProcessLines`）用命令原文，不用界面的摘要（`commandSummary` 会删掉开头的 `cd`）。指定了 `cwd` 的任务，提示词里同时写指定的目录和任务自己的目录。
   - **交接时带什么**：每个交接工具都把助手写的交接说明和显式附件交给下一处，不自动附带用户消息、引用、最近对话或当前轮的附件。`note` 必填且不能为空，说明里按需写清：要办成什么、背景、用户的要求（引用用户原话）、先问用户的事。
 
@@ -250,7 +281,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
     | `start_job` | 必填 `note` | 只有 `files` 参数 |
     | `message_assistant` | 必填 `note` | 只有 `files` 参数 |
     | `message_group` | 必填 `note` | 只有 `files` 参数 |
-    | 群主 `open_topic` | 必填 `note` | 只有 `files` 参数 |
+    | 群主 / 多话题助手主对话 `open_topic` | 必填 `note` | 只有 `files` 参数 |
 
     以后新加的交接点照这一节办。
 - **条目**：`GroupItem` 在 `Item` 上加发言人，id 是 `g-<序号>`（按群递增）；流式时先写一条 `streaming` 的条目，说完按同一个 id 再写一行完整正文，读的时候后者覆盖前者；卡片状态变了也按同一个 id 再写一行。进程重启时看到的 `streaming` 条目不续，收尾后补一行「服务重启，这一轮中断了」。
@@ -262,8 +293,8 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 - 每个 local Job 一个独立 pi 会话，cwd 默认 `HOB_HOME/assistants/<助手id>/jobs/<jobId>/work`（启动时建好；`start_job` 显式给了 cwd 才用给的）。产出文件约定放在这个目录，读可以读任何地方；工作目录是约定，不是强制边界，v1 不拦截命令和文件写入。要给用户看的文件用 `report` 的 files 交回（落盘后 `/api/files` 能读）。
 - 工具：任务没有展示页面工具，结果写成 report 的 Markdown，必要的产物文件放进 files，怎么展示给用户由助手决定；启用联网搜索时有 `web_search`、`web_fetch`；pi 内置 `read, bash, edit, write, grep, find, ls`（内置工具自带截断并把完整输出写进临时文件 = Spill），加 Hob 的 `report(outcome, result, files?)`、`ask_user(title, detail?, options[])`（阻塞等助手回复，助手自行回答或询问用户后用 `reply_job` 回复）；云桌面开启时还有整屏 `desktop_screenshot` 和 `desktop_action`；主助手的任务（定时就是它）另有只读的 `overview(sinceHours = 24)`，用来写早报/汇总；配了图像生成且该助手开着图像生成时再加 `generate_image(prompt, size?, refs?)`（见下文“图像生成”）。
-- 系统提示词：任务身份和目录、交付与如实报告、用户信息、全局「一律照做」规则、全局和助手的执行前确认事项、记忆；确认事项通过 `ask_user` 询问，结果通过 `report` 提交。
-- 模型：设置 → 模型里的任务执行模型（没选就退到对话模型，还没有就用模型列表里第一个可用的，思考 `high`）。
+- 系统提示词：任务身份和目录、交付与如实报告、用户信息、当前会话生效的规则（全局规则 + 所属群/群话题或助手/助手话题合成后的规则）、记忆；确认事项通过 `ask_user` 询问，结果通过 `report` 提交。
+- 模型：按任务所属 `Place` 经 `assistantForPlace` 解析生效的任务模型（群话题走六层、助手话题走三层，没选则退到默认任务/对话模型，还没有就用模型列表里第一个可用的，思考 `high`）。
 - 并发：同时最多 `settings.work.maxJobs`（默认 2）个任务，多的排队（状态 `queued`），改设置立即生效。
 - 预计用时：派任务时可由助手估计，未填和续做均为 10 分钟；定时任务取最近最多 5 次已完成用时的中位数，没记录则为 10 分钟。从本轮开始运行计时，任务等待助手回答不计入；达到预计时间先把提醒送进任务会话，让任务整理并用 `report` 交结果；达到预计的 2、4、8……倍时才通知所属助手。通知附最近 10 条过程，不附指令。
 - 任务用 `ask_user` 提问后，问题送到所属助手的会话；助手收到这条提问的那一轮（或之后的某一轮）结束时，如果没有用 `reply_job` 接住，也没有留下 Router 的用户确认或登录卡，就把任务结束为 `stuck`，原因是「提问没有得到答复：问题」。提问卡标为 `expired`，结束事件照常送回助手。助手转问用户时任务继续等；用户答卡后下一轮助手仍未接住，照同一规则结束。单聊、群会话和转交给别的助手的任务都按任务实际回流的会话判断；问题没送到会话时直接结束为受阻，并写清投递失败。
@@ -273,6 +304,17 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 - Watchdog：
   - 一轮结束没 report → 自动追问一次，再不报 → `stuck`（"没交代结果"）；
   - 进程重启时还在 running/queued/waiting 的 Job → `failed`（"Hob 重启，任务中断"）。
+
+## 定时（`server/src/routines.ts`）
+
+- **归属与到点投递**：每个 `Routine` 归属于创建它的会话——`groupId` 指向群的综合或群话题，`topicId` 指向助手话题，两者不同时存在，都没填则归助手主对话/单聊。
+  - 单聊/主对话定时到点先给所属助手主对话送事件；带 `topicId` 的定时到点直接送进对应助手话题（在话题里落定时提示行并触发话题回合），任务结果回到该话题。
+  - 群和群话题定时由群主负责，到点在目标综合或群话题留下记录并交给群主处理（不再将已关闭话题的定时改发综合），检查脚本的 `notify` 输出直接发送；群主变化时定时跟随变更。
+  - 个人定时（含助手话题）创建后不可更改归属；群定时只能在同一个群的综合与未关闭话题之间移动。`update_routine` / `delete_routine` 返回中写明各定时所在会话。
+- **话题关闭暂停与重开恢复**：
+  - 群话题或助手话题关闭时，名下启用中的定时自动暂停（`active: false`，写 `pausedBy: "topicClosed"`）；用户自己手动暂停的定时不写 `pausedBy`。
+  - 话题重新打开时，只恢复 `!active && pausedBy === "topicClosed"` 的定时，不覆盖用户手动暂停的项；若用户在话题关闭期间显式修改 `active: false`，会清掉 `pausedBy` 使其重开时不再自动恢复。重开恢复时若所有执行时间均已过去，按 `stopReason: "finished"` 停止。
+  - 话题关闭期间到点直接跳过，且拒绝新建、手动启用（`active: true`）或立即运行（`runNow`）。
 
 ## 记忆（长期记忆）
 
@@ -444,13 +486,15 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 端到端测试（`server/test/fill-login-e2e.test.ts`）不需要真的云桌面：云桌面的地址和令牌本来就来自部署环境变量 `HOB_DESKTOP_URL` / `HOB_DESKTOP_TOKEN`（见 `DesktopService`），测试把它们指向 `server/test/fixtures/fake-desktopd.mjs`——一个只实现 desktopd 的 `/api/health`、`/api/events`、`/api/screens/:id/browser/start` 和 `/cdp/:id` WebSocket 转发的小服务，`/cdp/:id` 原样转给本机 Chrome 的 `--remote-debugging-port`。假网站在 `fake-sites.mjs`（一步登录、两步登录、注册、改密码、仿冒页、几个没存账号的站、只有第三方登录按钮的页、登录后出验证码的页），Chrome 用 `--host-resolver-rules` 把这几个主机名指到它；假密码管理插件在 `credentials-fixture.mjs`（密码库是一个 JSON 文件，`HOB_FAKE_FAIL_FILE` 指向的文件内容决定哪一步报错，跑着的时候能切换）。本机找不到 Chrome（也没设 `HOB_TEST_CHROME`）时整组跳过。
 
 
+## 云桌面
+
 可选的 desktopd v2 是独立容器，通过地址和 Bearer 令牌连接。每个助手按 `desktopProfile(assistantId)` 使用独立屏幕、窗口和 Chromium profile。屏幕按需启动，空闲回收后保留浏览器数据；有观看者或 CDP 连接时不回收。助手和任务用 `playwright-cli` 操作所属屏幕的浏览器；Hob 在引擎的 `bin` 写入启动器，并在每次 bash 执行时注入会话独立的本机转发地址和短期凭据。每个会话有独立的 CLI 缓存，即使命令显式指定相同的 `-s` 名称也不会串；会话结束时关闭其 CLI 守护进程。转发入口只监听 127.0.0.1，云桌面令牌留在 Hob 内；用户接管时拒绝新连接并断开已有连接，同一屏幕同时只给一个任务使用，助手遇到任务占用时提示任务名。任务结束或助手会话释放时断开。CLI 的官方技能从 `playwright-core` 原样加载。Hob 自己连当前页面（填写登录、新密码）时，「当前显示的标签页」按 `document.hasFocus()` 的那个、再按 `visibilityState` 是 `visible` 的那个、最后才是列表里的最后一个来取（`currentPage`）：Playwright 列出页面的顺序和 Chrome `Target.getTargets` 的顺序都不可靠，标签页一多就不能拿位置当当前页面。headless Chrome 里所有标签页都报 `visible`、`hasFocus` 也不稳定，所以端到端测试的浏览器里始终只留一个标签页。
 
 登录态是跨屏幕共享的。desktopd 在 `/data/shared-login/cookies.json` 保存公共 cookie 快照，在 `/data/shared-login/state.json` 记每个 profile 是否完成首次迁移；每个 profile 启动时通过 CDP 合并旧 profile 的 cookie 并导入公共快照。每个带调试口的浏览器每 5 秒检查 cookie 变化，只把新增、变更和退出登录的 cookie 合进公共快照，再推给其他开着的浏览器；推送后刷新同一网站的页面，同一浏览器同一网站 60 秒最多刷新 3 次，浏览器正被任务或助手使用时延后到空闲再刷。localStorage、IndexedDB 和已保存密码不复制；依赖这些状态的网站由用户在桌面上完成登录。多个助手仍可同时操作各自屏幕，同一网站是否因新登录使旧会话失效由网站决定。
 
-接管状态按屏幕隔离。Hob 监听 desktopd 的 `/api/events`，断线时清空快照并退避重连，屏幕变化经 Hob SSE 推送；`GET /api/desktop/screens` 提供快照及助手到屏幕的映射，`POST /api/desktop/screens/:id/start` 只允许已存在助手的屏幕。VNC 经登录保护的 `/api/desktop/vnc?screen=…&client=…` 代理；只看时过滤键鼠输入。Hob 每次请求把设置里的 IANA 时区通过请求头传给 desktopd，之后新起的屏幕和浏览器用这个时区，语言照 `DESKTOP_LANG`。
+接管状态按屏幕隔离。Hob 监听 desktopd 的 `/api/events`，断线时清空快照并退避重连，屏幕变化经 Hob SSE 推送；服务端在 `DesktopToolSession` 占用或释放屏幕时按 `Place` 追踪屏幕使用者 `DesktopScreenUser { assistantId, jobId?, place }`（`desktopScreenUsers`），随 `GET /api/desktop/screens`（返回 `screens`、`profiles`、`users`）及 `desktop-screens` SSE 事件推送；`POST /api/desktop/screens/:id/start` 只允许已存在助手的屏幕。VNC 经登录保护的 `/api/desktop/vnc?screen=…&client=…` 代理；只看时过滤键鼠输入。Hob 每次请求把设置里的 IANA 时区通过请求头传给 desktopd，之后新起的屏幕和浏览器用这个时区，语言照 `DESKTOP_LANG`。
 
-右栏仅在当前助手的屏幕运行时显示桌面小屏，否则显示任务命令行。普通接管和登录卡接管都只改变输入互斥状态，浏览器和原有页面继续运行，用户直接在助手的浏览器里登录；用户点“好了”或交还时，Hob 同步一次 cookie 并推给其他开着的浏览器。浏览器启动参数关闭自动化标记、统一系统信息和 WebGL 信息，并禁止 WebRTC 使用非代理 UDP；不改 `navigator`、不伪造指纹。
+右栏由 `panelDesk`（`web/src/panel-stack.ts`）按当前会话（`Place`）决定云桌面呈现状态（`active` / `elsewhere` / `idle` / `off`）与自动展开列表（`activeWatch`）：仅当屏幕正在运行且当前使用者匹配本会话（`active`）时才内嵌小屏并自动展开（群综合汇总本群及全部话题，多话题助手主对话汇总主对话及全部助手话题，群话题与助手话题仅匹配自身 `Place`）；屏幕被其他会话占用时（`elsewhere`）不自动展开，由 `desktopUserWhere` 显示「「…」正在用」；已接入但没人用（`idle`）显示空闲；未接入（`off`）不显示。普通接管和登录卡接管都只改变输入互斥状态，浏览器和原有页面继续运行，用户直接在助手的浏览器里登录；用户点“好了”或交还时，Hob 同步一次 cookie 并推给其他开着的浏览器。浏览器启动参数关闭自动化标记、统一系统信息和 WebGL 信息，并禁止 WebRTC 使用非代理 UDP；不改 `navigator`、不伪造指纹。
 
 网页截图由 `playwright-cli screenshot` 保存为文件，助手用 `read` 查看、用 `send_file` 发送，任务通过 `report.files` 交回。任务的整屏 `desktop_screenshot` 仍保存到任务工作目录的 `screenshots/`，最多保留最近 20 张；旧助手截图随数据迁移保留。官方 CLI 的 `kill-all` 会按进程名终止其他会话的守护进程，Hob 启动器拒绝该命令并提示使用 `close` / `close-all`。
 
@@ -503,7 +547,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 
 - 登录：`POST /api/login {password}` → HttpOnly cookie（签名随机 token，存内存 + `config.json` 里的 secret）。其余 `/api/*` 都要 cookie。
 - REST（详见 `shared/types.ts` 的 `Api` 注释）：
-  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、在跑和最近的任务、定时、未答审批、设置（带 revision）、版本检查结果（`update`，有结果时返回）
+  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、全部助手话题摘要（`assistantTopics`）、在跑和最近的任务、定时、未答审批、设置（带 revision）、版本检查结果（`update`，有结果时返回）
   - `GET /api/settings` / `PUT /api/settings {revision, patch}` → 读 / 按节合并写设置
   - `GET /api/providers` → 已配的服务商、引擎自带的服务商目录、整份设置，以及每个已配置服务商的模型和思考档（`models`，键是服务商 id；内置服务商列出引擎目录里的全部模型）；`POST /api/providers/test` 测试连接（内置服务商发起少量模型调用，兼容接口访问模型列表，失败不保存配置）
   - `PUT /api/models/thinking {ref, levels}` → 存一个模型的自定义思考档（`null` = 恢复默认），返回新 revision 的整份设置和这个模型现在的思考档、`PUT /api/providers/:id`（新建或改，Key 可选留空沿用）、`DELETE /api/providers/:id`、`POST /api/providers/discover {api, baseUrl, apiKey?, id?}`（从兼容接口拉模型列表）、`GET /api/providers/import`（本机能导入的服务商，不带 Key）、`POST /api/providers/import {ids}`（导入所选，同 id 覆盖）
@@ -513,21 +557,24 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
   - `POST /api/assistants/:id/messages {text, quote?, files?}`、`POST /api/assistants/:id/stop`、`POST /api/assistants/:id/read`
-  - `GET /api/groups`（群和话题，话题带 `parentId` 和 `todos`）、`POST /api/groups {name, purpose, ownerId, members}`、`PATCH /api/groups/:id`（群忽略旧 `workflow` 字段，话题只能改名）、`POST /api/groups/:id/archive`（群按组归，话题用关闭）、`POST /api/groups/:gid/topics {title}`（开话题）、`POST /api/groups/:tid/close {note?}`、`POST /api/groups/:tid/reopen`
+  - `PATCH /api/assistants/:id`（助手设置或 `{ rule: { id?, text?, mode? } }` 保存规则；不传 id 时必须提供文字和模式并新增，返回规则；忽略 `topics` 字段）、`DELETE /api/assistants/:id/rules/:rid`、`POST /api/assistants/:id/topic-mode`（单向开启多话题模式，无损且幂等，主助手回 400）、`POST /api/assistants/:id/archive`（归档助手，见上文）
+  - 助手话题接口：`GET /api/assistants/:id/topics`（列表）、`POST /api/assistants/:id/topics {title?, cwd?, text?, quote?, files?}`（创建话题；带 `text` 或 `files` 同时发首条消息，失败回滚目录；未传 `title` 自动起名）、`PATCH /api/assistants/:id/topics/:tid {title}`（改名并清 `nameAuto`；传 `cwd` 回 400）、`POST /api/assistants/:id/topics/:tid/close {note?}`、`POST /api/assistants/:id/topics/:tid/reopen`
+  - 助手话题会话与配置：`GET /api/assistants/:id/topics/:tid/items?before&limit`、`POST /api/assistants/:id/topics/:tid/messages {text, quote?, files?}`（已关闭回 400）、`POST /api/assistants/:id/topics/:tid/read`、`POST /api/assistants/:id/topics/:tid/stop`、`GET /api/assistants/:id/topics/:tid/config`（`TopicConfigView`）、`PATCH /api/assistants/:id/topics/:tid/config {models?}`（更新模型覆盖，`null` 恢复跟随）、`POST /api/assistants/:id/topics/:tid/rules`、`PUT /api/assistants/:id/topics/:tid/rules/:rid`、`DELETE /api/assistants/:id/topics/:tid/rules/:rid`、`POST /api/assistants/:id/topics/:tid/rules/:rid/reset`
+  - `GET /api/groups`（群和话题，话题带 `parentId`、`overrides`、`pinnedAt` 和 `todos`）、`GET /api/groups/:id/profile`（`GroupProfile`：合成规则、`hiddenRules`、`replyMode` 来源、群/话题默认模型与各成员模型）、`POST /api/groups {name, purpose, ownerId, members, cwd?}`、`PATCH /api/groups/:id`（群忽略旧 `workflow` 字段；群话题支持改名、`pinned`、`replyMode`、`models` 和 `{ rule }` 写入话题覆盖层）、`PATCH /api/groups/:id/members/:assistantId/models {work}`（仅接受 `work`，`null` 恢复跟随，传 `conversation` 回 400）、`DELETE /api/groups/:id/rules/:rid`、`POST /api/groups/:id/rules/:rid/reset`（群话题单条规则恢复跟随）、`POST /api/groups/:id/archive`（群按组归，话题用关闭）、`POST /api/groups/:gid/topics {title, cwd?}`（开话题）、`POST /api/groups/:tid/close {note?}`、`POST /api/groups/:tid/reopen`
   - `GET /api/groups/:id/items?before&limit` → 群条目 + 引用到的 approvals/jobs；`POST /api/groups/:id/messages`、`POST /api/groups/:id/read`、`POST /api/groups/:id/stop`（停群里正在说话的成员，不停任务）
-  - `PATCH /api/assistants/:id`（助手设置或 `{ rule: { id?, text?, mode? } }` 保存规则；不传 id 时必须提供文字和模式并新增，返回规则）、`DELETE /api/assistants/:id/rules/:rid`、`POST /api/assistants/:id/archive`（归档助手，见上文）
   - `GET /api/memory`、`PUT /api/memory {revision, provider}`、`PUT /api/memory/lore {baseUrl, token?}`、`POST /api/memory/lore-test`（记忆提供者与 Lore 连接，见上文“记忆”）、`GET /api/memory/lore/import`（本机的 Lore 连接，不带 Token）、`POST /api/memory/lore/import`（导进 Hob 自己的配置）
   - `GET /api/image`（Key 配没配）、`PUT /api/image {revision, image, apiKey?}`（Key 只写不读，留空 = 沿用）、`POST /api/image/test {image?, apiKey?}`（试一张，失败也是 200，原因在 `error` 里）
   - `GET /api/push`（publicKey + 已订阅设备）、`POST /api/push/subscribe {subscription, label}`、`DELETE /api/push/subscribe {endpoint}`、`POST /api/push/test {endpoint?}`（推送，见下文“PWA 与推送”）
-  - `POST /api/visibility {clientId, visible}`（页面在不在前台，只存内存；SSE 断开即视为不可见）
+  - `POST /api/visibility {clientId, visible, target?}`（页面是否在前台及当前查看的会话 `"assistant:<id>"` / `"group:<id>"` / `"topic:<tid>"` / `null`，只存内存；SSE 断开即视为不可见）
   - `POST /api/delegations/:id/retry`（重新转交已中断的委派）
-  - `POST /api/approvals/:id {key}` 或 `{text}`（用户没选选项、自己写的一段，空白和超长都是 400）、`POST /api/drafts/:id/create`、`POST /api/drafts/:id/dismiss`
-  - `POST /api/routines`、`PATCH /api/routines/:id`、`DELETE /api/routines/:id`、`POST /api/routines/:id/run`
+  - `POST /api/approvals/:id {key}` 或 `{text}`（用户没选选项、自己写的一段，空白和超长都是 400）、`POST /api/drafts/:id/create {topics?}`（可选覆盖草稿的多话题开关）、`POST /api/drafts/:id/dismiss`
+  - `POST /api/routines`（支持 `groupId` / `topicId` 指定归属会话）、`PATCH /api/routines/:id`、`DELETE /api/routines/:id`、`POST /api/routines/:id/run`
   - `POST /api/jobs/:id/reply {text}`、`POST /api/jobs/:id/stop`
-  - `GET /api/jobs?assistantId&status&before&limit` → 工作记录：全部任务，新的在前，分页
+  - `GET /api/jobs?assistantId&groupId&topicId&exact&status&before&limit` → 工作记录：全部任务，新的在前，分页；`groupId` 默认含该群及其话题，带 `exact=1|true` 仅精确匹配该群/话题，`topicId` 精确筛选助手话题任务
+  - `GET /api/knowledge?origin&collection&kind&assistantId&groupId&topicId&exact&q&before&limit` → 知识库列表；支持与 `/api/jobs` 同口径的 `groupId` / `topicId` / `exact` 筛选
   - `GET /api/jobs/:id/transcript` → 任务过程（步骤列表，从 `worker.jsonl` 推导；单步输出超 20KB 时截断并给出全文路径）
-  - `POST /api/uploads?assistantId=`（multipart，存进这个助手的 `files/uploads/`，没传或助手不存在就 400/404）；`POST /api/uploads?groupId=` 存进 `groups/<gid>/files/uploads/`；`GET /api/files?path=`（数据目录里除 `system/` 和 `backup-*` 以外的文件，以及任务工作目录里的文件；符号链接解不开的不给，`.bak`、密钥类文件不给）
-- 实时：`GET /api/events`（SSE）。`page-live` 推送对话页面的完整草稿及完成或失败状态；进行中的草稿在内存中，可从对话条目接口恢复。`router-activity` 推送助手对话的思考 / 工具状态和中文标签（思考中的标签是模型当前思考的最后一段，压成一行，节流约 200ms；不进对话记录），文字开始输出、停止或结束时清空；当前状态只存内存，并随助手概要返回供刷新和重连恢复。Worker 的 `activity` 仍是独立的任务活动流。事件类型见 `HobEvent`。前端断线重连后重新拉 bootstrap 和当前对话（EventSource 自带重连）。连接上带 `clientId`，断开时服务端把这台客户端的可见性一起清掉。
+  - `POST /api/uploads?assistantId=`（multipart，存进这个助手的 `files/uploads/`，没传或助手不存在就 400/404）；`POST /api/uploads?groupId=` 存进 `groups/<gid>/files/uploads/`；`GET /api/files?path=`（数据目录里除 `system/` 和 `backup-*` 以外的文件，以及任务工作目录和绑定工作目录里的文件；符号链接解不开的不给，`.bak`、密钥类文件不给）
+- 实时：`GET /api/events`（SSE）。`assistant_topic` 推送助手话题新建或摘要变化；`item`、`delta`、`router-activity`、`page-live` 均带可选 `topicId` 以区分主对话与助手话题；`desktop-screens` 同时携带各屏幕的 `users`（`DesktopScreenUser[]`）。`page-live` 推送对话页面的完整草稿及完成或失败状态；进行中的草稿在内存中，可从对话条目接口恢复。`router-activity` 推送助手对话的思考 / 工具状态和中文标签（思考中的标签是模型当前思考的最后一段，压成一行，节流约 200ms；不进对话记录），文字开始输出、停止或结束时清空；当前状态只存内存，并随助手概要和助手话题概要返回供刷新和重连恢复。Worker 的 `activity` 仍是独立的任务活动流。事件类型见 `HobEvent`。前端断线重连后重新拉 bootstrap 和当前对话（EventSource 自带重连）。连接上带 `clientId`，断开时服务端把这台客户端的可见性一起清掉。
 
 ## 国际化
 
@@ -540,15 +587,17 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 - 可安装：`web/public/manifest.webmanifest`（Hob，standalone）+ `web/public/icons/` 的图标（192 / 512 any、512 maskable、apple-touch-icon 180、favicon 32）。图标由 `node scripts/make-icons.mjs` 把 hob 像素火苗截图生成，出图提交进仓库。
 - Service worker（`web/public/sw.js`，手写，无依赖）：导航 network-first（断网回退缓存的 index.html），`/assets/*`、`/icons/*`、`/fonts/*` cache-first，`/api/*` 一律不拦不缓存。只在生产构建里注册（`web/src/pwa.ts`）。新版本装好不自动接管，页面提示「有新版本 · 刷新」，点了才 `skipWaiting`。
 - iOS：`env(safe-area-inset-*)` 给列表页、对话页输入框、全屏页头部留出安全区。
-- Web Push：`web-push`，VAPID 密钥首次用时生成，和订阅一起存 `HOB_HOME/system/push.json`（0600、原子写）；subject 是 `mailto:` + 设置 → 通知里填的邮箱，没填用 Hob 的项目主页（Apple 不认 `mailto:…@localhost`）。推送只来自助手：助手出审批（该助手开了“需要我回答或做完时通知我”）、助手回合把一件事做完或失败时发出；任务的提问、结束都只交给助手，不直接推给用户，任务的提问也不计入首页和助手头像的「等你确认」。标题是助手名，点开跳 `/?a=<助手id>`；群里提的问题跳群聊页 `/#/group/<gid>`。只要有一个可见的页面客户端就不推；推送服务回 404/410 或 Apple 的 `VapidPkHashMismatch`（订阅用的是旧密钥）的订阅自动删掉，其他失败写日志，「发送测试通知」如实显示原因；页面开推送时浏览器里现有订阅的公钥对不上，先退掉再重订。页面里不再用浏览器 `Notification` 提醒。
+- Web Push：`web-push`，VAPID 密钥首次用时生成，和订阅一起存 `HOB_HOME/system/push.json`（0600、原子写）；subject 是 `mailto:` + 设置 → 通知里填的邮箱，没填用 Hob 的项目主页（Apple 不认 `mailto:…@localhost`）。推送只来自助手：助手出审批（该助手开了“需要我回答或做完时通知我”）、助手回合把一件事做完或失败时发出；任务的提问、结束都只交给助手，不直接推给用户，任务的提问也不计入首页和助手头像的「等你确认」。标题是助手名，点开跳 `/?a=<助手id>`；助手话题跳 `/#/chat/<助手id>/topic/<话题id>`；群里提的问题跳群聊页 `/#/group/<gid>`。只有客户端正聚焦看着对应对话（或兼容未报 target 的旧客户端）才静默推送；推送服务回 404/410 或 Apple 的 `VapidPkHashMismatch`（订阅用的是旧密钥）的订阅自动删掉，其他失败写日志，「发送测试通知」如实显示原因；页面开推送时浏览器里现有订阅的公钥对不上，先退掉再重订。页面里不再用浏览器 `Notification` 提醒。
 
 ## 前端
 
 - 照 `docs/design/v2/index.html` 做（那是唯一的视觉真相源：CSS 变量、尺寸、组件都直接搬）。截图 `s1~s6.png` 是验收对照。
 - 头像：都是 Hob 的像素小火苗，换一种颜色、带一件职责道具（安全帽、放大镜、Wi-Fi…），数据和画法在 `shared/sprites.ts`，前端画成 SVG。sprite 记成「道具」或「道具:颜色」；库里没有贴合职责的道具时，AI 可以自己画一件：sprite 记成 `custom` 或 `custom:颜色`，画法存在 `Assistant.prop`（`{ art, pal, dx }`，格式和 PROPS 里的一项相同；校验在 `shared/sprites.ts` 的 `validateCustomProp`，前后端共用，最多 16 行 × 16 字符、最多 6 种颜色、不能动火苗的 o y e 和描边 k、不能盖住眼睛、至少 6 个像素），草稿同样能带一份；自画道具在头像选择器里排第一个，换成内置道具后画法保留、能换回来；建助手时模型按职责挑道具（道具表同时生成提示词里的那行说明），和已有助手撞了就自动换颜色（自画的图案各不相同，不算撞）；助手设置里可以换道具和颜色。
-- 桌面三栏：左栏助手（置顶大头像可按住拖动换位置，先后存助手的 pinOrder，下面是分组列表、收起的助手、底部设置）、中间对话、右栏（正在做 + 定时 / 定时编辑 / 助手设置，可收起）。设置是整页：桌面左侧分栏导航 + 右侧内容，手机先列表再进入。
+- 桌面三栏与多话题二级页：左栏首页（置顶大头像可按住拖动换位置，先后存助手的 `pinOrder`，下面是分组列表、收起的助手、底部设置）、中间对话、右栏（正在做 + 定时 / 定时编辑 / 规则 / 模型 / 助手与群设置，可收起）。多话题助手和群共用二级页交互（桌面左栏切为 `AssistantSidebar` / `GroupSidebar`，手机在列表页和对话页之间增加 `"topics"` 话题列表页 `MobileAssistantTopics` / `MobileTopics`），列出主对话/综合、进行中话题（群话题置顶的排前）和已关闭话题；多话题助手新建话题先进入空白输入页、发出首句才真正创建。首页列表不展开话题行，由 `web/src/home.ts` 把主对话与各话题的未读数、忙闲、待答审批和最近一条汇总到首页助手行（单会话助手行为不变）。助手设置页提供单向「对话方式」切换及确认框，草稿卡显示对话方式。
+- 路由（`web/src/route.ts`）：`#/chat/<aid>[/<右栏页>]`、`#/chat/<aid>/topic/<tid>[/<右栏页>]`、`#/group/<gid>[/<右栏页>]`、`#/settings[/<分栏>]`、`#/plugins[/<id|market|new>]`、`#/knowledge`、`#/stars`；右栏子页支持 `topicRules`、`topicModels` 等。
+- 右栏按当前会话呈现：群综合与多话题助手主对话汇总全部话题（标注话题名），在这里改设置改的是上级；群话题与助手话题右栏仅显示本话题的任务、定时、知识库产出（`exact` / `topicId`）、规则页（`topicRules`，展示跟随/改过/本话题及停用的上级规则并支持恢复跟随）、模型页（`topicModels`）和云桌面状态（`panelDesk`）。群右栏成员行显示头像忙闲圆点与生效的任务模型下拉框；成员详情页（`GroupMemberModels`）只编辑任务模型，对话模型为只读显示及来源提示。
 - 设置页：通用、服务商、模型、记忆、图像生成、联网搜索、技能、任务、消耗、通知、关于都是真页面；MCP 服务从插件页管理，旧的 `#/settings/mcp` 地址跳到 `#/plugins`。
-- 手机（宽 < 768px）：列表页（顶部在跑的任务行 + 助手）和对话页两级。
+- 手机（宽 < 768px）：列表页（顶部在跑的任务行 + 助手）、话题二级页（群与多话题助手）和对话页。
 - 浅色为主，深色按系统或设置切换（index.html 里的 `.dark` 变量）。
 - 不用 UI 组件库、不用 CSS 框架；React + 手写 CSS。
 

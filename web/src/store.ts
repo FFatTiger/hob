@@ -128,6 +128,14 @@ export interface GroupPrefs {
   pinOrder?: number;
 }
 
+interface ComposerDraft {
+  text: string;
+  quote: NonNullable<SendMessageBody["quote"]> | null;
+  attachments: Attachment[];
+}
+
+const EMPTY_COMPOSER: ComposerDraft = { text: "", quote: null, attachments: [] };
+
 export interface State {
   stars: StarredMessage[];
   starsError: string | null;
@@ -185,9 +193,7 @@ export interface State {
   query: string;
   homeFilter: "all" | "assistants" | "jobs" | "routines";
   homeOrder: "recent" | "custom";
-  quote: { itemId: string; text: string } | null;
-  text: string;
-  attachments: Attachment[]; // 输入框里待发的附件（选了就出现，后台在传）
+  composerDrafts: Map<string, ComposerDraft>; // 和发件箱共用会话键，只在当前页面保留
   pending: Record<string, PendingMessage[]>; // 发件箱：点了发送还没被服务端那条顶替的消息
   nonce: number; // 让输入框重新聚焦／重新量高度
   mobile: MobilePage;
@@ -358,9 +364,7 @@ function initial(): State {
     query: "",
     homeFilter: storedHomeFilter(),
     homeOrder: storedHomeOrder(),
-    quote: null,
-    text: "",
-    attachments: [],
+    composerDrafts: new Map(),
     pending: {},
     nonce: 0,
     mobile: "list",
@@ -382,7 +386,8 @@ function initial(): State {
     state.collapsed = ui.collapsed;
     state.mobile = ui.mobile;
     state.theme = ui.dark ? "dark" : "light";
-    if (ui.text) state.text = ui.text;
+    const key = pendingKeyOf(state);
+    if (key && ui.text) state.composerDrafts.set(key, { ...EMPTY_COMPOSER, text: ui.text });
   }
   const aParam = params.get("a");
   if (aParam) state.sel = aParam;
@@ -1132,7 +1137,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {} });
+  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, composerDrafts: new Map() });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1256,6 +1261,7 @@ export function applyEvent(ev: HobEvent) {
     case "assistant_removed":
       set((s) => ({
         assistants: s.assistants.filter((a) => a.id !== ev.id),
+        composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, ev.id),
         sel: s.sel === ev.id ? (s.assistants.find((a) => a.primary)?.id ?? null) : s.sel,
       }));
       break;
@@ -1347,9 +1353,10 @@ export function applyEvent(ev: HobEvent) {
       dropGroupPrefs(ev.id);
       set((s) => {
         const groups = s.groups.filter((g) => g.id !== ev.id);
-        if (s.gsel !== ev.id) return { groups };
+        const composerDrafts = updatedDrafts(s, EMPTY_COMPOSER, `group:${ev.id}`);
+        if (s.gsel !== ev.id) return { groups, composerDrafts };
         const primary = s.assistants.find((a) => a.primary)?.id ?? s.assistants[0]?.id ?? null;
-        return { groups, gsel: null, sel: primary ?? s.sel, mobile: "list" as const, panelStack: [] };
+        return { groups, composerDrafts, gsel: null, sel: primary ?? s.sel, mobile: "list" as const, panelStack: [] };
       });
       break;
     case "group-item": {
@@ -1632,7 +1639,6 @@ export async function selectGroup(id: string, nav = true, keepStack = false, for
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
     ...(s.gsel !== id && !keepStack ? { worklog: null } : {}),
     ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
-    quote: null,
   }));
   if (group && group.unread > 0 && !opensTopics) {
     set((s) => ({ groups: s.groups.map((x) => (x.id === id ? { ...x, unread: 0 } : x)) }));
@@ -1679,7 +1685,6 @@ export async function select(id: string, nav = true, keepStack = false) {
     panelStack: selectPanelStack(s.panelStack, s.gsel ?? s.sel, id, keepStack),
     ...(s.sel !== id && !keepStack ? { worklog: null } : {}),
     ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
-    quote: null,
   }));
   const a = state.assistants.find((x) => x.id === id);
   if (a && a.unread > 0) {
@@ -1837,13 +1842,27 @@ export async function loadProfile(id: string) {
 
 /* ---------------- 发消息 ---------------- */
 
-/** 推荐提问不跟着打字清：发出去时（send）才清，服务端也在新一轮开始时清。 */
-export function setText(text: string) {
-  set({ text });
+export function composerDraft(s: State, key = pendingKeyOf(s)): ComposerDraft {
+  if (!key) return EMPTY_COMPOSER;
+  return s.composerDrafts.get(key) ?? EMPTY_COMPOSER;
 }
 
-export function setQuote(quote: { itemId: string; text: string } | null) {
-  set({ quote, nonce: state.nonce + 1 });
+function updatedDrafts(s: State, patch: Partial<ComposerDraft>, key = pendingKeyOf(s)) {
+  if (!key) return s.composerDrafts;
+  const draft = { ...composerDraft(s, key), ...patch };
+  const drafts = new Map(s.composerDrafts);
+  if (draft.text || draft.quote || draft.attachments.length) drafts.set(key, draft);
+  else drafts.delete(key);
+  return drafts;
+}
+
+/** 推荐提问不跟着打字清：发出去时（send）才清，服务端也在新一轮开始时清。 */
+export function setText(text: string) {
+  set((s) => ({ composerDrafts: updatedDrafts(s, { text }) }));
+}
+
+export function setQuote(quote: ComposerDraft["quote"]) {
+  set((s) => ({ composerDrafts: updatedDrafts(s, { quote }), nonce: s.nonce + 1 }));
 }
 
 /* ---------------- 附件和发件箱 ---------------- */
@@ -1862,26 +1881,35 @@ export function localImage(path: string): string | undefined {
   return previews.get(path);
 }
 
-function patchAttachment(id: string, patch: Partial<Attachment>) {
+function patchAttachment(key: string, id: string, patch: Partial<Attachment>) {
   const fix = (list: Attachment[]) => (list.some((a) => a.id === id) ? list.map((a) => (a.id === id ? { ...a, ...patch } : a)) : list);
-  set((s) => ({
-    attachments: fix(s.attachments),
-    pending: Object.fromEntries(Object.entries(s.pending).map(([k, list]) => [k, list.map((p) => ({ ...p, attachments: fix(p.attachments) }))])),
-  }));
+  set((s) => {
+    const draft = composerDraft(s, key);
+    const attachments = fix(draft.attachments);
+    const queued = s.pending[key];
+    return {
+      composerDrafts: attachments === draft.attachments ? s.composerDrafts : updatedDrafts(s, { attachments }, key),
+      pending: queued?.length ? {
+        ...s.pending,
+        [key]: queued.map((message) => ({ ...message, attachments: fix(message.attachments) })),
+      } : s.pending,
+    };
+  });
 }
 
-function startUpload(att: Attachment, target: { assistantId?: string; groupId?: string }): Promise<string> {
+function startUpload(att: Attachment, target: { assistantId: string } | { groupId: string }): Promise<string> {
+  const key = "groupId" in target ? `group:${target.groupId}` : target.assistantId;
   const file = uploadFiles.get(att.id)!;
   const job = api.upload(file, target).then(
     (path) => {
       const preview = previews.get(localPath(att));
       if (preview) previews.set(path, preview);
-      patchAttachment(att.id, { status: "done", path });
+      patchAttachment(key, att.id, { status: "done", path });
       return path;
     },
     (e: unknown) => {
       uploads.delete(att.id);
-      patchAttachment(att.id, { status: "failed" });
+      patchAttachment(key, att.id, { status: "failed" });
       throw e;
     },
   );
@@ -1900,12 +1928,12 @@ export function attach(files: FileList | File[]) {
     if (isImagePath(file.name)) previews.set(localPath(att), URL.createObjectURL(file));
     return att;
   });
-  set((s) => ({ attachments: [...s.attachments, ...added] }));
+  set((s) => ({ composerDrafts: updatedDrafts(s, { attachments: [...composerDraft(s).attachments, ...added] }) }));
   added.forEach((att) => void startUpload(att, target));
 }
 
 export function removeAttachment(id: string) {
-  set((s) => ({ attachments: s.attachments.filter((a) => a.id !== id) }));
+  set((s) => ({ composerDrafts: updatedDrafts(s, { attachments: composerDraft(s).attachments.filter((a) => a.id !== id) }) }));
 }
 
 /** 等这条消息的附件都传好（失败过的重传），拿到服务器路径。 */
@@ -1947,12 +1975,14 @@ async function deliver(p: PendingMessage) {
   }
 }
 
-export async function send(textOverride?: string) {
+/** 首页输入框传自己的文字；对话输入框发送并清空当前会话的整份草稿。 */
+export async function send(standaloneText?: string) {
   const groupId = state.gsel;
   const id = state.sel;
-  const text = (textOverride ?? state.text).trim();
+  const draft = standaloneText === undefined ? composerDraft(state) : EMPTY_COMPOSER;
+  const text = (standaloneText ?? draft.text).trim();
   // 只发图片 / 文件不写字也行（和 Telegram 一样）
-  if ((!groupId && !id) || (!text && !state.attachments.length)) return;
+  if ((!groupId && !id) || (!text && !draft.attachments.length)) return;
   const key = groupId ? `group:${groupId}` : id!;
   const p: PendingMessage = {
     localId: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
@@ -1960,15 +1990,13 @@ export async function send(textOverride?: string) {
     ...(groupId ? { group: true as const } : {}),
     at: new Date().toISOString(),
     text,
-    ...(state.quote ? { quote: state.quote } : {}),
-    attachments: state.attachments,
+    ...(draft.quote ? { quote: draft.quote } : {}),
+    attachments: draft.attachments,
     status: "sending",
   };
   markFresh([p.localId]);
   set((s) => ({
-    text: "",
-    quote: null,
-    attachments: [],
+    ...(standaloneText === undefined ? { composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, key) } : {}),
     nonce: s.nonce + 1,
     pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] },
     assistants: groupId ? s.assistants : s.assistants.map((assistant) => assistant.id === id ? { ...assistant, suggestions: undefined } : assistant),
@@ -2586,7 +2614,8 @@ export function newAssistant() {
   const primary = state.assistants.find((a) => a.primary);
   if (!primary) return;
   void select(primary.id);
-  set({ text: t("我想创建一个专属助手，负责："), nonce: state.nonce + 1, mobile: "chat", sheet: false });
+  setText(t("我想创建一个专属助手，负责："));
+  focusComposer();
 }
 
 export async function jumpToJob(assistantOrJobId: string, requestedJobId?: string) {

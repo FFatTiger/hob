@@ -102,22 +102,31 @@ self.addEventListener("push", (event) => {
   }
   const title = payload.title || "Hob";
   const target = payload.url || "/";
-  event.waitUntil(
-    self.registration.showNotification(title, {
-      body: payload.body || "",
-      icon: "/icons/icon-192.png",
-      badge: "/icons/favicon-32.png",
-      data: { url: target },
-      tag: target,
-    }),
-  );
+  const options = {
+    body: payload.body || "",
+    icon: "/icons/icon-192.png",
+    badge: "/icons/favicon-32.png",
+    data: { url: target },
+  };
+  if (payload.tag) {
+    options.tag = payload.tag;
+    options.renotify = true;
+  }
+  event.waitUntil(self.registration.showNotification(title, options));
 });
 
 self.addEventListener("notificationclick", (event) => {
   event.notification.close();
-  const url = new URL((event.notification.data && event.notification.data.url) || "/", self.location.origin).href;
+  const targetUrl = (event.notification.data && event.notification.data.url) || "/";
+  const url = new URL(targetUrl, self.location.origin).href;
   event.waitUntil(
     (async () => {
+      if (self.registration.getNotifications) {
+        const existing = await self.registration.getNotifications().catch(() => []);
+        for (const item of existing) {
+          if (item.data && item.data.url === targetUrl) item.close();
+        }
+      }
       const windows = await self.clients.matchAll({ type: "window", includeUncontrolled: true });
       for (const client of windows) {
         if (!client.url.startsWith(self.location.origin)) continue;

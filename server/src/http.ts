@@ -1167,11 +1167,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json(result);
   });
 
-  // 页面有没有在前台：只存内存，SSE 断掉就当不可见
+  // 页面有没有在前台、正在看哪个对话：只存内存，SSE 断掉就当不可见
   app.post("/api/visibility", async (c) => {
-    const body = (await c.req.json().catch(() => ({}))) as { clientId?: unknown; visible?: unknown };
+    const body = (await c.req.json().catch(() => ({}))) as { clientId?: unknown; visible?: unknown; target?: unknown };
     if (typeof body.clientId !== "string" || !body.clientId) return c.json({ error: "缺 clientId" }, 400);
-    runtime.push.setVisibility(body.clientId, body.visible === true);
+    const target = body.target === undefined ? undefined : typeof body.target === "string" ? body.target : null;
+    runtime.push.setVisibility(body.clientId, body.visible === true, target);
     return c.json({ ok: true });
   });
 

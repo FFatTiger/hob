@@ -281,7 +281,7 @@ export interface HobApi {
   subscribePush(subscription: PushSubscriptionJson, label: string): Promise<PushView>;
   unsubscribePush(endpoint: string): Promise<PushView>;
   testPush(endpoint?: string): Promise<{ sent: number; removed: number; error?: string }>;
-  visibility(clientId: string, visible: boolean): Promise<void>;
+  visibility(clientId: string, visible: boolean, target: string | null, opts?: { keepalive?: boolean }): Promise<void>;
   events(handlers: EventHandlers, clientId?: string): () => void;
 }
 
@@ -539,7 +539,11 @@ export const realApi: HobApi = {
     }),
   testPush: (endpoint) =>
     req<{ sent: number; removed: number; error?: string }>("/api/push/test", json(endpoint ? { endpoint } : {})),
-  visibility: (clientId, visible) => req<void>("/api/visibility", json({ clientId, visible })),
+  visibility: (clientId, visible, target, opts) =>
+    req<void>("/api/visibility", {
+      ...json({ clientId, visible, target }),
+      ...(opts?.keepalive ? { keepalive: true } : {}),
+    }),
   events: ({ onEvent, onReconnect, onDown }, clientId) => {
     const es = new EventSource(`/api/events${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`);
     let wasDown = false;

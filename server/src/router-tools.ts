@@ -1184,7 +1184,9 @@ export function buildRouterTools(
             } finally {
               signal?.removeEventListener("abort", cancel);
             }
-            void runtime.groups.deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id).catch((error) => console.error("交给群的事件没送到：", error));
+            void runtime.groups
+              .deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id, { workDone: true, userInitiated: false, bypassBusy: false })
+              .catch((error) => console.error("交给群的事件没送到：", error));
             return endTurn(`已交给群「${group.name}」：创建了话题「${topic.name}」（${topic.id}），群主「${nameOf(topic.ownerId)}」接手。有了结论会回到这里。`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
@@ -1220,7 +1222,7 @@ export function buildRouterTools(
           signal?.throwIfAborted();
           await router.addForwarded(destination.id, text, handbackId, assistantId);
           signal?.throwIfAborted();
-          await router.event(destination.id, `转自「${assistant().name}」：${text}\n交回原因：${reason}`);
+          await router.event(destination.id, `转自「${assistant().name}」：${text}\n交回原因：${reason}`, { userInitiated: true });
           return endTurn(`已交回「${destination.name}」。`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
@@ -1300,6 +1302,7 @@ export function buildRouterTools(
           const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           const event = `这个话题是你从综合创建的，上面是交接说明。\n\n${note}`;
 
+          const origin = router.turnOrigin(assistantId, gid);
           try {
             if (topicId) {
               if (!groupHasBoundCwd && params.cwd !== undefined) return fail(CWD_IMMUTABLE);
@@ -1309,13 +1312,15 @@ export function buildRouterTools(
               const topic = target.closedAt ? runtime.groups.reopen(topicId) : target;
               runtime.groups.appendItem(topicId, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
               runtime.groups.note(gid, assistantId, `转到了话题「${topic.name}」`, "info", undefined, topicId);
-              void runtime.groups.deliverEvent(topicId, assistantId, event).catch((error) => console.error("转到话题的事件没送到：", error));
+              void runtime.groups
+                .deliverEvent(topicId, assistantId, event, "", { workDone: true, ...origin })
+                .catch((error) => console.error("转到话题的事件没送到：", error));
               return endTurn(`已转到话题「${topic.name}」（${topic.id}），接下来在话题里处理。`);
             }
             const topic = runtime.groups.createTopic(gid, title, assistantId, !groupHasBoundCwd && params.cwd !== undefined ? { cwd: params.cwd } : undefined);
             runtime.groups.appendItem(topic.id, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
             void runtime.groups
-              .deliverEvent(topic.id, assistantId, event)
+              .deliverEvent(topic.id, assistantId, event, "", { workDone: true, ...origin })
               .catch((error) => console.error("创建话题的事件没送到：", error));
             return endTurn(t("话题「{name}」（{id}）已创建，交接说明已转过去，接下来在话题里处理。", { name: topic.name, id: topic.id }));
           } catch (error) {

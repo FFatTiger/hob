@@ -21,7 +21,8 @@ import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
 import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
-import type { EventText, NewItem } from "./router.ts";
+import type { EventText, NewItem, TurnOutcome } from "./router.ts";
+import { pushAssistantTurnEnd } from "./push.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, topicCwdLockedByGroup, validateWorkspaceCwd } from "./workspace.ts";
 
@@ -44,12 +45,37 @@ const SYSTEM = "system";
 /** 结论后面附的任务记录里，任务状态怎么写。 */
 const JOB_STATE: Record<JobStatus, string> = { queued: "排队中", running: "进行中", waiting: "等你回复", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" };
 
+/** 波次内最近一条有实质内容、未分派异步任务的候选推送。 */
+interface WavePushCandidate {
+  assistantId: string;
+  text: string;
+  userInitiated: boolean;
+  bypassBusy: boolean;
+  handoverPending: boolean;
+}
+
+/** 群事件投递的推送控制参数。 */
+export interface DeliverEventOptions {
+  workDone?: boolean;
+  userInitiated?: boolean;
+  bypassBusy?: boolean;
+}
+
 /** 一条用户消息引出的一串助手回合，turns 是已经开了几个（按 @ 接力计，不含全员依次轮到的回合）。 */
 interface Wave {
   turns: number;
   stopped: boolean;
   pending: number;
+  epoch: number;
   finalSpeaker?: string;
+  userInitiated: boolean;
+  bypassBusy: boolean;
+  /** 触及 MAX_WAVE_TURNS 后另起了群主收尾波次：原波次不再另行推送 */
+  handedToWrapUp?: boolean;
+  /** 本波最近一条可推送的实质回复（用于整波收口推送及下游全 NO_REPLY 时的兜底） */
+  lastPushable?: WavePushCandidate;
+  /** 本波最新动作是否已分派新任务/专卡或报错（若是，收口时不回退推送上游旧回复） */
+  suppressedByAction?: boolean;
   /** 全员回应：用户没点名时，群主这一串跑完后，把还没轮到过的成员按成员顺序依次排上。 */
   allReply?: {
     triggerId: string;
@@ -651,12 +677,16 @@ export class GroupManager {
     this.publish(gid);
     const explicit = this.explicitTargetsOf(group, body.text, body.quote);
     const targets = explicit.length ? explicit : [group.ownerId];
+    const epoch = this.epochs.get(gid) ?? 0;
     const wave: Wave = {
       turns: 0,
       stopped: false,
       pending: 0,
+      epoch,
+      userInitiated: true,
+      bypassBusy: true,
       ...(!explicit.length && group.replyMode === "all"
-        ? { allReply: { triggerId: item.id, epoch: this.epochs.get(gid) ?? 0, participated: new Set<string>() } }
+        ? { allReply: { triggerId: item.id, epoch, participated: new Set<string>() } }
         : {}),
     };
     for (const id of targets) void this.callTurn(gid, group, id, wave, item.id);
@@ -705,7 +735,7 @@ export class GroupManager {
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
+  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
     wave.pending += 1;
@@ -724,14 +754,34 @@ export class GroupManager {
     return next;
   }
 
+  /** 该话题是否仍处于主助手委托办理、尚未关闭交付结论的状态。 */
+  private isHandoverPending(group: Group | undefined): boolean {
+    return Boolean(group?.parentId && group.handover && (!group.handover.result || !group.handover.deliveredAt));
+  }
+
+  /** 整波接力真正停下来后，统一判定并发送本波最终推送（含下游全 NO_REPLY 时的兜底）。 */
+  private flushWavePush(gid: string, wave: Wave): void {
+    if (wave.suppressedByAction || !wave.lastPushable) return;
+    const candidate = wave.lastPushable;
+    wave.lastPushable = undefined;
+    // 主助手委托群办的话题未关闭/未交付前，不推群内纯文字沟通（用户亲自发言/插话/答卡片例外）
+    if ((candidate.handoverPending || this.isHandoverPending(this.store.group(gid))) && !candidate.userInitiated) return;
+    // 后台回流轮次在当前话题仍有其他在跑/排队/等待中的任务时，不推中间进度播报
+    if (!candidate.bypassBusy && this.runtime.router.hasPendingWork(candidate.assistantId, gid)) return;
+    pushAssistantTurnEnd(
+      { push: this.runtime.push, store: this.store },
+      { assistantId: candidate.assistantId, groupId: gid, text: candidate.text },
+    );
+  }
+
   /**
    * 这一串里正在跑的回合都结束时收尾：
    * 全员回应的波次还有没轮到的成员，就按成员列表顺序排上下一个（前一个跑完才轮到下一个）；
-   * 全部跑完后再生成推荐提问。
+   * 全部跑完后再统一决定本波推送，并生成推荐提问。
    */
   private advanceWave(gid: string, wave: Wave): void {
-    if (wave.pending > 0 || wave.stopped) return;
-    if (wave.allReply && (this.epochs.get(gid) ?? 0) === wave.allReply.epoch) {
+    if (wave.pending > 0) return;
+    if (!wave.stopped && wave.allReply && (this.epochs.get(gid) ?? 0) === wave.allReply.epoch) {
       const group = this.store.group(gid);
       if (group && group.replyMode === "all") {
         const nextMember = group.members.find((id) => !wave.allReply!.participated.has(id));
@@ -740,6 +790,9 @@ export class GroupManager {
           return;
         }
       }
+    }
+    if (!wave.handedToWrapUp && (this.epochs.get(gid) ?? 0) === wave.epoch) {
+      this.flushWavePush(gid, wave);
     }
     if (wave.finalSpeaker && !wave.stopped) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, gid);
   }
@@ -783,10 +836,28 @@ export class GroupManager {
    * 开一轮（不然流式的文字没有归属，会被丢掉），它说的话照常进时间线。
    * 一个事件算新的一串回合（新的 Wave）。
    */
-  async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = false): Promise<void> {
+  async deliverEvent(
+    gid: string,
+    assistantId: string,
+    text: EventText,
+    triggerId = "",
+    workDoneOrOptions: boolean | DeliverEventOptions = true,
+  ): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
-    await this.schedule(gid, assistantId, { turns: 0, stopped: false, pending: 0 }, triggerId, text, workDone);
+    const options = typeof workDoneOrOptions === "boolean" ? { workDone: workDoneOrOptions } : workDoneOrOptions;
+    const workDone = options.workDone ?? true;
+    const userInitiated = Boolean(options.userInitiated);
+    const bypassBusy = Boolean(options.bypassBusy || userInitiated);
+    const wave: Wave = {
+      turns: 0,
+      stopped: false,
+      pending: 0,
+      epoch: this.epochs.get(gid) ?? 0,
+      userInitiated,
+      bypassBusy,
+    };
+    await this.schedule(gid, assistantId, wave, triggerId, text, workDone);
   }
 
   /**
@@ -808,7 +879,7 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
+  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
     // 用户按了停止：这一轮不再开始
@@ -818,9 +889,18 @@ export class GroupManager {
     if (!allReplyTurn && wave.turns >= MAX_WAVE_TURNS) {
       if (!wave.stopped) {
         wave.stopped = true;
+        wave.handedToWrapUp = true;
         this.note(gid, SYSTEM, RELAY_NOTE, "info");
         // 群主在群里收尾：只给它这一轮，它再 @ 人也不接着转，免得停了又起
-        void this.schedule(gid, group.ownerId, { turns: MAX_WAVE_TURNS - 1, stopped: true, pending: 0 }, "", `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`)
+        const wrapWave: Wave = {
+          turns: MAX_WAVE_TURNS - 1,
+          stopped: true,
+          pending: 0,
+          epoch: this.epochs.get(gid) ?? 0,
+          userInitiated: wave.userInitiated,
+          bypassBusy: wave.bypassBusy,
+        };
+        void this.schedule(gid, group.ownerId, wrapWave, "", `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`)
           .catch(() => undefined);
       }
       return;
@@ -829,13 +909,29 @@ export class GroupManager {
     const input = this.windowFor(group, assistantId, event === undefined ? triggerId : "");
     if (event === undefined && !input) return;
     if (!allReplyTurn) wave.turns += 1;
+    const handoverPendingAtStart = this.isHandoverPending(group);
+    // 排队期间用户若亲自发了消息（非助手转发的交接说明），本轮即带上了用户发言，视为用户主动触发
+    const hasDirectUserMessage = Boolean(input?.items.some((item) => item.kind === "user" && !item.forwardedFrom));
+    if (hasDirectUserMessage) {
+      wave.userInitiated = true;
+      wave.bypassBusy = true;
+    }
     const key = `${gid}@${assistantId}`;
     const turn: RunningTurn = { text: "", ...(event !== undefined ? { event: true as const, held: [] } : {}), ...(triggerId ? { triggerId } : {}) };
     this.turns.set(key, turn);
     let text = "";
+    let outcome: TurnOutcome | undefined;
     try {
       const prompt = this.inputText(assistantId, group, input ?? { items: [] }, event);
-      await this.runtime.router.deliverMember(gid, assistantId, prompt, () => this.markSeen(gid, assistantId, input?.seenTo), input ? this.inputFiles(input) : [], event === undefined || workDone);
+      outcome = await this.runtime.router.deliverMember(
+        gid,
+        assistantId,
+        prompt,
+        () => this.markSeen(gid, assistantId, input?.seenTo),
+        input ? this.inputFiles(input) : [],
+        event === undefined || workDone || hasDirectUserMessage,
+        { userInitiated: wave.userInitiated, bypassBusy: wave.bypassBusy },
+      );
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       text = turn.text;
     } catch (error) {
@@ -843,6 +939,12 @@ export class GroupManager {
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       const message = error instanceof Error ? error.message : String(error);
       this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
+      pushAssistantTurnEnd(
+        { push: this.runtime.push, store: this.store },
+        { assistantId, groupId: gid, error: message },
+      );
+      wave.suppressedByAction = true;
+      wave.lastPushable = undefined;
     } finally {
       this.turns.delete(key);
     }
@@ -850,10 +952,41 @@ export class GroupManager {
     const userItem = input?.items.findLast((item) => item.kind === "user");
     if (userItem && turn.silent && !turn.lastId && !this.store.groupState(gid).reactions?.[userItem.id]?.[assistantId]) this.react(gid, assistantId, "👀", userItem.id);
     if ((this.epochs.get(gid) ?? 0) !== epoch) return;
+    if (outcome) {
+      if (outcome.userInitiated) {
+        wave.userInitiated = true;
+        wave.bypassBusy = true;
+      } else if (outcome.bypassBusy) {
+        wave.bypassBusy = true;
+      }
+      if (outcome.error) {
+        pushAssistantTurnEnd(
+          { push: this.runtime.push, store: this.store },
+          { assistantId, groupId: gid, error: outcome.error },
+        );
+        wave.suppressedByAction = true;
+        wave.lastPushable = undefined;
+      } else if (outcome.dispatched) {
+        wave.suppressedByAction = true;
+        wave.lastPushable = undefined;
+      } else if (outcome.workDone && !outcome.delegation && !outcome.silent && outcome.text) {
+        const handoverPending = handoverPendingAtStart || this.isHandoverPending(this.store.group(gid));
+        wave.lastPushable = {
+          assistantId,
+          text: outcome.text,
+          userInitiated: outcome.userInitiated,
+          bypassBusy: outcome.bypassBusy,
+          handoverPending,
+        };
+        wave.suppressedByAction = false;
+      }
+    }
     // 回复里 @ 了别的成员：接着轮到他们（用这一轮最后一条的 id 当触发条目）
     if (!turn.lastId) return;
     wave.finalSpeaker = assistantId;
-    for (const id of this.mentions(text, group, assistantId)) this.schedule(gid, id, wave, turn.lastId);
+    if (!wave.stopped) {
+      for (const id of this.mentions(text, group, assistantId)) this.schedule(gid, id, wave, turn.lastId);
+    }
   }
 
   /**

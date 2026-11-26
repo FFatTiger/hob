@@ -304,6 +304,10 @@ function interactive(value: CardElement): boolean {
   return false;
 }
 
+export function cardInteractive(card: Card): boolean {
+  return card.body.elements.some(interactive);
+}
+
 export function cardTitle(card: Card): string {
   return card.header ? headerText(card.header.title) : "";
 }
@@ -330,7 +334,7 @@ export function validateCard(input: unknown, options: { mode?: CardValidationMod
   const value: ValidatedCard = {
     card,
     title: cardTitle(card),
-    interactive: children.elements.some(interactive),
+    interactive: cardInteractive(card),
     componentCount: context.elementCount,
     unsupportedCount: context.unsupportedCount,
   };

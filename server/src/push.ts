@@ -49,13 +49,53 @@ export type PushSender = (
   vapid: VapidKeys & { subject: string },
 ) => Promise<void>;
 
-const webPushSender: PushSender = async (target, payload, vapid) => {
-  await webpush.sendNotification(
-    { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
-    payload,
-    { vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey } },
-  );
-};
+const PUSH_TIMEOUT_MS = 15_000;
+const PUSH_RETRY_DELAYS_MS: readonly number[] = [500, 1500];
+
+const TRANSIENT_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ECONNREFUSED",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+const TRANSIENT_NAMES = new Set(["TimeoutError", "AbortError"]);
+const TRANSIENT_MESSAGE = /\b(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)\b|fetch failed/i;
+
+/** 用 web-push 加密并签发 VAPID，再经全局 fetch 发送，复用 undici 全局代理与超时控制。 */
+export function createWebPushSender(fetchImpl?: typeof fetch): PushSender {
+  return async (target, payload, vapid) => {
+    const details = webpush.generateRequestDetails(
+      { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
+      payload,
+      { vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey } },
+    );
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(details.headers ?? {})) {
+      if (key.toLowerCase() === "content-length" || value === undefined) continue;
+      headers[key] = String(value);
+    }
+    const response = await (fetchImpl ?? globalThis.fetch)(details.endpoint, {
+      method: details.method,
+      headers,
+      body: details.body ? new Uint8Array(details.body) : undefined,
+      signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      const error = new Error(`Received unexpected response code ${response.status}`) as Error & {
+        statusCode: number;
+        body: string;
+      };
+      error.statusCode = response.status;
+      error.body = body;
+      throw error;
+    }
+  };
+}
 
 export interface PushResult {
   sent: number;
@@ -72,6 +112,7 @@ export interface PushServiceOptions {
   /** 设置 → 通知里填的邮箱（VAPID subject 用） */
   email: () => string;
   sender?: PushSender;
+  retryDelaysMs?: readonly number[];
 }
 
 function isVapid(value: unknown): value is VapidKeys {
@@ -114,22 +155,44 @@ function isGone(status: number | undefined, reason: string): boolean {
   return status === 404 || status === 410 || (status === 400 && reason === "VapidPkHashMismatch");
 }
 
+/** 仅重试瞬断网络错误、429 与 5xx；4xx 与失效订阅绝不重试。 */
+function isTransient(error: unknown, status: number | undefined): boolean {
+  if (status !== undefined) return status === 429 || status >= 500;
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const item = current as { code?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+    if (typeof item.code === "string" && TRANSIENT_CODES.has(item.code)) return true;
+    if (typeof item.name === "string" && TRANSIENT_NAMES.has(item.name)) return true;
+    if (typeof item.message === "string" && TRANSIENT_MESSAGE.test(item.message)) return true;
+    current = item.cause;
+  }
+  return false;
+}
+
 function describeFailure(error: unknown, status: number | undefined, reason: string): string {
   if (status) return t("推送服务拒绝（{status}{reason}）", { status, reason: reason ? ` ${reason}` : "" });
   return t("无法连接推送服务（{reason}）", { reason: error instanceof Error ? error.message : String(error) });
+}
+
+interface ClientViewState {
+  visible: boolean;
+  /** null 表示前台但未在看具体对话；"*" 表示未传 target 的旧版客户端（向后兼容） */
+  target: string | null | "*";
 }
 
 /** 推送服务（可见性只在内存里：进程重启后没有前台客户端）。 */
 export class PushService {
   private data?: PushFile;
   private readonly sender: PushSender;
-  /** 每个页面客户端的可见性；SSE 连接断了就删掉这一项 */
-  private readonly visible = new Map<string, boolean>();
+  /** 每个页面客户端的可见状态；SSE 连接断了就删掉这一项 */
+  private readonly clientViews = new Map<string, ClientViewState>();
   /** clientId → 还连着几条 SSE（重连时旧的断开不会把新的状态清掉） */
   private readonly clients = new Map<string, number>();
 
   constructor(private readonly options: PushServiceOptions) {
-    this.sender = options.sender ?? webPushSender;
+    this.sender = options.sender ?? createWebPushSender();
   }
 
   private file(): string {
@@ -207,10 +270,10 @@ export class PushService {
     return true;
   }
 
-  /** 有推送权限的页面客户端的可见性（页面自己报，只存内存）。 */
-  setVisibility(clientId: string, visible: boolean): void {
+  /** 页面客户端上报可见性与当前查看的会话（只存内存）；不传 target 视为旧版客户端（全局可见）。 */
+  setVisibility(clientId: string, visible: boolean, target?: string | null): void {
     if (!clientId) return;
-    this.visible.set(clientId, visible);
+    this.clientViews.set(clientId, { visible, target: target === undefined ? "*" : target });
   }
 
   /** SSE 连上：记一条连接，断开时把可见性一起清掉（没法确认还在看就是不在看）。 */
@@ -224,14 +287,37 @@ export class PushService {
         return;
       }
       this.clients.delete(clientId);
-      this.visible.delete(clientId);
+      this.clientViews.delete(clientId);
     };
   }
 
-  /** 只要有一个页面在看着就不推：通知是给不在电脑前的人看的。 */
-  hasVisible(): boolean {
-    for (const visible of this.visible.values()) if (visible) return true;
+  /** 只有客户端正聚焦看着对应对话（或兼容未报 target 的旧客户端）才静默推送。 */
+  hasVisible(target?: string): boolean {
+    for (const view of this.clientViews.values()) {
+      if (!view.visible) continue;
+      if (view.target === "*" || !target || view.target === target) return true;
+    }
     return false;
+  }
+
+  private async sendWithRetry(
+    target: PushTarget,
+    body: string,
+    vapid: VapidKeys & { subject: string },
+  ): Promise<void> {
+    const delays = this.options.retryDelaysMs ?? PUSH_RETRY_DELAYS_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.sender(target, body, vapid);
+        return;
+      } catch (error) {
+        const status = statusOf(error);
+        const reason = reasonOf(error);
+        if (isGone(status, reason) || !isTransient(error, status) || attempt >= delays.length) throw error;
+        const delay = delays[attempt] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
 
   private async deliver(devices: DeviceRecord[], payload: PushPayload): Promise<PushResult> {
@@ -244,7 +330,7 @@ export class PushService {
     await Promise.all(
       devices.map(async (device) => {
         try {
-          await this.sender(
+          await this.sendWithRetry(
             { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth },
             body,
             vapid,
@@ -270,9 +356,9 @@ export class PushService {
     return { sent, removed: gone.length, ...(failures.length ? { error: failures[0] } : {}) };
   }
 
-  /** 该推的时候推：有可见的客户端、或一台设备都没订阅就不发。 */
-  async send(payload: PushPayload): Promise<PushResult> {
-    if (this.hasVisible()) return { sent: 0, removed: 0, skipped: "visible" };
+  /** 该推的时候推：目标对话正被某个客户端聚焦查看、或一台设备都没订阅就不发。 */
+  async send(payload: PushPayload, target?: string): Promise<PushResult> {
+    if (this.hasVisible(target)) return { sent: 0, removed: 0, skipped: "visible" };
     const devices = this.load().devices;
     if (!devices.length) return { sent: 0, removed: 0, skipped: "no-devices" };
     return this.deliver(devices, payload);
@@ -287,9 +373,9 @@ export class PushService {
   }
 }
 
-/** 该推送的子集：只用到这两个方法（测试可以直接给假对象）。 */
+/** 该推送的子集：只用到这一个方法（测试可以直接给假对象）。 */
 export interface PushSink {
-  send(payload: PushPayload): Promise<PushResult>;
+  send(payload: PushPayload, target?: string): Promise<PushResult>;
 }
 
 export interface NotifyDeps {
@@ -310,7 +396,12 @@ function openUrl(assistantId: string, groupId?: string): string {
   return groupId ? `/#/group/${encodeURIComponent(groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
 }
 
-/** 一轮结束后推送；是否已经从有活变成没活由 Router 按 todosBusy 判断。 */
+/** 规范化会话目标标识，与前端上报的 ClientVisibility.target 保持一致。 */
+export function pushTarget(assistantId: string, groupId?: string): string {
+  return groupId ? `group:${groupId}` : `assistant:${assistantId}`;
+}
+
+/** 一轮结束后推送；是否需要推送由 Router 按本轮面向用户状态与分派任务/已推标记判断。 */
 export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
   const assistant = deps.store.assistant(turn.assistantId);
   if (!assistant?.notify) return;
@@ -321,7 +412,30 @@ export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): 
     : turn.text?.trim()
       ? plainText(turn.text).replace(/\s+/g, " ").slice(0, 160)
       : t("已完成");
-  void deps.push.send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }).catch(() => undefined);
+  void deps.push
+    .send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }, pushTarget(turn.assistantId, turn.groupId))
+    .catch(() => undefined);
+}
+
+/** 交互卡片推送参数。 */
+export interface InteractiveCardPush {
+  assistantId: string;
+  groupId?: string;
+  title?: string;
+}
+
+/** 交互卡片（含按钮/表单/选择器等）：这个助手开了通知就推送一条「等待你的操作」。 */
+export function pushInteractiveCard(deps: NotifyDeps, card: InteractiveCardPush): void {
+  const assistant = deps.store.assistant(card.assistantId);
+  if (!assistant?.notify) return;
+  const group = card.groupId ? deps.store.group(card.groupId) : undefined;
+  const title = card.title?.trim() ? plainText(card.title) : (group?.name ?? assistant.name);
+  void deps.push
+    .send(
+      { title, body: t("{assistant} · 等待你的操作", { assistant: assistant.name }), url: openUrl(card.assistantId, card.groupId) },
+      pushTarget(card.assistantId, card.groupId),
+    )
+    .catch(() => undefined);
 }
 
 /** 出审批：这个助手开了「需要我回答或做完时通知我」才推送。 */
@@ -331,6 +445,9 @@ export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   // 推送失败不能影响审批本身（也不能变成未处理的 rejection 把进程带走）
   // 推送的标题是卡片标题（一张卡可能问几个问题），正文写谁在等、等什么
   void deps.push
-    .send({ title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) })
+    .send(
+      { title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) },
+      pushTarget(approval.assistantId, approval.groupId),
+    )
     .catch(() => undefined);
 }

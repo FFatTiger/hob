@@ -3,7 +3,7 @@ import { setLocale } from "../../shared/i18n.ts";
 import type { Approval } from "../../shared/types.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { activityLabel } from "../src/router-activity.ts";
-import { pushApproval, type PushPayload } from "../src/push.ts";
+import { pushApproval, pushInteractiveCard, type PushPayload } from "../src/push.ts";
 import { createApp } from "../src/http.ts";
 import { makeHob, call, text } from "./helpers.ts";
 
@@ -126,8 +126,10 @@ describe("server user-facing translations", () => {
         createdAt: new Date().toISOString(),
       };
       pushApproval({ push: { send: async (payload) => { sent.push(payload); return { sent: 1, removed: 0 }; } }, store: hob.runtime.store }, approval);
+      pushInteractiveCard({ push: { send: async (payload) => { sent.push(payload); return { sent: 1, removed: 0 }; } }, store: hob.runtime.store }, { assistantId: "hob", title: "Confirm settings" });
       await new Promise((resolve) => setImmediate(resolve));
       expect(sent[0]).toMatchObject({ title: "Publish it?", body: "Hob · Waiting for your answer" });
+      expect(sent[1]).toMatchObject({ title: "Confirm settings", body: "Hob · Waiting for your action" });
     } finally {
       hob.close();
     }

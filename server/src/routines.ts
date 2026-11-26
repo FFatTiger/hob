@@ -3,6 +3,7 @@ import { boundKnowledge } from "./knowledge-tools.ts";
 import { scriptToolList } from "./script-tools.ts";
 import { pluginCommandToolsForAssistant, pluginToolsForAssistant } from "./plugin-host.ts";
 import { t } from "../../shared/i18n.ts";
+import { pushAssistantTurnEnd } from "./push.ts";
 import { exec } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -273,11 +274,16 @@ export class RoutineScheduler {
     if (result.outcome === "quiet") return { outcome: "quiet" };
     const output = result.output ?? "";
     if (routine.check.then === "notify") {
+      const gid = this.destination(routine);
       await this.runtime.router.addItem(routine.assistantId, {
         kind: "assistant",
         text: output,
         routine: { id: routine.id, name: routine.name },
-      }, this.destination(routine));
+      }, gid);
+      pushAssistantTurnEnd(
+        { push: this.runtime.push, store: this.runtime.store },
+        { assistantId: routine.assistantId, ...(gid ? { groupId: gid } : {}), text: output },
+      );
       return { outcome: "notify" };
     }
     return routine.groupId ? this.handOff(routine, output) : this.handToAssistant(routine, output);
@@ -293,7 +299,9 @@ export class RoutineScheduler {
     // 界面上只写一行「已到执行时间」：检查到的原始内容是给群主的材料，群主看过再告诉用户该知道的
     const item = this.runtime.groups.appendItem(gid, group.ownerId, { kind: "note", icon: "routine", text: this.dueNote(routine), routineId: routine.id, request: text });
     this.recordHanded(routine);
-    void this.runtime.groups.deliverEvent(gid, group.ownerId, text, item.id).catch((error) => console.error("定时事件没送到：", error));
+    void this.runtime.groups
+      .deliverEvent(gid, group.ownerId, text, item.id, { workDone: true, bypassBusy: true })
+      .catch((error) => console.error("定时事件没送到：", error));
     return { outcome: "handed" };
   }
 

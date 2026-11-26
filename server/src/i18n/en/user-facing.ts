@@ -321,6 +321,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "无法连接推送服务（{reason}）": "Can't connect to the push service ({reason}).",
   "测试通知：收到此消息说明推送功能正常。": "Test notification: push notifications are working.",
   "{assistant} · 等待你的回答": "{assistant} · Waiting for your answer",
+  "{assistant} · 等待你的操作": "{assistant} · Waiting for your action",
   "已创建群「{name}」": "Created group “{name}”",
   "{name} 已将「{topic}」交由这个群处理": "{name} handed “{topic}” to this group",
   "你关闭了这个话题": "You closed this topic",

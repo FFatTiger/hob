@@ -69,15 +69,17 @@ describe("Router", () => {
     } finally { hob.close(); }
   });
 
-  it("任务或提问仍在时不把回合当成做完", async () => {
+  it("后台维护事件（workDone: false）与本轮派活/出提问卡不重复推送，其他运行中任务不拦截直接答复", async () => {
     const hob = makeHob();
     try {
       const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      // 纯后台维护事件（如任务提问/超时提醒）显式传 workDone: false -> 不推送
       hob.faux.setResponses([text("普通回复。")]);
-      await hob.runtime.router.event("hob", "普通事件");
+      await hob.runtime.router.event("hob", "后台提醒", { workDone: false });
       await hob.runtime.router.waitIdle("hob");
       expect(push).not.toHaveBeenCalled();
 
+      // 本轮调 start_job 派活 -> 过渡语不推送
       const activeJob: Job = {
         id: "t-notify-busy",
         assistantId: "hob",
@@ -88,26 +90,42 @@ describe("Router", () => {
         stats: { reads: 0, commands: 0, edits: 0 },
         activity: [],
       };
+      vi.spyOn(hob.runtime.jobs, "start").mockResolvedValueOnce(activeJob);
+      hob.faux.setResponses([
+        call("start_job", { title: "查日志", note: "查一下日志" }),
+        text("已派去查。"),
+      ]);
+      await hob.runtime.router.send("hob", { text: "帮我查日志" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+
+      // 会话里已有另一个 running 任务时：后台普通回流不推中间播报，用户主动提问的直接答复照常推送
       hob.runtime.store.saveJob(activeJob);
-      hob.faux.setResponses([text("任务还在进行。")]);
+      hob.faux.setResponses([text("第一批结果先汇报给你。")]);
       await hob.runtime.router.event("hob", "任务结果已送到", { workDone: true });
       await hob.runtime.router.waitIdle("hob");
       expect(push).not.toHaveBeenCalled();
 
-      hob.runtime.store.saveJob({ ...activeJob, status: "done", endedAt: new Date().toISOString() });
-      hob.runtime.store.saveApproval({
-        id: "q-notify-busy",
-        assistantId: "hob",
-        title: "还要继续吗？",
-        options: [{ key: "A", label: "继续" }, { key: "B", label: "停止" }],
-        status: "pending",
-        source: "router",
-        createdAt: new Date().toISOString(),
-      });
-      hob.faux.setResponses([text("问题还在等回答。")]);
-      await hob.runtime.router.event("hob", "任务结果已送到", { workDone: true });
+      hob.faux.setResponses([text("这是给你刚才问题的直接回答。")]);
+      await hob.runtime.router.send("hob", { text: "顺便问一下配置在哪" });
       await hob.runtime.router.waitIdle("hob");
-      expect(push).not.toHaveBeenCalled();
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "Hob", body: "这是给你刚才问题的直接回答。" }),
+        "assistant:hob",
+      );
+
+      // 本轮调 ask_user 出审批卡 -> 仅 pushApproval 推一条，finishTurn 不重复推第二条
+      hob.faux.setResponses([
+        call("ask_user", { title: "要继续吗？", options: [{ label: "继续" }, { label: "停止" }] }),
+      ]);
+      await hob.runtime.router.send("hob", { text: "帮我决定一下" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(2);
+      expect(push).toHaveBeenLastCalledWith(
+        expect.objectContaining({ title: "要继续吗？", body: "Hob · 等待你的回答" }),
+        "assistant:hob",
+      );
     } finally { hob.close(); }
   });
 
@@ -862,7 +880,7 @@ describe("Router", () => {
       const notes = hob.runtime.router.items("hob").items.filter((item) => item.kind === "note");
       expect(notes.at(-1)).toMatchObject({ kind: "note", text: expect.stringMatching(/^未能回复：模型调用失败（模型服务返回 400：request exceeds client API key limits）。可重新发送。$/) });
       await new Promise((resolve) => setTimeout(resolve, 10));
-      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "Hob", body: expect.stringContaining("执行失败") }));
+      expect(push).toHaveBeenCalledWith(expect.objectContaining({ title: "Hob", body: expect.stringContaining("执行失败") }), "assistant:hob");
     } finally {
       hob.close();
     }

@@ -784,6 +784,7 @@ export interface Routine {
   instructionBy?: string; // 「要做的事」是谁写的："user" 是用户自己写的；助手写的存助手 id；旧数据没有
   schedules: string[]; // cron 表达式（如 "0 9 * * *"）或具体时间（如 "2026-11-08T09:00"）；可多个（"再加一个"）
   active: boolean;
+  pausedBy?: "topicClosed"; // 因话题关闭而暂停；重新打开时只恢复这种，用户自己暂停的不动
   createdAt: Iso;
   runs: RoutineRun[]; // 最近 20 次，新的在前
   check?: RoutineCheck; // 到点先跑脚本，多数时候没变化就不开任务

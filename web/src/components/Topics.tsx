@@ -311,10 +311,12 @@ export function NewTopicDialog({ group, onClose }: { group: GroupSummary; onClos
 }
 
 /** 话题的右栏和综合一样是群信息；话题自己多的只有最下面的关闭（或重新打开）。 */
-export function TopicClose({ topic }: { topic: GroupSummary }) {
-  const [confirming, setConfirming] = useState(false);
+export function TopicClose({ topic, initialConfirming = false }: { topic: GroupSummary; initialConfirming?: boolean }) {
+  const s = useApp();
+  const [confirming, setConfirming] = useState(initialConfirming);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const activeRoutines = (s.routines ?? []).filter((r) => r.groupId === topic.id && r.active).length;
   const run = (work: () => Promise<string | null>) => {
     setBusy(true);
     setError("");
@@ -334,6 +336,7 @@ export function TopicClose({ topic }: { topic: GroupSummary }) {
       ) : confirming ? (
         <div className="group-card sidebar-card-group mergeconfirm">
           {t("关闭「{name}」？", { name: topic.name })}
+          {activeRoutines > 0 ? <div style={{ marginTop: 4 }}>{t("这个话题有 {n} 个定时任务，关闭后暂停，重新打开时恢复", { n: activeRoutines })}</div> : null}
           <div className="acts">
             <button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => run(() => closeTopic(topic.id))}>{t("确认关闭")}</button>
             <button className="hob-btn" onClick={() => setConfirming(false)}>{t("取消")}</button>

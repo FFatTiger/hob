@@ -385,6 +385,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "一件事，如「相册备份出错」": "For example, “Photo backup failed”",
   "重新打开": "Reopen",
   "关闭「{name}」？": "Close “{name}”?",
+  "这个话题有 {n} 个定时任务，关闭后暂停，重新打开时恢复": "This topic has {n} scheduled tasks. They pause when it's closed and resume when it's reopened.",
   "确认关闭": "Confirm close",
   "关闭这个话题": "Close this topic",
   "这个话题已关闭": "This topic is closed",

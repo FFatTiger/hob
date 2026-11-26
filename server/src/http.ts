@@ -1730,7 +1730,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const result = await routines.runNow(c.req.param("id"));
       return c.json(result);
     } catch (error) {
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, message.includes("不存在") ? 404 : 400);
     }
   });
 

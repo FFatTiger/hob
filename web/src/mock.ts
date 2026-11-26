@@ -4004,6 +4004,13 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       delete topic.pinnedAt;
       if (body?.note?.trim()) topic.closeNote = body.note.trim();
       topic.busy = [];
+      for (const routine of db.routines) {
+        if (routine.groupId === topicId && routine.active) {
+          routine.active = false;
+          routine.pausedBy = "topicClosed";
+          emit({ type: "routine", routine: clone(routine) });
+        }
+      }
       emitGroup(topicId);
       emitGroup(topic.parentId);
       return clone(topic);
@@ -4014,6 +4021,15 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       delete topic.closedAt;
       delete topic.closeNote;
       delete topic.pinnedAt;
+      for (const routine of db.routines) {
+        if (routine.groupId === topicId && !routine.active && routine.pausedBy === "topicClosed") {
+          routine.active = true;
+          delete routine.pausedBy;
+          delete routine.stoppedAt;
+          delete routine.stopReason;
+          emit({ type: "routine", routine: clone(routine) });
+        }
+      }
       emitGroup(topicId);
       emitGroup(topic.parentId);
       return clone(topic);
@@ -4334,7 +4350,11 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const r = db.routines.find((x) => x.id === routineId);
       if (!r) return;
       if (r.groupId && patch.assistantId !== undefined) throw new Error("群的定时由群主处理");
+      if (patch.active === true && r.groupId && db.groups.find((g) => g.id === r.groupId)?.closedAt) {
+        throw new ApiError(400, "话题已关闭");
+      }
       Object.assign(r, patch);
+      if (patch.active !== undefined) delete r.pausedBy;
       emit({ type: "routine", routine: clone(r) });
     },
     deleteRoutine: async (routineId) => {
@@ -4348,6 +4368,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (r.groupId) {
         const group = db.groups.find((item) => item.id === r.groupId);
         if (!group) throw new Error("群不存在");
+        if (group.closedAt) throw new ApiError(400, "话题已关闭");
         const item: GroupItem = { kind: "note", icon: "routine", id: uid("g-"), at: time, speaker: group.ownerId, text: `定时任务「${r.name}」已到执行时间` };
         (db.groupItems[group.id] ??= []).push(item);
         r.runs = [{ at: time, status: "handed" as const }, ...r.runs].slice(0, 20);

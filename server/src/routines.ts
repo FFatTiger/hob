@@ -85,9 +85,14 @@ export class RoutineScheduler {
 
   start(): void {
     for (const routine of this.runtime.store.routines()) {
-      const group = routine.groupId && this.runtime.store.group(routine.groupId);
+      const group = routine.groupId ? this.runtime.store.group(routine.groupId) : undefined;
       if (group && routine.assistantId !== group.ownerId) this.transfer(routine, group.ownerId);
-      this.apply(this.runtime.store.routine(routine.id) ?? routine);
+      const current = this.runtime.store.routine(routine.id) ?? routine;
+      if (group?.closedAt && current.active) {
+        this.pauseRoutineForClosedTopic(current);
+        continue;
+      }
+      this.apply(current);
     }
   }
 
@@ -122,8 +127,38 @@ export class RoutineScheduler {
   }
 
   private destination(routine: Routine): string | undefined {
-    const group = routine.groupId ? this.runtime.store.group(routine.groupId) : undefined;
-    return group?.closedAt ? group.parentId : group?.id;
+    return routine.groupId ? this.runtime.store.group(routine.groupId)?.id : undefined;
+  }
+
+  private pauseRoutineForClosedTopic(routine: Routine): void {
+    const next: Routine = { ...routine, active: false, pausedBy: "topicClosed" };
+    this.runtime.store.saveRoutine(next);
+    this.apply(next);
+    this.runtime.bus.emit({ type: "routine", routine: next });
+  }
+
+  /** 话题关闭时暂停名下启用中的定时任务，记 pausedBy，重开时只恢复这一类。 */
+  pauseForTopic(groupId: string): void {
+    for (const routine of this.runtime.store.routines()) {
+      if (routine.groupId === groupId && routine.active) this.pauseRoutineForClosedTopic(routine);
+    }
+  }
+
+  /** 话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按完成停止。 */
+  resumeForTopic(groupId: string): void {
+    for (const routine of this.runtime.store.routines()) {
+      if (routine.groupId !== groupId || routine.active || routine.pausedBy !== "topicClosed") continue;
+      const { pausedBy: _pausedBy, stoppedAt: _stoppedAt, stopReason: _stopReason, ...rest } = routine;
+      const next: Routine = { ...rest, active: true };
+      this.apply(next);
+      const timers = this.timers.get(next.id) ?? [];
+      if (timers.length && timers.every((cron) => cron.nextRun() === null)) {
+        void this.stopRoutine(next, "finished");
+        continue;
+      }
+      this.runtime.store.saveRoutine(next);
+      this.runtime.bus.emit({ type: "routine", routine: next });
+    }
   }
 
   private validateGroup(groupId: string, assistantId: string, original?: string, allowClosed = false): void {
@@ -186,6 +221,7 @@ export class RoutineScheduler {
   async fire(routineId: string): Promise<void> {
     const routine = this.runtime.store.routine(routineId);
     if (!routine || !routine.active) return;
+    if (routine.groupId && this.runtime.store.group(routine.groupId)?.closedAt) return;
     let outcome: RoutineTick["outcome"] | undefined;
     try {
       outcome = (await this.tick(routine)).outcome;
@@ -369,8 +405,16 @@ export class RoutineScheduler {
     const { check, instructionBy, ...rest } = patch;
     delete (rest as Record<string, unknown>).userWords;
     delete (rest as Record<string, unknown>).skill;
+    delete (rest as Record<string, unknown>).pausedBy;
+    const targetGroupId = patch.groupId ?? routine.groupId;
+    if (rest.active === true && targetGroupId && this.runtime.store.group(targetGroupId)?.closedAt) {
+      throw new Error("话题已关闭");
+    }
     const next: Routine = { ...routine, ...rest };
     if (instructionBy !== undefined) next.instructionBy = instructionBy;
+    if (rest.active !== undefined || (patch.groupId !== undefined && patch.groupId !== routine.groupId)) {
+      delete next.pausedBy;
+    }
     // 重新打开：上次停下的记录清掉
     if (rest.active === true) {
       delete next.stoppedAt;
@@ -403,6 +447,7 @@ export class RoutineScheduler {
   async runNow(id: string): Promise<RoutineTick> {
     const routine = this.runtime.store.routine(id);
     if (!routine) throw new Error(`定时任务不存在：${id}`);
+    if (routine.groupId && this.runtime.store.group(routine.groupId)?.closedAt) throw new Error("话题已关闭");
     const result = await this.tick(routine);
     if (routine.groupId) await this.settle(id, result.outcome);
     return result;

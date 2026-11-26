@@ -322,11 +322,12 @@ export class GroupManager {
     return this.closeTopic(topic, text, text);
   }
 
-  /** 重新打开话题：清掉关闭说明与置顶。 */
+  /** 重新打开话题：清掉关闭说明与置顶，恢复因关闭而暂停的定时任务。 */
   reopen(tid: string): Group {
     const topic = this.topic(tid);
     const { closedAt: _closedAt, closeNote: _closeNote, pinnedAt: _pinnedAt, ...rest } = topic;
     this.store.saveGroup(rest);
+    this.runtime.routines.resumeForTopic(tid);
     this.publish(tid);
     if (topic.parentId) this.publish(topic.parentId);
     return this.group(tid);
@@ -339,6 +340,7 @@ export class GroupManager {
     // 上一句结论还在时，这次没给说明就把它清掉，免得卡片上留着旧话
     if (!text && next.closeNote) delete next.closeNote;
     this.store.saveGroup(next);
+    this.runtime.routines.pauseForTopic(topic.id);
     // 关了这个话题就没人再管它的待办了：没做完的直接清掉，不再写进时间线
     const left = readTodos(groupTodosPath(this.runtime.home, topic.id));
     if (left.length) clearTodos(groupTodosPath(this.runtime.home, topic.id));

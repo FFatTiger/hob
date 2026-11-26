@@ -2,11 +2,11 @@
 // Proxies GitHub's official remote MCP server while managing authentication, login, attribution, and command credentials.
 
 import { fileURLToPath } from "node:url";
-import { appendAttribution, shouldAttributeToolCall } from "./attribution.mjs";
+import { appendAttribution, appendCoAuthor, commitMessageArg, shouldAttributeToolCall } from "./attribution.mjs";
 import { AuthError, createAuthManager, extractScopeFromArgs } from "./auth.mjs";
 import { RemoteMcpClient } from "./remote-mcp.mjs";
 
-const SERVER_INFO = { name: "github", version: "2.0.4" };
+const SERVER_INFO = { name: "github", version: "2.0.5" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
 
 function errorToolResult(message) {
@@ -135,6 +135,15 @@ export function createGitHubServer(options = {}) {
     const forwardArgs = args && typeof args === "object" ? { ...args } : {};
     if (auth.config.attribution && shouldAttributeToolCall(name, forwardArgs)) {
       forwardArgs.body = appendAttribution(forwardArgs.body);
+    }
+    // Commits made through the API carry the same co-author as commits from bin/git,
+    // except when the commit is already authored by hob-bot itself.
+    const messageArg = commitMessageArg(name);
+    if (auth.config.attribution && messageArg && !(tokenResult.source === "app" && (await auth.getAppInfo().catch(() => null))?.slug === "hob-bot")) {
+      // A merge without a message keeps GitHub's default text rather than becoming just a trailer.
+      if (name !== "merge_pull_request" || typeof forwardArgs[messageArg] === "string") {
+        forwardArgs[messageArg] = appendCoAuthor(forwardArgs[messageArg]);
+      }
     }
 
     try {

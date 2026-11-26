@@ -1,7 +1,7 @@
 {
   "name": "github",
   "displayName": "GitHub",
-  "version": "2.0.4",
+  "version": "2.0.5",
   "description": "Connect official GitHub tools and bundled git/gh commands with hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution.",
   "homepage": "https://github.com/github/github-mcp-server",
   "userConfig": {

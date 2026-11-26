@@ -257,3 +257,23 @@ test("hob/command：身份是 hob-bot 机器人本人或 ATTRIBUTION 关闭时�
     tmp.cleanup();
   }
 });
+
+test("通过工具直接在 GitHub 上提交：提交说明补上 hob-bot 共同作者，只补一次；关掉署名不补", async () => {
+  const pat = "ghp_commit_attr";
+  const fake = await startFakeGitHub({ validTokens: [pat] });
+  const on = await startMcpTestClient({ ...fake.env(), GITHUB_PERSONAL_ACCESS_TOKEN: pat });
+  const off = await startMcpTestClient({ ...fake.env(), GITHUB_PERSONAL_ACCESS_TOKEN: pat, GITHUB_ATTRIBUTION: "false" });
+  const trailer = `Co-authored-by: ${HOB_BOT_CO_AUTHOR}`;
+  const call = async (client, name, args) => JSON.parse((await client.callTool(name, { owner: "acme", repo: "web", ...args })).content[0].text).args;
+  try {
+    assert.equal((await call(on, "create_or_update_file", { path: "a.md", content: "x", message: "docs: add a", branch: "main" })).message, `docs: add a\n\n${trailer}`);
+    assert.equal((await call(on, "push_files", { branch: "main", files: [], message: `feat: b\n\n${trailer}` })).message, `feat: b\n\n${trailer}`);
+    assert.equal((await call(on, "merge_pull_request", { pullNumber: 1, merge_method: "squash", commit_message: "squash body" })).commit_message, `squash body\n\n${trailer}`);
+    assert.equal((await call(on, "merge_pull_request", { pullNumber: 1 })).commit_message, undefined);
+    assert.equal((await call(off, "create_or_update_file", { path: "a.md", content: "x", message: "docs: add a", branch: "main" })).message, "docs: add a");
+  } finally {
+    await on.close();
+    await off.close();
+    await fake.close();
+  }
+});

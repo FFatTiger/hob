@@ -1,12 +1,26 @@
+import { createECDH, randomBytes } from "node:crypto";
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { Approval, PushSubscriptionJson } from "../../shared/types.ts";
 import { createApp } from "../src/http.ts";
-import { pushApproval, PushService, type PushSender } from "../src/push.ts";
+import { createWebPushSender, pushApproval, PushService, type PushSender } from "../src/push.ts";
 import type { HobRuntime } from "../src/runtime.ts";
 import { makeHob } from "./helpers.ts";
+
+const requirePush = createRequire(import.meta.url);
+const webpush = requirePush("web-push") as typeof import("web-push");
+
+function realCryptoKeys() {
+  const ecdh = createECDH("prime256v1");
+  ecdh.generateKeys();
+  return {
+    p256dh: ecdh.getPublicKey().toString("base64url"),
+    auth: randomBytes(16).toString("base64url"),
+  };
+}
 
 /** 假的推送发送器：记下发了什么，可以按 endpoint 让某台设备返回 410/404，或带原因的错误（Apple 的写法）。 */
 function fakeSender() {
@@ -325,6 +339,117 @@ describe("PushService 单独用", () => {
       const service = new PushService({ home, email: () => "" });
       const result = await service.send({ title: "Hob", body: "x", url: "/" });
       expect(result).toMatchObject({ sent: 0, skipped: "no-devices" });
+    } finally {
+      rmSync(home, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("传输层与瞬断重试", () => {
+  it("createWebPushSender 经 fetch 发送加密 payload 与 VAPID 头，非 2xx 抛出带 statusCode 和 body 的错误", async () => {
+    const vapid = { ...webpush.generateVAPIDKeys(), subject: "mailto:test@example.com" };
+    const keys = realCryptoKeys();
+    const calls: { url: string; init?: RequestInit }[] = [];
+    const okFetch = (async (url: string | URL | Request, init?: RequestInit) => {
+      calls.push({ url: String(url), init });
+      return new Response("", { status: 201 });
+    }) as typeof fetch;
+
+    const sender = createWebPushSender(okFetch);
+    await sender({ endpoint: "https://push.example/device-1", ...keys }, JSON.stringify({ title: "Hob", body: "你好", url: "/" }), vapid);
+
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.url).toBe("https://push.example/device-1");
+    expect(calls[0]?.init?.method).toBe("POST");
+    expect(calls[0]?.init?.body).toBeInstanceOf(Uint8Array);
+    expect((calls[0]?.init?.body as Uint8Array).byteLength).toBeGreaterThan(0);
+    expect(calls[0]?.init?.signal).toBeInstanceOf(AbortSignal);
+    const headers = calls[0]?.init?.headers as Record<string, string>;
+    const lowerKeys = Object.keys(headers).map((key) => key.toLowerCase());
+    expect(lowerKeys).not.toContain("content-length");
+    expect(headers.Authorization ?? headers.authorization).toMatch(/^vapid /i);
+    expect(headers.TTL ?? headers.ttl).toBeDefined();
+    expect(headers["Content-Encoding"] ?? headers["content-encoding"]).toBe("aes128gcm");
+
+    const failFetch = (async () => new Response('{"reason":"BadJwtToken"}', { status: 403 })) as typeof fetch;
+    const failingSender = createWebPushSender(failFetch);
+    await expect(
+      failingSender({ endpoint: "https://push.example/device-1", ...keys }, JSON.stringify({ title: "Hob", body: "你好", url: "/" }), vapid),
+    ).rejects.toMatchObject({ statusCode: 403, body: '{"reason":"BadJwtToken"}' });
+  });
+
+  it("瞬断错误（ECONNRESET / EAI_AGAIN / 503）最多重试两次，第三次成功则发送成功；连续失败返回错误", async () => {
+    const cases: { name: string; makeError: () => Error }[] = [
+      {
+        name: "ECONNRESET",
+        makeError: () => Object.assign(new Error("socket hang up"), { code: "ECONNRESET" }),
+      },
+      {
+        name: "EAI_AGAIN via cause",
+        makeError: () => new TypeError("fetch failed", { cause: Object.assign(new Error("getaddrinfo EAI_AGAIN"), { code: "EAI_AGAIN" }) }),
+      },
+      {
+        name: "503",
+        makeError: () => Object.assign(new Error("Service Unavailable"), { statusCode: 503, body: "try later" }),
+      },
+    ];
+
+    for (const item of cases) {
+      const home = mkdtempSync(join(tmpdir(), "hob-push-retry-"));
+      try {
+        let attempts = 0;
+        const sender: PushSender = async () => {
+          attempts += 1;
+          if (attempts < 3) throw item.makeError();
+        };
+        const service = new PushService({ home, email: () => "", sender, retryDelaysMs: [0, 0] });
+        service.subscribe(subscription("a"), "iPhone");
+        const okResult = await service.send({ title: "Hob", body: item.name, url: "/" });
+        expect(okResult).toEqual({ sent: 1, removed: 0 });
+        expect(attempts).toBe(3);
+
+        // 连续 3 次均失败：不再继续重试，返回失败原因并保留设备
+        let alwaysFailAttempts = 0;
+        const alwaysFail: PushSender = async () => {
+          alwaysFailAttempts += 1;
+          throw item.makeError();
+        };
+        const failingService = new PushService({ home, email: () => "", sender: alwaysFail, retryDelaysMs: [0, 0] });
+        const failResult = await failingService.send({ title: "Hob", body: item.name, url: "/" });
+        expect(failResult.sent).toBe(0);
+        expect(failResult.removed).toBe(0);
+        expect(failResult.error).toBeTruthy();
+        expect(alwaysFailAttempts).toBe(3);
+      } finally {
+        rmSync(home, { recursive: true, force: true });
+      }
+    }
+  });
+
+  it("404/410/400 VapidPkHashMismatch 与 403 BadJwtToken 绝不重试，失效订阅立即删除，403 保留设备", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-push-noretry-"));
+    try {
+      const counts = new Map<string, number>();
+      const sender = vi.fn<PushSender>(async (target) => {
+        counts.set(target.endpoint, (counts.get(target.endpoint) ?? 0) + 1);
+        if (target.endpoint.endsWith("/404")) throw Object.assign(new Error("Not Found"), { statusCode: 404 });
+        if (target.endpoint.endsWith("/410")) throw Object.assign(new Error("Gone"), { statusCode: 410 });
+        if (target.endpoint.endsWith("/400")) throw Object.assign(new Error("Bad"), { statusCode: 400, body: '{"reason":"VapidPkHashMismatch"}' });
+        if (target.endpoint.endsWith("/403")) throw Object.assign(new Error("Forbidden"), { statusCode: 403, body: '{"reason":"BadJwtToken"}' });
+      });
+      const service = new PushService({ home, email: () => "", sender, retryDelaysMs: [0, 0] });
+      service.subscribe(subscription("404"), "D404");
+      service.subscribe(subscription("410"), "D410");
+      service.subscribe(subscription("400"), "D400");
+      service.subscribe(subscription("403"), "D403");
+
+      const result = await service.send({ title: "Hob", body: "x", url: "/" });
+      expect(result).toEqual({ sent: 0, removed: 3, error: "推送服务拒绝（403 BadJwtToken）" });
+      expect(counts.get(subscription("404").endpoint)).toBe(1);
+      expect(counts.get(subscription("410").endpoint)).toBe(1);
+      expect(counts.get(subscription("400").endpoint)).toBe(1);
+      expect(counts.get(subscription("403").endpoint)).toBe(1);
+      expect(service.view().devices.map((d) => d.label)).toEqual(["D403"]);
     } finally {
       rmSync(home, { recursive: true, force: true });
     }

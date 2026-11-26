@@ -49,13 +49,53 @@ export type PushSender = (
   vapid: VapidKeys & { subject: string },
 ) => Promise<void>;
 
-const webPushSender: PushSender = async (target, payload, vapid) => {
-  await webpush.sendNotification(
-    { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
-    payload,
-    { vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey } },
-  );
-};
+const PUSH_TIMEOUT_MS = 15_000;
+const PUSH_RETRY_DELAYS_MS: readonly number[] = [500, 1500];
+
+const TRANSIENT_CODES = new Set([
+  "ECONNRESET",
+  "ETIMEDOUT",
+  "EAI_AGAIN",
+  "ENOTFOUND",
+  "ECONNREFUSED",
+  "EPIPE",
+  "UND_ERR_CONNECT_TIMEOUT",
+  "UND_ERR_SOCKET",
+]);
+const TRANSIENT_NAMES = new Set(["TimeoutError", "AbortError"]);
+const TRANSIENT_MESSAGE = /\b(ECONNRESET|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|ECONNREFUSED|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_SOCKET)\b|fetch failed/i;
+
+/** 用 web-push 加密并签发 VAPID，再经全局 fetch 发送，复用 undici 全局代理与超时控制。 */
+export function createWebPushSender(fetchImpl?: typeof fetch): PushSender {
+  return async (target, payload, vapid) => {
+    const details = webpush.generateRequestDetails(
+      { endpoint: target.endpoint, keys: { p256dh: target.p256dh, auth: target.auth } },
+      payload,
+      { vapidDetails: { subject: vapid.subject, publicKey: vapid.publicKey, privateKey: vapid.privateKey } },
+    );
+    const headers: Record<string, string> = {};
+    for (const [key, value] of Object.entries(details.headers ?? {})) {
+      if (key.toLowerCase() === "content-length" || value === undefined) continue;
+      headers[key] = String(value);
+    }
+    const response = await (fetchImpl ?? globalThis.fetch)(details.endpoint, {
+      method: details.method,
+      headers,
+      body: details.body ? new Uint8Array(details.body) : undefined,
+      signal: AbortSignal.timeout(PUSH_TIMEOUT_MS),
+    });
+    if (!response.ok) {
+      const body = await response.text().catch(() => "");
+      const error = new Error(`Received unexpected response code ${response.status}`) as Error & {
+        statusCode: number;
+        body: string;
+      };
+      error.statusCode = response.status;
+      error.body = body;
+      throw error;
+    }
+  };
+}
 
 export interface PushResult {
   sent: number;
@@ -72,6 +112,7 @@ export interface PushServiceOptions {
   /** 设置 → 通知里填的邮箱（VAPID subject 用） */
   email: () => string;
   sender?: PushSender;
+  retryDelaysMs?: readonly number[];
 }
 
 function isVapid(value: unknown): value is VapidKeys {
@@ -114,6 +155,22 @@ function isGone(status: number | undefined, reason: string): boolean {
   return status === 404 || status === 410 || (status === 400 && reason === "VapidPkHashMismatch");
 }
 
+/** 仅重试瞬断网络错误、429 与 5xx；4xx 与失效订阅绝不重试。 */
+function isTransient(error: unknown, status: number | undefined): boolean {
+  if (status !== undefined) return status === 429 || status >= 500;
+  let current: unknown = error;
+  const seen = new Set<unknown>();
+  while (current && typeof current === "object" && !seen.has(current)) {
+    seen.add(current);
+    const item = current as { code?: unknown; name?: unknown; message?: unknown; cause?: unknown };
+    if (typeof item.code === "string" && TRANSIENT_CODES.has(item.code)) return true;
+    if (typeof item.name === "string" && TRANSIENT_NAMES.has(item.name)) return true;
+    if (typeof item.message === "string" && TRANSIENT_MESSAGE.test(item.message)) return true;
+    current = item.cause;
+  }
+  return false;
+}
+
 function describeFailure(error: unknown, status: number | undefined, reason: string): string {
   if (status) return t("推送服务拒绝（{status}{reason}）", { status, reason: reason ? ` ${reason}` : "" });
   return t("无法连接推送服务（{reason}）", { reason: error instanceof Error ? error.message : String(error) });
@@ -129,7 +186,7 @@ export class PushService {
   private readonly clients = new Map<string, number>();
 
   constructor(private readonly options: PushServiceOptions) {
-    this.sender = options.sender ?? webPushSender;
+    this.sender = options.sender ?? createWebPushSender();
   }
 
   private file(): string {
@@ -234,6 +291,26 @@ export class PushService {
     return false;
   }
 
+  private async sendWithRetry(
+    target: PushTarget,
+    body: string,
+    vapid: VapidKeys & { subject: string },
+  ): Promise<void> {
+    const delays = this.options.retryDelaysMs ?? PUSH_RETRY_DELAYS_MS;
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        await this.sender(target, body, vapid);
+        return;
+      } catch (error) {
+        const status = statusOf(error);
+        const reason = reasonOf(error);
+        if (isGone(status, reason) || !isTransient(error, status) || attempt >= delays.length) throw error;
+        const delay = delays[attempt] ?? 0;
+        if (delay > 0) await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
+  }
+
   private async deliver(devices: DeviceRecord[], payload: PushPayload): Promise<PushResult> {
     const file = this.load();
     const body = JSON.stringify(payload);
@@ -244,7 +321,7 @@ export class PushService {
     await Promise.all(
       devices.map(async (device) => {
         try {
-          await this.sender(
+          await this.sendWithRetry(
             { endpoint: device.endpoint, p256dh: device.p256dh, auth: device.auth },
             body,
             vapid,

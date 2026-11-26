@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, s
 import { dirname, join } from "node:path";
 import { archiveAssistantsDir, archiveGroupsDir, assistantDir, assistantJobsDir, groupDir, groupFilesDir, groupsDir } from "./config.ts";
 import { newId } from "./ids.ts";
+import { effectiveRules, emptyRuleOverrides, layerOverrides, type TopicConfigHost } from "./topic-config.ts";
 import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
 import type {
@@ -10,11 +11,16 @@ import type {
   Assistant,
   Delegation,
   Draft,
+  EffectiveRule,
   Group,
   GroupItem,
+  GroupReplyMode,
   Job,
+  ModelPick,
   Routine,
   Rule,
+  RuleOverrides,
+  TopicOverrides,
   WorklogEntry,
   StarredMessage,
   ConversationRef,
@@ -152,11 +158,11 @@ export class Store {
       for (const name of ["group.json", "rules.json", "state.json", "cards.json", "routines.json"]) readJson(join(dir, name), null);
       const topics = join(dir, "topics");
       if (existsSync(topics)) for (const topic of readdirSync(topics)) {
-        for (const name of ["group.json", "state.json"]) readJson(join(topics, topic, name), null);
+        for (const name of ["group.json", "rule-overrides.json", "state.json"]) readJson(join(topics, topic, name), null);
       }
     }
     for (const id of this.groupIds()) {
-      for (const name of ["group.json", "rules.json", "state.json", "cards.json", "routines.json"]) readJson(join(groupDir(this.home, id), name), null);
+      for (const name of ["group.json", "rules.json", "rule-overrides.json", "state.json", "cards.json", "routines.json"]) readJson(join(groupDir(this.home, id), name), null);
     }
   }
 
@@ -264,16 +270,72 @@ export class Store {
     return !!target && !!actual && (target.parentId ?? target.id) === (actual.parentId ?? actual.id);
   }
 
-  groupRules(id: string): Rule[] {
+  groupParentRules(id: string): Rule[] {
     const group = this.group(id);
     if (!group) throw new Error("群不存在");
     return readJson<Rule[]>(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), []);
   }
 
+  groupRuleOverrides(id: string): RuleOverrides {
+    const path = join(groupDir(this.home, id), "rule-overrides.json");
+    const raw = readJson<unknown>(path, null);
+    if (raw === null) return emptyRuleOverrides();
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`话题规则覆盖文件格式无效：${path}`);
+    }
+    const obj = raw as Record<string, unknown>;
+    return {
+      own: Array.isArray(obj.own) ? (obj.own as Rule[]) : [],
+      changed:
+        obj.changed && typeof obj.changed === "object" && !Array.isArray(obj.changed)
+          ? (obj.changed as RuleOverrides["changed"])
+          : {},
+      hidden:
+        obj.hidden && typeof obj.hidden === "object" && !Array.isArray(obj.hidden)
+          ? (obj.hidden as RuleOverrides["hidden"])
+          : {},
+    };
+  }
+
+  saveGroupRuleOverrides(id: string, overrides: RuleOverrides): void {
+    const group = this.group(id);
+    if (!group?.parentId) throw new Error("话题不存在");
+    writeJsonAtomic(join(groupDir(this.home, id), "rule-overrides.json"), overrides);
+  }
+
+  groupTopicConfigHost(tid: string): TopicConfigHost {
+    const own = readJson<Group | null>(join(groupDir(this.home, tid), "group.json"), null);
+    if (!own?.parentId) throw new Error("话题不存在");
+    const parentId = own.parentId;
+    return {
+      parentRules: () => this.groupParentRules(parentId),
+      readOverrides: () => {
+        const cur = readJson<Group | null>(join(groupDir(this.home, tid), "group.json"), null);
+        return cur?.overrides ?? {};
+      },
+      writeOverrides: (next) => {
+        const cur = this.group(tid);
+        if (!cur) throw new Error("话题不存在");
+        this.saveGroup({ ...cur, overrides: next });
+      },
+      readRuleOverrides: () => this.groupRuleOverrides(tid),
+      writeRuleOverrides: (next) => this.saveGroupRuleOverrides(tid, next),
+    };
+  }
+
+  groupRules(id: string): EffectiveRule[] {
+    const group = this.group(id);
+    if (!group) throw new Error("群不存在");
+    const parent = this.groupParentRules(group.parentId ?? group.id);
+    if (!group.parentId) return parent.map((rule) => ({ ...rule, from: "parent" as const }));
+    return effectiveRules(parent, this.groupRuleOverrides(group.id));
+  }
+
   saveGroupRules(id: string, rules: Rule[]): void {
     const group = this.group(id);
     if (!group) throw new Error("群不存在");
-    writeJsonAtomic(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), rules);
+    const clean = rules.map(({ id: ruleId, text, mode, changedAt }) => ({ id: ruleId, text, mode, changedAt }));
+    writeJsonAtomic(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), clean);
   }
 
   worklog(id: string, limit = 30): WorklogEntry[] {
@@ -301,8 +363,8 @@ export class Store {
   }
 
   /**
-   * 读一个群。话题带 parentId，读出来时补上所属群的成员、群主和负责什么；
-   * 这些只在群上存一份，群改了，话题读到的跟着变。旧 workflow 字段保留在文件里但不进入视图。
+   * 读一个群。话题带 parentId，读出来时补上所属群的成员、群主和负责什么，
+   * 再把话题的 overrides 叠上去；视图另外保留 overrides 原值。旧 workflow 字段保留在文件里但不进入视图。
    */
   group(id: string): Group | undefined {
     const own = readJson<Group | null>(join(groupDir(this.home, id), "group.json"), null);
@@ -311,15 +373,18 @@ export class Store {
     const parent = readJson<Group | null>(join(groupDir(this.home, own.parentId), "group.json"), null);
     // 所属的群不在了（目录坏了）：当这个话题不存在，别处拿不到缺成员、缺群主的数据
     if (!parent) return undefined;
+    const overrides: TopicOverrides = own.overrides ?? (own.replyMode ? { replyMode: own.replyMode } : {});
+    const layered = layerOverrides(parent, overrides);
     return {
       id: own.id,
       name: own.name,
       purpose: parent.purpose,
       ownerId: parent.ownerId,
       members: parent.members,
-      ...(parent.models ? { models: parent.models } : {}),
-      ...(parent.memberModels ? { memberModels: parent.memberModels } : {}),
-      ...(own.replyMode ? { replyMode: own.replyMode } : {}),
+      ...(layered.models ? { models: layered.models } : {}),
+      ...(layered.memberModels ? { memberModels: layered.memberModels } : {}),
+      ...(layered.replyMode ? { replyMode: layered.replyMode } : {}),
+      ...(own.overrides !== undefined ? { overrides: own.overrides } : {}),
       createdAt: own.createdAt,
       parentId: own.parentId,
       ...(own.cwd ? { cwd: own.cwd } : {}),
@@ -331,19 +396,47 @@ export class Store {
     };
   }
 
-  /** 存一个群。话题只写自己的字段；旧 workflow 若已经存在，原样保留但不主动新增或删除。 */
+  /**
+   * 存一个群。话题只写自己的字段和 overrides 原值，不把视图上叠好的 replyMode/models/memberModels 固化回去；
+   * 写群文件时顺手去掉 memberModels 里残留的 conversation 键。旧 workflow 若已经存在，原样保留。
+   */
   saveGroup(group: Group): void {
     const path = join(groupDir(this.home, group.id), "group.json");
     if (!group.parentId) {
-      writeJsonAtomic(path, group);
+      const out = { ...group };
+      if (out.memberModels) {
+        const cleaned: Record<string, { work?: ModelPick }> = {};
+        for (const [aid, entry] of Object.entries(out.memberModels)) {
+          if (entry && typeof entry === "object" && "work" in entry && entry.work) {
+            cleaned[aid] = { work: entry.work };
+          }
+        }
+        if (Object.keys(cleaned).length) out.memberModels = cleaned;
+        else delete out.memberModels;
+      }
+      writeJsonAtomic(path, out);
       return;
     }
     const existing = readJson<Record<string, unknown> | null>(path, null);
+    const legacyReplyMode = existing
+      ? existing.replyMode === "owner" || existing.replyMode === "all"
+        ? existing.replyMode
+        : undefined
+      : group.replyMode === "owner" || group.replyMode === "all"
+        ? group.replyMode
+        : undefined;
+    const overrides =
+      group.overrides ??
+      (existing && Object.prototype.hasOwnProperty.call(existing, "overrides")
+        ? (existing.overrides as TopicOverrides)
+        : legacyReplyMode
+          ? { replyMode: legacyReplyMode }
+          : {});
     writeJsonAtomic(path, {
       id: group.id,
       parentId: group.parentId,
       name: group.name,
-      ...(group.replyMode ? { replyMode: group.replyMode } : {}),
+      overrides,
       createdAt: group.createdAt,
       ...(group.cwd ? { cwd: group.cwd } : {}),
       ...(existing && Object.prototype.hasOwnProperty.call(existing, "workflow") ? { workflow: existing.workflow } : {}),
@@ -353,6 +446,28 @@ export class Store {
       ...(group.closeNote ? { closeNote: group.closeNote } : {}),
       ...(group.handover ? { handover: group.handover } : {}),
     });
+  }
+
+  /** 老数据里的群话题补一次 overrides（已经有 overrides 键的不再处理）。 */
+  migrateTopicOverrides(): void {
+    for (const id of this.groupIds()) {
+      const path = join(groupDir(this.home, id), "group.json");
+      const own = readJson<Record<string, unknown> | null>(path, null);
+      if (!own || typeof own.parentId !== "string" || !own.parentId) continue;
+      if (Object.prototype.hasOwnProperty.call(own, "overrides")) continue;
+      const parent = readJson<Record<string, unknown> | null>(
+        join(groupDir(this.home, own.parentId), "group.json"),
+        null,
+      );
+      if (!parent) continue;
+      const parentReplyMode = parent.replyMode ?? "owner";
+      const overrides: TopicOverrides = {};
+      if (own.replyMode !== undefined && own.replyMode !== parentReplyMode) {
+        overrides.replyMode = own.replyMode as GroupReplyMode;
+      }
+      const { replyMode: _removed, ...rest } = own;
+      writeJsonAtomic(path, { ...rest, overrides });
+    }
   }
 
   /**

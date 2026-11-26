@@ -49,6 +49,7 @@ import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
 import { markdownToCard } from "./card-markdown.ts";
 import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd } from "./workspace.ts";
+import { deleteTopicRule, setTopicRule } from "./topic-config.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -223,6 +224,7 @@ export function buildRouterTools(
   const boundSession = Boolean(resolvedWorkspace.bound);
   const currentGroup = groupId ? store.group(groupId) : undefined;
   const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
+  const isGroupTopic = Boolean(currentGroup?.parentId);
   const groupHasBoundCwd = Boolean(parentGroup?.cwd);
   const assistant = () => {
     const found = store.assistant(assistantId);
@@ -317,7 +319,7 @@ export function buildRouterTools(
 
   // 能派的模型：写进 start_job 的参数说明，助手知道有哪些可选、哪个是默认
   const modelSettings = runtime.settings.settings.models;
-  const modelAssistant = assistantInGroup(assistant(), groupId ? store.group(groupId) : undefined, runtime.models, modelSettings);
+  const modelAssistant = assistantInGroup(assistant(), currentGroup, runtime.models, modelSettings, isGroupTopic ? parentGroup : undefined);
   const usable = usableRefs(modelSettings, modelAssistant, runtime.models);
   const defaultModel = defaultWorkRef(modelSettings, modelAssistant, runtime.models);
   const modelList = usable.map((ref) => {
@@ -359,6 +361,13 @@ export function buildRouterTools(
     const desktop = runtime.desktop.view();
     return desktop.enabled && Boolean(desktop.url && desktop.tokenConfigured) && runtime.plugins.hasPasswordGenerator(assistantId);
   })();
+  const scopeSchema = Type.Optional(Type.Literal("group", { description: "可选。用户说这条规则不只是这件事、而是整个群以后都要这样时填，写到上级；不填只写这个话题。" }));
+  const badScope = (scope: unknown) =>
+    isGroupTopic && scope !== undefined && scope !== "group"
+      ? "scope 只能填 group（写到本群规则）或不填（只写这个话题）。"
+      : undefined;
+  const targetGroupOf = (scope: unknown) => (isGroupTopic && scope === "group" ? currentGroup!.parentId! : groupId);
+
   const tools: Tool[] = [
     {
       name: "react",
@@ -767,19 +776,35 @@ export function buildRouterTools(
     {
       name: "set_rule",
       label: "记录规则",
-      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? "在群里记的，只在这个群生效。" : ""}`,
+      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里默认只在这个话题生效；填 scope 为 group 才写到整个群。" : "在群里记的，只在这个群生效。") : ""}`,
       parameters: Type.Object({
         text: Type.String({ description: "规则内容，如「发布公众号」" }),
         mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
+        ...(isGroupTopic ? { scope: scopeSchema } : {}),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
       execute: async (_id, params: any) => {
         const target = targetOf(params.assistantId);
         if ("error" in target) return fail(target.error);
+        const scopeErr = badScope(params.scope);
+        if (scopeErr) return fail(scopeErr);
         const text = String(params.text).trim();
         if (!text) return fail("规则内容为空。");
         const mode = params.mode === "allow" ? "allow" : "ask";
-        const rules = groupId ? store.groupRules(groupId) : store.rules(target.id);
+        if (isGroupTopic && params.scope !== "group") {
+          const existing = store.groupRules(groupId!).find((rule) => rule.text === text);
+          if (existing?.mode === mode) return ok("这条规则已经记着了，没有改动。");
+          setTopicRule(store.groupTopicConfigHost(groupId!), {
+            ...(existing ? { id: existing.id } : {}),
+            text,
+            mode,
+          });
+          await note("rule", t("已记入{owner}的规则 · {rule}", { owner: t("这个话题"), rule: text }));
+          profileChanged(target.id);
+          return ok("已加到这个话题的规则，只在这个话题生效。");
+        }
+        const targetGroupId = targetGroupOf(params.scope);
+        const rules = targetGroupId ? store.groupParentRules(targetGroupId) : store.rules(target.id);
         const existing = rules.find((rule) => rule.text === text);
         // 答 always 审批时规则已经写好了（Actions 那行提示也已经出过），这里没改动就不重复出：
         // 模型看到答案之后常会把同一句再记一遍，重复的提示行对用户没有信息量。
@@ -790,11 +815,11 @@ export function buildRouterTools(
         } else {
           rules.push({ id: newId("r-"), text, mode, changedAt: new Date().toISOString() });
         }
-        if (groupId) store.saveGroupRules(groupId, rules);
+        if (targetGroupId) store.saveGroupRules(targetGroupId, rules);
         else store.saveRules(target.id, rules);
-        await note("rule", t("已记入{owner}的规则 · {rule}", { owner: groupId ? t("本群") : nameOf(target.id), rule: text }));
+        await note("rule", t("已记入{owner}的规则 · {rule}", { owner: targetGroupId ? t("本群") : nameOf(target.id), rule: text }));
         profileChanged(target.id);
-        return ok("已记录规则。");
+        return ok(isGroupTopic ? "已加到本群的规则，没有单独改过这一条的话题都会用。" : "已记录规则。");
       },
     },
     {
@@ -803,19 +828,33 @@ export function buildRouterTools(
       description: "删除一条规则。",
       parameters: Type.Object({
         ruleId: Type.String({ description: "规则 id" }),
+        ...(isGroupTopic ? { scope: scopeSchema } : {}),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
       execute: async (_id, params: any) => {
         const target = targetOf(params.assistantId);
         if ("error" in target) return fail(target.error);
-        const rules = groupId ? store.groupRules(groupId) : store.rules(target.id);
+        const scopeErr = badScope(params.scope);
+        if (scopeErr) return fail(scopeErr);
+        if (isGroupTopic && params.scope !== "group") {
+          try {
+            deleteTopicRule(store.groupTopicConfigHost(groupId!), String(params.ruleId));
+          } catch {
+            return fail("没有这条规则。");
+          }
+          await note("rule", t("删除了{owner}的一条规则", { owner: t("这个话题") }));
+          profileChanged(target.id);
+          return ok("已从这个话题的规则里删除，只在这个话题生效。");
+        }
+        const targetGroupId = targetGroupOf(params.scope);
+        const rules = targetGroupId ? store.groupParentRules(targetGroupId) : store.rules(target.id);
         const kept = rules.filter((rule) => rule.id !== params.ruleId);
         if (kept.length === rules.length) return fail("没有这条规则。");
-        if (groupId) store.saveGroupRules(groupId, kept);
+        if (targetGroupId) store.saveGroupRules(targetGroupId, kept);
         else store.saveRules(target.id, kept);
-        await note("rule", t("删除了{owner}的一条规则", { owner: groupId ? t("本群") : nameOf(target.id) }));
+        await note("rule", t("删除了{owner}的一条规则", { owner: targetGroupId ? t("本群") : nameOf(target.id) }));
         profileChanged(target.id);
-        return ok("已删除。");
+        return ok(isGroupTopic ? "已从本群的规则里删除。" : "已删除。");
       },
     },
     {

@@ -17,14 +17,16 @@ describe("群资源", () => {
     const group = (await api.groupProfile("g-dev")).group;
     const member = group.members[0]!;
     const pick = { ref: "demo/model", thinking: "high" as const };
-    await api.patchGroup("g-dev", { models: { conversation: pick } });
+    await api.patchGroup("g-dev", { models: { conversation: pick, work: pick } });
     expect((await api.groupProfile("g-dev")).memberModels[member]?.conversation).toEqual({ source: "group", pick, inherited: { source: "group", pick } });
+    expect((await api.groupProfile("g-dev")).memberModels[member]?.work).toEqual({ source: "group", pick, inherited: { source: "group", pick } });
     const override = { ref: "demo/override", thinking: "high" as const };
-    await api.patchGroupMemberModels("g-dev", member, { conversation: override });
-    expect((await api.groupProfile("g-dev")).memberModels[member]?.conversation).toEqual({ source: "member", pick: override, inherited: { source: "group", pick } });
-    await api.patchGroupMemberModels("g-dev", member, { conversation: null });
-    await api.patchGroup("g-dev", { models: { conversation: null } });
-    expect(["assistant", "global"]).toContain((await api.groupProfile("g-dev")).memberModels[member]?.conversation.source);
+    await expect(api.patchGroupMemberModels("g-dev", member, { conversation: override } as never)).rejects.toThrow("成员只能单设任务模型");
+    await api.patchGroupMemberModels("g-dev", member, { work: override });
+    expect((await api.groupProfile("g-dev")).memberModels[member]?.work).toEqual({ source: "member", pick: override, inherited: { source: "group", pick } });
+    await api.patchGroupMemberModels("g-dev", member, { work: null });
+    await api.patchGroup("g-dev", { models: { conversation: null, work: null } });
+    expect(["assistant", "global"]).toContain((await api.groupProfile("g-dev")).memberModels[member]?.work.source);
   });
 
   it("继承模型文字按服务端来源显示", () => {

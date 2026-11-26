@@ -1,10 +1,10 @@
 import { currentLocale, t } from "../../shared/i18n.ts";
 import { Cron } from "croner";
-import type { Approval, AssistantSummary, Delegation, Job, Routine } from "../../shared/types.ts";
+import type { Approval, AssistantSummary, Delegation, InheritedGroupModel, Job, Routine } from "../../shared/types.ts";
 import type { KnowledgeEntry } from "../../shared/knowledge.ts";
 
-export function followingModel(source: "group" | "assistant" | "global", name: string) {
-  const label = source === "group" ? t("本群") : t("助手");
+export function followingModel(source: InheritedGroupModel["source"], name: string) {
+  const label = source === "group" || source === "member" ? t("本群") : source === "topic" ? t("本话题") : t("助手");
   return { text: t("跟随{label} · {name}", { label, name }), option: t("跟随{label}（{name}）", { label, name }) };
 }
 

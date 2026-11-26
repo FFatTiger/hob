@@ -4,6 +4,7 @@ import type {
   Assistant,
   Group,
   GroupMemberModel,
+  InheritedGroupModel,
   ModelInfo,
   ModelPick,
   ModelSettings,
@@ -11,6 +12,7 @@ import type {
   SettingsPatch,
   ThinkingLevel,
   ThinkingLevelMapSetting,
+  TopicOverrides,
 } from "../../shared/types.ts";
 import { contextText, guessModelScores, scoreSummary } from "../../shared/model-note.ts";
 import {
@@ -141,15 +143,43 @@ export function nameOf(ref: string, catalog: ModelCatalog): string {
   return catalog.find(ref)?.name ?? ref;
 }
 
-export function groupModelPick(assistant: Assistant, group: Group | undefined, catalog: ModelCatalog, settings: ModelSettings, key: "conversation" | "work"): GroupMemberModel {
-  const candidates = [
-    ["member", group?.memberModels?.[assistant.id]?.[key]],
-    ["group", group?.models?.[key]],
-    ["assistant", assistant.models?.[key]],
-    ["global", settings[key]],
-  ] as const;
-  const choose = (start: number) => {
-    const found = candidates.slice(start).find(([, pick]) => pick && catalog.find(pick.ref) && (key !== "work" || allowedRefs(settings.roster, assistant).includes(pick.ref)));
+export function groupModelPick(
+  assistant: Assistant,
+  group: Group | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+  key: "conversation" | "work",
+  overrides?: TopicOverrides,
+): GroupMemberModel {
+  const ov = overrides ?? group?.overrides;
+  const isTopic = Boolean(group?.parentId || overrides !== undefined);
+  type Candidate = readonly [GroupMemberModel["source"], ModelPick | undefined];
+  const candidates: readonly Candidate[] =
+    key === "conversation"
+      ? [
+          ...(isTopic ? ([["topic", ov?.models?.conversation]] as const) : []),
+          ["group", group?.models?.conversation],
+          ["assistant", assistant.models?.conversation],
+          ["global", settings.conversation],
+        ]
+      : [
+          ...(isTopic ? ([["topicMember", ov?.memberModels?.[assistant.id]?.work]] as const) : []),
+          ["member", group?.memberModels?.[assistant.id]?.work],
+          ...(isTopic ? ([["topic", ov?.models?.work]] as const) : []),
+          ["group", group?.models?.work],
+          ["assistant", assistant.models?.work],
+          ["global", settings.work],
+        ];
+
+  const choose = (start: number): { source: GroupMemberModel["source"]; pick: ModelPick } => {
+    const found = candidates
+      .slice(start)
+      .find(
+        ([, pick]) =>
+          pick &&
+          catalog.find(pick.ref) &&
+          (key !== "work" || allowedRefs(settings.roster, assistant).includes(pick.ref)),
+      );
     const source = found?.[0] ?? "global";
     let pick = found?.[1] ?? settings[key];
     if (key === "work") {
@@ -161,15 +191,62 @@ export function groupModelPick(assistant: Assistant, group: Group | undefined, c
     return { source, pick };
   };
   const chosen = choose(0);
+  // 成员这一层只设任务模型；对话模型没有成员覆盖层，inherited 与实际值一致
+  const inherited = key === "conversation" ? chosen : choose(1);
+  return {
+    ...chosen,
+    inherited: {
+      source: (inherited.source === "topicMember" ? "global" : inherited.source) as InheritedGroupModel["source"],
+      pick: inherited.pick,
+    },
+  };
+}
+
+/** 群/话题默认层的模型解析（用于 GroupProfile.models 展示话题默认及其继承来源）。 */
+export function groupDefaultModelPick(
+  group: Group,
+  overrides: TopicOverrides | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+  key: "conversation" | "work",
+): GroupMemberModel {
+  const ov = overrides ?? group.overrides;
+  const isTopic = Boolean(group.parentId || overrides !== undefined);
+  type Candidate = readonly [InheritedGroupModel["source"], ModelPick | undefined];
+  const candidates: readonly Candidate[] = [
+    ...(isTopic ? ([["topic", ov?.models?.[key]]] as const) : []),
+    ["group", group.models?.[key]],
+    ["global", settings[key]],
+  ];
+  const choose = (start: number): { source: InheritedGroupModel["source"]; pick: ModelPick } => {
+    const found = candidates.slice(start).find(([, pick]) => pick && catalog.find(pick.ref));
+    const source = found?.[0] ?? "global";
+    const raw = found?.[1] ?? settings[key];
+    const info = catalog.find(raw.ref);
+    const pick = info ? { ref: raw.ref, thinking: fitThinking(thinkingLevelsOf(info), raw.thinking) } : raw;
+    return { source, pick };
+  };
+  const chosen = choose(0);
   const inherited = choose(1);
-  return { ...chosen, inherited: { source: inherited.source === "member" ? "global" : inherited.source, pick: inherited.pick } };
+  return {
+    ...chosen,
+    inherited: { source: inherited.source, pick: inherited.pick },
+  };
 }
 
 /** 本群覆盖有效时只影响这次选模，不改助手档案。 */
-export function assistantInGroup(assistant: Assistant, group: Group | undefined, catalog: ModelCatalog, settings: ModelSettings): Assistant {
+export function assistantInGroup(
+  assistant: Assistant,
+  group: Group | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+  parent?: Group,
+): Assistant {
   if (!group) return assistant;
-  const conversation = groupModelPick(assistant, group, catalog, settings, "conversation").pick;
-  const work = groupModelPick(assistant, group, catalog, settings, "work").pick;
+  const base = parent ?? group;
+  const overrides = parent || group.parentId ? (group.overrides ?? {}) : undefined;
+  const conversation = groupModelPick(assistant, base, catalog, settings, "conversation", overrides).pick;
+  const work = groupModelPick(assistant, base, catalog, settings, "work", overrides).pick;
   return { ...assistant, models: { ...assistant.models, conversation, work } };
 }
 

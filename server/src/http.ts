@@ -44,7 +44,8 @@ import { completePluginOAuth, disconnectPluginOAuth, pendingPluginOAuthId, start
 import type { PluginPatch } from "../../shared/types.ts";
 import { checkImageSettings, generateImage, imageConfigured, imageKey, IMAGE_KEY_SECRET } from "./image.ts";
 import { checkEmbeddingSettings, embed, embeddingKey, embeddingModel, EMBEDDING_KEY_SECRET } from "./embedding.ts";
-import { groupModelPick, checkModelsPatch } from "./models.ts";
+import { groupDefaultModelPick, groupModelPick, checkModelsPatch } from "./models.ts";
+import { deleteTopicRule, hiddenRules as topicHiddenRules, resetTopicRule, setTopicRule } from "./topic-config.ts";
 import { saveLoreConnection, testLoreConnection } from "./memory.ts";
 import { verifyPassword } from "./password.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -1388,30 +1389,76 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.get("/api/groups/:id/profile", async (c) => {
     const selected = store.group(c.req.param("id"));
     if (!selected) return c.json({ error: "群不存在" }, 404);
-    const group = selected.parentId ? store.group(selected.parentId)! : selected;
+    const parent = selected.parentId ? store.group(selected.parentId)! : selected;
+    const isTopic = Boolean(selected.parentId);
+    const overrides = isTopic ? (selected.overrides ?? {}) : undefined;
     await runtime.models.get();
-    const memberModels = Object.fromEntries(group.members.flatMap((id) => {
+    const settings = runtime.settings.settings.models;
+    const memberModels = Object.fromEntries(parent.members.flatMap((id) => {
       const assistant = store.assistant(id);
       if (!assistant) return [];
-      const settings = runtime.settings.settings.models;
-      return [[id, { conversation: groupModelPick(assistant, group, runtime.models, settings, "conversation"), work: groupModelPick(assistant, group, runtime.models, settings, "work") }]];
+      return [[id, {
+        conversation: groupModelPick(assistant, parent, runtime.models, settings, "conversation", overrides),
+        work: groupModelPick(assistant, parent, runtime.models, settings, "work", overrides),
+      }]];
     }));
-    return c.json({ group, rules: store.groupRules(group.id), memberModels });
+    const hiddenRules = isTopic ? topicHiddenRules(store.groupParentRules(parent.id), store.groupRuleOverrides(selected.id)) : [];
+    const replyMode = {
+      value: selected.replyMode ?? ("owner" as const),
+      source: isTopic && selected.overrides?.replyMode !== undefined ? ("topic" as const) : ("group" as const),
+    };
+    const models = {
+      conversation: groupDefaultModelPick(parent, overrides, runtime.models, settings, "conversation"),
+      work: groupDefaultModelPick(parent, overrides, runtime.models, settings, "work"),
+    };
+    return c.json({
+      group: selected,
+      rules: store.groupRules(selected.id),
+      hiddenRules,
+      replyMode,
+      models,
+      memberModels,
+    });
   });
 
   app.delete("/api/groups/:id/rules/:rid", (c) => {
     const id = c.req.param("id");
-    if (!store.group(id)) return c.json({ error: "群不存在" }, 404);
-    const rules = store.groupRules(id);
-    const kept = rules.filter((rule) => rule.id !== c.req.param("rid"));
+    const group = store.group(id);
+    if (!group) return c.json({ error: "群不存在" }, 404);
+    const rid = c.req.param("rid");
+    if (group.parentId) {
+      try {
+        deleteTopicRule(store.groupTopicConfigHost(id), rid);
+        return c.json({ ok: true });
+      } catch (error) {
+        return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
+      }
+    }
+    const rules = store.groupParentRules(id);
+    const kept = rules.filter((rule) => rule.id !== rid);
     if (kept.length === rules.length) return c.json({ error: "规则不存在。" }, 404);
     store.saveGroupRules(id, kept);
     return c.json({ ok: true });
   });
 
+  app.post("/api/groups/:id/rules/:rid/reset", (c) => {
+    const id = c.req.param("id");
+    const group = store.group(id);
+    if (!group) return c.json({ error: "群不存在" }, 404);
+    if (!group.parentId) return c.json({ error: "只有话题可以恢复跟随规则。" }, 400);
+    try {
+      resetTopicRule(store.groupTopicConfigHost(id), c.req.param("rid"));
+      return c.json({ ok: true });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, message.includes("不存在") ? 404 : 400);
+    }
+  });
+
   app.patch("/api/groups/:id", async (c) => {
     const id = c.req.param("id");
-    if (!store.group(id)) return c.json({ error: "群不存在" }, 404);
+    const group = store.group(id);
+    if (!group) return c.json({ error: "群不存在" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
     if (body.cwd !== undefined) {
       return c.json({ error: CWD_IMMUTABLE }, 400);
@@ -1427,10 +1474,20 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const text = typeof edit.text === "string" ? edit.text.trim() : existing!.text;
       if (rules.some((item) => item.id !== edit.id && item.text === text)) return c.json({ error: "规则内容已存在。" }, 400);
       const mode = edit.mode === "ask" || edit.mode === "allow" ? edit.mode : existing!.mode;
-      const rule = { id: existing?.id ?? newId("r-"), text, mode, changedAt: new Date().toISOString() };
-      if (existing) Object.assign(existing, rule);
-      else rules.push(rule);
-      store.saveGroupRules(id, rules);
+      if (group.parentId) {
+        const rule = setTopicRule(store.groupTopicConfigHost(id), {
+          ...(edit.id !== undefined ? { id: edit.id as string } : {}),
+          text,
+          mode,
+        });
+        return c.json({ ok: true, rule });
+      }
+      const parentRules = store.groupParentRules(id);
+      const existingParent = edit.id === undefined ? undefined : parentRules.find((item) => item.id === edit.id);
+      const rule = { id: existingParent?.id ?? newId("r-"), text, mode, changedAt: new Date().toISOString() };
+      if (existingParent) Object.assign(existingParent, rule);
+      else parentRules.push(rule);
+      store.saveGroupRules(id, parentRules);
       return c.json({ ok: true, rule });
     }
     try {

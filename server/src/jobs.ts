@@ -351,9 +351,11 @@ export class JobManager {
       input.model || input.thinking
         ? { ...(input.model ? { model: input.model } : {}), ...(input.thinking ? { thinking: input.thinking } : {}) }
         : undefined;
+    const group = input.groupId ? this.store.group(input.groupId) : undefined;
+    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
     const picked = jobModel({
       settings: this.runtime.settings.settings.models,
-      assistant: assistantInGroup(assistant, input.groupId ? this.store.group(input.groupId) : undefined, this.runtime.models, this.runtime.settings.settings.models),
+      assistant: assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent),
       catalog: this.runtime.models,
       ...(requested ? { requested } : {}),
       ...(hasImageFiles(input.files) ? { hasImages: true } : {}),

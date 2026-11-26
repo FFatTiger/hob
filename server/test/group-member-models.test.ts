@@ -45,8 +45,10 @@ describe("群成员模型", () => {
       const b = hob.runtime.groups.create({ name: "乙", purpose: "测试", members: ["hob"], ownerId: "hob" });
       const topic = hob.runtime.groups.createTopic(a.id, "话题", "user");
       const pick = (ref: string) => ({ ref: `hob-faux/${ref}`, thinking: "off" });
-      await hob.runtime.groups.updateMemberModels(a.id, "hob", { conversation: pick("smart"), work: pick("smart") });
-      await hob.runtime.groups.updateMemberModels(b.id, "hob", { conversation: pick("eyes"), work: pick("eyes") });
+      await hob.runtime.groups.updateModels(a.id, { conversation: pick("smart") });
+      await hob.runtime.groups.updateMemberModels(a.id, "hob", { work: pick("smart") });
+      await hob.runtime.groups.updateModels(b.id, { conversation: pick("eyes") });
+      await hob.runtime.groups.updateMemberModels(b.id, "hob", { work: pick("eyes") });
       const direct = await hob.runtime.router.ensure("hob");
       const first = await hob.runtime.router.ensure("hob", a.id);
       const second = await hob.runtime.router.ensure("hob", b.id);
@@ -57,7 +59,8 @@ describe("群成员模型", () => {
       expect([jobA.model, jobB.model]).toEqual(["hob-faux/smart", "hob-faux/eyes"]);
       const directSession = direct.session;
       const secondSession = second.session;
-      await hob.runtime.groups.updateMemberModels(a.id, "hob", { conversation: pick("eyes"), work: pick("eyes") });
+      await hob.runtime.groups.updateModels(a.id, { conversation: pick("eyes") });
+      await hob.runtime.groups.updateMemberModels(a.id, "hob", { work: pick("eyes") });
       expect((await hob.runtime.router.ensure("hob")).session).toBe(directSession);
       expect((await hob.runtime.router.ensure("hob", b.id)).session).toBe(secondSession);
       expect((await hob.runtime.router.ensure("hob", a.id)).session?.model?.id).toBe("eyes");
@@ -71,7 +74,7 @@ describe("群成员模型", () => {
     } finally { hob.close(); }
   });
 
-  it("群模型按成员、群、助手、全局取值并只释放本群会话", async () => {
+  it("群模型按话题、群、助手、全局取值并只释放对应会话", async () => {
     const picks = ["fast", "smart", "eyes"];
     const hob = makeHob({}, { memory: "off", models: picks.map((id) => ({ id, input: ["text"] })), settings: { models: { roster: picks.map((id) => ({ ref: `hob-faux/${id}`, note: "" })) } } });
     try {
@@ -80,19 +83,22 @@ describe("群成员模型", () => {
       const topic = hob.runtime.groups.createTopic(a.id, "话题", "user");
       const pick = (id: string) => ({ ref: `hob-faux/${id}`, thinking: "off" });
       const direct = await hob.runtime.router.ensure("hob");
+      const groupSession = await hob.runtime.router.ensure("hob", a.id);
       const other = await hob.runtime.router.ensure("hob", b.id);
       await hob.runtime.router.ensure("hob", topic.id);
+      // 改话题模型只释放这个话题的会话，综合、单聊和其他群不受影响
       await hob.runtime.groups.updateModels(topic.id, { conversation: pick("smart"), work: pick("smart") });
       expect((await hob.runtime.router.ensure("hob", topic.id)).session?.model?.id).toBe("smart");
       expect((await hob.runtime.router.ensure("hob")).session).toBe(direct.session);
+      expect((await hob.runtime.router.ensure("hob", a.id)).session).toBe(groupSession.session);
       expect((await hob.runtime.router.ensure("hob", b.id)).session).toBe(other.session);
-      await hob.runtime.groups.updateMemberModels(a.id, "hob", { conversation: pick("eyes") });
+      // 改群对话模型，群和未覆盖的话题都跟着变
+      await hob.runtime.groups.updateModels(a.id, { conversation: pick("eyes") });
       expect((await hob.runtime.router.ensure("hob", a.id)).session?.model?.id).toBe("eyes");
-      await hob.runtime.groups.updateMemberModels(a.id, "hob", { conversation: null });
-      expect((await hob.runtime.router.ensure("hob", a.id)).session?.model?.id).toBe("smart");
+      expect((await hob.runtime.router.ensure("hob", topic.id)).session?.model?.id).toBe("smart");
+      await hob.runtime.groups.updateModels(a.id, { conversation: null });
       const assistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...assistant, models: { conversation: pick("eyes") as any } });
-      await hob.runtime.groups.updateModels(a.id, { conversation: null });
       expect((await hob.runtime.router.ensure("hob", a.id)).session?.model?.id).toBe("eyes");
       hob.runtime.store.saveAssistant({ ...assistant });
       await hob.runtime.groups.updateModels(a.id, { conversation: null });
@@ -110,24 +116,25 @@ describe("群成员模型", () => {
       const assistant = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...assistant, models: { conversation: pick("fast"), work: pick("fast") } });
       await hob.runtime.groups.updateModels(group.id, { conversation: pick("smart"), work: pick("smart") });
-      await hob.runtime.groups.updateMemberModels(group.id, "hob", { conversation: pick("eyes"), work: pick("eyes") });
+      await hob.runtime.groups.updateMemberModels(group.id, "hob", { work: pick("eyes") });
       const app = createApp(hob.runtime, { home: hob.home });
       const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
       const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
-      const profile = async () => (await (await app.request(`/api/groups/${topic.id}/profile`, { headers: { cookie } })).json() as import("../../shared/types.ts").GroupProfile).memberModels.hob!;
-      for (const key of ["conversation", "work"] as const) expect((await profile())[key]).toEqual({ source: "member", pick: pick("eyes"), inherited: { source: "group", pick: pick("smart") } });
+      const profile = async (id = topic.id) => (await (await app.request(`/api/groups/${id}/profile`, { headers: { cookie } })).json() as import("../../shared/types.ts").GroupProfile).memberModels.hob!;
+      expect((await profile()).conversation).toEqual({ source: "group", pick: pick("smart"), inherited: { source: "group", pick: pick("smart") } });
+      expect((await profile()).work).toEqual({ source: "member", pick: pick("eyes"), inherited: { source: "member", pick: pick("eyes") } });
+      expect((await profile(group.id)).work).toEqual({ source: "member", pick: pick("eyes"), inherited: { source: "group", pick: pick("smart") } });
       await hob.runtime.groups.updateModels(group.id, { conversation: null, work: null });
-      for (const key of ["conversation", "work"] as const) expect((await profile())[key].inherited).toEqual({ source: "assistant", pick: pick("fast") });
+      expect((await profile(group.id)).work.inherited).toEqual({ source: "assistant", pick: pick("fast") });
       hob.runtime.store.saveAssistant({ ...assistant, models: undefined });
-      const global = (await profile());
-      for (const key of ["conversation", "work"] as const) expect(global[key].inherited).toEqual({ source: "global", pick: hob.runtime.settings.settings.models[key] });
-      await hob.runtime.groups.updateMemberModels(group.id, "hob", { conversation: null, work: null });
-      const following = await profile();
-      for (const key of ["conversation", "work"] as const) expect(following[key].inherited).toEqual({ source: following[key].source, pick: following[key].pick });
+      expect((await profile(group.id)).work.inherited).toEqual({ source: "global", pick: hob.runtime.settings.settings.models.work });
+      await hob.runtime.groups.updateMemberModels(group.id, "hob", { work: null });
+      const following = await profile(group.id);
+      expect(following.work.inherited).toEqual({ source: following.work.source, pick: following.work.pick });
     } finally { hob.close(); }
   });
 
-  it("话题与所属群共用覆盖，清除和非成员校验", async () => {
+  it("话题成员模型独立于所属群，只收 work，清除和非成员校验", async () => {
     const hob = makeHob({}, { models: [{ id: "fast", input: ["text"] }, { id: "smart", input: ["text"] }], settings: { models: { roster: [{ ref: "hob-faux/fast", note: "" }, { ref: "hob-faux/smart", note: "" }] } } });
     try {
       const group = hob.runtime.groups.create({ name: "测试群", purpose: "测试", members: ["hob"], ownerId: "hob" });
@@ -136,11 +143,14 @@ describe("群成员模型", () => {
       const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
       const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
       const patch = (id: string, assistant: string, body: unknown) => app.request(`/api/groups/${id}/members/${assistant}/models`, { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify(body) });
+      const badConv = await patch(topic.id, "hob", { conversation: { ref: "hob-faux/smart", thinking: "off" } });
+      expect(badConv.status).toBe(400);
+      expect(await badConv.json()).toEqual({ error: "成员只能单设任务模型，对话模型在群设置里改" });
       expect((await patch(topic.id, "hob", { work: { ref: "hob-faux/smart", thinking: "off" } })).status).toBe(200);
-      expect(hob.runtime.store.group(group.id)?.memberModels?.hob?.work?.ref).toBe("hob-faux/smart");
+      expect(hob.runtime.store.group(group.id)?.memberModels?.hob?.work).toBeUndefined();
       expect(hob.runtime.store.group(topic.id)?.memberModels?.hob?.work?.ref).toBe("hob-faux/smart");
       expect((await patch(group.id, "other", { work: null })).status).toBe(400);
-      expect((await patch(group.id, "hob", { work: null })).status).toBe(200);
+      expect((await patch(topic.id, "hob", { work: null })).status).toBe(200);
       expect(hob.runtime.store.group(topic.id)?.memberModels?.hob).toBeUndefined();
     } finally { hob.close(); }
   });

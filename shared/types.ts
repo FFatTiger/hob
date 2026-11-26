@@ -639,10 +639,11 @@ export interface Group {
   purpose: string; // 负责什么，一句话
   ownerId: string; // 群主，必须在 members 里
   members: string[]; // assistantId，含群主，顺序就是成员列表的顺序
-  /** 用户没点名的消息谁来回应：缺省为 owner（群主回应）；all 为全员依次回应。群和话题各自一份。 */
+  /** 用户没点名的消息谁来回应：缺省为 owner（群主回应）；all 为全员依次回应。话题继承群，可单独覆盖。 */
   replyMode?: GroupReplyMode;
   models?: { conversation?: ModelPick; work?: ModelPick }; // 本群模型默认值
-  memberModels?: Record<string, { conversation?: ModelPick; work?: ModelPick }>; // 各成员在本群的模型覆盖
+  memberModels?: Record<string, { work?: ModelPick }>; // 各成员在本群的任务模型覆盖（老数据里的 conversation 读时忽略、写时去掉）
+  overrides?: TopicOverrides; // 只有群话题有：话题自己改过的配置
   /** 首页助手/群列表的固定顺序：小的在前；没排过的按最近活跃排。 */
   listOrder?: number;
   /** 可选工作目录（创建时绑定，不可修改；群绑定时其下所有话题沿用） */
@@ -680,11 +681,34 @@ export interface TodoItem {
 /** 收起的一份待办为什么收的。老数据里还有这种时间线条目；现在已经不再写入、界面也不显示。 */
 export type TodoArchiveWhy = "done" | "cleared" | "topicClosed" | "stale";
 
-export type InheritedGroupModel = { source: "group" | "assistant" | "global"; pick: ModelPick };
-export type GroupMemberModel = { source: "member" | InheritedGroupModel["source"]; pick: ModelPick; inherited: InheritedGroupModel };
+/** 话题自己改过的配置。没写的项跟随上级（群或助手），上级改了跟着变。 */
+export interface TopicOverrides {
+  models?: { conversation?: ModelPick; work?: ModelPick };
+  memberModels?: Record<string, { work?: ModelPick }>; // 只有群话题有；成员只单设任务模型
+  replyMode?: GroupReplyMode; // 只有群话题有
+}
+
+/** 话题对规则的改动，存在话题目录的 rule-overrides.json。 */
+export interface RuleOverrides {
+  own: Rule[]; // 只在本话题的规则
+  changed: Record<string, { text?: string; mode?: Rule["mode"]; changedAt: Iso }>; // 改了上级的某条，只在本话题生效
+  hidden: Record<string, Iso>; // 本话题不用的上级规则：id → 停用时间
+}
+
+/** 话题里实际生效的一条规则；界面据此标「跟随群 / 跟随助手」「本话题改过」「本话题的」。 */
+export interface EffectiveRule extends Rule {
+  from: "parent" | "topic";
+  changed?: true;
+}
+
+export type InheritedGroupModel = { source: "member" | "topic" | "group" | "assistant" | "global"; pick: ModelPick };
+export type GroupMemberModel = { source: "topicMember" | InheritedGroupModel["source"]; pick: ModelPick; inherited: InheritedGroupModel };
 export interface GroupProfile {
   group: Group;
-  rules: Rule[];
+  rules: EffectiveRule[];
+  hiddenRules?: Rule[];
+  replyMode?: { value: GroupReplyMode; source: "topic" | "group" };
+  models?: Record<"conversation" | "work", GroupMemberModel>;
   memberModels: Record<string, Record<"conversation" | "work", GroupMemberModel>>;
 }
 

@@ -12,6 +12,7 @@ import { cardTitle, validateCard } from "./cards.ts";
 import { candidateId, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
 import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
 import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
+import { setTopicRule } from "./topic-config.ts";
 
 export interface ActionResult {
   status: number;
@@ -590,20 +591,30 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   if (option?.always) {
     const assistant = store.assistant(approval.assistantId);
     const ruleText = approval.ruleText?.trim() || option.label;
-    const rules = approval.groupId && store.group(approval.groupId) ? store.groupRules(approval.groupId) : store.rules(approval.assistantId);
-    const existing = rules.find((rule) => rule.text === ruleText);
-    if (existing) {
-      existing.mode = "allow";
-      existing.changedAt = new Date().toISOString();
+    const group = approval.groupId ? store.group(approval.groupId) : undefined;
+    if (group?.parentId) {
+      const existing = store.groupRules(group.id).find((rule) => rule.text === ruleText);
+      setTopicRule(store.groupTopicConfigHost(group.id), {
+        ...(existing ? { id: existing.id } : {}),
+        text: ruleText,
+        mode: "allow",
+      });
     } else {
-      rules.push({ id: newId("r-"), text: ruleText, mode: "allow", changedAt: new Date().toISOString() });
+      const rules = group ? store.groupParentRules(group.id) : store.rules(approval.assistantId);
+      const existing = rules.find((rule) => rule.text === ruleText);
+      if (existing) {
+        existing.mode = "allow";
+        existing.changedAt = new Date().toISOString();
+      } else {
+        rules.push({ id: newId("r-"), text: ruleText, mode: "allow", changedAt: new Date().toISOString() });
+      }
+      if (group) store.saveGroupRules(group.id, rules);
+      else store.saveRules(approval.assistantId, rules);
     }
-    if (approval.groupId && store.group(approval.groupId)) store.saveGroupRules(approval.groupId, rules);
-    else store.saveRules(approval.assistantId, rules);
     await router.addItem(approval.assistantId, {
       kind: "note",
       icon: "rule",
-      text: t("已记入{owner}的规则 · {rule}", { owner: approval.groupId && store.group(approval.groupId) ? "本群" : assistant?.name ?? approval.assistantId, rule: ruleText }),
+      text: t("已记入{owner}的规则 · {rule}", { owner: group ? (group.parentId ? t("这个话题") : "本群") : assistant?.name ?? approval.assistantId, rule: ruleText }),
     }, approval.groupId);
     bus.emit({ type: "profile", assistantId: approval.assistantId });
   }

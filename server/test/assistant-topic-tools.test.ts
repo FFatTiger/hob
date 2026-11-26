@@ -210,7 +210,7 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
     try {
       addAssistant(hob, "multi", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
       const { topic: existing } = await hob.runtime.assistantTopics.create("multi", { title: "装修预算" });
-      hob.runtime.assistantTopics.close("multi", existing.id, "初版已定");
+      await hob.runtime.assistantTopics.close("multi", existing.id, "初版已定");
       expect(hob.runtime.store.assistantTopic("multi", existing.id)?.closedAt).toBeDefined();
 
       hob.faux.setResponses([text("已收到补充预算，继续处理。")]);
@@ -264,7 +264,7 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
 
       const { topic: activeTopic } = await hob.runtime.assistantTopics.create("multi", { title: "进行中甲" });
       const { topic: closedTopic } = await hob.runtime.assistantTopics.create("multi", { title: "已关闭乙" });
-      hob.runtime.assistantTopics.close("multi", closedTopic.id, "完了");
+      await hob.runtime.assistantTopics.close("multi", closedTopic.id, "完了");
       const { topic: foreignTopic } = await hob.runtime.assistantTopics.create("other", { title: "别人话题" });
 
       const openTool = findTool(hob, "multi", "open_topic")!;
@@ -527,7 +527,7 @@ describe("转交挪进话题完整状态机", () => {
 
       // 发起方只收到恰好一次结果
       expect(resultSpy).toHaveBeenCalledTimes(1);
-      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("年度总结已整理完成。"), false);
+      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("年度总结已整理完成。"), false, undefined);
     } finally {
       hob.close();
     }
@@ -603,7 +603,7 @@ describe("转交挪进话题完整状态机", () => {
       expect(finalDelegation.status).toBe("done");
       expect(finalDelegation.turnFailed).toBeUndefined();
       expect(resultSpy).toHaveBeenCalledTimes(1);
-      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("文档大纲已按要求补齐。"), false);
+      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("文档大纲已按要求补齐。"), false, undefined);
     } finally {
       hob.close();
     }
@@ -750,7 +750,7 @@ describe("转交挪进话题完整状态机", () => {
         toTopicId: topicAsk.id,
       });
       expect(eventSpy).toHaveBeenCalledTimes(1);
-      expect(eventSpy).toHaveBeenCalledWith("hob", expect.stringContaining("因服务重启中断"), { urgent: true });
+      expect(eventSpy).toHaveBeenCalledWith("hob", expect.stringContaining("因服务重启中断"), { urgent: true }, undefined);
 
       // 重启后用户答复话题内的审批：答案必须送到 topicAsk（不误送主对话），并最终回传给 hob 一次
       hob.faux.setResponses([text("已按紧凑风格完成排版。")]);
@@ -767,7 +767,7 @@ describe("转交挪进话题完整状态机", () => {
       expect(hob2.router.items("multi").items).toHaveLength(0);
       expect(hob2.router.sessionEntries("multi", { topicId: topicAsk.id }).some((e) => e.type === "custom_message" && JSON.stringify(e).includes("紧凑"))).toBe(true);
       expect(resultSpy).toHaveBeenCalledTimes(1);
-      expect(resultSpy).toHaveBeenCalledWith("hob", dAsk.id, expect.stringContaining("已按紧凑风格完成排版。"), false);
+      expect(resultSpy).toHaveBeenCalledWith("hob", dAsk.id, expect.stringContaining("已按紧凑风格完成排版。"), false, undefined);
     } finally {
       hob2?.router.disposeAll();
       hob2?.jobs.disposeAll();
@@ -899,7 +899,7 @@ describe("转交挪进话题完整状态机", () => {
       });
       expect(finalDelegation?.turnFailed).toBeUndefined();
       expect(resultSpy).toHaveBeenCalledTimes(1);
-      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("已在话题内完成。"), false);
+      expect(resultSpy).toHaveBeenCalledWith("hob", delegation.id, expect.stringContaining("已在话题内完成。"), false, undefined);
     } finally {
       hob.close();
     }

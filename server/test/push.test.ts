@@ -287,7 +287,7 @@ describe("推送接口", () => {
     }
   });
 
-  it("可见性上报：缺 clientId 400，可见后发送被跳过", async () => {
+  it("可见性上报：缺 clientId 400，旧客户端不传 target 按全局可见跳过", async () => {
     const fake = fakeSender();
     const hob = makeHob({}, { pushSender: fake.sender });
     try {
@@ -300,10 +300,68 @@ describe("推送接口", () => {
           body: JSON.stringify(body),
         });
       expect((await post({ visible: true })).status).toBe(400);
-      expect((await post({ clientId: "c1", visible: true })).status).toBe(200);
-      const result = await hob.runtime.push.send({ title: "Hob", body: "x", url: "/" });
+      expect((await post({ clientId: "old", visible: true })).status).toBe(200);
+      const result = await hob.runtime.push.send({ title: "Hob", body: "x", url: "/" }, "group:g1");
       expect(result).toMatchObject({ sent: 0, skipped: "visible" });
       expect(fake.sent).toHaveLength(0);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("按会话目标与焦点细粒度静默：只静默正看着的对话，首页/失焦/其他对话照常推送，SSE 断开后恢复", async () => {
+    const fake = fakeSender();
+    const hob = makeHob({}, { pushSender: fake.sender });
+    try {
+      const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
+      hob.runtime.push.subscribe(subscription("a"), "iPhone");
+      const post = (body: unknown) =>
+        app.request("/api/visibility", {
+          method: "POST",
+          headers: { "content-type": "application/json", cookie },
+          body: JSON.stringify(body),
+        });
+
+      const detach = hob.runtime.push.attachClient("c1");
+
+      // 客户端 A 聚焦看 group:g1 -> 仅跳过 group:g1，其他群和单聊照常发送
+      expect((await post({ clientId: "c1", visible: true, target: "group:g1" })).status).toBe(200);
+      expect(await hob.runtime.push.send({ title: "G1", body: "1", url: "/#/group/g1" }, "group:g1")).toMatchObject({
+        sent: 0,
+        skipped: "visible",
+      });
+      expect(await hob.runtime.push.send({ title: "G2", body: "2", url: "/#/group/g2" }, "group:g2")).toMatchObject({
+        sent: 1,
+      });
+      expect(await hob.runtime.push.send({ title: "Hob", body: "3", url: "/?a=hob" }, "assistant:hob")).toMatchObject({
+        sent: 1,
+      });
+
+      // 客户端 A 在前台但停在首页/设置页（target: null）-> 任意单聊/群聊照常发送
+      expect((await post({ clientId: "c1", visible: true, target: null })).status).toBe(200);
+      expect(await hob.runtime.push.send({ title: "G1", body: "4", url: "/#/group/g1" }, "group:g1")).toMatchObject({
+        sent: 1,
+      });
+      expect(await hob.runtime.push.send({ title: "Hob", body: "5", url: "/?a=hob" }, "assistant:hob")).toMatchObject({
+        sent: 1,
+      });
+
+      // 客户端 A 窗口失焦/后台（visible: false, target: "group:g1"）-> group:g1 照常发送
+      expect((await post({ clientId: "c1", visible: false, target: "group:g1" })).status).toBe(200);
+      expect(await hob.runtime.push.send({ title: "G1", body: "6", url: "/#/group/g1" }, "group:g1")).toMatchObject({
+        sent: 1,
+      });
+
+      // 重新聚焦看 group:g1，随后 SSE 断线 detach() -> 清除可见性，group:g1 恢复推送
+      expect((await post({ clientId: "c1", visible: true, target: "group:g1" })).status).toBe(200);
+      expect(await hob.runtime.push.send({ title: "G1", body: "7", url: "/#/group/g1" }, "group:g1")).toMatchObject({
+        sent: 0,
+        skipped: "visible",
+      });
+      detach();
+      expect(await hob.runtime.push.send({ title: "G1", body: "8", url: "/#/group/g1" }, "group:g1")).toMatchObject({
+        sent: 1,
+      });
     } finally {
       hob.close();
     }

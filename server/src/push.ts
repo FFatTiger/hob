@@ -176,12 +176,18 @@ function describeFailure(error: unknown, status: number | undefined, reason: str
   return t("无法连接推送服务（{reason}）", { reason: error instanceof Error ? error.message : String(error) });
 }
 
+interface ClientViewState {
+  visible: boolean;
+  /** null 表示前台但未在看具体对话；"*" 表示未传 target 的旧版客户端（向后兼容） */
+  target: string | null | "*";
+}
+
 /** 推送服务（可见性只在内存里：进程重启后没有前台客户端）。 */
 export class PushService {
   private data?: PushFile;
   private readonly sender: PushSender;
-  /** 每个页面客户端的可见性；SSE 连接断了就删掉这一项 */
-  private readonly visible = new Map<string, boolean>();
+  /** 每个页面客户端的可见状态；SSE 连接断了就删掉这一项 */
+  private readonly clientViews = new Map<string, ClientViewState>();
   /** clientId → 还连着几条 SSE（重连时旧的断开不会把新的状态清掉） */
   private readonly clients = new Map<string, number>();
 
@@ -264,10 +270,10 @@ export class PushService {
     return true;
   }
 
-  /** 有推送权限的页面客户端的可见性（页面自己报，只存内存）。 */
-  setVisibility(clientId: string, visible: boolean): void {
+  /** 页面客户端上报可见性与当前查看的会话（只存内存）；不传 target 视为旧版客户端（全局可见）。 */
+  setVisibility(clientId: string, visible: boolean, target?: string | null): void {
     if (!clientId) return;
-    this.visible.set(clientId, visible);
+    this.clientViews.set(clientId, { visible, target: target === undefined ? "*" : target });
   }
 
   /** SSE 连上：记一条连接，断开时把可见性一起清掉（没法确认还在看就是不在看）。 */
@@ -281,13 +287,16 @@ export class PushService {
         return;
       }
       this.clients.delete(clientId);
-      this.visible.delete(clientId);
+      this.clientViews.delete(clientId);
     };
   }
 
-  /** 只要有一个页面在看着就不推：通知是给不在电脑前的人看的。 */
-  hasVisible(): boolean {
-    for (const visible of this.visible.values()) if (visible) return true;
+  /** 只有客户端正聚焦看着对应对话（或兼容未报 target 的旧客户端）才静默推送。 */
+  hasVisible(target?: string): boolean {
+    for (const view of this.clientViews.values()) {
+      if (!view.visible) continue;
+      if (view.target === "*" || !target || view.target === target) return true;
+    }
     return false;
   }
 
@@ -347,9 +356,9 @@ export class PushService {
     return { sent, removed: gone.length, ...(failures.length ? { error: failures[0] } : {}) };
   }
 
-  /** 该推的时候推：有可见的客户端、或一台设备都没订阅就不发。 */
-  async send(payload: PushPayload): Promise<PushResult> {
-    if (this.hasVisible()) return { sent: 0, removed: 0, skipped: "visible" };
+  /** 该推的时候推：目标对话正被某个客户端聚焦查看、或一台设备都没订阅就不发。 */
+  async send(payload: PushPayload, target?: string): Promise<PushResult> {
+    if (this.hasVisible(target)) return { sent: 0, removed: 0, skipped: "visible" };
     const devices = this.load().devices;
     if (!devices.length) return { sent: 0, removed: 0, skipped: "no-devices" };
     return this.deliver(devices, payload);
@@ -364,9 +373,9 @@ export class PushService {
   }
 }
 
-/** 该推送的子集：只用到这两个方法（测试可以直接给假对象）。 */
+/** 该推送的子集：只用到这一个方法（测试可以直接给假对象）。 */
 export interface PushSink {
-  send(payload: PushPayload): Promise<PushResult>;
+  send(payload: PushPayload, target?: string): Promise<PushResult>;
 }
 
 export interface NotifyDeps {
@@ -387,6 +396,11 @@ function openUrl(assistantId: string, groupId?: string): string {
   return groupId ? `/#/group/${encodeURIComponent(groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
 }
 
+/** 规范化会话目标标识，与前端上报的 ClientVisibility.target 保持一致。 */
+export function pushTarget(assistantId: string, groupId?: string): string {
+  return groupId ? `group:${groupId}` : `assistant:${assistantId}`;
+}
+
 /** 一轮结束后推送；是否已经从有活变成没活由 Router 按 todosBusy 判断。 */
 export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
   const assistant = deps.store.assistant(turn.assistantId);
@@ -398,7 +412,9 @@ export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): 
     : turn.text?.trim()
       ? plainText(turn.text).replace(/\s+/g, " ").slice(0, 160)
       : t("已完成");
-  void deps.push.send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }).catch(() => undefined);
+  void deps.push
+    .send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }, pushTarget(turn.assistantId, turn.groupId))
+    .catch(() => undefined);
 }
 
 /** 出审批：这个助手开了「需要我回答或做完时通知我」才推送。 */
@@ -408,6 +424,9 @@ export function pushApproval(deps: NotifyDeps, approval: Approval): void {
   // 推送失败不能影响审批本身（也不能变成未处理的 rejection 把进程带走）
   // 推送的标题是卡片标题（一张卡可能问几个问题），正文写谁在等、等什么
   void deps.push
-    .send({ title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) })
+    .send(
+      { title: plainText(approval.title), body: t("{assistant} · 等待你的回答", { assistant: assistant.name }), url: openUrl(approval.assistantId, approval.groupId) },
+      pushTarget(approval.assistantId, approval.groupId),
+    )
     .catch(() => undefined);
 }

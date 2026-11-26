@@ -1186,6 +1186,7 @@ async function loadBootstrap(reconnect = false) {
           onEvent: applyEvent,
           onReconnect: () => {
             set({ offline: null });
+            reportVisibility({ force: true });
             void loadBootstrap(true);
           },
           onDown: (reason) => set({ offline: reason }),
@@ -1471,9 +1472,39 @@ function mergeAssistantSummaries(incoming: AssistantSummary[]): AssistantSummary
   });
 }
 
-/** 页面在前台就不推（服务端根据这个决定）。只存内存，SSE 断开会自动清掉。 */
-function reportVisibility(): void {
-  void api.visibility(CLIENT_ID, document.visibilityState === "visible").catch(() => undefined);
+/** 当前正在查看的会话标识（"assistant:<id>" 或 "group:<id>"），未在看具体对话时为 null。 */
+export function activeTarget(s: State, narrow = isNarrow()): string | null {
+  if (s.page !== "main") return null;
+  if (narrow && s.mobile !== "chat") return null;
+  if (s.gsel) return `group:${s.gsel}`;
+  if (s.sel) return `assistant:${s.sel}`;
+  return null;
+}
+
+function pageVisible(): boolean {
+  const doc = globalThis.document;
+  if (!doc || doc.visibilityState !== "visible") return false;
+  return typeof doc.hasFocus === "function" ? doc.hasFocus() : true;
+}
+
+let lastReportedVisibility: { visible: boolean; target: string | null } | null = null;
+
+/** 页面在前台且聚焦正看着某个对话时才静默该对话推送（服务端根据这个决定）。状态未变不重复发；force 用于 SSE 重连补报。 */
+export function reportVisibility(opts?: { force?: boolean; visible?: boolean; keepalive?: boolean }): void {
+  const visible = opts?.visible ?? pageVisible();
+  const target = activeTarget(state);
+  const changed =
+    !lastReportedVisibility ||
+    lastReportedVisibility.visible !== visible ||
+    lastReportedVisibility.target !== target;
+  if (opts?.force || changed) {
+    lastReportedVisibility = { visible, target };
+    void api.visibility(CLIENT_ID, visible, target, opts?.keepalive ? { keepalive: true } : undefined).catch(() => undefined);
+  }
+}
+
+function onVisibilityReturn(): void {
+  reportVisibility();
   // 切回来时正开着的那个助手 / 群攒下的未读算看过了
   const a = state.assistants.find((x) => x.id === state.sel);
   if (a && a.unread > 0 && viewing(a.id)) {
@@ -1498,8 +1529,12 @@ function viewingGroup(id: string): boolean {
 function watchVisibility(): void {
   if (watchingVisibility) return;
   watchingVisibility = true;
-  document.addEventListener("visibilitychange", reportVisibility);
-  reportVisibility();
+  document.addEventListener("visibilitychange", onVisibilityReturn);
+  globalThis.window?.addEventListener?.("focus", onVisibilityReturn);
+  globalThis.window?.addEventListener?.("blur", () => reportVisibility());
+  globalThis.window?.addEventListener?.("pagehide", () => reportVisibility({ visible: false, keepalive: true }));
+  subscribe(() => reportVisibility());
+  onVisibilityReturn();
 }
 
 /* ---------------- 群 ---------------- */

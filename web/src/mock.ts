@@ -4353,9 +4353,8 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (patch.active === true && r.groupId && db.groups.find((g) => g.id === r.groupId)?.closedAt) {
         throw new ApiError(400, "话题已关闭");
       }
-      const activeChanged = patch.active !== undefined && patch.active !== r.active;
       Object.assign(r, patch);
-      if (activeChanged) delete r.pausedBy;
+      if (patch.active !== undefined) delete r.pausedBy;
       emit({ type: "routine", routine: clone(r) });
     },
     deleteRoutine: async (routineId) => {

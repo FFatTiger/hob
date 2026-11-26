@@ -1,7 +1,14 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { makeHob } from "./helpers.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { createApp } from "../src/http.ts";
+
+function setNow(iso: string): void {
+  vi.useFakeTimers({ toFake: ["Date"] });
+  vi.setSystemTime(new Date(iso));
+}
+
+afterEach(() => vi.useRealTimers());
 
 describe("群定时", () => {
   it("启动时把旧群定时迁到群主名下", () => {
@@ -304,6 +311,79 @@ describe("群话题的定时归话题（P2）", () => {
       const deleted = await toolIn(group.id, "delete_routine").execute("d1", { routineId: rtTopic.id });
       expect(said(deleted)).toContain("已删除「发版巡检」（话题「发布检查」）");
       expect(said(deleted)).toContain(`「早会汇总」（${rtGeneral.id} · 综合）`);
+    } finally { hob.close(); }
+  });
+
+  it("关闭期间显式停用会清掉 pausedBy，重开话题不再恢复", () => {
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "上线检查", "user");
+      const routine = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "巡检",
+        instruction: "看指标",
+        schedules: ["0 9 * * *"],
+      });
+
+      hob.runtime.groups.closeByUser(topic.id, "先关");
+      expect(hob.runtime.store.routine(routine.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+
+      const updated = hob.runtime.routines.update(routine.id, { active: false });
+      expect(updated.active).toBe(false);
+      expect(updated.pausedBy).toBeUndefined();
+      expect(hob.runtime.store.routine(routine.id)?.pausedBy).toBeUndefined();
+
+      hob.runtime.groups.reopen(topic.id);
+      expect(hob.runtime.store.routine(routine.id)?.active).toBe(false);
+      expect(hob.runtime.store.routine(routine.id)?.pausedBy).toBeUndefined();
+      expect(hob.runtime.routines.nextRuns(routine.id)).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("一次性定时因关闭暂停、过点后重开按完成停止", () => {
+    setNow("2026-11-08T00:30:00Z"); // 上海 08:30
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "发版窗口", "user");
+      const expired = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "九点发版提醒",
+        instruction: "提醒发版",
+        schedules: ["2026-11-08T09:00"],
+        once: true,
+      });
+      const upcoming = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "十点复核提醒",
+        instruction: "提醒复核",
+        schedules: ["2026-11-08T10:00"],
+        once: true,
+      });
+
+      hob.runtime.groups.closeByUser(topic.id, "暂停");
+      expect(hob.runtime.store.routine(expired.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.store.routine(upcoming.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+
+      // 时间跨过 09:00 但未到 10:00 后重开
+      setNow("2026-11-08T01:30:00Z"); // 上海 09:30
+      hob.runtime.groups.reopen(topic.id);
+
+      const savedExpired = hob.runtime.store.routine(expired.id)!;
+      expect(savedExpired).toMatchObject({ active: false, stopReason: "finished" });
+      expect(savedExpired.pausedBy).toBeUndefined();
+      expect(savedExpired.stoppedAt).toBeDefined();
+      expect(hob.runtime.routines.nextRuns(expired.id)).toEqual([]);
+      expect(hob.runtime.groups.items(topic.id).items.some((item) => item.kind === "note" && item.text === "定时任务「九点发版提醒」已完成最后一次运行，已停止")).toBe(true);
+
+      const savedUpcoming = hob.runtime.store.routine(upcoming.id)!;
+      expect(savedUpcoming.active).toBe(true);
+      expect(savedUpcoming.pausedBy).toBeUndefined();
+      expect(hob.runtime.routines.nextRuns(upcoming.id).filter(Boolean)).toHaveLength(1);
     } finally { hob.close(); }
   });
 });

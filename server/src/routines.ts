@@ -144,14 +144,19 @@ export class RoutineScheduler {
     }
   }
 
-  /** 话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动。 */
+  /** 话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按完成停止。 */
   resumeForTopic(groupId: string): void {
     for (const routine of this.runtime.store.routines()) {
       if (routine.groupId !== groupId || routine.active || routine.pausedBy !== "topicClosed") continue;
       const { pausedBy: _pausedBy, stoppedAt: _stoppedAt, stopReason: _stopReason, ...rest } = routine;
       const next: Routine = { ...rest, active: true };
-      this.runtime.store.saveRoutine(next);
       this.apply(next);
+      const timers = this.timers.get(next.id) ?? [];
+      if (timers.length && timers.every((cron) => cron.nextRun() === null)) {
+        void this.stopRoutine(next, "finished");
+        continue;
+      }
+      this.runtime.store.saveRoutine(next);
       this.runtime.bus.emit({ type: "routine", routine: next });
     }
   }
@@ -407,7 +412,7 @@ export class RoutineScheduler {
     }
     const next: Routine = { ...routine, ...rest };
     if (instructionBy !== undefined) next.instructionBy = instructionBy;
-    if ((rest.active !== undefined && rest.active !== routine.active) || (patch.groupId !== undefined && patch.groupId !== routine.groupId)) {
+    if (rest.active !== undefined || (patch.groupId !== undefined && patch.groupId !== routine.groupId)) {
       delete next.pausedBy;
     }
     // 重新打开：上次停下的记录清掉

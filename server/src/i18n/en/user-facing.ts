@@ -20,6 +20,8 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "我是{assistant}，负责{duty}。": "I am {assistant}, responsible for {duty}.",
   "由 Hob 创建": "created by Hob",
   "已创建「{name}」": "Created “{name}”",
+  "已开启多话题，这里是主对话": "Topics are on. This is the main conversation.",
+  "主助手暂不支持多话题": "The main assistant doesn't support topics yet.",
   "已创建助手「{name}」": "Created assistant “{name}”",
   "已创建助手「{name}」（{id}）。": "Created assistant “{name}” ({id}).",
   "已创建群「{name}」（{id}）。": "Created group “{name}” ({id}).",

@@ -1,14 +1,27 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync, appendFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { archiveAssistantsDir, archiveGroupsDir, assistantDir, assistantJobsDir, groupDir, groupFilesDir, groupsDir } from "./config.ts";
+import {
+  archiveAssistantsDir,
+  archiveGroupsDir,
+  assistantDir,
+  assistantJobsDir,
+  assistantTopicFile,
+  assistantTopicRouterPath,
+  assistantTopicsDir,
+  assistantTopicStatePath,
+  groupDir,
+  groupFilesDir,
+  groupsDir,
+} from "./config.ts";
 import { newId } from "./ids.ts";
 import { effectiveRules, emptyRuleOverrides, layerOverrides, type TopicConfigHost } from "./topic-config.ts";
 import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
 import type {
   Approval,
-  CardRecord,
   Assistant,
+  AssistantTopic,
+  CardRecord,
   Delegation,
   Draft,
   EffectiveRule,
@@ -150,6 +163,11 @@ export class Store {
         for (const name of ["profile.json", "rules.json", "state.json", "approvals.json", "cards.json", "routines.json", "drafts.json", "delegations.json"]) {
           readJson(join(root, id, name), null);
         }
+        const topics = join(root, id, "topics");
+        if (existsSync(topics)) for (const topic of readdirSync(topics, { withFileTypes: true })) {
+          if (!topic.isDirectory()) continue;
+          for (const name of ["topic.json", "rule-overrides.json", "state.json"]) readJson(join(topics, topic.name, name), null);
+        }
       }
     }
     const archivedGroups = archiveGroupsDir(this.home);
@@ -253,6 +271,49 @@ export class Store {
 
   routerFile(id: string): string {
     return join(this.assistantDir(id), "router.jsonl");
+  }
+
+  assistantTopics(aid: string): AssistantTopic[] {
+    const root = assistantTopicsDir(this.home, aid);
+    if (!existsSync(root)) return [];
+    const out: AssistantTopic[] = [];
+    for (const entry of readdirSync(root, { withFileTypes: true })) {
+      if (!entry.isDirectory()) continue;
+      const topic = this.assistantTopic(aid, entry.name);
+      if (topic) out.push(topic);
+    }
+    return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+  }
+
+  assistantTopic(aid: string, tid: string): AssistantTopic | undefined {
+    const file = assistantTopicFile(this.home, aid, tid);
+    const raw = readJson<unknown>(file, null);
+    if (raw === null) return undefined;
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+      throw new Error(`话题文件格式无效：${file}`);
+    }
+    const obj = raw as Record<string, unknown>;
+    if (typeof obj.id !== "string" || typeof obj.assistantId !== "string" || typeof obj.name !== "string" || typeof obj.createdAt !== "string") {
+      throw new Error(`话题文件格式无效：${file}`);
+    }
+    return raw as AssistantTopic;
+  }
+
+  saveAssistantTopic(topic: AssistantTopic): void {
+    writeJsonAtomic(assistantTopicFile(this.home, topic.assistantId, topic.id), topic);
+  }
+
+  assistantTopicRouterFile(aid: string, tid: string): string {
+    return assistantTopicRouterPath(this.home, aid, tid);
+  }
+
+  assistantTopicState(aid: string, tid: string): AssistantState {
+    return readJson<AssistantState>(assistantTopicStatePath(this.home, aid, tid), {});
+  }
+
+  /** 只改给出的字段，别的照旧。 */
+  saveAssistantTopicState(aid: string, tid: string, patch: AssistantState): void {
+    writeJsonAtomic(assistantTopicStatePath(this.home, aid, tid), { ...this.assistantTopicState(aid, tid), ...patch });
   }
 
   rules(id: string): Rule[] {

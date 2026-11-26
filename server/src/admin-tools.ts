@@ -312,6 +312,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
         dutyLong: Type.String({ description: "助手卡里的职责说明，两三句话，写完整一些" }),
         instructions: Type.Optional(Type.String({ description: "用户给这个助手写的补充提示词：性格、说话方式、工作方法、格式要求，什么都可以。用户给了原文就原样照抄，不缩写、不改写；用户没给就不填。" })),
         cwd: Type.Optional(Type.String({ description: "可选，助手的工作目录（绝对路径，如 /workspace/app），在和它单聊时生效；在群里用群和话题的目录。创建后不可修改；不填则使用系统默认目录。" })),
+        topics: Type.Optional(Type.Boolean({ description: "可选，是否开启多话题模式，默认单会话；主助手不支持多话题，仅普通助手可用；开启后不能改回单会话。" })),
         sprite: Type.String({
           description: `内置道具：${PROP_IDS.filter((id) => id !== "hob").map((id) => `${id} ${PROPS[id].label}`).join("，")}；或 custom（同时填 prop_art，自己画一件）`,
         }),
@@ -358,6 +359,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
           dutyLong: String(params.dutyLong),
           ...(typeof params.instructions === "string" && params.instructions.trim() ? { instructions: params.instructions.trim() } : {}),
           ...(cwd ? { cwd } : {}),
+          ...(typeof params.topics === "boolean" ? { topics: params.topics } : {}),
           routines: routinesInput,
           routinesText: routinesInput.map((item) => `${item.name} · ${cronToChinese(item.schedule)}`).join("、"),
           askFirst: (params.askFirst as string[]) ?? [],

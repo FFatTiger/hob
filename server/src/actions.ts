@@ -703,6 +703,7 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
     ...(abilities ? { abilities } : {}),
     ...(Array.isArray(body.knowledge) ? { knowledge: [...new Set(body.knowledge as string[])] } : {}),
   };
+  // topics 只允许通过 /topic-mode 单向开启，PATCH 忽略该字段以保留原值
   store.saveAssistant(next);
   // 工具说明和注册取决于模型及助手能力，变化后重开会话
   if (models || abilities) router.releaseSessions();
@@ -711,8 +712,33 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
   return { status: 200, body: { assistant: summary } };
 }
 
+/**
+ * 单会话转多话题（无损 + 幂等 + 单向）：
+ * 已有 topics 直接返回现状；主助手拒绝；首次开启写 profile.json、在主对话末尾追加分隔 note、释放会话句柄并推送事件。
+ */
+export async function enableAssistantTopics(runtime: HobRuntime, id: string): Promise<ActionResult> {
+  const { store, bus, router } = runtime;
+  const assistant = store.assistant(id);
+  if (!assistant) return { status: 404, body: { error: "助手不存在" } };
+  if (assistant.primary || assistant.id === "hob") {
+    return { status: 400, body: { error: "主助手暂不支持多话题" } };
+  }
+  if (assistant.topics) {
+    return { status: 200, body: router.summary(assistant) };
+  }
+  const next: Assistant = {
+    ...assistant,
+    topics: { enabledAt: new Date().toISOString() },
+  };
+  store.saveAssistant(next);
+  await router.appendNoteAndRelease(id, t("已开启多话题，这里是主对话"));
+  const summary = router.summary(next);
+  bus.emit({ type: "assistant", assistant: summary });
+  return { status: 200, body: summary };
+}
+
 /** 草稿 → 真正创建助手：带规则、定时任务，两边对话各写一行说明。 */
-export async function createFromDraft(runtime: HobRuntime, draftId: string): Promise<ActionResult> {
+export async function createFromDraft(runtime: HobRuntime, draftId: string, options?: { topics?: boolean }): Promise<ActionResult> {
   const { store, bus, router, routines } = runtime;
   const draft = store.draft(draftId);
   if (!draft) return { status: 404, body: { error: "草稿不存在" } };
@@ -737,6 +763,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
   }
 
   const now = new Date().toISOString();
+  const topicsEnabled = options?.topics ?? draft.topics === true;
   const assistant: Assistant = {
     id,
     name: draft.name,
@@ -744,6 +771,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
     dutyLong: draft.dutyLong,
     ...(typeof draft.instructions === "string" && draft.instructions.trim() ? { instructions: draft.instructions.trim() } : {}),
     ...(cwd ? { cwd } : {}),
+    ...(topicsEnabled ? { topics: { enabledAt: now } } : {}),
     // 和已有助手撞了头像就换个颜色（自画的图案各不相同，不算撞）
     sprite: distinctSprite(draft.sprite, store.assistants().map((a) => a.sprite)),
     ...(draft.prop ? { prop: draft.prop } : {}),
@@ -792,7 +820,14 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string): Pro
   });
   await router.addItem(draft.assistantId, { kind: "note", icon: "split", text: t("已创建「{name}」", { name: assistant.name }) });
 
-  const created: Draft = { ...draft, routines: savedRoutines, routinesText: createdRoutines.join("、"), status: "created", createdAssistantId: assistant.id };
+  const created: Draft = {
+    ...draft,
+    ...(options?.topics !== undefined ? { topics: options.topics } : {}),
+    routines: savedRoutines,
+    routinesText: createdRoutines.join("、"),
+    status: "created",
+    createdAssistantId: assistant.id,
+  };
   store.saveDraft(created);
   bus.emit({ type: "draft", draft: created });
   bus.emit({ type: "assistant", assistant: router.summary(assistant) });

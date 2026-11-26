@@ -610,6 +610,8 @@ export interface Assistant {
   knowledge?: string[];
   /** 可选工作目录（主助手不支持；普通助手仅创建时可绑定，创建后不可修改） */
   cwd?: string;
+  /** 多话题模式：有它就是多话题，enabledAt 是打开的时间；没有就是单会话。只能打开、不能关；主助手不支持。 */
+  topics?: { enabledAt: Iso };
   createdAt: Iso;
   splitFrom?: { from: string; at: Iso; readonly conversations?: number }; // conversations 仅供读取旧数据
 }
@@ -624,6 +626,33 @@ export interface AssistantSummary extends Assistant {
   activity?: RouterActivity | null;
   todos?: TodoItem[]; // 这个助手单聊里的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
+}
+
+/**
+ * 助手的话题：助手名下一段独立的对话，只谈一件事。
+ * 主对话就是助手原来那条对话（router.jsonl），不在这里。
+ */
+export interface AssistantTopic {
+  id: string; // "tp-" + 6 位（"c-" 已被卡片占用）
+  assistantId: string;
+  name: string; // 最多 40 字
+  nameAuto?: true; // 名字是自动起的；用户或助手改过名就去掉，之后不再自动改
+  cwd?: string; // 助手没绑工作目录时，创建话题时可以绑；创建后不可修改
+  overrides?: TopicOverrides; // 话题自己改过的模型；规则的改动另存 rule-overrides.json
+  createdAt: Iso;
+  createdBy: string; // "user" 或助手 id
+  closedAt?: Iso; // 关了的时间；关了不能再发消息，能重新打开
+  closeNote?: string; // 关的时候写的结论或原因
+}
+
+/** 二级页、对话页用的一行话题；首页助手行的汇总也从这里算。 */
+export interface AssistantTopicSummary extends AssistantTopic {
+  last?: { text: string; at: Iso };
+  unread: number;
+  busy: boolean; // 这个话题的会话正在回复
+  activity?: RouterActivity | null;
+  todos?: TodoItem[];
+  suggestions?: string[];
 }
 
 /**
@@ -779,6 +808,7 @@ export interface Routine {
   id: string;
   assistantId: string; // 谁来做
   groupId?: string; // 结果发到的群或话题
+  topicId?: string; // 结果发到的助手话题
   name: string; // 如 "每日简报"
   instruction: string; // 要做什么
   instructionBy?: string; // 「要做的事」是谁写的："user" 是用户自己写的；助手写的存助手 id；旧数据没有
@@ -1052,6 +1082,8 @@ export interface Draft {
   instructions?: string; // 用户写的说明
   /** 可选工作目录（创建后不可修改） */
   cwd?: string;
+  /** 草稿要建成多话题助手 */
+  topics?: boolean;
   routines: { name: string; instruction: string; schedule: string }[]; // 草稿卡 "定时任务" 行
   routinesText: string; // 草稿卡 "定时任务" 行的展示文字
   askFirst: string[]; // 执行前确认的事项

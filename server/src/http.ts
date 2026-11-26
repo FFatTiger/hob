@@ -29,7 +29,7 @@ import type {
   UsagePricePatch,
   UsagePriceSaved,
 } from "../../shared/types.ts";
-import { answerApproval, answerCard, archiveAssistant, retirePluginCards, createFromDraft, dismissDraft, updateAssistant } from "./actions.ts";
+import { answerApproval, answerCard, archiveAssistant, retirePluginCards, createFromDraft, dismissDraft, enableAssistantTopics, updateAssistant } from "./actions.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -1334,6 +1334,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json(result.body as Record<string, unknown>, result.status as 200);
   });
 
+  app.post("/api/assistants/:id/topic-mode", async (c) => {
+    const result = await enableAssistantTopics(runtime, c.req.param("id"));
+    return c.json(result.body as Record<string, unknown>, result.status as 200);
+  });
+
   // 归档助手：档案、对话、规则和定时进归档，助手从列表移除
   app.post("/api/assistants/:id/archive", async (c) => {
     const result = await archiveAssistant(runtime, c.req.param("id"));
@@ -1649,7 +1654,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   app.post("/api/drafts/:id/create", async (c) => {
-    const result = await createFromDraft(runtime, c.req.param("id"));
+    const body = (await c.req.json().catch(() => ({}))) as { topics?: unknown };
+    const result = await createFromDraft(
+      runtime,
+      c.req.param("id"),
+      typeof body.topics === "boolean" ? { topics: body.topics } : undefined,
+    );
     return c.json(result.body as Record<string, unknown>, result.status as 200);
   });
 

@@ -1127,7 +1127,7 @@ export class RouterManager {
 
   private maybeRelease(state: RouterState): void {
     if (!state.releaseAfterTurn) return;
-    if (state.running > 0 || state.session?.isStreaming || state.session?.isCompacting || state.compactionPromise) return;
+    if (state.opening || state.running > 0 || state.session?.isStreaming || state.session?.isCompacting || state.compactionPromise) return;
     state.releaseAfterTurn = false;
     this.close(state);
   }
@@ -1253,6 +1253,46 @@ export class RouterManager {
     if (full.kind === "file") {
       const page = isInPagesDir(relative(this.runtime.home, resolve(full.path)));
       void this.runtime.knowledge.collect({ origin: "output", path: full.path, assistantId, itemId: full.id, ...(page ? { name: full.name, description: full.meta } : {}) }).catch((error) => console.error("知识库收集失败：", error));
+    }
+    return full;
+  }
+
+  /**
+   * 直接在对话末尾追加一条 info note（不打开模型会话、不依赖模型配置），
+   * 若该会话当前在内存里打开着，则设 releaseAfterTurn（空闲立即释放，忙碌等本轮结束再释）。
+   */
+  async appendNoteAndRelease(assistantId: string, text: string, place?: Place): Promise<Item> {
+    const normalized = placeOf(place);
+    const key = sessionKey(assistantId, normalized);
+    let state = this.routers.get(key);
+    if (state?.opening && !state.manager) {
+      await state.opening.catch(() => undefined);
+      state = this.routers.get(key);
+    }
+    const item = { kind: "note" as const, icon: "info" as const, text };
+    const file = this.sessionFile(assistantId, normalized);
+    // 尚无消息落盘且当前空闲的会话在内存中未 flush，先关掉再走直写路径确保立刻落盘
+    if (state?.manager && !existsSync(file) && state.running === 0 && !state.session?.isStreaming && !state.session?.isCompacting && !state.compactionPromise) {
+      this.close(state);
+      state = undefined;
+    }
+    const lead = this.derived(assistantId, normalized).result.lead;
+    let full: Item;
+    if (state?.manager) {
+      const id = state.manager.appendCustomEntry(ITEM_TYPE, item);
+      full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) };
+      this.bus.emit({ type: "item", assistantId, item: full });
+      state.releaseAfterTurn = true;
+      this.maybeRelease(state);
+    } else {
+      mkdirSync(dirname(file), { recursive: true });
+      if (!existsSync(file)) writeFileSync(file, "");
+      const manager = SessionManagerImpl.open(file, dirname(file), this.store.home);
+      const id = manager.appendCustomEntry(ITEM_TYPE, item);
+      const at = manager.getEntries().find((entry) => entry.id === id)?.timestamp ?? new Date().toISOString();
+      full = { ...item, ...(lead ? { lead: true } : {}), id, at };
+      this.itemCache.delete(key);
+      this.bus.emit({ type: "item", assistantId, item: full });
     }
     return full;
   }

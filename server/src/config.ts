@@ -100,6 +100,37 @@ export function assistantTodosPath(home: string, id: string): string {
   return join(assistantDir(home, id), "todos.json");
 }
 
+/** 这个助手的话题根目录：一个话题一个目录。 */
+export function assistantTopicsDir(home: string, id: string): string {
+  return join(assistantDir(home, id), "topics");
+}
+
+/** 一个助手话题的目录：topic.json、router.jsonl、state.json、todos.json、rule-overrides.json。 */
+export function assistantTopicDir(home: string, id: string, tid: string): string {
+  return join(assistantTopicsDir(home, id), tid);
+}
+
+/** 这个助手话题里的待办：一份 json。 */
+export function assistantTopicTodosPath(home: string, id: string, tid: string): string {
+  return join(assistantTopicDir(home, id, tid), "todos.json");
+}
+
+export function assistantTopicFile(home: string, id: string, tid: string): string {
+  return join(assistantTopicDir(home, id, tid), "topic.json");
+}
+
+export function assistantTopicStatePath(home: string, id: string, tid: string): string {
+  return join(assistantTopicDir(home, id, tid), "state.json");
+}
+
+export function assistantTopicRuleOverridesPath(home: string, id: string, tid: string): string {
+  return join(assistantTopicDir(home, id, tid), "rule-overrides.json");
+}
+
+export function assistantTopicRouterPath(home: string, id: string, tid: string): string {
+  return join(assistantTopicDir(home, id, tid), "router.jsonl");
+}
+
 /** 这个群（话题）的待办：一份 json，群里的人共用。 */
 export function groupTodosPath(home: string, gid: string): string {
   return join(groupDir(home, gid), "todos.json");

@@ -12,7 +12,7 @@ import { buildSystemPrompt, buildWorkerPrompt } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import type { HobRuntime } from "../src/runtime.ts";
 import { deleteTopicRule, resetTopicRule, setTopicRule } from "../src/topic-config.ts";
-import { call, makeHob, text, type TestHob } from "./helpers.ts";
+import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 const extraDirs: string[] = [];
 
@@ -295,15 +295,15 @@ describe("助手话题模型逐键叠加、会话释放与不固化", () => {
       expect(followBefore.session?.model?.id).toBe("asst1");
 
       const { patch } = await loggedIn(hob.runtime, hob.home);
-      const forgetSpy = vi.spyOn(hob.runtime.router, "forgetSession");
+      const releaseSpy = vi.spyOn(hob.runtime.router, "releaseSession");
 
       // 改 custom 话题模型：只释放 custom 会话，主对话与 follow 话题会话保持原实例
       const res = await patch(`/api/assistants/${aid}/topics/${custom.id}/config`, {
         models: { conversation: pick("topicConv"), work: pick("topicWork") },
       });
       expect(res.status).toBe(200);
-      expect(forgetSpy).toHaveBeenCalledTimes(1);
-      expect(forgetSpy).toHaveBeenCalledWith(aid, { topicId: custom.id });
+      expect(releaseSpy).toHaveBeenCalledTimes(1);
+      expect(releaseSpy).toHaveBeenCalledWith(aid, { topicId: custom.id });
 
       expect((await hob.runtime.router.ensure(aid)).session).toBe(mainBefore.session);
       expect((await hob.runtime.router.ensure(aid, { topicId: follow.id })).session).toBe(followBefore.session);
@@ -348,6 +348,92 @@ describe("助手话题模型逐键叠加、会话释放与不固化", () => {
       });
       expect(jobFollow.model).toBe("hob-faux/asst2");
       expect(jobCustom2.model).toBe("hob-faux/topicWork");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("话题空闲时改模型立即释放；忙碌时改模型不打断当前轮次，本轮安全结束后才释放", async () => {
+    const ids = ["m1", "m2", "m3"];
+    const hob = makeHob(
+      {},
+      {
+        memory: "off",
+        models: ids.map((id) => ({ id, input: ["text"] })),
+        settings: {
+          models: {
+            conversation: { ref: "hob-faux/m1", thinking: "off" },
+            work: { ref: "hob-faux/m1", thinking: "off" },
+            roster: ids.map((id) => ({ ref: `hob-faux/${id}`, note: "" })),
+          },
+        },
+      },
+    );
+    try {
+      const pick = (id: string) => ({ ref: `hob-faux/${id}`, thinking: "off" as const });
+      const aid = "dev";
+      addAssistant(hob, aid);
+      const { topic } = await hob.runtime.assistantTopics.create(aid, { title: "优雅释放验证" });
+      const { patch } = await loggedIn(hob.runtime, hob.home);
+      const topicKey = `${aid}@${topic.id}`;
+
+      // 1. 空闲时改模型：立即释放旧会话句柄
+      const idleBefore = await hob.runtime.router.ensure(aid, { topicId: topic.id });
+      expect(idleBefore.session?.model?.id).toBe("m1");
+      const rIdle = await patch(`/api/assistants/${aid}/topics/${topic.id}/config`, {
+        models: { conversation: pick("m2") },
+      });
+      expect(rIdle.status).toBe(200);
+      expect((hob.runtime.router as any).routers.get(topicKey)?.session).toBeUndefined();
+      expect((hob.runtime.router as any).routers.get(topicKey)?.releaseAfterTurn).toBe(false);
+
+      // 2. 忙碌时改模型：不打断当前轮次，仅标 releaseAfterTurn，本轮结束后才释放
+      let resolveTurn!: () => void;
+      const turnGate = new Promise<void>((resolve) => {
+        resolveTurn = resolve;
+      });
+      const started = new Promise<void>((resolve) => {
+        hob.faux.setResponses([
+          async () => {
+            resolve();
+            await turnGate;
+            return text("忙碌轮完整回复");
+          },
+          text("新模型下的新一轮"),
+        ]);
+      });
+
+      const sendPromise = hob.runtime.router.send(aid, { text: "开始长回复" }, { topicId: topic.id });
+      await started;
+      await sendPromise;
+
+      const stateBusy = (hob.runtime.router as any).routers.get(topicKey);
+      const busySession = stateBusy?.session;
+      expect(busySession).toBeDefined();
+      expect(busySession.model?.id).toBe("m2");
+      expect(stateBusy.running).toBeGreaterThan(0);
+
+      const rBusy = await patch(`/api/assistants/${aid}/topics/${topic.id}/config`, {
+        models: { conversation: pick("m3") },
+      });
+      expect(rBusy.status).toBe(200);
+      // 还在跑：会话句柄未销毁，且已标记 releaseAfterTurn
+      expect((hob.runtime.router as any).routers.get(topicKey)?.session).toBe(busySession);
+      expect((hob.runtime.router as any).routers.get(topicKey)?.releaseAfterTurn).toBe(true);
+
+      // 放行本轮结束：安全收尾后再释放句柄
+      resolveTurn();
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topic.id });
+      await waitFor(() => !(hob.runtime.router as any).routers.get(topicKey)?.session);
+      expect((hob.runtime.router as any).routers.get(topicKey)?.releaseAfterTurn).toBe(false);
+
+      // 下一轮重新打开会话并切到 m3，且上一轮回复完整保留
+      await hob.runtime.router.send(aid, { text: "下一轮" }, { topicId: topic.id });
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topic.id });
+      expect((hob.runtime.router as any).routers.get(topicKey)?.session?.model?.id).toBe("m3");
+      const items = hob.runtime.router.items(aid, {}, { topicId: topic.id }).items;
+      expect(items.some((item) => item.kind === "assistant" && item.text === "忙碌轮完整回复")).toBe(true);
+      expect(items.some((item) => item.kind === "assistant" && item.text === "新模型下的新一轮")).toBe(true);
     } finally {
       hob.close();
     }
@@ -749,6 +835,11 @@ describe("助手话题配置与规则 HTTP 接口", () => {
       });
       expect(enBadWork.status).toBe(400);
       expect(await enBadWork.json()).toEqual({ error: "Model hob-faux/other isn't in this assistant's allowed models." });
+
+      // rule-overrides.json 损坏时 DELETE /rules/:rid 和 POST .../reset 一样返回 400 而非误回 404
+      writeFileSync(assistantTopicRuleOverridesPath(hob.home, a1.id, topic.id), "{broken-json");
+      expect((await del(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1`)).status).toBe(400);
+      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1/reset`)).status).toBe(400);
     } finally {
       hob.close();
     }

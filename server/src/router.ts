@@ -1131,13 +1131,15 @@ export class RouterManager {
     }
   }
 
+  releaseSession(assistantId: string, place?: Place): void {
+    const state = this.routers.get(sessionKey(assistantId, place));
+    if (!state) return;
+    state.releaseAfterTurn = true;
+    this.maybeRelease(state);
+  }
+
   releaseGroupMemberSessions(assistantId: string, groupIds: string[]): void {
-    for (const groupId of groupIds) {
-      const state = this.routers.get(sessionKey(assistantId, { groupId }));
-      if (!state) continue;
-      state.releaseAfterTurn = true;
-      this.maybeRelease(state);
-    }
+    for (const groupId of groupIds) this.releaseSession(assistantId, { groupId });
   }
 
   private clearLivePagesForKey(key: string): void {

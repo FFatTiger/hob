@@ -360,7 +360,7 @@ export class AssistantTopicManager {
       }
       if ("conversation" in parsed || "work" in parsed) {
         patchOverrides(this.store.assistantTopicConfigHost(aid, tid), { models: parsed });
-        this.runtime.router.forgetSession(aid, { topicId: tid });
+        this.runtime.router.releaseSession(aid, { topicId: tid });
         this.publish(aid, tid);
       }
     }

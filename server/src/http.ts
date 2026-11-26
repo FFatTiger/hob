@@ -1555,7 +1555,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json({ ok: true });
     } catch (error) {
       if (error instanceof TopicError) return topicErr(c, error);
-      return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, message.includes("不存在") ? 404 : 400);
     }
   });
 

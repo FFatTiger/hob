@@ -12,6 +12,7 @@ import type {
   CardRecord,
   Assistant,
   AssistantSummary,
+  AssistantTopicSummary,
   Bootstrap,
   ClaudeCodeSettings,
   Delegation,
@@ -144,6 +145,7 @@ export interface State {
   notice: string | null; // 一次性的操作失败提示
   offline: string | null; // 实时连接断开
   assistants: AssistantSummary[];
+  assistantTopics: AssistantTopicSummary[];
   groups: GroupSummary[];
   groupPrefs: Record<string, GroupPrefs>;
   groupItems: Record<string, GroupItem[]>;
@@ -178,7 +180,11 @@ export interface State {
   sidebarFiles: Record<string, SidebarPage<KnowledgeEntry>>;
   sel: string | null;
   gsel: string | null; // 选中的群；和 sel 互斥（群和助手分开选中）
-  /** 桌面左栏在首页列表：选中群时左栏换成这个群的二级页，点返回又回到首页 */
+  tsel: string | null; // 选中的助手话题；有值时 sel 为所属助手 id
+  newTopic: { title: string; cwd: string } | null; // 空白新话题页；发出第一句话才创建
+  newTopicBusy: boolean;
+  newTopicError: string | null;
+  /** 桌面左栏在首页列表：选中群或开启多话题助手时左栏换成二级页，点返回又回到首页 */
   sideHome: boolean;
   panelStack: PanelPage[];
   viewer: { path: string; name: string } | null; // 全屏看图
@@ -313,6 +319,7 @@ function initial(): State {
     notice: null,
     offline: null,
     assistants: [],
+    assistantTopics: [],
     groups: [],
     groupPrefs: loadGroupPrefs(),
     groupItems: {},
@@ -349,6 +356,10 @@ function initial(): State {
     sidebarFiles: {},
     sel: null, // 没选中对话就是首页
     gsel: null,
+    tsel: null,
+    newTopic: null,
+    newTopicBusy: false,
+    newTopicError: null,
     sideHome: true,
     panelStack: [],
     viewer: null,
@@ -379,7 +390,9 @@ function initial(): State {
   if (MOCK) {
     state.sel = ui.gsel ? null : ui.sel;
     state.gsel = ui.gsel ?? null;
-    state.sideHome = !ui.gsel;
+    state.tsel = ui.tsel ?? null;
+    state.newTopic = ui.newTopic ? { title: "", cwd: "" } : null;
+    state.sideHome = ui.sideHome ?? !ui.gsel;
     const panel = parsePanel(ui.panel);
     state.panelStack = panel.kind === "now" ? [] : [panel];
     state.collapsed = ui.collapsed;
@@ -393,9 +406,15 @@ function initial(): State {
   if (bootRoute.group) {
     state.gsel = bootRoute.group;
     state.sel = null;
+    state.tsel = null;
+    state.newTopic = null;
     state.sideHome = false;
   }
-  if (bootRoute.sel) state.sel = bootRoute.sel;
+  if (bootRoute.sel) {
+    state.sel = bootRoute.sel;
+    state.tsel = bootRoute.topic ?? null;
+    state.newTopic = null;
+  }
   if (bootRoute.panel) state.panelStack = [bootRoute.panel];
   if (bootRoute.plugins) {
     state.page = "plugins";
@@ -1136,7 +1155,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, composerDrafts: new Map() });
+  set({ phase: "login", assistants: [], assistantTopics: [], items: {}, profiles: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, composerDrafts: new Map() });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1161,6 +1180,7 @@ async function loadBootstrap(reconnect = false) {
       error: null,
       offline: null,
       assistants: mergeAssistantSummaries(boot.assistants),
+      assistantTopics: mergeAssistantTopicSummaries(boot.assistantTopics ?? []),
       jobs: index(boot.jobs),
       delegations: index(boot.delegations ?? []),
       routines: boot.routines,
@@ -1203,12 +1223,21 @@ async function loadBootstrap(reconnect = false) {
     // 实时连接断了又连上：只补拉正看着的对话，不换页、不收右栏，正在打字的输入框和引用都留着
     if (reconnect) {
       if (state.gsel) await loadGroupItems(state.gsel);
-      else if (state.sel) await Promise.all([loadItems(state.sel), loadProfile(state.sel)]);
+      else if (state.sel && state.tsel) await Promise.all([loadItems(state.sel, state.tsel), loadProfile(state.sel)]);
+      else if (state.sel && !state.newTopic) await Promise.all([loadItems(state.sel), loadProfile(state.sel)]);
     }
     // 群地址代表综合时间线；手机刷新也应直接回到综合。
     else if (state.gsel && state.groups.some((g) => g.id === state.gsel)) await selectGroup(state.gsel, true, false, Boolean(bootRoute.group));
     // 没指定对话就停在首页
-    else if (state.page === "main" && sel && state.sel) await select(sel, mobileWantsChat());
+    else if (state.page === "main" && sel && state.sel) {
+      if (state.tsel && state.assistantTopics.some((t) => t.id === state.tsel && t.assistantId === sel)) {
+        await openAssistantTopic(sel, state.tsel, mobileWantsChat());
+      } else if (state.newTopic) {
+        openNewAssistantTopic(sel);
+      } else {
+        await select(sel, mobileWantsChat(), false, Boolean(bootRoute.sel) || (MOCK && SCENE_UI[scene].mobile === "chat"));
+      }
+    }
     if (state.page === "knowledge") void loadKnowledge();
     // 刷新前开着的任务页：内容要自己拉
     const top = state.panelStack.at(-1);
@@ -1221,7 +1250,7 @@ async function loadBootstrap(reconnect = false) {
 
 const closedLivePages = new Set<string>();
 export function applyEvent(ev: HobEvent) {
-  if ((ev.type === "item" || ev.type === "delta") && !ev.topicId) itemEvents.get(ev.assistantId)?.push(ev);
+  if (ev.type === "item" || ev.type === "delta") itemEvents.get(assistantSessionKey(ev.assistantId, ev.topicId))?.push(ev);
   if (ev.type === "group-item" || ev.type === "group-delta") groupEvents.get(ev.groupId)?.push(ev);
   switch (ev.type) {
     case "stars":
@@ -1231,11 +1260,10 @@ export function applyEvent(ev: HobEvent) {
       if (state.page === "settings" && state.section === "rules") void loadRules();
       break;
     case "page-live": {
-      if (ev.topicId) break;
       const first = !state.livePages[ev.callId];
       set((s) => ({
         livePages: { ...s.livePages, [ev.callId]: ev },
-        ...(shouldOpenLive(ev, { seen: !first, closed: closedLivePages.has(ev.callId), assistantId: s.sel, inChat: s.page === "main" && (s.mobile === "chat" || !isNarrow()) })
+        ...(shouldOpenLive(ev, { seen: !first, closed: closedLivePages.has(ev.callId), assistantId: s.sel, topicId: s.gsel || s.newTopic ? null : s.tsel, inChat: s.page === "main" && !s.gsel && !s.newTopic && (s.mobile === "chat" || !isNarrow()) })
           ? { panelStack: pushPage(s.panelStack, { kind: "file", path: "", full: false, liveId: ev.callId }) } : {}),
       }));
       break;
@@ -1256,36 +1284,59 @@ export function applyEvent(ev: HobEvent) {
       }));
       break;
     }
+    case "assistant_topic": {
+      const current = state.assistantTopics.find((topic) => topic.id === ev.topic.id);
+      const read = ev.topic.unread > 0 && viewingTopic(ev.topic.assistantId, ev.topic.id);
+      if (read) void api.readAssistantTopic(ev.topic.assistantId, ev.topic.id).catch(() => {});
+      const topic = mergeTopicEvent(current, ev.topic, read);
+      set((s) => ({ assistantTopics: upsert(s.assistantTopics, topic) }));
+      break;
+    }
     case "router-activity":
-      if (ev.topicId) break;
-      set((s) => ({ assistants: s.assistants.map((a) => a.id === ev.assistantId ? { ...a, activity: ev.activity } : a) }));
+      if (ev.topicId) {
+        set((s) => ({
+          assistantTopics: s.assistantTopics.map((topic) => (topic.id === ev.topicId ? { ...topic, activity: ev.activity } : topic)),
+        }));
+      } else {
+        set((s) => ({ assistants: s.assistants.map((a) => a.id === ev.assistantId ? { ...a, activity: ev.activity } : a) }));
+      }
       break;
     case "assistant_removed":
-      set((s) => ({
-        assistants: s.assistants.filter((a) => a.id !== ev.id),
-        composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, ev.id),
-        sel: s.sel === ev.id ? (s.assistants.find((a) => a.primary)?.id ?? null) : s.sel,
-      }));
+      set((s) => {
+        const removedTopics = s.assistantTopics.filter((topic) => topic.assistantId === ev.id);
+        const drafts = new Map(s.composerDrafts);
+        drafts.delete(ev.id);
+        drafts.delete(`${ev.id}@new`);
+        for (const topic of removedTopics) drafts.delete(assistantSessionKey(ev.id, topic.id));
+        const removingCurrent = s.sel === ev.id;
+        return {
+          assistants: s.assistants.filter((a) => a.id !== ev.id),
+          assistantTopics: s.assistantTopics.filter((topic) => topic.assistantId !== ev.id),
+          composerDrafts: drafts,
+          sel: removingCurrent ? (s.assistants.find((a) => a.primary)?.id ?? null) : s.sel,
+          ...(removingCurrent ? { tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true } : {}),
+        };
+      });
       break;
     case "item": {
-      if (ev.topicId) break;
-      const list = state.items[ev.assistantId];
+      const key = assistantSessionKey(ev.assistantId, ev.topicId);
+      const list = state.items[key];
       if (!list) break;
-      const outbox = state.pending[ev.assistantId] ?? [];
+      const outbox = state.pending[key] ?? [];
       const mine = outbox.find((p) => isSentAs(p, ev.item));
       if (!mine && !list.some((x) => x.id === ev.item.id)) markFresh([ev.item.id]);
       set((s) => ({
-        items: { ...s.items, [ev.assistantId]: mergeItems(list, ev.item) },
-        ...(mine ? { pending: { ...s.pending, [ev.assistantId]: outbox.filter((p) => p !== mine) } } : {}),
+        items: { ...s.items, [key]: mergeItems(list, ev.item) },
+        ...(mine ? { pending: { ...s.pending, [key]: outbox.filter((p) => p !== mine) } } : {}),
       }));
       break;
     }
     case "delta": {
-      if (ev.topicId) break;
-      const list = state.items[ev.assistantId];
+      const key = assistantSessionKey(ev.assistantId, ev.topicId);
+      const list = state.items[key];
       if (!list) break;
       const next = applyDelta(list, ev.itemId, ev.text);
-      if (next !== list) set((s) => ({ items: { ...s.items, [ev.assistantId]: next } }));
+      if (next !== list) set((s) => ({ items: { ...s.items, [key]: next } }));
       break;
     }
     case "job":
@@ -1475,12 +1526,47 @@ function mergeAssistantSummaries(incoming: AssistantSummary[]): AssistantSummary
   });
 }
 
-/** 当前正在查看的会话标识（"assistant:<id>" 或 "group:<id>"），未在看具体对话时为 null。 */
+const topicReadAt: Record<string, string> = {};
+
+function mergeTopicEvent(current: AssistantTopicSummary | undefined, incoming: AssistantTopicSummary, read: boolean): AssistantTopicSummary {
+  const prevReadAt = topicReadAt[incoming.id];
+  const nextReadAt = read ? new Date().toISOString() : prevReadAt;
+  if (nextReadAt) topicReadAt[incoming.id] = nextReadAt;
+  const oldMessage = Boolean(prevReadAt && (incoming.last?.at ?? "") <= prevReadAt);
+  return {
+    ...incoming,
+    ...(read || oldMessage ? { unread: 0 } : {}),
+  };
+}
+
+function mergeAssistantTopicSummaries(incoming: AssistantTopicSummary[]): AssistantTopicSummary[] {
+  return incoming.map((topic) => {
+    const prevReadAt = topicReadAt[topic.id];
+    if (!prevReadAt) return topic;
+    const oldMessage = (topic.last?.at ?? "") <= prevReadAt;
+    return oldMessage ? { ...topic, unread: 0 } : topic;
+  });
+}
+
+function markAssistantTopicRead(assistantId: string, topicId: string): void {
+  topicReadAt[topicId] = new Date().toISOString();
+  set((s) => ({
+    assistantTopics: s.assistantTopics.map((t) => (t.id === topicId && t.assistantId === assistantId ? { ...t, unread: 0 } : t)),
+  }));
+  void api.readAssistantTopic(assistantId, topicId).catch(() => {});
+}
+
+export function assistantSessionKey(assistantId: string, topicId?: string | null): string {
+  return topicId ? `${assistantId}@${topicId}` : assistantId;
+}
+
+/** 当前正在查看的会话标识（"assistant:<id>"、"assistant:<id>@<tid>" 或 "group:<id>"），未在看具体对话时为 null。 */
 export function activeTarget(s: State, narrow = isNarrow()): string | null {
   if (s.page !== "main") return null;
   if (narrow && s.mobile !== "chat") return null;
   if (s.gsel) return `group:${s.gsel}`;
-  if (s.sel) return `assistant:${s.sel}`;
+  if (s.newTopic) return null;
+  if (s.sel) return `assistant:${assistantSessionKey(s.sel, s.tsel)}`;
   return null;
 }
 
@@ -1509,9 +1595,16 @@ export function reportVisibility(opts?: { force?: boolean; visible?: boolean; ke
 function onVisibilityReturn(): void {
   reportVisibility();
   // 切回来时正开着的那个助手 / 群攒下的未读算看过了
-  const a = state.assistants.find((x) => x.id === state.sel);
-  if (a && a.unread > 0 && viewing(a.id)) {
-    markAssistantRead(a.id);
+  if (state.sel && state.tsel) {
+    const topic = state.assistantTopics.find((t) => t.id === state.tsel && t.assistantId === state.sel);
+    if (topic && topic.unread > 0 && viewingTopic(topic.assistantId, topic.id)) {
+      markAssistantTopicRead(topic.assistantId, topic.id);
+    }
+  } else if (state.sel && !state.newTopic) {
+    const a = state.assistants.find((x) => x.id === state.sel);
+    if (a && a.unread > 0 && viewing(a.id)) {
+      markAssistantRead(a.id);
+    }
   }
   const g = state.groups.find((x) => x.id === state.gsel);
   if (g && g.unread > 0 && viewingGroup(g.id)) {
@@ -1520,9 +1613,13 @@ function onVisibilityReturn(): void {
   }
 }
 
-/** 用户正看着这个助手的对话：页面在前台、在主界面，手机上要进了对话页。 */
+/** 用户正看着这个助手的主对话/单聊：页面在前台、在主界面，手机上要进了对话页。 */
 function viewing(id: string): boolean {
-  return state.sel === id && state.page === "main" && globalThis.document?.visibilityState === "visible" && (!isNarrow() || state.mobile === "chat");
+  return state.sel === id && !state.tsel && !state.newTopic && state.page === "main" && globalThis.document?.visibilityState === "visible" && (!isNarrow() || state.mobile === "chat");
+}
+
+function viewingTopic(assistantId: string, topicId: string): boolean {
+  return state.sel === assistantId && state.tsel === topicId && !state.newTopic && state.page === "main" && globalThis.document?.visibilityState === "visible" && (!isNarrow() || state.mobile === "chat");
 }
 
 function viewingGroup(id: string): boolean {
@@ -1707,9 +1804,12 @@ export async function stopGroup(id: string) {
   }
 }
 
-/** 群消息走自己的分页；发件箱按会话键分开存，群 id 和助手 id 不撞。 */
+/** 群消息走自己的分页；发件箱和草稿按会话键分开存，群 id、助手主对话和助手话题不撞。 */
 export function pendingKeyOf(s: State): string | null {
-  return s.gsel ? `group:${s.gsel}` : s.sel;
+  if (s.gsel) return `group:${s.gsel}`;
+  if (!s.sel) return null;
+  if (s.newTopic) return `${s.sel}@new`;
+  return assistantSessionKey(s.sel, s.tsel);
 }
 
 /**
@@ -1717,13 +1817,17 @@ export function pendingKeyOf(s: State): string | null {
  * 手机上点群先进话题列表，点话题才进对话。
  */
 export async function selectGroup(id: string, nav = true, keepStack = false, forceChat = false) {
-  const previous = state.gsel ?? state.sel;
+  const previous = state.gsel ?? (state.sel ? assistantSessionKey(state.sel, state.tsel) : null);
   const group = state.groups.find((x) => x.id === id);
   const narrow = isNarrow();
   const opensTopics = !forceChat && narrow && Boolean(group && !group.parentId);
   set((s) => ({
     gsel: id,
     sel: null,
+    tsel: null,
+    newTopic: null,
+    newTopicBusy: false,
+    newTopicError: null,
     sideHome: false,
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
     ...(s.gsel !== id && !keepStack ? { worklog: null } : {}),
@@ -1763,23 +1867,126 @@ export async function openNoteGroup(id: string) {
 /** 回首页：对话、右栏的页、弹层、设置和知识库一次全收起（左栏二级页的返回、设置和知识库的返回、左栏的首页键都走这里）。 */
 export function goHome() {
   for (const page of state.panelStack) if (page.kind === "file" && page.liveId) closedLivePages.add(page.liveId);
-  set({ page: "main", sel: null, gsel: null, sideHome: true, panelStack: [], sheet: false, search: false, viewer: null, mobile: "list" });
+  set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, search: false, viewer: null, mobile: "list" });
 }
 
-export async function select(id: string, nav = true, keepStack = false) {
+export async function select(id: string, nav = true, keepStack = false, forceChat = false) {
+  const a = state.assistants.find((x) => x.id === id);
+  const multiTopic = Boolean(a?.topics);
+  const narrow = isNarrow();
+  const opensTopics = !forceChat && narrow && multiTopic;
+  const previous = state.gsel ?? (state.sel ? assistantSessionKey(state.sel, state.tsel) : null);
   set((s) => ({
     sel: id,
     gsel: null,
-    sideHome: true,
-    panelStack: selectPanelStack(s.panelStack, s.gsel ?? s.sel, id, keepStack),
-    ...(s.sel !== id && !keepStack ? { worklog: null } : {}),
-    ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
+    tsel: null,
+    newTopic: null,
+    newTopicBusy: false,
+    newTopicError: null,
+    sideHome: !multiTopic,
+    panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
+    ...(previous !== id && !keepStack ? { worklog: null } : {}),
+    ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
   }));
-  const a = state.assistants.find((x) => x.id === id);
-  if (a && a.unread > 0) {
+  if (a && a.unread > 0 && !opensTopics) {
     markAssistantRead(id);
   }
   await Promise.all([loadItems(id), loadProfile(id)]);
+}
+
+/** 手机上从多话题助手二级页进主对话：同 openGroupHome。 */
+export async function openAssistantMain(id: string) {
+  await select(id, true, false, true);
+}
+
+/** 打开多话题助手的某个话题。 */
+export async function openAssistantTopic(aid: string, tid: string, nav = true, keepStack = false) {
+  const previous = state.gsel ?? (state.sel ? assistantSessionKey(state.sel, state.tsel) : null);
+  const nextKey = assistantSessionKey(aid, tid);
+  const topic = state.assistantTopics.find((t) => t.id === tid && t.assistantId === aid);
+  set((s) => ({
+    sel: aid,
+    gsel: null,
+    tsel: tid,
+    newTopic: null,
+    newTopicBusy: false,
+    newTopicError: null,
+    sideHome: false,
+    panelStack: selectPanelStack(s.panelStack, previous, nextKey, keepStack),
+    ...(previous !== nextKey && !keepStack ? { worklog: null } : {}),
+    ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
+  }));
+  if (topic && topic.unread > 0) {
+    markAssistantTopicRead(aid, tid);
+  }
+  await Promise.all([loadItems(aid, tid), loadProfile(aid)]);
+}
+
+/** 点「创建新话题」进入空白新话题页（此时不发创建请求；未发送离开不留空话题）。 */
+export function openNewAssistantTopic(aid: string) {
+  const previous = state.gsel ?? (state.sel ? assistantSessionKey(state.sel, state.tsel) : null);
+  const nextKey = `${aid}@new`;
+  set((s) => ({
+    sel: aid,
+    gsel: null,
+    tsel: null,
+    newTopic: { title: "", cwd: "" },
+    newTopicBusy: false,
+    newTopicError: null,
+    sideHome: false,
+    panelStack: selectPanelStack(s.panelStack, previous, nextKey, false),
+    ...(previous !== nextKey ? { worklog: null } : {}),
+    mobile: "chat" as const,
+    sheet: false,
+    search: false,
+  }));
+  void loadProfile(aid);
+}
+
+export function setNewTopicTitle(title: string) {
+  set((s) => (s.newTopic ? { newTopic: { ...s.newTopic, title }, newTopicError: null } : {}));
+}
+
+export function setNewTopicCwd(cwd: string) {
+  set((s) => (s.newTopic ? { newTopic: { ...s.newTopic, cwd }, newTopicError: null } : {}));
+}
+
+export async function renameAssistantTopic(aid: string, tid: string, title: string): Promise<string | null> {
+  try {
+    const topic = await api.renameAssistantTopic(aid, tid, title);
+    set((s) => ({ assistantTopics: upsert(s.assistantTopics, topic) }));
+    return null;
+  } catch (e) {
+    return errText(e);
+  }
+}
+
+export async function closeAssistantTopic(aid: string, tid: string, note?: string): Promise<string | null> {
+  try {
+    const topic = await api.closeAssistantTopic(aid, tid, note ? { note } : undefined);
+    set((s) => ({ assistantTopics: upsert(s.assistantTopics, topic) }));
+    return null;
+  } catch (e) {
+    return errText(e);
+  }
+}
+
+export async function reopenAssistantTopic(aid: string, tid: string): Promise<string | null> {
+  try {
+    const topic = await api.reopenAssistantTopic(aid, tid);
+    set((s) => ({ assistantTopics: upsert(s.assistantTopics, topic) }));
+    return null;
+  } catch (e) {
+    return errText(e);
+  }
+}
+
+export async function stopAssistantTopic(aid: string, tid: string) {
+  try {
+    await api.stopAssistantTopic(aid, tid);
+  } catch (e) {
+    set({ notice: t("停止失败：{error}", { error: errText(e) }) });
+  }
 }
 
 const itemRequests = new Map<string, number>();
@@ -1788,29 +1995,30 @@ const itemEvents = new Map<string, HobEvent[]>();
 /** 拉时间线期间到的新条目/增量：拉完再按顺序合上，不然这一段就丢了。 */
 const groupEvents = new Map<string, HobEvent[]>();
 
-async function loadItems(id: string) {
-  const request = (itemRequests.get(id) ?? 0) + 1;
-  itemRequests.set(id, request);
-  olderRequests.delete(id);
-  itemEvents.set(id, []);
-  set((s) => ({ itemPages: { ...s.itemPages, [id]: { hasMore: false, loading: false, error: null } } }));
+async function loadItems(id: string, topicId?: string | null) {
+  const key = assistantSessionKey(id, topicId);
+  const request = (itemRequests.get(key) ?? 0) + 1;
+  itemRequests.set(key, request);
+  olderRequests.delete(key);
+  itemEvents.set(key, []);
+  set((s) => ({ itemPages: { ...s.itemPages, [key]: { hasMore: false, loading: false, error: null } } }));
   const knownLive = new Set(Object.keys(state.livePages));
   try {
-    const page = await api.items(id);
-    if (itemRequests.get(id) !== request) return;
-    const events = itemEvents.get(id) ?? [];
-    itemEvents.delete(id);
+    const page = topicId ? await api.assistantTopicItems(id, topicId) : await api.items(id);
+    if (itemRequests.get(key) !== request) return;
+    const events = itemEvents.get(key) ?? [];
+    itemEvents.delete(key);
     clearFresh(); // 这一批是历史，不播入场
     const active = new Set((page.pageLive ?? []).map((live) => live.callId));
     set((s) => {
-      const livePages = Object.fromEntries(Object.entries(s.livePages).filter(([key, live]) => live.assistantId !== id || live.state === "done" || !knownLive.has(key) || active.has(key)));
+      const livePages = Object.fromEntries(Object.entries(s.livePages).filter(([k, live]) => live.assistantId !== id || (live.topicId ?? null) !== (topicId ?? null) || live.state === "done" || !knownLive.has(k) || active.has(k)));
       return { livePages, panelStack: removeMissingLivePages(s.panelStack, livePages) };
     });
     for (const live of page.pageLive ?? []) applyEvent({ type: "page-live", ...live });
     set((s) => ({
-      items: { ...s.items, [id]: page.items },
-      itemGen: { ...s.itemGen, [id]: (s.itemGen[id] ?? 0) + 1 },
-      itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
+      items: { ...s.items, [key]: page.items },
+      itemGen: { ...s.itemGen, [key]: (s.itemGen[key] ?? 0) + 1 },
+      itemPages: { ...s.itemPages, [key]: { hasMore: page.hasMore, loading: false, error: null } },
       jobs: mergePage(s.jobs, page.jobs),
       approvals: mergePage(s.approvals, page.approvals),
       drafts: mergePage(s.drafts, page.drafts),
@@ -1819,41 +2027,44 @@ async function loadItems(id: string) {
     }));
     for (const event of events) applyEvent(event);
   } catch (e) {
-    if (itemRequests.get(id) !== request) return;
-    itemEvents.delete(id);
+    if (itemRequests.get(key) !== request) return;
+    itemEvents.delete(key);
     set({ notice: t("无法加载对话：{error}", { error: errText(e) }) });
   }
 }
 
-export function loadOlderItems(id: string, retry = false): Promise<void> {
-  const existing = olderRequests.get(id);
+export function loadOlderItems(id: string, retry = false, topicId?: string | null): Promise<void> {
+  const key = assistantSessionKey(id, topicId);
+  const existing = olderRequests.get(key);
   if (existing) return existing;
-  const paging = state.itemPages[id];
-  const before = state.items[id]?.[0]?.id;
+  const paging = state.itemPages[key];
+  const before = state.items[key]?.[0]?.id;
   if (!paging?.hasMore || !before || (paging.error && !retry)) return Promise.resolve();
-  const request = itemRequests.get(id);
-  set((s) => ({ itemPages: { ...s.itemPages, [id]: { ...paging, loading: true, error: null } } }));
+  const request = itemRequests.get(key);
+  set((s) => ({ itemPages: { ...s.itemPages, [key]: { ...paging, loading: true, error: null } } }));
   const work = (async () => {
     try {
-      const page = await api.items(id, before);
-      if (itemRequests.get(id) !== request || state.sel !== id) return;
+      const page = topicId ? await api.assistantTopicItems(id, topicId, before) : await api.items(id, before);
+      if (itemRequests.get(key) !== request || state.sel !== id || (state.tsel ?? null) !== (topicId ?? null)) return;
       set((s) => {
-        const current = s.items[id] ?? [];
+        const current = s.items[key] ?? [];
         const known = new Set(current.map((item) => item.id));
         return {
-          items: { ...s.items, [id]: [...page.items.filter((item) => !known.has(item.id)), ...current] },
-          itemPages: { ...s.itemPages, [id]: { hasMore: page.hasMore, loading: false, error: null } },
+          items: { ...s.items, [key]: [...page.items.filter((item) => !known.has(item.id)), ...current] },
+          itemPages: { ...s.itemPages, [key]: { hasMore: page.hasMore, loading: false, error: null } },
           jobs: { ...index(page.jobs), ...s.jobs }, approvals: { ...index(page.approvals), ...s.approvals },
           cards: { ...index(page.cards ?? []), ...s.cards },
           drafts: { ...index(page.drafts), ...s.drafts }, delegations: { ...index(page.delegations ?? []), ...s.delegations },
         };
       });
     } catch (e) {
-      if (itemRequests.get(id) === request && state.sel === id) set((s) => ({ itemPages: { ...s.itemPages, [id]: { ...s.itemPages[id], loading: false, error: errText(e) } } }));
+      if (itemRequests.get(key) === request && state.sel === id && (state.tsel ?? null) === (topicId ?? null)) {
+        set((s) => ({ itemPages: { ...s.itemPages, [key]: { ...s.itemPages[key], loading: false, error: errText(e) } } }));
+      }
     }
   })();
-  olderRequests.set(id, work);
-  void work.finally(() => { if (olderRequests.get(id) === work) olderRequests.delete(id); });
+  olderRequests.set(key, work);
+  void work.finally(() => { if (olderRequests.get(key) === work) olderRequests.delete(key); });
   return work;
 }
 
@@ -1986,8 +2197,8 @@ function patchAttachment(key: string, id: string, patch: Partial<Attachment>) {
   });
 }
 
-function startUpload(att: Attachment, target: { assistantId: string } | { groupId: string }): Promise<string> {
-  const key = "groupId" in target ? `group:${target.groupId}` : target.assistantId;
+function startUpload(att: Attachment, target: { assistantId: string } | { groupId: string }, draftKey?: string): Promise<string> {
+  const key = draftKey ?? ("groupId" in target ? `group:${target.groupId}` : target.assistantId);
   const file = uploadFiles.get(att.id)!;
   const job = api.upload(file, target).then(
     (path) => {
@@ -2010,7 +2221,8 @@ function startUpload(att: Attachment, target: { assistantId: string } | { groupI
 /** 选了文件：立刻出现在输入框里（图片用本地缩略图），后台开始传。传进当前会话的目录（助手或群）。 */
 export function attach(files: FileList | File[]) {
   const target = state.gsel ? { groupId: state.gsel } : state.sel ? { assistantId: state.sel } : null;
-  if (!target) return;
+  const key = pendingKeyOf(state);
+  if (!target || !key) return;
   const added: Attachment[] = Array.from(files).map((file) => {
     const att: Attachment = { id: `att-${Math.random().toString(36).slice(2, 10)}`, name: file.name, status: "uploading" };
     uploadFiles.set(att.id, file);
@@ -2018,7 +2230,7 @@ export function attach(files: FileList | File[]) {
     return att;
   });
   set((s) => ({ composerDrafts: updatedDrafts(s, { attachments: [...composerDraft(s).attachments, ...added] }) }));
-  added.forEach((att) => void startUpload(att, target));
+  added.forEach((att) => void startUpload(att, target, key));
 }
 
 export function removeAttachment(id: string) {
@@ -2028,7 +2240,8 @@ export function removeAttachment(id: string) {
 /** 等这条消息的附件都传好（失败过的重传），拿到服务器路径。 */
 async function uploadedPaths(p: PendingMessage): Promise<string[]> {
   const target = p.group ? { groupId: p.to } : { assistantId: p.to };
-  return Promise.all(p.attachments.map((a) => uploads.get(a.id) ?? startUpload(a, target)));
+  const key = p.group ? `group:${p.to}` : assistantSessionKey(p.to, p.topicId);
+  return Promise.all(p.attachments.map((a) => uploads.get(a.id) ?? startUpload(a, target, key)));
 }
 
 function setPending(key: string, localId: string, patch: Partial<PendingMessage> | null) {
@@ -2040,7 +2253,7 @@ function setPending(key: string, localId: string, patch: Partial<PendingMessage>
 }
 
 async function deliver(p: PendingMessage) {
-  const key = p.group ? `group:${p.to}` : p.to;
+  const key = p.group ? `group:${p.to}` : assistantSessionKey(p.to, p.topicId);
   setPending(key, p.localId, { status: "sending", error: undefined });
   try {
     const files = await uploadedPaths(p);
@@ -2054,13 +2267,54 @@ async function deliver(p: PendingMessage) {
       }));
       return;
     }
-    const sent = await api.sendMessage(p.to, body);
+    const sent = p.topicId
+      ? await api.sendAssistantTopicMessage(p.to, p.topicId, body)
+      : await api.sendMessage(p.to, body);
     set((s) => ({
       pending: { ...s.pending, [key]: (s.pending[key] ?? []).filter((x) => x.localId !== p.localId) },
-      items: { ...s.items, [p.to]: mergeItems(s.items[p.to] ?? [], sent.item) },
+      items: { ...s.items, [key]: mergeItems(s.items[key] ?? [], sent.item) },
     }));
   } catch (e) {
     setPending(key, p.localId, { status: "failed", error: errText(e) });
+  }
+}
+
+/** 空白新话题页发送第一条消息：调用 POST /api/assistants/:id/topics 建好并切进话题。 */
+async function sendNewAssistantTopic(aid: string, meta: { title: string; cwd: string }, text: string, draft: ComposerDraft) {
+  if (state.newTopicBusy) return;
+  const draftKey = `${aid}@new`;
+  set({ newTopicBusy: true, newTopicError: null });
+  try {
+    const files = draft.attachments.length
+      ? await Promise.all(draft.attachments.map((a) => uploads.get(a.id) ?? startUpload(a, { assistantId: aid }, draftKey)))
+      : [];
+    const title = meta.title.trim();
+    const cwd = meta.cwd.trim();
+    const created = await api.createAssistantTopic(aid, {
+      ...(title ? { title } : {}),
+      ...(cwd ? { cwd } : {}),
+      ...(text ? { text } : {}),
+      ...(draft.quote ? { quote: draft.quote } : {}),
+      ...(files.length ? { files } : {}),
+    });
+    const tid = created.topic.id;
+    const key = assistantSessionKey(aid, tid);
+    set((s) => ({
+      assistantTopics: upsert(s.assistantTopics, created.topic),
+      tsel: tid,
+      newTopic: null,
+      newTopicBusy: false,
+      newTopicError: null,
+      sideHome: false,
+      composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, draftKey),
+      nonce: s.nonce + 1,
+      items: { ...s.items, [key]: created.item ? mergeItems(s.items[key] ?? [], created.item) : (s.items[key] ?? []) },
+      itemGen: { ...s.itemGen, [key]: (s.itemGen[key] ?? 0) + 1 },
+      itemPages: { ...s.itemPages, [key]: s.itemPages[key] ?? { hasMore: false, loading: false, error: null } },
+    }));
+  } catch (e) {
+    const msg = errText(e);
+    set({ newTopicBusy: false, newTopicError: msg, notice: msg });
   }
 }
 
@@ -2068,14 +2322,20 @@ async function deliver(p: PendingMessage) {
 export async function send(standaloneText?: string) {
   const groupId = state.gsel;
   const id = state.sel;
+  const topicId = !groupId && !state.newTopic ? state.tsel : null;
   const draft = standaloneText === undefined ? composerDraft(state) : EMPTY_COMPOSER;
   const text = (standaloneText ?? draft.text).trim();
   // 只发图片 / 文件不写字也行（和 Telegram 一样）
   if ((!groupId && !id) || (!text && !draft.attachments.length)) return;
-  const key = groupId ? `group:${groupId}` : id!;
+  if (!groupId && id && state.newTopic && standaloneText === undefined) {
+    await sendNewAssistantTopic(id, state.newTopic, text, draft);
+    return;
+  }
+  const key = groupId ? `group:${groupId}` : assistantSessionKey(id!, topicId);
   const p: PendingMessage = {
     localId: `local-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`,
     to: (groupId ?? id)!,
+    ...(topicId ? { topicId } : {}),
     ...(groupId ? { group: true as const } : {}),
     at: new Date().toISOString(),
     text,
@@ -2088,7 +2348,8 @@ export async function send(standaloneText?: string) {
     ...(standaloneText === undefined ? { composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, key) } : {}),
     nonce: s.nonce + 1,
     pending: { ...s.pending, [key]: [...(s.pending[key] ?? []), p] },
-    assistants: groupId ? s.assistants : s.assistants.map((assistant) => assistant.id === id ? { ...assistant, suggestions: undefined } : assistant),
+    assistants: !groupId && !topicId ? s.assistants.map((assistant) => assistant.id === id ? { ...assistant, suggestions: undefined } : assistant) : s.assistants,
+    assistantTopics: !groupId && topicId ? s.assistantTopics.map((topic) => topic.id === topicId ? { ...topic, suggestions: undefined } : topic) : s.assistantTopics,
     groups: groupId ? s.groups.map((group) => group.id === groupId ? { ...group, suggestions: undefined } : group) : s.groups,
   }));
   await deliver(p);
@@ -2099,14 +2360,15 @@ export async function send(standaloneText?: string) {
 }
 
 export function discardPending(p: PendingMessage) {
-  setPending(p.group ? `group:${p.to}` : p.to, p.localId, null);
+  setPending(p.group ? `group:${p.to}` : assistantSessionKey(p.to, p.topicId), p.localId, null);
 }
 
 /** 对话里要画的条目：服务端的列表 + 还没顶替掉的待发消息。 */
-export function chatItems(s: State, assistantId: string | null): Item[] {
+export function chatItems(s: State, assistantId: string | null, topicId?: string | null): Item[] {
   if (!assistantId) return [];
-  const pending = s.pending[assistantId] ?? [];
-  const items = s.items[assistantId] ?? [];
+  const key = assistantSessionKey(assistantId, topicId);
+  const pending = s.pending[key] ?? [];
+  const items = s.items[key] ?? [];
   return pending.length ? [...items, ...pending.map(pendingItem)] : items;
 }
 
@@ -2260,8 +2522,14 @@ export async function jumpToApproval(approvalId: string) {
         set({ notice: t("未找到对应的问题") });
         return;
       }
+    } else if (approval.topicId) {
+      await openAssistantTopic(approval.assistantId, approval.topicId, true);
+      if (!await findConversationItem(approval.assistantId, (item) => item.kind === "question" && item.approvalId === approvalId, approval.topicId)) {
+        set({ notice: t("未找到对应的问题") });
+        return;
+      }
     } else {
-      await select(approval.assistantId);
+      await select(approval.assistantId, true, false, true);
       if (!await findConversationItem(approval.assistantId, (item) => item.kind === "question" && item.approvalId === approvalId)) {
         set({ notice: t("未找到对应的问题") });
         return;
@@ -2302,14 +2570,15 @@ export async function jumpToDelegation(assistantId: string, id: string, forwarde
   await jumpToLink(assistantId, id, forwarded ? "forward" : "delegation");
 }
 
-async function findConversationItem(assistantId: string, matches: (item: Item) => boolean): Promise<boolean> {
-  while (state.sel === assistantId && !(state.items[assistantId] ?? []).some(matches) && state.itemPages[assistantId]?.hasMore) {
-    const first = state.items[assistantId]?.[0]?.id;
-    await loadOlderItems(assistantId);
-    if (state.itemPages[assistantId]?.error) throw new Error(state.itemPages[assistantId].error!);
-    if (!first || state.items[assistantId]?.[0]?.id === first) break;
+async function findConversationItem(assistantId: string, matches: (item: Item) => boolean, topicId?: string | null): Promise<boolean> {
+  const key = assistantSessionKey(assistantId, topicId);
+  while (state.sel === assistantId && (state.tsel ?? null) === (topicId ?? null) && !(state.items[key] ?? []).some(matches) && state.itemPages[key]?.hasMore) {
+    const first = state.items[key]?.[0]?.id;
+    await loadOlderItems(assistantId, false, topicId);
+    if (state.itemPages[key]?.error) throw new Error(state.itemPages[key].error!);
+    if (!first || state.items[key]?.[0]?.id === first) break;
   }
-  return (state.items[assistantId] ?? []).some(matches);
+  return (state.items[key] ?? []).some(matches);
 }
 
 async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback") {
@@ -2995,14 +3264,15 @@ export function setMobile(page: MobilePage) {
   set({ mobile: page, sheet: false, search: false });
 }
 
-/** 手机上从对话返回：群里的对话先回话题列表，单聊回首页。 */
+/** 手机上从对话返回：群和开启多话题的助手先回话题列表，单聊回首页。 */
 export function leaveChat() {
-  set({ mobile: state.gsel ? "topics" : "list" });
+  const multi = Boolean(state.sel && state.assistants.find((a) => a.id === state.sel)?.topics);
+  set({ mobile: state.gsel || multi ? "topics" : "list", newTopic: null, newTopicBusy: false, newTopicError: null });
 }
 
 /** 手机上从话题列表返回首页。 */
 export function leaveTopicList() {
-  set({ mobile: "list", gsel: null, sideHome: true });
+  set({ mobile: "list", gsel: null, sel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true });
 }
 
 export function openSheet() {

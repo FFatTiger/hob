@@ -2,7 +2,9 @@
 import type {
   Approval,
   ApprovalQuestion,
+  Assistant,
   AssistantSummary,
+  AssistantTopicSummary,
   Bootstrap,
   Delegation,
   DesktopView,
@@ -73,12 +75,12 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.19.0" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark" | "assistant-topics" | "assistant-topics-dark" | "assistant-topics-main" | "assistant-topics-new" | "assistant-topics-closed";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
   SceneId,
-  { sel: string | null; gsel?: string | null; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "chat"; text?: string }
+  { sel: string | null; gsel?: string | null; tsel?: string | null; newTopic?: boolean; sideHome?: boolean; panel: string; collapsed: boolean; dark: boolean; mobile: "list" | "topics" | "chat"; text?: string }
 > = {
   "cards-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "cards-gallery": { sel: "hob", panel: "now", collapsed: true, dark: false, mobile: "chat" },
@@ -184,6 +186,12 @@ export const SCENE_UI: Record<
   // 全员回应群演示（票 266）：用户没点名提问，群主回了，一个成员补充，另一个成员只挂 👀
   "group-reply-all": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "group-reply-all-dark": { sel: null, gsel: "g-advisors", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  // 助手多话题（票 G）：二级页 + 话题对话 / 主对话 / 新话题空白页 / 已关闭话题
+  "assistant-topics": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-dark": { sel: "planner", tsel: "tp-move", sideHome: false, panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "assistant-topics-main": { sel: "planner", tsel: null, sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-new": { sel: "planner", tsel: null, newTopic: true, sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "assistant-topics-closed": { sel: "planner", tsel: "tp-reno", sideHome: false, panel: "now", collapsed: false, dark: false, mobile: "chat" },
 };
 
 const uid = (() => {
@@ -291,6 +299,7 @@ const DESKTOP_VIEWS: Record<DesktopScene, DesktopView> = {
 
 interface Db {
   assistants: AssistantSummary[];
+  assistantTopics: AssistantTopicSummary[];
   groups: GroupSummary[];
   groupItems: Record<string, GroupItem[]>;
   items: Record<string, Item[]>;
@@ -2090,6 +2099,100 @@ cp now.txt "$seen"`,
       book: [],
       leaf: [],
     },
+    assistantTopics: (() => {
+      if (!scene.startsWith("assistant-topics")) return [];
+      const planner: AssistantSummary = {
+        id: "planner",
+        name: L("日程统筹", "Schedule planner"),
+        duty: L("搬家、预约与日常事务", "Moving, bookings and errands"),
+        sprite: "page",
+        primary: false,
+        pinned: true,
+        hidden: false,
+        notify: true,
+        topics: { enabledAt: at(10, 9, 0) },
+        createdAt: at(12, 9, 0),
+        last: { text: L("已开启多话题，这里是主对话", "Topics are on. This is the main conversation."), at: at(0, 9, 15) },
+        unread: 0,
+        busy: false,
+      };
+      assistants.splice(1, 0, planner);
+      items.planner = [
+        { kind: "user", id: "pm-1", at: at(0, 9, 10), text: L("下个月初要从城西搬到城东，帮我排一下搬家筹备和比价。", "I'm moving across town early next month. Help me plan and compare movers.") },
+        { kind: "assistant", id: "pm-2", at: at(0, 9, 11), text: L("收到，这件事要来回确认几轮，我单独开了一个话题来跟进。", "Got it. Since this needs several rounds of follow-up, I opened a separate topic for it.") },
+        { kind: "topic", id: "pm-3", at: at(0, 9, 12), topicId: "tp-move" },
+        { kind: "note", id: "pm-4", at: at(0, 9, 15), icon: "info", text: L("已开启多话题，这里是主对话", "Topics are on. This is the main conversation.") },
+        { kind: "topic", id: "pm-5", at: at(0, 9, 20), topicId: "tp-checkup" },
+        { kind: "topic", id: "pm-6", at: at(2, 16, 0), topicId: "tp-reno" },
+      ];
+      items["planner@tp-move"] = [
+        { kind: "user", id: "tm-1", at: at(0, 9, 12), text: L("下个月初要从城西搬到城东，帮我排一下搬家筹备和比价。", "I'm moving across town early next month. Help me plan and compare movers."), forwardedFrom: { assistantId: "planner", itemId: "pm-1" } },
+        { kind: "assistant", id: "tm-2", at: at(0, 9, 14), text: L("我已经整理好三家常驻搬家团队的报价和车辆规格：\n\n1. **安居厢货**：4.2 米厢车含 2 位师傅，起步价 680 元，楼层费另计。\n2. **顺心搬运**：一口价 950 元含拆装衣柜。\n3. **城际快搬**：按件计费，预估 820 元。\n\n周六上午 10 点目前前两家都可以上门看货，你倾向先约哪一家？", "I compared three local movers:\n\n1. **Anju Van**: 4.2m box truck + 2 movers, from 680.\n2. **Shunxin Moving**: 950 flat rate including wardrobe disassembly.\n3. **Metro Express**: itemized quote around 820.\n\nBoth #1 and #2 are free this Saturday at 10 AM for an on-site estimate. Which one would you like to book?") },
+      ];
+      items["planner@tp-checkup"] = [
+        { kind: "user", id: "tc-1", at: at(0, 9, 18), text: L("帮我看下周末上午哪家体检中心还能约基础加项。", "Check which clinic has Saturday morning slots for the standard checkup plus add-ons.") },
+        { kind: "assistant", id: "tc-2", at: at(0, 9, 20), text: L("正在核对市一院和瑞和体检中心的周六号源。", "Checking Saturday availability at City First and Ruihe clinics.") },
+      ];
+      items["planner@tp-tax"] = [
+        { kind: "user", id: "tt-1", at: at(0, 8, 50), text: L("今年专项附加扣除需要提前核对哪些凭证？", "Which receipts should I check ahead of time for this year's deductions?") },
+        { kind: "assistant", id: "tt-2", at: at(0, 9, 5), text: L("整理好了房贷与子女教育两项凭证清单，有两项材料需要你确认金额。", "I listed the mortgage and education documents; two amounts need your confirmation.") },
+      ];
+      items["planner@tp-reno"] = [
+        { kind: "user", id: "tr-1", at: at(3, 14, 0), text: L("阳台渗水想重新做防水，帮我对比两家报价。", "Compare two quotes for redoing the balcony waterproofing.") },
+        { kind: "assistant", id: "tr-2", at: at(1, 18, 0), text: L("两家施工方案和质保都核对过了：聚氨酯整刷报价 2,800 元、质保五年，性价比更稳妥。", "Compared both quotes: polyurethane coating at 2,800 with a 5-year warranty is the better value.") },
+      ];
+      return [
+        {
+          id: "tp-move",
+          assistantId: "planner",
+          name: L("下月搬家筹备", "Next month's move"),
+          createdAt: at(0, 9, 12),
+          createdBy: "planner",
+          unread: 2,
+          busy: false,
+          last: { at: at(0, 9, 14), text: L("周六上午 10 点目前前两家都可以上门看货，你倾向先约哪一家？", "Both #1 and #2 are free Saturday at 10 AM. Which should I book?") },
+          todos: [
+            { text: L("比价三家搬家团队", "Compare three moving quotes"), status: "done" },
+            { text: L("预约周六上午上门看货", "Book Saturday morning estimate"), status: "doing" },
+            { text: L("整理打包物品清单", "Prepare packing checklist"), status: "todo" },
+          ],
+          suggestions: [L("先约安居厢货周六上午 10 点", "Book Anju Van for Saturday 10 AM"), L("列出打包需要的纸箱尺寸", "List box sizes needed for packing")],
+        },
+        {
+          id: "tp-checkup",
+          assistantId: "planner",
+          name: L("年度体检预约", "Annual checkup booking"),
+          createdAt: at(0, 9, 18),
+          createdBy: "user",
+          unread: 0,
+          busy: true,
+          activity: { state: "tool", label: L("正在筛选周末可约时段…", "Checking weekend slots…") },
+          last: { at: at(0, 9, 20), text: L("正在核对市一院和瑞和体检中心的周六号源。", "Checking Saturday availability at City First and Ruihe clinics.") },
+        },
+        {
+          id: "tp-tax",
+          assistantId: "planner",
+          name: L("年度抵扣凭证核对", "Annual deduction checklist"),
+          createdAt: at(0, 8, 50),
+          createdBy: "user",
+          unread: 2,
+          busy: false,
+          last: { at: at(0, 9, 5), text: L("整理好了两项凭证清单，有两项材料需要你确认金额。", "Listed two deduction checklists; two items need your confirmation.") },
+        },
+        {
+          id: "tp-reno",
+          assistantId: "planner",
+          name: L("阳台防水报价对比", "Balcony waterproofing quotes"),
+          createdAt: at(3, 14, 0),
+          createdBy: "user",
+          closedAt: at(1, 18, 0),
+          closeNote: L("已选定聚氨酯方案，总价 2,800 元，下周施工", "Selected polyurethane option at 2,800; scheduled next week"),
+          unread: 0,
+          busy: false,
+          last: { at: at(1, 18, 0), text: L("已选定聚氨酯方案，总价 2,800 元，下周施工", "Selected polyurethane option at 2,800; scheduled next week") },
+        },
+      ];
+    })(),
     settings: {
       revision: 1,
       settings: {
@@ -3413,7 +3516,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     logout: async () => {},
     bootstrap: async () => ({
       assistants: clone(db.assistants),
-      assistantTopics: [],
+      assistantTopics: clone(db.assistantTopics),
       jobs: clone(Object.values(db.jobs)),
       delegations: clone(Object.values(db.delegations)),
       routines: clone(db.routines),
@@ -3973,6 +4076,139 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     stopAssistant: async (assistantId) => setAssistant(assistantId, { busy: false }),
     markRead: async (assistantId) => setAssistant(assistantId, { unread: 0 }),
+    assistantTopics: async (assistantId) => clone(db.assistantTopics.filter((t) => t.assistantId === assistantId)),
+    createAssistantTopic: async (assistantId, body) => {
+      const a = assistant(assistantId);
+      if (!a) throw new ApiError(404, "助手不存在");
+      if (!a.topics) throw new ApiError(400, "这个助手是单会话模式，先在助手设置里改成多话题");
+      const rawTitle = body.title?.trim();
+      if (rawTitle && [...rawTitle].length > 40) throw new ApiError(400, `话题名最多 40 字（现在 ${[...rawTitle].length} 字）`);
+      const cwd = body.cwd?.trim();
+      if (cwd && a.cwd) throw new ApiError(400, `助手绑定了工作目录 ${a.cwd}，话题沿用它，不能另外绑定`);
+      if (cwd && !cwd.startsWith("/") && !cwd.startsWith("~")) throw new ApiError(400, "工作目录必须填写绝对路径（如 /workspace/app）。");
+      const text = body.text?.trim() ?? "";
+      const name = rawTitle || (text ? ([...text].length > 20 ? `${[...text].slice(0, 20).join("")}…` : text) : "新话题");
+      const now = new Date().toISOString();
+      const topic: AssistantTopicSummary = {
+        id: uid("tp-"),
+        assistantId,
+        name,
+        ...(!rawTitle ? { nameAuto: true as const } : {}),
+        ...(cwd ? { cwd } : {}),
+        createdAt: now,
+        createdBy: "user",
+        unread: 0,
+        busy: false,
+        ...(text ? { last: { at: now, text } } : {}),
+      };
+      db.assistantTopics.push(topic);
+      const key = `${assistantId}@${topic.id}`;
+      db.items[key] = [];
+      let item: Item | undefined;
+      if (text || body.files?.length) {
+        item = {
+          kind: "user",
+          id: uid("mock-u"),
+          at: now,
+          text,
+          ...(body.quote ? { quote: body.quote } : {}),
+          ...(body.files?.length ? { files: body.files } : {}),
+        };
+        db.items[key].push(item);
+        topic.busy = true;
+        emit({ type: "assistant_topic", topic: clone(topic) });
+        setTimeout(() => {
+          const reply: Item = { kind: "assistant", id: uid("mock-a"), at: new Date().toISOString(), text: "收到，已在新话题里记下。" };
+          db.items[key].push(reply);
+          emit({ type: "item", assistantId, topicId: topic.id, item: clone(reply) });
+          topic.busy = false;
+          topic.last = { at: reply.at, text: reply.text };
+          emit({ type: "assistant_topic", topic: clone(topic) });
+        }, 320);
+      } else {
+        emit({ type: "assistant_topic", topic: clone(topic) });
+      }
+      return { topic: clone(topic), ...(item ? { item: clone(item) } : {}) };
+    },
+    renameAssistantTopic: async (assistantId, topicId, title) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic) throw new ApiError(404, "话题不存在");
+      const trimmed = title.trim();
+      if (!trimmed) throw new ApiError(400, "话题名不能为空");
+      if ([...trimmed].length > 40) throw new ApiError(400, `话题名最多 40 字（现在 ${[...trimmed].length} 字）`);
+      delete topic.nameAuto;
+      topic.name = trimmed;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+      return clone(topic);
+    },
+    closeAssistantTopic: async (assistantId, topicId, body) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic) throw new ApiError(404, "话题不存在");
+      topic.closedAt = topic.closedAt ?? new Date().toISOString();
+      if (body?.note?.trim()) topic.closeNote = body.note.trim();
+      else delete topic.closeNote;
+      topic.busy = false;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+      return clone(topic);
+    },
+    reopenAssistantTopic: async (assistantId, topicId) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic) throw new ApiError(404, "话题不存在");
+      delete topic.closedAt;
+      delete topic.closeNote;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+      return clone(topic);
+    },
+    assistantTopicItems: async (assistantId, topicId) => ({
+      items: clone(db.items[`${assistantId}@${topicId}`] ?? []),
+      approvals: clone(Object.values(db.approvals).filter((a) => a.assistantId === assistantId && a.topicId === topicId)),
+      jobs: clone(Object.values(db.jobs).filter((j) => j.assistantId === assistantId && j.topicId === topicId)),
+      drafts: [],
+      delegations: [],
+      cards: [],
+      hasMore: false,
+    }),
+    sendAssistantTopicMessage: async (assistantId, topicId, body) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic) throw new ApiError(404, "话题不存在");
+      if (topic.closedAt) throw new ApiError(400, "这个话题已关闭，重新打开后才能发消息");
+      const time = new Date().toISOString();
+      const key = `${assistantId}@${topicId}`;
+      const item: Item = {
+        kind: "user",
+        id: uid("mock-u"),
+        at: time,
+        text: body.text,
+        ...(body.quote ? { quote: body.quote } : {}),
+        ...(body.files?.length ? { files: body.files } : {}),
+      };
+      (db.items[key] ??= []).push(item);
+      emit({ type: "item", assistantId, topicId, item: clone(item) });
+      topic.last = { at: time, text: body.text };
+      topic.busy = true;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+      setTimeout(() => {
+        const reply: Item = { kind: "assistant", id: uid("mock-a"), at: new Date().toISOString(), text: "收到。" };
+        (db.items[key] ??= []).push(reply);
+        emit({ type: "item", assistantId, topicId, item: clone(reply) });
+        topic.last = { at: reply.at, text: reply.text };
+        topic.busy = false;
+        emit({ type: "assistant_topic", topic: clone(topic) });
+      }, 320);
+      return { item: clone(item) };
+    },
+    readAssistantTopic: async (assistantId, topicId) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic || !topic.unread) return;
+      topic.unread = 0;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+    },
+    stopAssistantTopic: async (assistantId, topicId) => {
+      const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
+      if (!topic) return;
+      topic.busy = false;
+      emit({ type: "assistant_topic", topic: clone(topic) });
+    },
     groupProfile: async (id) => {
       const selected = db.groups.find((g) => g.id === id);
       const group = db.groups.find((g) => g.id === (selected?.parentId ?? id));

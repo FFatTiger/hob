@@ -50,4 +50,41 @@ describe("地址 hash", () => {
     expect(parseRoute("#/settings/nope")).toEqual({ sel: null, settings: true, section: null });
     for (const h of ["", "#", "#/chat", "#/x/y", "#ops", "#/chat/%E0"]) expect(parseRoute(h)).toEqual({ sel: null, settings: false, section: null });
   });
+
+  it("助手话题及右栏子路径可以生成并恢复", () => {
+    const hash = routeHash({ page: "main", section: null, sel: "planner", tsel: "tp-123456", mobile: "chat" }, false);
+    expect(hash).toBe("#/chat/planner/topic/tp-123456");
+    expect(parseRoute(hash)).toEqual({ sel: "planner", topic: "tp-123456", settings: false, section: null });
+
+    const withPanel = routeHash(
+      { page: "main", section: null, sel: "planner", tsel: "tp-123456", mobile: "chat", panelStack: [{ kind: "job", id: "t-9" }] },
+      false,
+    );
+    expect(withPanel).toBe("#/chat/planner/topic/tp-123456/job/t-9");
+    expect(parseRoute(withPanel)).toEqual({
+      sel: "planner",
+      topic: "tp-123456",
+      settings: false,
+      section: null,
+      panel: { kind: "job", id: "t-9" },
+    });
+
+    const withFile = routeHash(
+      { page: "main", section: null, sel: "planner", tsel: "tp-123456", mobile: "chat", panelStack: [{ kind: "file", path: "/a/报告.md", full: false }] },
+      false,
+    );
+    expect(parseRoute(withFile)).toEqual({
+      sel: "planner",
+      topic: "tp-123456",
+      settings: false,
+      section: null,
+      panel: { kind: "file", path: "/a/报告.md", full: false },
+    });
+
+    // 窄屏在话题列表时不带 hash
+    expect(routeHash({ page: "main", section: null, sel: "planner", tsel: "tp-123456", mobile: "topics" }, true)).toBe("");
+    // 缺 topicId 或损坏编码时回到助手主对话，不崩溃
+    expect(parseRoute("#/chat/planner/topic")).toEqual({ sel: "planner", settings: false, section: null });
+    expect(parseRoute("#/chat/planner/topic/%E0")).toEqual({ sel: "planner", settings: false, section: null });
+  });
 });

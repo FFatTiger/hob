@@ -2,7 +2,7 @@
 import { currentLocale, t } from "../../../shared/i18n.ts";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import type { AssistantSummary, GroupItem, GroupSummary, Item, TodoItem } from "../../../shared/types.ts";
+import type { AssistantSummary, AssistantTopicSummary, GroupItem, GroupSummary, Item, RouterActivity, TodoItem } from "../../../shared/types.ts";
 import { isImagePath } from "../../../shared/media.ts";
 import { localPath } from "../outbox.ts";
 import { pastedFiles } from "../pasted-files.ts";
@@ -12,6 +12,7 @@ import { fmtWhen } from "../util.ts";
 import { Avatar } from "../sprites.tsx";
 import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
+  assistantSessionKey,
   expandPanel,
   toggleSideCollapsed,
   focusComposer,
@@ -23,12 +24,17 @@ import {
   openSettings,
   openSheet,
   removeAttachment,
+  renameAssistantTopic,
   send,
   selectGroup,
+  setNewTopicCwd,
+  setNewTopicTitle,
+  setNotice,
   setQuote,
   setSection,
   setText,
   stopAssistant,
+  stopAssistantTopic,
   stopGroup,
   attach,
   chatItems,
@@ -43,29 +49,34 @@ import { isStreamingTail } from "../merge.ts";
 import { afterScroll, expectAfterResize } from "../stick.ts";
 import { GroupItemList, ItemList } from "./Items.tsx";
 import { GroupCluster, membersOf } from "./Groups.tsx";
-import { ClosedTopic } from "./Topics.tsx";
+import { ClosedTopic, TopicClose } from "./Topics.tsx";
 import { TodoStrip, type RunningJob } from "./Todos.tsx";
 import { DelayedText } from "./Empty.tsx";
 import { ComposerPlus } from "./ComposerPlus.tsx";
+import { Disclosure } from "./Disclosure.tsx";
 
 export function conversationState(s: ReturnType<typeof useApp>) {
   const g = groupById(s, s.gsel);
   const a = g ? undefined : s.assistants.find((x) => x.id === s.sel);
-  const items = g ? groupChatItems(s, g.id) : chatItems(s, s.sel);
-  const loaded = g ? s.groupItems[g.id] !== undefined : s.sel ? s.items[s.sel] !== undefined : false;
-  const busy = g ? g.busy.length > 0 : Boolean(a?.busy);
-  return { g, a, items, loaded, busy, empty: Boolean((g || a) && loaded && items.length === 0 && !busy), thinking: busy && !isStreamingTail(items) };
+  const isNewTopic = Boolean(!g && a && s.newTopic);
+  const topic = !g && a && !isNewTopic && s.tsel ? (s.assistantTopics ?? []).find((t) => t.id === s.tsel && t.assistantId === a.id) : undefined;
+  const sessionKey = a && !isNewTopic ? assistantSessionKey(a.id, topic?.id ?? s.tsel) : null;
+  const items = g ? groupChatItems(s, g.id) : isNewTopic ? [] : chatItems(s, s.sel, topic?.id ?? s.tsel);
+  const loaded = g ? s.groupItems[g.id] !== undefined : isNewTopic ? true : sessionKey ? s.items[sessionKey] !== undefined : false;
+  const busy = g ? g.busy.length > 0 : isNewTopic ? false : topic ? topic.busy : Boolean(a?.busy);
+  return { g, a, topic, isNewTopic, items, loaded, busy, empty: Boolean((g || a) && loaded && items.length === 0 && !busy), thinking: busy && !isStreamingTail(items) };
 }
 
 /** 忙、但字还没出来时显示当前活动。 */
-function Thinking({ leaving, gap, a }: { leaving: boolean; gap: boolean; a: AssistantSummary }) {
+function Thinking({ leaving, gap, a, activity }: { leaving: boolean; gap: boolean; a: AssistantSummary; activity?: RouterActivity | null }) {
+  const act = activity === undefined ? a.activity : activity;
   return (
     <>
       {gap ? <div className="g" /> : null}
       <div className={`hov think${leaving ? " leaving" : ""}`}>
         <div className="activity-line" role="status">
-          <Avatar sprite={a.sprite} prop={a.prop} size={46} free motion={a.activity?.state === "tool" ? "work" : "think"} />
-          <span className="activity-shimmer">{a.activity?.label ?? t("正在思考…")}</span>
+          <Avatar sprite={a.sprite} prop={a.prop} size={46} free motion={act?.state === "tool" ? "work" : "think"} />
+          <span className="activity-shimmer">{act?.label ?? t("正在思考…")}</span>
         </div>
       </div>
     </>
@@ -155,6 +166,7 @@ function useOlderMessages(
   firstId: string | undefined,
   expect: React.RefObject<number>,
   group = false,
+  topicId?: string | null,
 ) {
   const anchor = useRef<{ id: string; top: number; key: string } | null>(null);
   const lastFirst = useRef<{ key: string; id?: string }>({ key: "" });
@@ -181,15 +193,16 @@ function useOlderMessages(
     const el = ref.current;
     if (!el || !id) return;
     capture();
-    if (el.scrollTop < 120) void (group ? loadOlderGroupItems(id) : loadOlderItems(id));
+    if (el.scrollTop < 120) void (group ? loadOlderGroupItems(id) : loadOlderItems(id, false, topicId));
   };
 }
 
-function OlderStatus({ id, group = false }: { id: string | null; group?: boolean }) {
+function OlderStatus({ id, group = false, topicId }: { id: string | null; group?: boolean; topicId?: string | null }) {
   const s = useApp();
-  const page = group ? s.groupPages[id ?? ""] : s.itemPages[id ?? ""];
+  const key = group ? (id ?? "") : assistantSessionKey(id ?? "", topicId);
+  const page = group ? s.groupPages[key] : s.itemPages[key];
   if (!page?.hasMore && !page?.loading && !page?.error) return null;
-  return <div className="older-messages" role="status">{page.error ? <button onClick={() => id && void (group ? loadOlderGroupItems(id, true) : loadOlderItems(id, true))}>{t("读取失败：{error}", { error: page.error })} · {t("重试")}</button> : page.loading ? <DelayedText text={t("正在读取更早的消息…")} /> : null}</div>;
+  return <div className="older-messages" role="status">{page.error ? <button onClick={() => id && void (group ? loadOlderGroupItems(id, true) : loadOlderItems(id, true, topicId))}>{t("读取失败：{error}", { error: page.error })} · {t("重试")}</button> : page.loading ? <DelayedText text={t("正在读取更早的消息…")} /> : null}</div>;
 }
 
 /** 最后一条是不是自己刚发的（转自别的助手的不算）。 */
@@ -230,22 +243,101 @@ function runningJobs(s: ReturnType<typeof useApp>, items: Item[]): RunningJob[] 
   });
 }
 
+function TopicTitle({ topic }: { topic: AssistantTopicSummary }) {
+  const [editing, setEditing] = useState(false);
+  const [draft, setDraft] = useState(topic.name);
+  const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    setDraft(topic.name);
+    setEditing(false);
+  }, [topic.id, topic.name]);
+  const commit = async () => {
+    if (busy) return;
+    const next = draft.trim();
+    if (!next || next === topic.name) {
+      setDraft(topic.name);
+      setEditing(false);
+      return;
+    }
+    setBusy(true);
+    const err = await renameAssistantTopic(topic.assistantId, topic.id, next);
+    setBusy(false);
+    if (err) setNotice(err);
+    else setEditing(false);
+  };
+  if (editing) {
+    return (
+      <input
+        autoFocus
+        maxLength={40}
+        className="ccap-nm-edit"
+        aria-label={t("话题名")}
+        value={draft}
+        disabled={busy}
+        onChange={(e) => setDraft(e.target.value)}
+        onBlur={() => void commit()}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") {
+            e.preventDefault();
+            void commit();
+          } else if (e.key === "Escape") {
+            setDraft(topic.name);
+            setEditing(false);
+          }
+        }}
+      />
+    );
+  }
+  return (
+    <button
+      type="button"
+      className="ccap-nm ccap-nm-btn"
+      title={t("点击修改话题名")}
+      onClick={() => {
+        setDraft(topic.name);
+        setEditing(true);
+      }}
+    >
+      {topic.name}
+    </button>
+  );
+}
+
 /**
  * 顶上正中：一个大头像浮着，名字在它下面，没有底框，消息从下面滚过去。
- * 群是叠放头像和「综合 · 几位成员」；话题是群主的头像和话题名。
+ * 群是叠放头像和「综合 · 几位成员」；话题是群主的头像和话题名；多话题助手主对话在名字下标「主对话」。
  */
-function ChatHead({ g, a, parent, mobile }: { g?: GroupSummary; a?: AssistantSummary; parent?: GroupSummary; mobile?: boolean }) {
+function ChatHead({
+  g,
+  a,
+  topic,
+  isNewTopic,
+  parent,
+  mobile,
+}: {
+  g?: GroupSummary;
+  a?: AssistantSummary;
+  topic?: AssistantTopicSummary;
+  isNewTopic?: boolean;
+  parent?: GroupSummary;
+  mobile?: boolean;
+}) {
   const s = useApp();
   const size = mobile ? 56 : 48;
   const owner = g && parent ? s.assistants.find((x) => x.id === g.ownerId) : undefined;
   const face = owner ? <Avatar sprite={owner.sprite} prop={owner.prop} size={size} /> : g ? <GroupCluster g={g} assistants={s.assistants} size={size} /> : a ? <Avatar sprite={a.sprite} prop={a.prop} size={size} /> : null;
-  // 话题只写话题名：在哪个群，左栏（手机上是返回键）已经交代了；名字长了一行省略，悬停看全名
-  const sub = g && !parent ? <span className="ccap-sub">{t("综合 · {n} 位成员", { n: g.members.length })}</span> : null;
-  const name = g?.name ?? a?.name ?? "";
+  const sub = g && !parent
+    ? <span className="ccap-sub">{t("综合 · {n} 位成员", { n: g.members.length })}</span>
+    : isNewTopic
+      ? <span className="ccap-sub">{t("新话题")}</span>
+      : a && a.topics && !topic
+        ? <span className="ccap-sub">{t("主对话")}</span>
+        : null;
+  const name = g?.name ?? topic?.name ?? a?.name ?? "";
   return (
     <div className={`ccap${sub ? "" : " solo"}${g && !owner ? " cluster" : ""}`} title={name}>
       <span className="ccap-face">{face}</span>
-      <span className="ccap-nm">{name}</span>
+      {topic ? <TopicTitle topic={topic} /> : <span className="ccap-nm">{name}</span>}
       {sub}
     </div>
   );
@@ -343,10 +435,50 @@ function EmptyGroup({ g }: { g: GroupSummary }) {
   );
 }
 
+/** 新话题空白页：标题选填、助手未绑 cwd 时展示收起的工作目录输入框；发出第一句话时创建。 */
+function NewTopicEmpty({ a }: { a: AssistantSummary }) {
+  const s = useApp();
+  const [cwdOpen, setCwdOpen] = useState(false);
+  const draft = s.newTopic ?? { title: "", cwd: "" };
+  return (
+    <div className="hello new-topic-empty">
+      <Avatar sprite={a.sprite} prop={a.prop} size={80} free motion="home" />
+      <div className="t">{t("创建新话题")}</div>
+      <div className="new-topic-form">
+        <input
+          className="new-topic-title"
+          maxLength={40}
+          value={draft.title}
+          placeholder={t("话题名（选填，不填按第一句话生成）")}
+          onChange={(e) => setNewTopicTitle(e.target.value)}
+        />
+        {!a.cwd ? (
+          <Disclosure
+            className="new-topic-cwd"
+            label={t("工作目录（选填，创建后不可修改）")}
+            open={cwdOpen}
+            onToggle={() => setCwdOpen((v) => !v)}
+          >
+            <input
+              className="new-topic-cwd-input"
+              value={draft.cwd}
+              placeholder={t("如 /workspace/app")}
+              onChange={(e) => setNewTopicCwd(e.target.value)}
+            />
+          </Disclosure>
+        ) : null}
+        {s.newTopicError ? <div className="badline">{s.newTopicError}</div> : null}
+      </div>
+    </div>
+  );
+}
+
 /** 话题顶上那行灰字：谁开的、什么时候。（服务端记的是 createdBy） */
-function openLine(g: GroupSummary, assistants: AssistantSummary[]): string {
+function openLine(g: { createdBy?: string; createdAt: string }, assistants: AssistantSummary[], assistantTopic = false): string {
   const who = g.createdBy && g.createdBy !== "user"
-    ? t("{name}在综合创建了话题", { name: assistants.find((a) => a.id === g.createdBy)?.name ?? g.createdBy })
+    ? (assistantTopic
+        ? t("{name}在主对话创建了话题", { name: assistants.find((a) => a.id === g.createdBy)?.name ?? g.createdBy })
+        : t("{name}在综合创建了话题", { name: assistants.find((a) => a.id === g.createdBy)?.name ?? g.createdBy }))
     : t("你创建了这个话题");
   return `${who} · ${fmtWhen(g.createdAt)}`;
 }
@@ -368,16 +500,16 @@ function chatKey(sel: string | null, gen: number | undefined): string {
 }
 
 function ConversationBody({ className, scrollRef, onScroll, state, scrollId, think, stick, mobile = false }: { className: string; scrollRef: React.RefObject<HTMLDivElement | null>; onScroll: React.UIEventHandler<HTMLDivElement>; state: ReturnType<typeof conversationState>; scrollId: string | null; think: ReturnType<typeof useLeave>; stick: { atBottom: boolean; toBottom: () => void }; mobile?: boolean }) {
-  const { g, a, items, empty, busy } = state;
+  const { g, a, topic, isNewTopic, items, empty, busy } = state;
   const s = useApp();
   const assistants = s.assistants;
-  const suggestions = think.mounted ? undefined : g?.suggestions ?? a?.suggestions;
+  const suggestions = think.mounted ? undefined : g?.suggestions ?? topic?.suggestions ?? a?.suggestions;
   return <>
     <div className={className} ref={scrollRef} onScroll={onScroll}><div className={`col${empty ? " mid" : ""}`}>
-      {g?.parentId ? <div className="topic-open-line">{openLine(g, assistants)}</div> : null}
-      <OlderStatus id={scrollId} group={Boolean(g)} />
-      {empty ? (g ? <EmptyGroup g={g} /> : a ? <EmptyChat a={a} /> : null) : g ? <GroupItemList g={g} items={items as GroupItem[]} /> : <ItemList items={items} />}
-      {think.mounted && g ? <GroupThinking g={g} /> : think.mounted && a ? <Thinking a={a} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
+      {g?.parentId ? <div className="topic-open-line">{openLine(g, assistants)}</div> : topic ? <div className="topic-open-line">{openLine(topic, assistants, true)}</div> : null}
+      {!isNewTopic ? <OlderStatus id={scrollId} group={Boolean(g)} topicId={topic?.id} /> : null}
+      {isNewTopic && a ? <NewTopicEmpty a={a} /> : empty ? (g ? <EmptyGroup g={g} /> : topic ? <EmptyTopic topic={topic} /> : a ? <EmptyChat a={a} /> : null) : g ? <GroupItemList g={g} items={items as GroupItem[]} /> : <ItemList items={items} />}
+      {think.mounted && g ? <GroupThinking g={g} /> : think.mounted && a ? <Thinking a={a} activity={topic ? topic.activity : a.activity} leaving={think.leaving} gap={items.at(-1)?.kind === "user"} /> : null}
       <FollowUpStrip items={suggestions} group={Boolean(g)} prefix={groupSuggestionPrefix(g, items, assistants)} onPick={(text) => {
         const hasText = composerDraft(s).text.length > 0;
         setText(text);
@@ -388,32 +520,50 @@ function ConversationBody({ className, scrollRef, onScroll, state, scrollId, thi
   </>;
 }
 
+function EmptyTopic({ topic }: { topic: AssistantTopicSummary }) {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === topic.assistantId);
+  return (
+    <div className="hello">
+      {a ? <Avatar sprite={a.sprite} prop={a.prop} size={88} free motion="home" /> : null}
+      <div className="t">{topic.name}</div>
+      <div className="d">{t("这件事的讨论、提问和进展都放在这个话题里。")}</div>
+    </div>
+  );
+}
+
 export function Chat() {
   const s = useApp();
-  const { g, a, items, loaded, busy, empty, thinking } = conversationState(s);
+  const { g, a, topic, isNewTopic, items, loaded, busy, empty, thinking } = conversationState(s);
   const parent = g?.parentId ? groupById(s, g.parentId) : undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
-  const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
+  const sessionKey = a && !isNewTopic ? assistantSessionKey(a.id, topic?.id ?? s.tsel) : null;
+  const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : isNewTopic ? `${a?.id ?? ""}@new` : chatKey(sessionKey, sessionKey ? s.itemGen[sessionKey] : 0);
   const scrollId = g ? g.id : s.sel;
   const think = useLeave(thinking, 180);
 
   const expect = useRef(0);
-  const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g));
+  const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g), topic?.id);
   const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
     <main className="chat">
       <div className="chead">
         {s.sideCollapsed ? <button className="hob-icon-btn side-expand" title={t("展开左栏")} aria-label={t("展开左栏")} onClick={toggleSideCollapsed}><Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} /></button> : null}
-        <ChatHead g={g} a={a} parent={parent} />
-        {s.collapsed ? (
-          <button className="chead-btn right" title={t("展开右栏")} onClick={expandPanel}>
-            <Icon name="panel" size={18} />
-          </button>
+        <ChatHead g={g} a={a} topic={topic} isNewTopic={isNewTopic} parent={parent} />
+        {(topic && !topic.closedAt) || s.collapsed ? (
+          <div className="chead-right">
+            {topic && !topic.closedAt ? <TopicClose topic={topic} variant="header" /> : null}
+            {s.collapsed ? (
+              <button className="chead-btn right" title={t("展开右栏")} onClick={expandPanel}>
+                <Icon name="panel" size={18} />
+              </button>
+            ) : null}
+          </div>
         ) : null}
       </div>
-      <ConversationBody className="msgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} />
-      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} />}
+      <ConversationBody className="msgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, topic, isNewTopic, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} />
+      {g?.closedAt || topic?.closedAt ? <ClosedTopic g={(g ?? topic)!} /> : <Composer todos={g ? g.todos : isNewTopic ? undefined : topic ? topic.todos : a?.todos} jobs={isNewTopic ? [] : runningJobs(s, items)} />}
     </main>
   );
 }
@@ -443,6 +593,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
   const draft = composerDraft(s);
   const a = s.assistants.find((x) => x.id === s.sel);
   const g = groupById(s, s.gsel);
+  const topic = !g && !s.newTopic && s.sel && s.tsel ? (s.assistantTopics ?? []).find((t) => t.id === s.tsel && t.assistantId === s.sel) : undefined;
   const owner = g ? s.assistants.find((x) => x.id === g.ownerId) : undefined;
   const members = g ? membersOf(g, s.assistants) : [];
   const ta = useRef<HTMLTextAreaElement>(null);
@@ -621,12 +772,12 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
           }}
         />
         {/* 群里有人正在说话、输入框又是空的：发送键换成停止（有任务在跑不算，那是任务卡的事） */}
-        {(g ? groupSpeaking(s, g).length > 0 : a?.busy) && !has ? (
-          <button className="sendbtn stop" title={t("停止")} onClick={() => void (g ? stopGroup(g.id) : a ? stopAssistant(a.id) : undefined)}>
+        {(g ? groupSpeaking(s, g).length > 0 : topic ? topic.busy : !s.newTopic && a?.busy) && !has ? (
+          <button className="sendbtn stop" title={t("停止")} onClick={() => void (g ? stopGroup(g.id) : topic && a ? stopAssistantTopic(a.id, topic.id) : a ? stopAssistant(a.id) : undefined)}>
             <Icon name="stop" size={18} />
           </button>
         ) : (
-          <button className="sendbtn" title={t("发送")} disabled={!has} onClick={() => void send()}>
+          <button className="sendbtn" title={t("发送")} disabled={!has || s.newTopicBusy} onClick={() => void send()}>
             <Icon name="send" size={17} />
           </button>
         )}
@@ -645,15 +796,16 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
 /** 手机上点助手行后切到对话页。 */
 export function ChatPage() {
   const s = useApp();
-  const { g, a, items, loaded, busy, empty, thinking } = conversationState(s);
+  const { g, a, topic, isNewTopic, items, loaded, busy, empty, thinking } = conversationState(s);
   const parent = g?.parentId ? groupById(s, g.parentId) : undefined;
   const think = useLeave(thinking, 180);
   const scrollRef = useRef<HTMLDivElement>(null);
-  const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : chatKey(s.sel, s.sel ? s.itemGen[s.sel] : 0);
+  const sessionKey = a && !isNewTopic ? assistantSessionKey(a.id, topic?.id ?? s.tsel) : null;
+  const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : isNewTopic ? `${a?.id ?? ""}@new` : chatKey(sessionKey, sessionKey ? s.itemGen[sessionKey] : 0);
   const scrollId = g ? g.id : s.sel;
 
   const expect = useRef(0);
-  const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g));
+  const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g), topic?.id);
   const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
 
   return (
@@ -662,13 +814,16 @@ export function ChatPage() {
         <button className="chead-btn left" title={t("返回")} onClick={leaveChat}>
           <Icon name="left" size={22} />
         </button>
-        <ChatHead g={g} a={a} parent={parent} mobile />
-        <button className="chead-btn right" title={g ? t("群信息") : t("助手信息")} onClick={openSheet}>
-          <Icon name="more" size={20} />
-        </button>
+        <ChatHead g={g} a={a} topic={topic} isNewTopic={isNewTopic} parent={parent} mobile />
+        <div className="chead-right">
+          {topic && !topic.closedAt ? <TopicClose topic={topic} variant="header" mobile /> : null}
+          <button className="chead-btn right" title={g ? t("群信息") : t("助手信息")} onClick={openSheet}>
+            <Icon name="more" size={20} />
+          </button>
+        </div>
       </div>
-      <ConversationBody className="mmsgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} mobile />
-      {g?.closedAt ? <ClosedTopic g={g} /> : <Composer variant="mobile" todos={g ? g.todos : a?.todos} jobs={runningJobs(s, items)} />}
+      <ConversationBody className="mmsgs" scrollRef={scrollRef} onScroll={onScroll} state={{ g, a, topic, isNewTopic, items, loaded, busy, empty, thinking }} scrollId={scrollId} think={think} stick={stick} mobile />
+      {g?.closedAt || topic?.closedAt ? <ClosedTopic g={(g ?? topic)!} /> : <Composer variant="mobile" todos={g ? g.todos : isNewTopic ? undefined : topic ? topic.todos : a?.todos} jobs={isNewTopic ? [] : runningJobs(s, items)} />}
     </>
   );
 }

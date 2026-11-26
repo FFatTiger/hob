@@ -32,6 +32,7 @@ import {
   focusComposer,
   jumpToDelegation,
   jumpToHandback,
+  openAssistantTopic,
   openFilePreview,
   openLoginDesktop,
   openLivePreview,
@@ -735,6 +736,35 @@ export function TopicCard({ topicId, fresh, itemId }: { topicId: string; fresh: 
   );
 }
 
+/** 主对话里的话题卡：内容从 assistantTopics 实时取，话题有变化卡片原地更新。 */
+export function AssistantTopicCard({ topicId, fresh, itemId }: { topicId: string; fresh: boolean; itemId: string }) {
+  const s = useApp();
+  const topic = (s.assistantTopics ?? []).find((item) => item.id === topicId);
+  if (!topic) {
+    return (
+      <div className={`hov${fresh ? " enter" : ""}`} data-item-id={itemId}>
+        <div className="b topiccard gone">{t("话题已不存在")}</div>
+      </div>
+    );
+  }
+  const face = s.assistants.find((a) => a.id === topic.assistantId);
+  const open = () => void openAssistantTopic(topic.assistantId, topic.id);
+  return (
+    <div className={`hov${fresh ? " enter" : ""}`} data-item-id={itemId}>
+      <div className="b topiccard" role="button" tabIndex={0} onClick={open} onKeyDown={(event) => { if (event.key === "Enter") open(); }}>
+        <div className="tt">
+          {face ? <span className="jav"><Avatar sprite={face.sprite} prop={face.prop} size={40} /></span> : null}
+          <span className="jt">{topic.name}</span>
+          {topic.closedAt ? <StatusTag meta={{ text: t("已关闭"), icon: "archive", color: "", spin: false }} card /> : <button className="topic-enter" onClick={(event) => { event.stopPropagation(); open(); }}>{t("进入话题")} <Icon name="chev" size={13} /></button>}
+        </div>
+        {topic.closedAt
+          ? topic.closeNote ? <div className="topic-line"><span>{topic.closeNote}</span></div> : null
+          : topic.last ? <div className="topic-line"><span>{plain(topic.last.text)}</span></div> : null}
+      </div>
+    </div>
+  );
+}
+
 function ItemView({
   item,
   inlineDraft,
@@ -796,7 +826,18 @@ function ItemView({
           <span className="send-progress" aria-label={t("正在发送")}><Icon name="spin" size={16} w={2.2} className="spin" /></span>
         ) : null}
         <div className={`hov right msg${fresh ? " enter-right" : ""}${pend ? " pending" : ""}`}>
-        {forwarded ? <div className="forwarded-line">{forwarded && "assistantId" in forwarded ? (() => { const sender = s.assistants.find((a) => a.id === forwarded.assistantId); return t("从和「{name}」的对话转来", { name: sender?.name ?? forwarded.assistantId }); })() : t("从综合转来")}</div> : null}
+        {forwarded ? (
+          <div className="forwarded-line">
+            {"assistantId" in forwarded
+              ? (!s.gsel && s.sel === forwarded.assistantId
+                  ? t("从主对话转来")
+                  : (() => {
+                      const sender = s.assistants.find((a) => a.id === forwarded.assistantId);
+                      return t("从和「{name}」的对话转来", { name: sender?.name ?? forwarded.assistantId });
+                    })())
+              : t("从综合转来")}
+          </div>
+        ) : null}
         {album ? (
           <div className={`u-album${albumOpen ? " open" : ""}`} ref={hasBubble ? undefined : bubble} style={hasBubble ? undefined : swipeStyle}>
             {!albumOpen ? <PhotoStack photos={photos} onOpen={open} /> : null}
@@ -916,7 +957,7 @@ function ItemView({
     return card ? <CardView record={card} fresh={fresh} itemId={item.id} /> : null;
   }
 
-  if (item.kind === "topic") return <TopicCard topicId={item.topicId} fresh={fresh} itemId={item.id} />;
+  if (item.kind === "topic") return item.topicId.startsWith("tp-") ? <AssistantTopicCard topicId={item.topicId} fresh={fresh} itemId={item.id} /> : <TopicCard topicId={item.topicId} fresh={fresh} itemId={item.id} />;
 
   if (item.kind === "image") return <ImageGenCard {...item} fresh={fresh} itemId={item.id} />;
 
@@ -1144,11 +1185,11 @@ export function ItemList({ items: all }: { items: Item[] }) {
         ) : opensGroup(prev, item) ? (
           <div className="g" />
         ) : null}
-        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} /></GestureCard>
+        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} forwarded={item.kind === "user" ? item.forwardedFrom : undefined} /></GestureCard>
       </Fragment>,
     );
   }
-  for (const page of visibleLiveCards(Object.values(s.livePages), s.sel)) {
+  for (const page of visibleLiveCards(Object.values(s.livePages), s.sel, s.tsel)) {
     rows.push(<button key={page.callId} className={`att filecard${page.state === "failed" ? " bad" : ""}`} onClick={() => openLivePreview(page.callId)}>
       <span className="ico"><Icon name={page.state === "writing" ? "spin" : "close"} className={page.state === "writing" ? "spin" : ""} size={18} /></span>
       <span><span className="n" style={{ display: "block" }}>{page.title || t("正在生成页面…")}</span><span className="m">{page.state === "failed" ? t("生成失败：{error}", { error: page.error ?? "" }) : t("生成中")}</span></span>

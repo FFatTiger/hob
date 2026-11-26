@@ -41,7 +41,7 @@ export function layers(s: State, narrow: boolean): Layer[] {
     if (s.section) out.push("section");
     if (s.sub) out.push("sub");
   } else {
-    if (s.gsel && s.mobile !== "list") out.push("topics");
+    if ((s.gsel || (s.sel && s.assistants?.some((a) => a.id === s.sel && Boolean(a.topics)))) && s.mobile !== "list") out.push("topics");
     if (s.mobile === "chat" && (s.sel || s.gsel)) out.push("chat");
     if (s.sheet) out.push("sheet");
   }

@@ -7,6 +7,7 @@ import type {
   AboutInfo,
   AnswerApprovalBody,
   Assistant,
+  AssistantTopicSummary,
   Bootstrap,
   ClaudeCodeSettings,
   ClaudeCodeView,
@@ -236,6 +237,18 @@ export interface HobApi {
   sendMessage(assistantId: string, body: SendMessageBody): Promise<{ item: Item }>;
   stopAssistant(assistantId: string): Promise<void>;
   markRead(assistantId: string): Promise<void>;
+  assistantTopics(assistantId: string): Promise<AssistantTopicSummary[]>;
+  createAssistantTopic(
+    assistantId: string,
+    body: { title?: string; cwd?: string; text?: string; quote?: SendMessageBody["quote"]; files?: string[] },
+  ): Promise<{ topic: AssistantTopicSummary; item?: Item }>;
+  renameAssistantTopic(assistantId: string, topicId: string, title: string): Promise<AssistantTopicSummary>;
+  closeAssistantTopic(assistantId: string, topicId: string, body?: { note?: string }): Promise<AssistantTopicSummary>;
+  reopenAssistantTopic(assistantId: string, topicId: string): Promise<AssistantTopicSummary>;
+  assistantTopicItems(assistantId: string, topicId: string, before?: string): Promise<ItemsPage>;
+  sendAssistantTopicMessage(assistantId: string, topicId: string, body: SendMessageBody): Promise<{ item: Item }>;
+  readAssistantTopic(assistantId: string, topicId: string): Promise<void>;
+  stopAssistantTopic(assistantId: string, topicId: string): Promise<void>;
   patchAssistant(assistantId: string, patch: Partial<Assistant> & { rule?: { id?: string; text?: string; mode?: "ask" | "allow" } }): Promise<{ rule?: Rule } | void>;
   archiveAssistant(assistantId: string): Promise<void>;
   deleteRule(assistantId: string, ruleId: string): Promise<void>;
@@ -453,6 +466,49 @@ export const realApi: HobApi = {
     req<void>(`/api/assistants/${encodeURIComponent(assistantId)}/stop`, { method: "POST" }),
   markRead: (assistantId) =>
     req<void>(`/api/assistants/${encodeURIComponent(assistantId)}/read`, { method: "POST" }),
+  assistantTopics: (assistantId) =>
+    req<AssistantTopicSummary[]>(`/api/assistants/${encodeURIComponent(assistantId)}/topics`),
+  createAssistantTopic: (assistantId, body) =>
+    req<{ topic: AssistantTopicSummary; item?: Item }>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics`,
+      json(body),
+    ),
+  renameAssistantTopic: (assistantId, topicId, title) =>
+    req<AssistantTopicSummary>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}`,
+      json({ title }, "PATCH"),
+    ),
+  closeAssistantTopic: (assistantId, topicId, body) =>
+    req<AssistantTopicSummary>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/close`,
+      json(body ?? {}),
+    ),
+  reopenAssistantTopic: (assistantId, topicId) =>
+    req<AssistantTopicSummary>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/reopen`,
+      { method: "POST" },
+    ),
+  assistantTopicItems: (assistantId, topicId, before) =>
+    req<ItemsPage>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/items?limit=60${
+        before ? `&before=${encodeURIComponent(before)}` : ""
+      }`,
+    ),
+  sendAssistantTopicMessage: (assistantId, topicId, body) =>
+    req<{ item: Item }>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/messages`,
+      json(body),
+    ),
+  readAssistantTopic: (assistantId, topicId) =>
+    req<void>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/read`,
+      { method: "POST" },
+    ),
+  stopAssistantTopic: (assistantId, topicId) =>
+    req<void>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/topics/${encodeURIComponent(topicId)}/stop`,
+      { method: "POST" },
+    ),
   patchAssistant: (assistantId, patch) =>
     req<{ rule?: Rule }>(`/api/assistants/${encodeURIComponent(assistantId)}`, {
       method: "PATCH",

@@ -4,13 +4,33 @@ import { t } from "../../../shared/i18n.ts";
 import { useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { DialogShell } from "./DialogShell.tsx";
-import type { GroupSummary, Job, TodoItem } from "../../../shared/types.ts";
+import type { AssistantSummary, AssistantTopicSummary, GroupSummary, Job, TodoItem } from "../../../shared/types.ts";
+import { plainText } from "../../../shared/plain-text.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
-import { closeTopic, goHome, leaveTopicList, openGroupHome, openJob, openKnowledge, openSettings, openTopic, pinTopic, reopenTopic, selectGroup, toggleSideCollapsed, useApp } from "../store.ts";
+import {
+  closeAssistantTopic,
+  closeTopic,
+  goHome,
+  leaveTopicList,
+  openAssistantMain,
+  openAssistantTopic,
+  openGroupHome,
+  openJob,
+  openKnowledge,
+  openNewAssistantTopic,
+  openSettings,
+  openTopic,
+  pinTopic,
+  reopenAssistantTopic,
+  reopenTopic,
+  selectGroup,
+  toggleSideCollapsed,
+  useApp,
+} from "../store.ts";
 import { fmtElapsed, fmtList } from "../util.ts";
 import { JOB_STATUS } from "./status-meta.tsx";
-import { ownerGroup, topicFace, topicGroups, topicPreview } from "../topics.ts";
+import { assistantTopicGroups, ownerGroup, topicFace, topicGroups, topicPreview } from "../topics.ts";
 import { GroupCluster, groupPreview } from "./Groups.tsx";
 import { todoStamp } from "./status-meta.tsx";
 import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
@@ -21,13 +41,15 @@ export function membersLine(g: GroupSummary): string {
   return t("{n} 位成员", { n: g.members.length });
 }
 
-function Unread({ g }: { g: { unread: number; busy: string[] } }) {
+function Unread({ g, waiting = false }: { g: { unread: number; busy: boolean | string[] }; waiting?: boolean }) {
+  if (waiting) return <span className="topic-waiting" title={t("等你确认")} aria-label={t("等你确认")}>?</span>;
   if (g.unread > 0) return <span className="topic-unread">{g.unread}</span>;
-  if (g.busy.length) return <span className="topic-busy" title={t("进行中")} aria-label={t("进行中")} />;
+  const isBusy = Array.isArray(g.busy) ? g.busy.length > 0 : Boolean(g.busy);
+  if (isBusy) return <span className="topic-busy" title={t("进行中")} aria-label={t("进行中")} />;
   return null;
 }
 
-/** 通用于群话题和未来助手话题的行数据。 */
+/** 通用于群话题和助手话题的行数据。 */
 export interface TopicRowData {
   id: string;
   name: string;
@@ -37,26 +59,45 @@ export interface TopicRowData {
   closedAt?: string;
   closeNote?: string;
   pinnedAt?: string;
-  last?: { at: string; speaker: string | "user"; text: string };
+  last?: { at: string; speaker?: string | "user"; text: string };
   unread: number;
-  busy: string[];
+  busy: boolean | string[];
   todos?: TodoItem[];
 }
 
-/** 「综合」那一行：井号方块、最后一条的预览、时间、未读。 */
-export function GeneralRow({ g, sel, onClick }: { g: GroupSummary; sel?: boolean; onClick: () => void }) {
+export interface GeneralRowProps {
+  g?: GroupSummary;
+  title?: string;
+  icon?: ReactNode;
+  time?: string;
+  preview?: string;
+  unread?: number;
+  busy?: boolean | string[];
+  waiting?: boolean;
+  sel?: boolean;
+  onClick: () => void;
+}
+
+/** 「综合」或「主对话」那一行：图标、标题、最后一条的预览、时间、未读。 */
+export function GeneralRow({ g, title, icon, time, preview, unread, busy, waiting = false, sel, onClick }: GeneralRowProps) {
   const s = useApp();
+  const rowTitle = title ?? t("综合");
+  const rowIcon = icon ?? <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={20} /></span>;
+  const rowTime = time ?? fmtList(g?.last?.at);
+  const rowPreview = preview ?? (g ? groupPreview(g, s.assistants) : "");
+  const rowUnread = unread ?? g?.unread ?? 0;
+  const rowBusy = busy ?? g?.busy ?? [];
   return (
     <button className={`list-row home-row topic-row general-row${sel ? " sel" : ""}`} onClick={onClick}>
-      <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={20} /></span>
+      {rowIcon}
       <div className="main">
         <div className="l1">
-          <span className="nm">{t("综合")}</span>
-          <span className="tm">{fmtList(g.last?.at)}</span>
+          <span className="nm">{rowTitle}</span>
+          <span className="tm">{rowTime}</span>
         </div>
-        <div className="pv">{groupPreview(g, s.assistants)}</div>
+        <div className="pv">{rowPreview}</div>
       </div>
-      <Unread g={g} />
+      <Unread g={{ unread: rowUnread, busy: rowBusy }} waiting={waiting} />
     </button>
   );
 }
@@ -66,18 +107,22 @@ export function TopicRow<T extends TopicRowData>({
   g,
   sel,
   face,
+  waiting = false,
+  pinnable = true,
   onSelect,
   onPin,
 }: {
   g: T;
   sel?: boolean;
   face?: ReactNode;
+  waiting?: boolean;
+  pinnable?: boolean;
   onSelect?: () => void;
   onPin?: (pinned: boolean) => void;
 }) {
   const s = useApp();
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
-  const canPin = !g.closedAt;
+  const canPin = pinnable && !g.closedAt;
   const hold = useHoldMenu((x, y) => setMenuPos({ x, y }), canPin);
   const menuBox = useContextBox(canPin ? menuPos : null, () => setMenuPos(null));
 
@@ -89,7 +134,7 @@ export function TopicRow<T extends TopicRowData>({
       ? <Avatar sprite={faceAssistant.sprite} prop={faceAssistant.prop} size={36} />
       : <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={18} /></span>;
   const stamp = todoStamp(g);
-  const pinned = Boolean(!g.closedAt && g.pinnedAt);
+  const pinned = Boolean(pinnable && !g.closedAt && g.pinnedAt);
   const togglePin = () => {
     setMenuPos(null);
     if (onPin) onPin(!g.pinnedAt);
@@ -100,13 +145,13 @@ export function TopicRow<T extends TopicRowData>({
     <>
       <button
         className={`list-row home-row topic-row${sel ? " sel" : ""}${g.closedAt ? " closed" : ""}${pinned ? " pinned" : ""}`}
-        onPointerDown={hold.handlers.onPointerDown}
-        onPointerMove={hold.handlers.onPointerMove}
-        onPointerUp={hold.handlers.onPointerUp}
-        onPointerCancel={hold.handlers.onPointerCancel}
-        onContextMenu={hold.handlers.onContextMenu}
+        onPointerDown={canPin ? hold.handlers.onPointerDown : undefined}
+        onPointerMove={canPin ? hold.handlers.onPointerMove : undefined}
+        onPointerUp={canPin ? hold.handlers.onPointerUp : undefined}
+        onPointerCancel={canPin ? hold.handlers.onPointerCancel : undefined}
+        onContextMenu={canPin ? hold.handlers.onContextMenu : undefined}
         onClick={() => {
-          if (hold.takeHeld()) return;
+          if (canPin && hold.takeHeld()) return;
           if (onSelect) onSelect();
           else void selectGroup(g.id);
         }}
@@ -125,7 +170,7 @@ export function TopicRow<T extends TopicRowData>({
             <span className="topic-preview">{topicPreview(g, s.assistants)}</span>
           </div>
         </div>
-        <Unread g={g} />
+        <Unread g={g} waiting={waiting} />
       </button>
       {canPin && menuPos ? createPortal(
         <div className="amenu topic-menu" ref={menuBox} role="menu" onContextMenu={(e) => e.preventDefault()}>
@@ -140,12 +185,42 @@ export function TopicRow<T extends TopicRowData>({
 }
 
 /** 已关闭那一节默认列最近 5 个，多了给一个「查看全部」。 */
-function ClosedRows<T extends TopicRowData>({ list, showAll, onMore }: { list: T[]; showAll: boolean; onMore: () => void }) {
+function ClosedRows<T extends TopicRowData>({
+  list,
+  showAll,
+  onMore,
+  isSelected,
+  renderFace,
+  onSelect,
+  pinnable = true,
+  isWaiting,
+  isBusy,
+}: {
+  list: T[];
+  showAll: boolean;
+  onMore: () => void;
+  isSelected?: (item: T) => boolean;
+  renderFace?: (item: T) => ReactNode;
+  onSelect?: (item: T) => void;
+  pinnable?: boolean;
+  isWaiting?: (item: T) => boolean;
+  isBusy?: (item: T) => boolean | string[];
+}) {
   const s = useApp();
   const rows = showAll ? list : list.slice(0, 5);
   return (
     <>
-      {rows.map((g) => <TopicRow key={g.id} g={g} sel={s.gsel === g.id} />)}
+      {rows.map((g) => (
+        <TopicRow
+          key={g.id}
+          g={isBusy ? { ...g, busy: isBusy(g) } : g}
+          sel={isSelected ? isSelected(g) : s.gsel === g.id}
+          face={renderFace ? renderFace(g) : undefined}
+          waiting={isWaiting ? isWaiting(g) : false}
+          pinnable={pinnable}
+          onSelect={onSelect ? () => onSelect(g) : undefined}
+        />
+      ))}
       {!showAll && list.length > 5 ? (
         <button className="fold gtopic-more" onClick={onMore}>{t("查看全部已关闭的话题")} <Icon name="chev" size={13} /></button>
       ) : null}
@@ -242,6 +317,152 @@ export function MobileTopics({ groupId }: { groupId?: string }) {
   );
 }
 
+function assistantRowFlags(s: ReturnType<typeof useApp>, assistantId: string, topicId?: string) {
+  const approvals = Object.values(s.approvals ?? {});
+  const jobs = Object.values(s.jobs ?? {});
+  const waiting = approvals.some(
+    (ap) =>
+      ap.status === "pending" &&
+      ap.assistantId === assistantId &&
+      !ap.groupId &&
+      (topicId ? ap.topicId === topicId : !ap.topicId) &&
+      ap.source !== "job",
+  );
+  const jobBusy = jobs.some(
+    (j) =>
+      j.assistantId === assistantId &&
+      !j.groupId &&
+      (topicId ? j.topicId === topicId : !j.topicId) &&
+      (j.status === "running" || j.status === "waiting"),
+  );
+  return { waiting, jobBusy };
+}
+
+function AssistantTopicRows({ a, mobile = false }: { a: AssistantSummary; mobile?: boolean }) {
+  const s = useApp();
+  const [showAllClosed, setShowAllClosed] = useState(false);
+  const topics = assistantTopicGroups(s.assistantTopics ?? [], a.id);
+  const mainFlags = assistantRowFlags(s, a.id);
+  const topicIcon = <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={18} /></span>;
+
+  const renderTopic = (topic: AssistantTopicSummary) => {
+    const flags = assistantRowFlags(s, a.id, topic.id);
+    return (
+      <TopicRow
+        key={topic.id}
+        g={{ ...topic, busy: Boolean(topic.busy || flags.jobBusy) }}
+        sel={!mobile && s.sel === a.id && s.tsel === topic.id}
+        face={topicIcon}
+        waiting={flags.waiting}
+        pinnable={false}
+        onSelect={() => void openAssistantTopic(a.id, topic.id)}
+      />
+    );
+  };
+
+  return (
+    <>
+      <GeneralRow
+        title={t("主对话")}
+        icon={<Avatar sprite={a.sprite} prop={a.prop} size={36} />}
+        time={fmtList(a.last?.at)}
+        preview={a.last ? plainText(a.last.text) : a.duty}
+        unread={a.unread}
+        busy={Boolean(a.busy || mainFlags.jobBusy)}
+        waiting={mainFlags.waiting}
+        sel={!mobile && s.sel === a.id && !s.tsel && !s.newTopic}
+        onClick={() => void openAssistantMain(a.id)}
+      />
+      {topics.active.length ? <div className="gt"><span>{t("进行中 {n}", { n: topics.active.length })}</span></div> : null}
+      {topics.active.map(renderTopic)}
+      {topics.closed.length ? <div className="gt"><span>{t("已关闭 {n}", { n: topics.closed.length })}</span></div> : null}
+      <ClosedRows
+        list={topics.closed}
+        showAll={showAllClosed}
+        onMore={() => setShowAllClosed(true)}
+        pinnable={false}
+        renderFace={() => topicIcon}
+        isSelected={(topic) => !mobile && s.sel === a.id && s.tsel === topic.id}
+        isBusy={(topic) => Boolean(topic.busy || assistantRowFlags(s, a.id, topic.id).jobBusy)}
+        isWaiting={(topic) => assistantRowFlags(s, a.id, topic.id).waiting}
+        onSelect={(topic) => void openAssistantTopic(a.id, topic.id)}
+      />
+    </>
+  );
+}
+
+/** 桌面左栏的多话题助手二级页：返回首页、助手头像和名字、职责简介、创建新话题；下面是主对话和话题。 */
+export function AssistantSidebar({ assistantId }: { assistantId?: string }) {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === (assistantId ?? s.sel));
+  if (!a || !a.topics) return null;
+  const updateVersion = availableVersion(s.update);
+  return (
+    <aside className="side gside">
+      <div className="gside-head">
+        <button className="hob-icon-btn" title={t("返回首页")} onClick={goHome}>
+          <Icon name="left" size={20} />
+        </button>
+        <Avatar sprite={a.sprite} prop={a.prop} size={30} />
+        <span className="gside-id">
+          <strong>{a.name}</strong>
+          <small>{a.duty}</small>
+        </span>
+        <button className="hob-icon-btn" title={t("收起左栏")} aria-label={t("收起左栏")} onClick={toggleSideCollapsed}>
+          <Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} />
+        </button>
+        <button className="hob-icon-btn" title={t("创建新话题")} onClick={() => openNewAssistantTopic(a.id)}>
+          <Icon name="plus" size={19} />
+        </button>
+      </div>
+      <div className="side-scroll gside-rows">
+        <AssistantTopicRows a={a} />
+      </div>
+      <div className="side-foot">
+        <button className="frow" onClick={openKnowledge}>
+          <Icon name="archive" size={18} />
+          <span className="sp">{t("知识库")}</span>
+        </button>
+        <button className="frow" onClick={openSettings}>
+          <Icon name="gear" size={18} />
+          <span className="sp">
+            {t("设置")}
+            {updateVersion ? <UpdateDot version={updateVersion} /> : null}
+          </span>
+        </button>
+      </div>
+    </aside>
+  );
+}
+
+/** 手机上的多话题助手列表页：头部是助手，第一行主对话，然后进行中与已关闭话题。 */
+export function MobileAssistantTopics({ assistantId }: { assistantId?: string }) {
+  const s = useApp();
+  const a = s.assistants.find((x) => x.id === (assistantId ?? s.sel));
+  if (!a || !a.topics) return null;
+  return (
+    <>
+      <div className="mhead gtopics-head">
+        <button className="hob-icon-btn" title={t("返回")} onClick={leaveTopicList}>
+          <Icon name="left" size={22} />
+        </button>
+        <Avatar sprite={a.sprite} prop={a.prop} size={30} />
+        <span className="gside-id">
+          <strong>{a.name}</strong>
+          <small>{a.duty}</small>
+        </span>
+        <span className="sp" />
+        <button className="hob-icon-btn" title={t("创建新话题")} onClick={() => openNewAssistantTopic(a.id)}>
+          <Icon name="plus" size={20} />
+        </button>
+      </div>
+      <div className="mlist gtopics-list">
+        <AssistantTopicRows a={a} mobile />
+      </div>
+    </>
+  );
+}
+
 const ACTIVE_JOB: Job["status"][] = ["running", "queued", "waiting"];
 
 /**
@@ -310,38 +531,90 @@ export function NewTopicDialog({ group, onClose }: { group: GroupSummary; onClos
       </DialogShell>;
 }
 
-/** 话题的右栏和综合一样是群信息；话题自己多的只有最下面的关闭（或重新打开）。 */
-export function TopicClose({ topic, initialConfirming = false }: { topic: GroupSummary; initialConfirming?: boolean }) {
+function isAssistantTopicTarget(topic: { id: string; assistantId?: string; members?: string[] }): topic is AssistantTopicSummary {
+  return typeof topic.assistantId === "string" && !("members" in topic && Array.isArray(topic.members));
+}
+
+/** 话题的关闭 / 重新打开控件：支持群话题与助手话题，确认时可填选填结论。 */
+export function TopicClose({
+  topic,
+  initialConfirming = false,
+  variant = "panel",
+  mobile = false,
+}: {
+  topic: GroupSummary | AssistantTopicSummary;
+  initialConfirming?: boolean;
+  variant?: "panel" | "header";
+  mobile?: boolean;
+}) {
   const s = useApp();
   const [confirming, setConfirming] = useState(initialConfirming);
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const activeRoutines = (s.routines ?? []).filter((r) => r.groupId === topic.id && r.active).length;
+  const isAssistantTopic = isAssistantTopicTarget(topic);
+  const activeRoutines = (s.routines ?? []).filter((r) => (isAssistantTopic ? r.topicId === topic.id : r.groupId === topic.id) && r.active).length;
   const run = (work: () => Promise<string | null>) => {
     setBusy(true);
     setError("");
     void work().then((failure) => {
       setBusy(false);
       if (failure) setError(failure);
-      else setConfirming(false);
+      else {
+        setConfirming(false);
+        setNote("");
+      }
     });
   };
+  const closeFn = () => (isAssistantTopic ? closeAssistantTopic(topic.assistantId, topic.id, note.trim() || undefined) : closeTopic(topic.id, note.trim() || undefined));
+  const reopenFn = () => (isAssistantTopic ? reopenAssistantTopic(topic.assistantId, topic.id) : reopenTopic(topic.id));
+
+  const confirmCard = (
+    <div className="group-card sidebar-card-group mergeconfirm">
+      {t("关闭「{name}」？", { name: topic.name })}
+      {activeRoutines > 0 ? <div style={{ marginTop: 4 }}>{t("这个话题有 {n} 个定时任务，关闭后暂停，重新打开时恢复", { n: activeRoutines })}</div> : null}
+      <input
+        className="topic-close-note"
+        type="text"
+        value={note}
+        placeholder={t("结论（选填）")}
+        onChange={(event) => setNote(event.target.value)}
+      />
+      {error ? <div className="badline" style={{ marginTop: 6 }}>{error}</div> : null}
+      <div className="acts">
+        <button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => run(closeFn)}>{t("确认关闭")}</button>
+        <button className="hob-btn" onClick={() => { setConfirming(false); setError(""); }}>{t("取消")}</button>
+      </div>
+    </div>
+  );
+
+  if (variant === "header") {
+    if (topic.closedAt) return null;
+    return (
+      <div className="topic-close-header">
+        {mobile ? (
+          <button className="chead-btn" title={t("关闭这个话题")} aria-label={t("关闭这个话题")} onClick={() => setConfirming((v) => !v)}>
+            <Icon name="archive" size={18} />
+          </button>
+        ) : (
+          <button className="topic-close-pill" title={t("关闭这个话题")} aria-label={t("关闭这个话题")} onClick={() => setConfirming((v) => !v)}>
+            <Icon name="archive" size={15} />
+            <span>{t("关闭这个话题")}</span>
+          </button>
+        )}
+        {confirming ? <div className="topic-close-pop">{confirmCard}</div> : null}
+      </div>
+    );
+  }
 
   return (
     <>
-      {error ? <div className="badline">{error}</div> : null}
+      {error && !confirming ? <div className="badline">{error}</div> : null}
 
       {topic.closedAt ? (
-        <button className="gm-end" disabled={busy} onClick={() => run(() => reopenTopic(topic.id))}>{t("重新打开")}</button>
+        <button className="gm-end" disabled={busy} onClick={() => run(reopenFn)}>{t("重新打开")}</button>
       ) : confirming ? (
-        <div className="group-card sidebar-card-group mergeconfirm">
-          {t("关闭「{name}」？", { name: topic.name })}
-          {activeRoutines > 0 ? <div style={{ marginTop: 4 }}>{t("这个话题有 {n} 个定时任务，关闭后暂停，重新打开时恢复", { n: activeRoutines })}</div> : null}
-          <div className="acts">
-            <button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => run(() => closeTopic(topic.id))}>{t("确认关闭")}</button>
-            <button className="hob-btn" onClick={() => setConfirming(false)}>{t("取消")}</button>
-          </div>
-        </div>
+        confirmCard
       ) : (
         <button className="gm-end" onClick={() => setConfirming(true)}>{t("关闭这个话题")}</button>
       )}
@@ -350,9 +623,10 @@ export function TopicClose({ topic, initialConfirming = false }: { topic: GroupS
 }
 
 /** 话题关了：输入框换成一句说明和「重新打开」，closeNote 有就一并写出来。 */
-export function ClosedTopic({ g }: { g: GroupSummary }) {
+export function ClosedTopic({ g }: { g: GroupSummary | AssistantTopicSummary }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const isAssistantTopic = isAssistantTopicTarget(g);
   return (
     <div className="compwrap">
       <div className="col">
@@ -368,7 +642,8 @@ export function ClosedTopic({ g }: { g: GroupSummary }) {
             onClick={() => {
               setBusy(true);
               setError("");
-              void reopenTopic(g.id).then((failure) => {
+              const work = isAssistantTopic ? reopenAssistantTopic(g.assistantId, g.id) : reopenTopic(g.id);
+              void work.then((failure) => {
                 setBusy(false);
                 if (failure) setError(failure);
               });

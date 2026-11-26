@@ -4,7 +4,7 @@ import type { PanelPage } from "./panel-stack.ts";
 export const SETTINGS_SECTIONS = ["general", "rules", "providers", "models", "memory", "image", "knowledge", "search", "skills", "desktop", "work", "usage", "push", "about"] as const;
 export type SettingsSection = (typeof SETTINGS_SECTIONS)[number];
 
-type RouteState = { page: "main" | "settings" | "knowledge" | "plugins" | "stars"; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; section: SettingsSection | null; sel: string | null; gsel?: string | null; mobile: "list" | "topics" | "chat"; panelStack?: PanelPage[] };
+type RouteState = { page: "main" | "settings" | "knowledge" | "plugins" | "stars"; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; section: SettingsSection | null; sel: string | null; gsel?: string | null; tsel?: string | null; mobile: "list" | "topics" | "chat"; panelStack?: PanelPage[] };
 
 function decode(arg: string | undefined): string | null {
   try {
@@ -28,8 +28,8 @@ function panelHash(page: PanelPage): string {
 }
 
 /** 地址里的 hash：刷新时据此回到原来那页。 */
-export function parseRoute(hash: string): { sel: string | null; group?: string; settings: boolean; section: SettingsSection | null; knowledge?: boolean; stars?: boolean; plugins?: boolean; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; panel?: PanelPage } {
-  const [kind, arg, panel, panelArg] = hash.replace(/^#\/?/, "").split("/");
+export function parseRoute(hash: string): { sel: string | null; topic?: string; group?: string; settings: boolean; section: SettingsSection | null; knowledge?: boolean; stars?: boolean; plugins?: boolean; pluginId?: string | null; pluginPage?: "installed" | "market" | "new"; panel?: PanelPage } {
+  const [kind, arg, panel, panelArg, subPanel, subPanelArg] = hash.replace(/^#\/?/, "").split("/");
   const value = decode(arg);
   if (kind === "plugins") {
     if (value === "market" || value === "new") return { sel: null, settings: false, section: null, plugins: true, pluginId: null, pluginPage: value };
@@ -38,7 +38,14 @@ export function parseRoute(hash: string): { sel: string | null; group?: string; 
   if (kind === "stars") return { sel: null, settings: false, section: null, stars: true };
   if (kind === "knowledge") return { sel: null, settings: false, section: null, knowledge: true };
   if (kind === "group" && value) return { sel: null, group: value, settings: false, section: null, panel: parsePanel(panel, decode(panelArg)) };
-  if (kind === "chat" && value) return { sel: value, settings: false, section: null, panel: parsePanel(panel, decode(panelArg)) };
+  if (kind === "chat" && value) {
+    if (panel === "topic") {
+      const topic = decode(panelArg);
+      if (!topic) return { sel: value, settings: false, section: null };
+      return { sel: value, topic, settings: false, section: null, panel: parsePanel(subPanel, decode(subPanelArg)) };
+    }
+    return { sel: value, settings: false, section: null, panel: parsePanel(panel, decode(panelArg)) };
+  }
   if (kind === "settings") {
     if (value === "mcp") return { sel: null, settings: false, section: null, plugins: true, pluginId: null, pluginPage: "installed" };
     const section = SETTINGS_SECTIONS.find((s) => s === value) ?? null;
@@ -59,5 +66,6 @@ export function routeHash(s: RouteState, narrow: boolean): string {
   const conv = s.gsel ?? s.sel;
   if (!conv || (narrow && s.mobile !== "chat")) return "";
   const top = s.panelStack?.at(-1);
-  return `#/${s.gsel ? "group" : "chat"}/${encodeURIComponent(conv)}${top ? panelHash(top) : ""}`;
+  const topic = !s.gsel && s.tsel ? `/topic/${encodeURIComponent(s.tsel)}` : "";
+  return `#/${s.gsel ? "group" : "chat"}/${encodeURIComponent(conv)}${topic}${top ? panelHash(top) : ""}`;
 }

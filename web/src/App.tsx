@@ -14,9 +14,9 @@ import { PushPrompt } from "./components/PushPrompt.tsx";
 import { SettingsPage } from "./components/Settings.tsx";
 import { Stars } from "./components/Stars.tsx";
 import { Sidebar } from "./components/Sidebar.tsx";
-import { GroupSidebar, MobileTopics } from "./components/Topics.tsx";
+import { AssistantSidebar, GroupSidebar, MobileAssistantTopics, MobileTopics } from "./components/Topics.tsx";
 import { Home } from "./components/Home.tsx";
-import { groupSidebarFor } from "./topics.ts";
+import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, panelDesk, type GonePage } from "./panel-stack.ts";
@@ -58,17 +58,22 @@ export function App() {
   const knowledge = useLeave(s.page === "knowledge", 180);
   const plugins = useLeave(s.page === "plugins", 180);
   const sheet = useLeave(s.sheet, 180);
-  // 左栏的群二级页（桌面）和手机的话题列表：退场时还要画着刚才那个群，id 先记下来
+  // 左栏的群/多话题助手二级页（桌面）和手机的话题列表：退场时还要画着刚才那个群或助手，id 先记下来
   const sideGroup = groupSidebarFor(s.gsel, s.sideHome, s.groups);
-  const groupSide = useLeave(Boolean(sideGroup), 180);
-  const sideGroupId = useRef<string | undefined>(undefined);
-  if (sideGroup) sideGroupId.current = sideGroup.id;
-  // 打开页面时就在群里：二级页直接在那，不播推入
-  const sideStill = useRef(Boolean(sideGroup));
+  const sideAssistant = sideGroup ? undefined : assistantSidebarFor(s.sel, s.sideHome, s.assistants);
+  const hasSecondarySide = Boolean(sideGroup || sideAssistant);
+  const groupSide = useLeave(hasSecondarySide, 180);
+  const sideTarget = useRef<{ kind: "group" | "assistant"; id: string } | undefined>(undefined);
+  if (sideGroup) sideTarget.current = { kind: "group", id: sideGroup.id };
+  else if (sideAssistant) sideTarget.current = { kind: "assistant", id: sideAssistant.id };
+  // 打开页面时就在群或助手二级页：直接在那，不播推入
+  const sideStill = useRef(hasSecondarySide);
   if (!groupSide.mounted) sideStill.current = false;
-  const topicsPane = useLeave(s.mobile !== "list" && Boolean(s.gsel), 180);
-  const topicsGroupId = useRef<string | undefined>(undefined);
-  if (s.mobile !== "list" && s.gsel) topicsGroupId.current = s.gsel;
+  const mobileAssistant = !s.gsel && s.sel ? s.assistants.find((a) => a.id === s.sel && Boolean(a.topics)) : undefined;
+  const topicsPane = useLeave(s.mobile !== "list" && Boolean(s.gsel || mobileAssistant), 180);
+  const topicsTarget = useRef<{ kind: "group" | "assistant"; id: string } | undefined>(undefined);
+  if (s.mobile !== "list" && s.gsel) topicsTarget.current = { kind: "group", id: s.gsel };
+  else if (s.mobile !== "list" && mobileAssistant) topicsTarget.current = { kind: "assistant", id: mobileAssistant.id };
   const top = s.panelStack.at(-1);
   const layers = useLayers(s.panelStack, s.sel);
   const mobileLayers = layers.map(({ page, leaving }) => (
@@ -125,9 +130,12 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    const n = s.assistants.reduce((sum, a) => sum + a.unread, 0) + s.groups.reduce((sum, g) => sum + g.unread, 0);
+    const n =
+      s.assistants.reduce((sum, a) => sum + a.unread, 0) +
+      s.assistantTopics.reduce((sum, t) => sum + t.unread, 0) +
+      s.groups.reduce((sum, g) => sum + g.unread, 0);
     document.title = n > 0 ? `(${n}) Hob` : "Hob";
-  }, [s.assistants, s.groups]);
+  }, [s.assistants, s.assistantTopics, s.groups]);
 
   useEffect(() => {
     if (!s.notice) return;
@@ -239,9 +247,11 @@ export function App() {
           <div className={`mpane list${s.mobile === "list" ? "" : " back"}`}>
             <MobileList />
           </div>
-          {topicsPane.mounted ? (
+          {topicsPane.mounted && topicsTarget.current ? (
             <div className={`mpane topics${topicsPane.leaving ? " out" : s.mobile === "chat" ? " back" : ""}`}>
-              <MobileTopics groupId={topicsGroupId.current} />
+              {topicsTarget.current.kind === "group"
+                ? <MobileTopics groupId={topicsTarget.current.id} />
+                : <MobileAssistantTopics assistantId={topicsTarget.current.id} />}
             </div>
           ) : null}
           {chat.mounted ? (
@@ -264,12 +274,14 @@ export function App() {
   return (
     <div className={`app${fullPage ? " preview-full" : ""}${sideHidden ? " side-collapsed" : ""}`}>
       <div className="sidestack" inert={sideHidden}>
-        <div className={`sidepane home${sideGroup ? " away" : ""}`} aria-hidden={sideGroup ? true : undefined}>
+        <div className={`sidepane home${hasSecondarySide ? " away" : ""}`} aria-hidden={hasSecondarySide ? true : undefined}>
           <Sidebar />
         </div>
-        {groupSide.mounted ? (
+        {groupSide.mounted && sideTarget.current ? (
           <div className={`sidepane grp${groupSide.leaving ? " out" : ""}${sideStill.current ? " still" : ""}`}>
-            <GroupSidebar groupId={sideGroupId.current} />
+            {sideTarget.current.kind === "group"
+              ? <GroupSidebar groupId={sideTarget.current.id} />
+              : <AssistantSidebar assistantId={sideTarget.current.id} />}
           </div>
         ) : null}
       </div>

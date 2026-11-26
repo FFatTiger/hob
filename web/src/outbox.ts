@@ -15,6 +15,7 @@ export interface PendingMessage {
   localId: string;
   /** 发到哪：助手 id；群消息时是群 id */
   to: string;
+  topicId?: string;
   group?: true;
   at: string;
   text: string;

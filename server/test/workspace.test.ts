@@ -339,7 +339,7 @@ describe("继承链与不可变边界", () => {
       const topicFollow = await topicFollowRes.json() as { id: string; cwd?: string };
       expect(topicFollow.cwd).toBeUndefined();
       expect(hob.runtime.store.group(topicFollow.id)?.cwd).toBeUndefined();
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, topicFollow.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: topicFollow.id })).toEqual({
         bound: groupDirPath,
         source: "group",
         sessionCwd: groupDirPath,
@@ -358,7 +358,7 @@ describe("继承链与不可变边界", () => {
 
       // 异常数据防御：即使话题文件被手工写入 cwd，父群已设 cwd 时解析链依然锁定父群 cwd
       hob.runtime.store.saveGroup({ ...hob.runtime.store.group(topicFollow.id)!, cwd: topicDir });
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, topicFollow.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: topicFollow.id })).toEqual({
         bound: groupDirPath,
         source: "group",
         sessionCwd: groupDirPath,
@@ -375,11 +375,11 @@ describe("继承链与不可变边界", () => {
 
       // 话题不设 cwd 时：群里不看助手自己的 cwd，dev 和 hob 都是没绑定；dev 回到单聊才用自己的
       const freeTopic = hob.runtime.groups.createTopic(freeGroup.id, "日常同步", "user");
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, freeTopic.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: freeTopic.id })).toEqual({
         source: "default",
         sessionCwd: assistantWorkDir(hob.home, dev.id),
       });
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, freeGroup.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: freeGroup.id })).toEqual({
         source: "default",
         sessionCwd: assistantWorkDir(hob.home, dev.id),
       });
@@ -388,7 +388,7 @@ describe("继承链与不可变边界", () => {
         source: "assistant",
         sessionCwd: astDir,
       });
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", freeTopic.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", { groupId: freeTopic.id })).toEqual({
         source: "default",
         sessionCwd: assistantWorkDir(hob.home, "hob"),
       });
@@ -403,12 +403,12 @@ describe("继承链与不可变边界", () => {
       const boundTopic = await boundTopicRes.json() as { id: string; cwd?: string };
       expect(boundTopic.cwd).toBe(topicDir);
       expect(hob.runtime.store.group(freeGroup.id)?.cwd).toBeUndefined();
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, boundTopic.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: boundTopic.id })).toEqual({
         bound: topicDir,
         source: "topic",
         sessionCwd: topicDir,
       });
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", boundTopic.id)).toEqual({
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", { groupId: boundTopic.id })).toEqual({
         bound: topicDir,
         source: "topic",
         sessionCwd: topicDir,
@@ -484,7 +484,7 @@ describe("继承链与不可变边界", () => {
       expect(jAssistant.cwd).toBe(astDir);
 
       // 3. 绑定了 cwd 的群内指派给其他成员（无论是绑了自己 cwd 的 dev 还是未绑定的 writer）：统一继承群 cwd
-      const startInLocked = buildRouterTools(hob.runtime, "hob", lockedGroup.id, groupDirPath).find((t) => t.name === "start_job")!;
+      const startInLocked = buildRouterTools(hob.runtime, "hob", { groupId: lockedGroup.id }, groupDirPath).find((t) => t.name === "start_job")!;
       await startInLocked.execute("c1", { title: "指派开发", note: "检查构建", assistantId: dev.id });
       await startInLocked.execute("c2", { title: "指派写手", note: "整理变更日志", assistantId: plain.id });
       const jLockedDev = hob.runtime.store.jobs().find((j) => j.title === "指派开发")!;
@@ -493,7 +493,7 @@ describe("继承链与不可变边界", () => {
       expect(jLockedPlain.cwd).toBe(groupDirPath);
 
       // 4. 群未设 cwd 时指派给绑了目录的 dev：群里不看 dev 自己的目录，落在任务自己的目录
-      const startInFree = buildRouterTools(hob.runtime, "hob", freeGroup.id, assistantWorkDir(hob.home, "hob")).find((t) => t.name === "start_job")!;
+      const startInFree = buildRouterTools(hob.runtime, "hob", { groupId: freeGroup.id }, assistantWorkDir(hob.home, "hob")).find((t) => t.name === "start_job")!;
       await startInFree.execute("c3", { title: "自由群指派开发", note: "查代码", assistantId: dev.id });
       const jFreeDev = hob.runtime.store.jobs().find((j) => j.title === "自由群指派开发")!;
       expect(jFreeDev.cwd).toBe(join(hob.home, "assistants", dev.id, "jobs", jFreeDev.id, "work"));
@@ -944,7 +944,7 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
 
       // open_topic：群未绑时暴露 cwd 且创建新话题可带 cwd、转到已有话题传 cwd 拒；群已绑时隐藏 cwd 且忽略强传 cwd
       vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
-      const devFreeTools = buildRouterTools(hob.runtime, dev.id, freeGroup.id);
+      const devFreeTools = buildRouterTools(hob.runtime, dev.id, { groupId: freeGroup.id });
       const openFree = findTool(devFreeTools, "open_topic");
       expect("cwd" in openFree.parameters.properties).toBe(true);
       expect(openFree.parameters.properties.cwd.description).toBe("仅创建新话题（填 title）时可选，话题的工作目录（绝对路径，创建后不可修改）。");
@@ -957,14 +957,14 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       expect(openExistingWithCwd.isError).toBe(true);
       expect((openExistingWithCwd.content[0] as { text: string }).text).toContain("工作目录仅支持在创建时绑定，创建后不可修改。");
 
-      const devLockedTools = buildRouterTools(hob.runtime, dev.id, lockedGroup.id, grpDir);
+      const devLockedTools = buildRouterTools(hob.runtime, dev.id, { groupId: lockedGroup.id }, grpDir);
       const openLocked = findTool(devLockedTools, "open_topic");
       expect("cwd" in openLocked.parameters.properties).toBe(false);
       const openLockedForced = await openLocked.execute("ot3", { title: "忽略强传目录", note: "说明", cwd: topicDir });
       expect(openLockedForced.isError).not.toBe(true);
       const lockedTopic2 = hob.runtime.groups.topicsOf(lockedGroup.id).find((t) => t.name === "忽略强传目录")!;
       expect(lockedTopic2.cwd).toBeUndefined();
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, lockedTopic2.id)).toMatchObject({ bound: grpDir, source: "group", sessionCwd: grpDir });
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, dev.id, { groupId: lockedTopic2.id })).toMatchObject({ bound: grpDir, source: "group", sessionCwd: grpDir });
 
       // message_group：目标群未设 cwd 时可传 cwd；目标群已设 cwd 时传非空 cwd 拒绝
       const msgGroup = findTool(hobTools, "message_group");
@@ -1034,8 +1034,8 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const unboundStartCases = [
         { label: "主助手单聊", tools: buildRouterTools(hob.runtime, "hob") },
         { label: "未绑定助手单聊", tools: buildRouterTools(hob.runtime, writer.id) },
-        { label: "未绑定群综合", tools: buildRouterTools(hob.runtime, "hob", freeGroup.id) },
-        { label: "未绑定话题", tools: buildRouterTools(hob.runtime, "hob", freeTopic.id) },
+        { label: "未绑定群综合", tools: buildRouterTools(hob.runtime, "hob", { groupId: freeGroup.id }) },
+        { label: "未绑定话题", tools: buildRouterTools(hob.runtime, "hob", { groupId: freeTopic.id }) },
       ];
       for (const { label, tools } of unboundStartCases) {
         const startTool = findTool(tools, "start_job");
@@ -1056,8 +1056,8 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       ]);
       const boundStartCases = [
         { label: "单聊助手绑定", title: "强传单聊", tools: buildRouterTools(hob.runtime, dev.id, undefined, astDir), expectedCwd: astDir },
-        { label: "群绑定", title: "强传群聊", tools: buildRouterTools(hob.runtime, "hob", lockedGroup.id, grpDir), expectedCwd: grpDir },
-        { label: "话题绑定", title: "强传话题", tools: buildRouterTools(hob.runtime, "hob", boundTopic.id, topicDir), expectedCwd: topicDir },
+        { label: "群绑定", title: "强传群聊", tools: buildRouterTools(hob.runtime, "hob", { groupId: lockedGroup.id }, grpDir), expectedCwd: grpDir },
+        { label: "话题绑定", title: "强传话题", tools: buildRouterTools(hob.runtime, "hob", { groupId: boundTopic.id }, topicDir), expectedCwd: topicDir },
       ];
       for (const { label, title, tools, expectedCwd } of boundStartCases) {
         const startTool = findTool(tools, "start_job");
@@ -1075,15 +1075,15 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       await hob.runtime.jobs.waitIdle();
 
       // 3. open_topic：群已绑定 cwd 时隐藏 cwd（且强传不透传）；群未绑定 cwd 时暴露 cwd
-      const lockedOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", lockedGroup.id, grpDir), "open_topic");
+      const lockedOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", { groupId: lockedGroup.id }, grpDir), "open_topic");
       expect("cwd" in lockedOpenTopic.parameters.properties).toBe(false);
       const lockedOpenRes = await lockedOpenTopic.execute("ot-locked", { title: "群绑话题", note: "交接", cwd: otherDir });
       expect(lockedOpenRes.isError).not.toBe(true);
       const createdLockedTopic = hob.runtime.groups.topicsOf(lockedGroup.id).find((t) => t.name === "群绑话题")!;
       expect(createdLockedTopic.cwd).toBeUndefined();
-      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", createdLockedTopic.id).bound).toBe(grpDir);
+      expect(resolveWorkspaceCwd(hob.runtime.store, hob.home, "hob", { groupId: createdLockedTopic.id }).bound).toBe(grpDir);
 
-      const freeOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", freeGroup.id), "open_topic");
+      const freeOpenTopic = findTool(buildRouterTools(hob.runtime, "hob", { groupId: freeGroup.id }), "open_topic");
       expect("cwd" in freeOpenTopic.parameters.properties).toBe(true);
       expect(freeOpenTopic.parameters.properties.cwd.description).toBe(
         "仅创建新话题（填 title）时可选，话题的工作目录（绝对路径，创建后不可修改）。",
@@ -1194,9 +1194,9 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       });
 
       // 1. 绑了目录的 A 在未绑定的群和话题里：start_job 的 cwd 说明和没绑定的会话一样
-      const unboundDescription = buildRouterTools(hob.runtime, memberB.id, freeGroup.id).find((t) => t.name === "start_job")!.parameters.properties.cwd.description;
-      const startAInFreeGroup = buildRouterTools(hob.runtime, memberA.id, freeGroup.id).find((t) => t.name === "start_job")!;
-      const startAInFreeTopic = buildRouterTools(hob.runtime, memberA.id, freeTopic.id).find((t) => t.name === "start_job")!;
+      const unboundDescription = buildRouterTools(hob.runtime, memberB.id, { groupId: freeGroup.id }).find((t) => t.name === "start_job")!.parameters.properties.cwd.description;
+      const startAInFreeGroup = buildRouterTools(hob.runtime, memberA.id, { groupId: freeGroup.id }).find((t) => t.name === "start_job")!;
+      const startAInFreeTopic = buildRouterTools(hob.runtime, memberA.id, { groupId: freeTopic.id }).find((t) => t.name === "start_job")!;
       expect(startAInFreeGroup.parameters.properties.cwd.description).toBe(unboundDescription);
       expect(startAInFreeTopic.parameters.properties.cwd.description).toBe(unboundDescription);
 

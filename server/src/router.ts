@@ -5,6 +5,7 @@ import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { newId } from "./ids.ts";
+import { placeFields, placeOf, samePlace, sessionKey } from "./place.ts";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
@@ -24,6 +25,7 @@ import type {
   JobStep,
   NoteIcon,
   PageLive,
+  Place,
   Profile,
   SendMessageBody,
   RouterActivity,
@@ -138,10 +140,10 @@ function groupTool(name: string, primary: boolean): boolean {
 }
 
 interface RouterState {
-  /** 会话键：单聊就是 assistantId，群会话是 `<assistantId>@<gid>` */
+  /** 会话键：单聊就是 assistantId，群会话是 `<assistantId>@<gid>`，助手话题是 `<assistantId>@<tid>` */
   key: string;
   assistantId: string;
-  groupId?: string;
+  place: Place;
   session?: AgentSession;
   manager?: SessionManager;
   opening?: Promise<void>;
@@ -456,15 +458,16 @@ export class RouterManager {
     return assistant;
   }
 
-  private entries(assistantId: string): SessionEntry[] {
-    const state = this.routers.get(assistantId);
+  private entries(assistantId: string, place?: Place): SessionEntry[] {
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (state?.manager) return state.manager.getEntries();
-    return readEntries(this.store.routerFile(assistantId));
+    return readEntries(this.sessionFile(assistantId, place));
   }
 
-  private derived(assistantId: string) {
-    const manager = this.routers.get(assistantId)?.manager;
-    const file = this.store.routerFile(assistantId);
+  private derived(assistantId: string, place?: Place) {
+    const key = sessionKey(assistantId, place);
+    const manager = this.routers.get(key)?.manager;
+    const file = this.sessionFile(assistantId, place);
     let version: string;
     if (manager) version = String(manager.getEntryCount());
     else {
@@ -476,7 +479,7 @@ export class RouterManager {
         version = "missing";
       }
     }
-    const cached = this.itemCache.get(assistantId);
+    const cached = this.itemCache.get(key);
     if (cached && cached.manager === manager && cached.version === version) return cached;
     const result = walk(manager ? manager.getEntries() : readEntries(file));
     const positions = new Map<string, number>();
@@ -489,19 +492,20 @@ export class RouterManager {
     });
     assistantTimes.sort();
     const next = { manager, version, result, positions, assistantTimes, last };
-    this.itemCache.set(assistantId, next);
+    this.itemCache.set(key, next);
     return next;
   }
 
-  async ensure(assistantId: string, groupId?: string): Promise<RouterState> {
+  async ensure(assistantId: string, place?: Place): Promise<RouterState> {
     const assistant = this.assistant(assistantId);
-    const key = this.keyOf(assistantId, groupId);
+    const normalized = placeOf(place);
+    const key = sessionKey(assistantId, normalized);
     let state = this.routers.get(key);
     if (!state) {
       state = {
         key,
         assistantId,
-        ...(groupId ? { groupId } : {}),
+        place: normalized,
         running: 0,
         lastEventAt: Date.now(),
         stalled: false,
@@ -529,20 +533,16 @@ export class RouterManager {
     return state;
   }
 
-  /** 会话键：单聊是 assistantId，群会话是 `<assistantId>@<gid>`。 */
-  private keyOf(assistantId: string, groupId?: string): string {
-    return groupId ? `${assistantId}@${groupId}` : assistantId;
-  }
-
   /** 这个会话的文件：群会话在 groups/<gid>/members/ 下，单聊还是 router.jsonl。 */
-  private sessionFile(state: RouterState): string {
-    return state.groupId ? this.store.groupMemberFile(state.groupId, state.assistantId) : this.store.routerFile(state.assistantId);
+  private sessionFile(assistantId: string, place?: Place): string {
+    return place?.groupId ? this.store.groupMemberFile(place.groupId, assistantId) : this.store.routerFile(assistantId);
   }
 
   private async openSession(state: RouterState, assistant: Assistant): Promise<void> {
     // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
     await this.runtime.models.get();
-    const group = state.groupId ? this.store.group(state.groupId) : undefined;
+    const place = state.place;
+    const group = place.groupId ? this.store.group(place.groupId) : undefined;
     const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
     const effectiveAssistant = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const pick = conversationPick(this.runtime.settings.settings.models, effectiveAssistant);
@@ -558,7 +558,7 @@ export class RouterManager {
         undefined,
         true,
         undefined,
-        { place: state.groupId ? { groupId: state.groupId } : {} },
+        { place },
       );
       cliEnvironment = await state.desktop.preparePlaywrightCli();
     }
@@ -566,7 +566,7 @@ export class RouterManager {
     const directToolNames = ["read", ...(abilities.exec ? ["bash"] : []), ...(abilities.write ? ["edit", "write"] : [])];
     const ownWorkDir = assistantWorkDir(this.runtime.home, assistant.id);
     mkdirSync(ownWorkDir, { recursive: true });
-    const resolved = resolveWorkspaceCwd(this.store, this.runtime.home, assistant.id, state.groupId);
+    const resolved = resolveWorkspaceCwd(this.store, this.runtime.home, assistant.id, place);
     let sessionCwd = resolved.sessionCwd;
     let workspacePrompt: { cwd: string; source: "topic" | "group" | "assistant"; ownDir: string } | undefined;
     let workspaceWarning: string | undefined;
@@ -581,24 +581,24 @@ export class RouterManager {
         workspaceWarning = resolved.bound;
       }
     }
-    const customTools = buildRouterTools(this.runtime, assistant.id, state.groupId, sessionCwd, ownWorkDir);
+    const customTools = buildRouterTools(this.runtime, assistant.id, place, sessionCwd, ownWorkDir);
     const existingNames = new Set([...directToolNames, ...customTools.map(tool => tool.name), "tool_search"]);
     const pluginTools = pluginToolsForAssistant(this.runtime.plugins, assistant.id, existingNames, {
-      onCard: (payload) => this.addPluginCard(assistant.id, state.groupId, payload),
-      onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, state.groupId, message),
+      onCard: (payload) => this.addPluginCard(assistant.id, place, payload),
+      onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, place, message),
     });
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
-    const allowedTools = state.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
+    const allowedTools = place.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
     const tools = [...customTools.filter((tool) => allowedTools.includes(tool.name)), ...pluginTools];
     allowedTools.push(...pluginTools.map(tool => tool.name));
     const toolSearch = pluginTools.some(tool => tool.exposure === "deferred");
     if (toolSearch) allowedTools.push("tool_search");
     await this.runtime.scriptTools.start();
-    const file = this.sessionFile(state);
-    const groupId = state.groupId;
+    const file = this.sessionFile(state.assistantId, place);
+    const groupId = place.groupId;
     const opened = await this.runtime.pi.open({
       file,
-      spillDir: state.groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
+      spillDir: groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
       cwd: sessionCwd,
       agentsFiles,
       writeGuard: {
@@ -629,7 +629,7 @@ export class RouterManager {
           showPageEnabled: tools.some((tool) => tool.name === "show_page"),
           desktopEnabled: desktopEnabled,
           credentialsEnabled: desktopEnabled && this.runtime.plugins.hasCredentialProvider(assistant.id),
-          models: this.promptModels(assistant.id, groupId),
+          models: this.promptModels(assistant.id, place),
           skills: visibleSkills(this.runtime, assistant.id, group),
           thinkingChoice: this.runtime.settings.settings.models.thinkingChoice,
           abilities,
@@ -673,7 +673,7 @@ export class RouterManager {
   private async refreshTools(state: RouterState): Promise<void> {
     state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
     const primary = this.store.assistant(state.assistantId)?.primary === true;
-    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.groupId || name === "tool_search" || state.toolLabels?.has(name) || groupTool(name, primary)));
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.place.groupId || name === "tool_search" || state.toolLabels?.has(name) || groupTool(name, primary)));
     if (state.knowledgeNames.length) names.push("search_knowledge");
     refreshSystemPrompt(state.session!, names);
   }
@@ -699,10 +699,10 @@ export class RouterManager {
   }
 
   /** 这个助手能派、当前可用的模型（提示词里那一节）。 */
-  private promptModels(assistantId: string, groupId?: string): PromptModel[] {
+  private promptModels(assistantId: string, place?: Place): PromptModel[] {
     const found = this.store.assistant(assistantId);
     if (!found) return [];
-    const group = groupId ? this.store.group(groupId) : undefined;
+    const group = place?.groupId ? this.store.group(place.groupId) : undefined;
     const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
     const assistant = assistantInGroup(found, group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const settings = this.runtime.settings.settings.models;
@@ -724,7 +724,7 @@ export class RouterManager {
   /** 换了对话模型或思考档：下一轮生效，不重建会话（上下文保留）。 */
   private async applyConversationModel(state: RouterState): Promise<void> {
     if (!state.session) return;
-    const group = state.groupId ? this.store.group(state.groupId) : undefined;
+    const group = state.place.groupId ? this.store.group(state.place.groupId) : undefined;
     const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
     const assistant = assistantInGroup(this.assistant(state.assistantId), group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const pick = conversationPick(this.runtime.settings.settings.models, assistant);
@@ -763,7 +763,7 @@ export class RouterManager {
       const failed = Boolean(state.turnError);
       if (state.turnError) state.turnFailure = state.turnError;
       void this.reportTurnFailure(state).catch((error) => console.error("写失败说明失败：", error));
-      if (!failed) releaseIdleTodos(this.runtime, assistantId, state.groupId);
+      if (!failed) releaseIdleTodos(this.runtime, assistantId, state.place);
     }
     if (event.type === "agent_end") {
       state.turnRoutine = undefined;
@@ -802,7 +802,7 @@ export class RouterManager {
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
       // 事件那一轮：文字先攒着，这一轮结束时再决定出不出现
       this.flushEventTurn(state, assistantId);
-      if (!state.groupId) state.eventTurn = { held: [] };
+      if (!state.place.groupId) state.eventTurn = { held: [] };
       const details = event.message.details as EventDetails | undefined;
       state.turnDelegation ||= Boolean(details?.delegationId);
       state.turnWorkDone ||= details?.workDone !== false;
@@ -856,8 +856,8 @@ export class RouterManager {
     }
     if (event.type === "message_start" && event.message.role === "assistant") {
       // 群会话的条目 id 和时间线由 GroupManager 管，这里只把文字转过去
-      if (state.groupId) return;
-      state.streaming = { itemId: `a-${this.assistantCount(assistantId) + 1}`, shown: false };
+      if (state.place.groupId) return;
+      state.streaming = { itemId: `a-${this.assistantCount(assistantId, state.place) + 1}`, shown: false };
       return;
     }
     if (event.type === "message_update" && (event.assistantMessageEvent.type === "toolcall_start" || event.assistantMessageEvent.type === "toolcall_delta" || event.assistantMessageEvent.type === "toolcall_end")) {
@@ -885,12 +885,12 @@ export class RouterManager {
     }
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       this.setActivity(state, null);
-      if (state.groupId) {
-        this.runtime.groups?.delta(state.groupId, state.assistantId, event.assistantMessageEvent.delta);
+      if (state.place.groupId) {
+        this.runtime.groups?.delta(state.place.groupId, state.assistantId, event.assistantMessageEvent.delta);
         return;
       }
       if (state.eventTurn) return;
-      state.streaming ??= { itemId: `a-${this.assistantCount(assistantId) + 1}`, shown: false };
+      state.streaming ??= { itemId: `a-${this.assistantCount(assistantId, state.place) + 1}`, shown: false };
       const streaming = state.streaming;
       if (!streaming.shown) {
         streaming.shown = true;
@@ -903,7 +903,7 @@ export class RouterManager {
             at: new Date().toISOString(),
             text: "",
             streaming: true,
-            ...(this.derived(assistantId).result.lead ? { lead: true } : {}),
+            ...(this.derived(assistantId, state.place).result.lead ? { lead: true } : {}),
           },
         });
       }
@@ -918,8 +918,8 @@ export class RouterManager {
         const shown = stripNoReply(text);
         if (shown && !state.turnSilent) state.turnLastText = shown;
       }
-      if (state.groupId) {
-        this.runtime.groups?.settle(state.groupId, state.assistantId, text);
+      if (state.place.groupId) {
+        this.runtime.groups?.settle(state.place.groupId, state.assistantId, text);
         return;
       }
       const streaming = state.streaming;
@@ -942,11 +942,11 @@ export class RouterManager {
 
   /** 一条系统提示：单聊进对话，群会话进群的时间线（发言人是这个成员）。 */
   private async note(state: RouterState, icon: NoteIcon, text: string, detail?: string): Promise<void> {
-    if (state.groupId) {
-      this.runtime.groups?.note(state.groupId, state.assistantId, text, icon, detail);
+    if (state.place.groupId) {
+      this.runtime.groups?.note(state.place.groupId, state.assistantId, text, icon, detail);
       return;
     }
-    await this.addItem(state.assistantId, { kind: "note", icon, text, ...(detail ? { detail } : {}) });
+    await this.addItem(state.assistantId, { kind: "note", icon, text, ...(detail ? { detail } : {}) }, state.place);
   }
 
   /**
@@ -975,20 +975,20 @@ export class RouterManager {
     if (!visible.length) return;
     // pi 在 message_end 之后才把消息写进会话文件，等一拍再按条目发，内容和 id 才和刷新后一致
     setTimeout(() => {
-      for (const one of visible) this.emitSettledAssistant(assistantId, one.text, one.itemId);
+      for (const one of visible) this.emitSettledAssistant(assistantId, one.text, one.itemId, state.place);
     }, 0);
   }
 
-  private emitSettledAssistant(assistantId: string, text: string, expectedId?: string): void {
-    const list = this.derived(assistantId).result.items.filter((item) => item.kind === "assistant");
+  private emitSettledAssistant(assistantId: string, text: string, expectedId?: string, place?: Place): void {
+    const list = this.derived(assistantId, place).result.items.filter((item) => item.kind === "assistant");
     const item = list.find((entry) => entry.id === expectedId) ?? list.filter((entry) => entry.text === text).pop();
     if (item) this.bus.emit({ type: "item", assistantId, item });
-    const state = this.routers.get(assistantId);
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (state) this.touch(state);
   }
 
-  private assistantCount(assistantId: string): number {
-    return this.entries(assistantId).filter(
+  private assistantCount(assistantId: string, place?: Place): number {
+    return this.entries(assistantId, place).filter(
       (entry) => entry.type === "message" && entry.message.role === "assistant",
     ).length;
   }
@@ -996,7 +996,7 @@ export class RouterManager {
   private setActivity(state: RouterState, activity: RouterActivity | null): void {
     if (state.activity?.state === activity?.state && state.activity?.label === activity?.label) return;
     state.activity = activity;
-    if (state.groupId) this.bus.emit({ type: "group-activity", groupId: state.groupId, speaker: state.assistantId, activity });
+    if (state.place.groupId) this.bus.emit({ type: "group-activity", groupId: state.place.groupId, speaker: state.assistantId, activity });
     else this.bus.emit({ type: "router-activity", assistantId: state.assistantId, activity });
   }
 
@@ -1072,7 +1072,7 @@ export class RouterManager {
     state.desktop = undefined;
     state.session = undefined;
     state.manager = undefined;
-    this.itemCache.delete(state.assistantId);
+    this.itemCache.delete(state.key);
   }
 
   /**
@@ -1088,7 +1088,7 @@ export class RouterManager {
 
   releaseGroupMemberSessions(assistantId: string, groupIds: string[]): void {
     for (const groupId of groupIds) {
-      const state = this.routers.get(this.keyOf(assistantId, groupId));
+      const state = this.routers.get(sessionKey(assistantId, { groupId }));
       if (!state) continue;
       state.releaseAfterTurn = true;
       this.maybeRelease(state);
@@ -1097,7 +1097,9 @@ export class RouterManager {
 
   /** 助手没了（归档）：关掉它的会话（含它所在的群会话），内存里也不留 —— 它的目录随后会被移进归档。 */
   forget(assistantId: string): void {
-    this.itemCache.delete(assistantId);
+    for (const key of [...this.itemCache.keys()]) {
+      if (key === assistantId || key.startsWith(`${assistantId}@`)) this.itemCache.delete(key);
+    }
     for (const [key, state] of [...this.routers]) {
       if (state.assistantId !== assistantId) continue;
       this.close(state);
@@ -1106,8 +1108,8 @@ export class RouterManager {
   }
 
   /** 关掉一个会话（助手被移出群时用）。 */
-  forgetSession(assistantId: string, groupId?: string): void {
-    const key = this.keyOf(assistantId, groupId);
+  forgetSession(assistantId: string, place?: Place): void {
+    const key = sessionKey(assistantId, place);
     const state = this.routers.get(key);
     if (!state) return;
     this.close(state);
@@ -1117,7 +1119,7 @@ export class RouterManager {
   /** 群归档了：关掉这个群里所有成员的会话。 */
   forgetGroup(groupId: string): void {
     for (const [key, state] of [...this.routers]) {
-      if (state.groupId !== groupId) continue;
+      if (state.place.groupId !== groupId) continue;
       this.close(state);
       this.routers.delete(key);
     }
@@ -1143,10 +1145,10 @@ export class RouterManager {
 
   private hasIdleWork(state: RouterState): boolean {
     const active = new Set(["running", "queued", "waiting"]);
-    const jobs = this.store.jobs().some((job) => job.groupId === state.groupId && active.has(job.status) && (state.groupId !== undefined || job.assistantId === state.assistantId));
+    const jobs = this.store.jobs().some((job) => samePlace(placeOf(job), state.place) && active.has(job.status) && (state.place.groupId !== undefined || job.assistantId === state.assistantId));
     if (jobs) return true;
-    if (!state.groupId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
-    return this.store.approvals().some((approval) => approval.status === "pending" && (state.groupId ? approval.groupId === state.groupId : approval.assistantId === state.assistantId && !approval.groupId));
+    if (!state.place.groupId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
+    return this.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), state.place) && (state.place.groupId !== undefined || approval.assistantId === state.assistantId));
   }
 
   private alreadyCompactedAfterLastTurn(state: RouterState): boolean {
@@ -1194,22 +1196,22 @@ export class RouterManager {
    * 一个一个来：整理要调一次模型，不同时压好几个。
    */
   async compactIdleSessions(now = Date.now()): Promise<void> {
-    const sessions: { assistantId: string; groupId?: string }[] = [
+    const sessions: { assistantId: string; place?: Place }[] = [
       ...this.store.assistants().map((assistant) => ({ assistantId: assistant.id })),
-      ...this.store.groups().flatMap((group) => group.members.map((assistantId) => ({ assistantId, groupId: group.id }))),
+      ...this.store.groups().flatMap((group) => group.members.map((assistantId) => ({ assistantId, place: { groupId: group.id } }))),
     ];
-    for (const { assistantId, groupId } of sessions) {
-      const key = this.keyOf(assistantId, groupId);
+    for (const { assistantId, place } of sessions) {
+      const key = sessionKey(assistantId, place);
       const state = this.routers.get(key);
       if (state?.session) {
         await this.compactIfIdle(state, now);
         continue;
       }
-      const file = groupId ? this.store.groupMemberFile(groupId, assistantId) : this.store.routerFile(assistantId);
+      const file = this.sessionFile(assistantId, place);
       const changedAt = statSync(file, { throwIfNoEntry: false })?.mtimeMs;
       if (changedAt === undefined || now - changedAt < IDLE_COMPACTION_IDLE_MS || this.idleChecked.get(key) === changedAt) continue;
       this.idleChecked.set(key, changedAt);
-      await this.ensure(assistantId, groupId).catch((error) => console.error(`闲置会话检查失败：${key}`, error));
+      await this.ensure(assistantId, place).catch((error) => console.error(`闲置会话检查失败：${key}`, error));
     }
   }
 
@@ -1224,9 +1226,9 @@ export class RouterManager {
 
   // ---------- 事件与条目 ----------
   /** 这个群还在、这个助手也还在群里：卡片进群的时间线，事件进它的群会话。 */
-  private groupFor(assistantId: string, groupId?: string): Group | undefined {
-    if (!groupId) return undefined;
-    const group = this.store.group(groupId);
+  private groupFor(assistantId: string, place?: Place): Group | undefined {
+    if (!place?.groupId) return undefined;
+    const group = this.store.group(place.groupId);
     if (!group || !group.members.includes(assistantId)) return undefined;
     return group;
   }
@@ -1235,14 +1237,15 @@ export class RouterManager {
    * 卡片进对话：在群里就进群的时间线（speaker 是这个助手），否则照旧进单聊。
    * 群已归档、成员已被移出时落回单聊，前端照常能看到，东西不丢。
    */
-  async addItem(assistantId: string, item: NewItem, groupId?: string): Promise<Item> {
-    const group = this.groupFor(assistantId, groupId);
+  async addItem(assistantId: string, item: NewItem, place?: Place): Promise<Item> {
+    const group = this.groupFor(assistantId, place);
     let full: Item;
     if (group) {
       full = this.runtime.groups.appendItem(group.id, assistantId, item);
     } else {
-      const state = await this.ensure(assistantId);
-      const lead = this.derived(assistantId).result.lead;
+      const fallback = place?.groupId ? undefined : place;
+      const state = await this.ensure(assistantId, fallback);
+      const lead = this.derived(assistantId, fallback).result.lead;
       const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
       full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
       this.bus.emit({ type: "item", assistantId, item: full });
@@ -1254,16 +1257,16 @@ export class RouterManager {
     return full;
   }
 
-  async addCard(assistantId: string, record: CardRecord, groupId?: string): Promise<Item> {
-    const card: CardRecord = { ...record, ...(groupId ? { groupId } : {}) };
+  async addCard(assistantId: string, record: CardRecord, place?: Place): Promise<Item> {
+    const card: CardRecord = { ...record, ...placeFields(place) };
     this.store.saveCard(card);
-    const item = await this.addItem(assistantId, { kind: "card", cardId: card.id }, groupId);
+    const item = await this.addItem(assistantId, { kind: "card", cardId: card.id }, place);
     this.bus.emit({ type: "card", card });
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (cardInteractive(card.card)) {
       pushInteractiveCard(
         { push: this.runtime.push, store: this.store },
-        { assistantId, ...(groupId ? { groupId } : {}), title: cardTitle(card.card) },
+        { assistantId, ...(place ? { place } : {}), title: cardTitle(card.card) },
       );
       if (state) state.turnDispatched = true;
     } else if (state) {
@@ -1277,38 +1280,39 @@ export class RouterManager {
     this.bus.emit({ type: "card", card: record });
   }
 
-  private async addPluginCard(assistantId: string, groupId: string | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"] }): Promise<void> {
+  private async addPluginCard(assistantId: string, place: Place | undefined, payload: { pluginId: string; pluginName: string; service: string; callbackTool?: string; card: CardRecord["card"] }): Promise<void> {
     const record: CardRecord = {
       id: newId("c-"),
       owner: { type: "plugin", pluginId: payload.pluginId, assistantId },
       plugin: { service: payload.service, ...(payload.callbackTool ? { callbackTool: payload.callbackTool } : {}), pluginName: payload.pluginName },
-      ...(groupId ? { groupId } : {}),
+      ...placeFields(place),
       card: payload.card,
       status: "open",
       createdAt: new Date().toISOString(),
     };
-    await this.addCard(assistantId, record, groupId);
+    await this.addCard(assistantId, record, place);
   }
 
-  private async addPluginCardError(assistantId: string, groupId: string | undefined, message: string): Promise<void> {
-    await this.addItem(assistantId, { kind: "note", icon: "info", text: message }, groupId);
+  private async addPluginCardError(assistantId: string, place: Place | undefined, message: string): Promise<void> {
+    await this.addItem(assistantId, { kind: "note", icon: "info", text: message }, place);
   }
 
   async updateImage(
     assistantId: string,
     id: string,
     update: { status: "done" | "failed"; path?: string; error?: string },
-    groupId?: string,
+    place?: Place,
   ): Promise<void> {
-    const group = this.groupFor(assistantId, groupId);
+    const group = this.groupFor(assistantId, place);
     if (group) {
       const item = this.runtime.groups.updateImageItem(group.id, id, update);
       if (!item) throw new Error(`图片条目不存在：${id}`);
       this.collectGeneratedImage(item, assistantId, update);
       return;
     }
-    const state = await this.ensure(assistantId);
-    const item = this.derived(assistantId).result.items.find((entry) => entry.id === id && entry.kind === "image");
+    const fallback = place?.groupId ? undefined : place;
+    const state = await this.ensure(assistantId, fallback);
+    const item = this.derived(assistantId, fallback).result.items.find((entry) => entry.id === id && entry.kind === "image");
     if (!item) throw new Error(`图片条目不存在：${id}`);
     state.manager!.appendCustomEntry(ITEM_UPDATE_TYPE, { id, ...update });
     this.bus.emit({ type: "item", assistantId, item: { ...item, ...update } });
@@ -1321,12 +1325,12 @@ export class RouterManager {
     }
   }
 
-  currentDelegation(assistantId: string, groupId?: string): string | undefined {
-    return groupId ? undefined : this.routers.get(assistantId)?.currentDelegationId;
+  currentDelegation(assistantId: string, place?: Place): string | undefined {
+    return place?.groupId ? undefined : this.routers.get(sessionKey(assistantId, place))?.currentDelegationId;
   }
 
-  currentRoutineId(assistantId: string, groupId?: string): string | undefined {
-    return this.routers.get(this.keyOf(assistantId, groupId))?.turnRoutine?.id;
+  currentRoutineId(assistantId: string, place?: Place): string | undefined {
+    return this.routers.get(sessionKey(assistantId, place))?.turnRoutine?.id;
   }
 
   async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob", files: string[] = []): Promise<Item> {
@@ -1339,8 +1343,8 @@ export class RouterManager {
     return item;
   }
 
-  async event(assistantId: string, text: string, details?: EventDetails, groupId?: string): Promise<boolean> {
-    const group = this.groupFor(assistantId, groupId);
+  async event(assistantId: string, text: string, details?: EventDetails, place?: Place): Promise<boolean> {
+    const group = this.groupFor(assistantId, place);
     if (group) {
       // 进它的群会话，并且让 GroupManager 开一轮：它说的话才写得到时间线上；事件正文在真正开轮时再按任务状态取。
       void this.runtime.groups
@@ -1352,9 +1356,10 @@ export class RouterManager {
         .catch((error) => console.error("群事件投递失败：", error));
       return true;
     }
+    const fallback = place?.groupId ? undefined : place;
     try {
-      await this.ensure(assistantId);
-      void this.pushEvent(assistantId, text, details).catch(() => undefined);
+      await this.ensure(assistantId, fallback);
+      void this.pushEvent(assistantId, text, details, undefined, fallback).catch(() => undefined);
       return true;
     } catch {
       return false;
@@ -1390,8 +1395,9 @@ export class RouterManager {
     text: string,
     details: EventDetails | undefined,
     knowledgeQuery?: string,
+    place?: Place,
   ): Promise<boolean> {
-    const state = await this.ensure(assistantId);
+    const state = await this.ensure(assistantId, place);
     return await new Promise<boolean>((resolve) => {
       const jobId = details?.job?.id;
       const existing = jobId ? state.pendingEvents?.find((event) => event.jobId === jobId) : undefined;
@@ -1455,7 +1461,7 @@ export class RouterManager {
       this.publishBusy(state);
       await this.waitForCompaction(state);
       const knowledge = knowledgeQuery === undefined ? "" : await this.automaticKnowledge(state, knowledgeQuery);
-      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`, display: false, details };
+      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId, state.place)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`, display: false, details };
       await this.refreshTools(state);
       await this.applyConversationModel(state);
       if (session.isStreaming) {
@@ -1505,12 +1511,13 @@ export class RouterManager {
   }
 
   /** 当前会话/话题里是否还有未收口的后台任务、未结转交或未关闭的交群话题。 */
-  hasPendingWork(assistantId: string, groupId?: string): boolean {
+  hasPendingWork(assistantId: string, place?: Place): boolean {
+    const normalized = placeOf(place);
     const activeJobs = this.store
       .jobs()
-      .some((job) => job.groupId === groupId && ACTIVE_JOB_STATUSES.has(job.status) && (groupId !== undefined || job.assistantId === assistantId));
+      .some((job) => samePlace(placeOf(job), normalized) && ACTIVE_JOB_STATUSES.has(job.status) && (normalized.groupId !== undefined || job.assistantId === assistantId));
     if (activeJobs) return true;
-    if (groupId !== undefined) return false;
+    if (normalized.groupId !== undefined) return false;
     const openDelegations = this.store
       .delegations()
       .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
@@ -1521,8 +1528,8 @@ export class RouterManager {
   }
 
   /** 读取当前正在进行的轮次来源（open_topic 转入话题时沿用）。 */
-  turnOrigin(assistantId: string, groupId?: string): { userInitiated: boolean; bypassBusy: boolean } {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+  turnOrigin(assistantId: string, place?: Place): { userInitiated: boolean; bypassBusy: boolean } {
+    const state = this.routers.get(sessionKey(assistantId, place));
     return {
       userInitiated: Boolean(state?.turnUserInitiated),
       bypassBusy: Boolean(state?.turnBypassBusy),
@@ -1533,10 +1540,10 @@ export class RouterManager {
   private finishTurn(state: RouterState): TurnOutcome | undefined {
     if (state.running > 0) return undefined;
     const error = state.turnFailure;
-    const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
-    if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
+    const busy = todosBusy(this.runtime, state.assistantId, state.place);
+    if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.place);
     // 收到了用户的消息、这一轮回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
-    if (!state.groupId && state.turnSilent && state.turnUserItem && !this.store.state(state.assistantId).reactions?.[state.turnUserItem]?.[state.assistantId]) {
+    if (!state.place.groupId && state.turnSilent && state.turnUserItem && !this.store.state(state.assistantId).reactions?.[state.turnUserItem]?.[state.assistantId]) {
       this.react(state.assistantId, "👀", state.turnUserItem);
     }
     const bodyText = state.turnLastText || state.turnCardTitle;
@@ -1552,8 +1559,8 @@ export class RouterManager {
       bypassBusy: state.turnBypassBusy,
       delegation: state.turnDelegation,
     };
-    if (!state.groupId) {
-      const suppressedByPendingWork = !outcome.bypassBusy && this.hasPendingWork(state.assistantId);
+    if (!state.place.groupId) {
+      const suppressedByPendingWork = !outcome.bypassBusy && this.hasPendingWork(state.assistantId, state.place);
       const shouldPush =
         (outcome.workDone || Boolean(error)) &&
         !outcome.delegation &&
@@ -1563,14 +1570,15 @@ export class RouterManager {
           { push: this.runtime.push, store: this.store },
           {
             assistantId: state.assistantId,
+            place: state.place,
             ...(error ? { error } : { text: outcome.text }),
           },
         );
       }
     }
-    void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.groupId).catch((error) => console.error("收尾任务提问失败：", error));
-    if (!state.groupId && !error && !busy && !state.stalled && !silent && state.turnLastText && !this.hasIdleWork(state)) {
-      void this.generateSuggestionsFor(state.assistantId);
+    void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.place).catch((error) => console.error("收尾任务提问失败：", error));
+    if (!state.place.groupId && !error && !busy && !state.stalled && !silent && state.turnLastText && !this.hasIdleWork(state)) {
+      void this.generateSuggestionsFor(state.assistantId, state.place);
     }
     state.turnDispatched = false;
     state.turnWorkDone = false;
@@ -1587,8 +1595,8 @@ export class RouterManager {
   }
 
   /** 同一模型回合内，判断 check_job 是否只是重复查看同一状态。 */
-  checkJobUnchanged(assistantId: string, groupId: string | undefined, jobId: string, job: Job, steps: JobStep[]): boolean {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+  checkJobUnchanged(assistantId: string, place: Place | undefined, jobId: string, job: Job, steps: JobStep[]): boolean {
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (!state) return false;
     const snapshot = JSON.stringify({
       status: job.status,
@@ -1602,8 +1610,8 @@ export class RouterManager {
 
   /** 忙闲变了告诉前端（“正在想”要看它）。 */
   private publishBusy(state: RouterState): void {
-    if (state.groupId) {
-      this.runtime.groups?.publish(state.groupId);
+    if (state.place.groupId) {
+      this.runtime.groups?.publish(state.place.groupId);
       return;
     }
     const assistant = this.store.assistant(state.assistantId);
@@ -1621,7 +1629,7 @@ export class RouterManager {
     const text = t("未能回复：模型调用失败（{error}）。可重新发送。", { error: briefModelError(error) });
     await this.note(state, "info", text);
     // 单聊里这一行是卡片，不进模型上下文：另记一句，下一轮它知道上一轮没有回出去。群里那行本来就在时间线上
-    if (!state.groupId) await this.remember(state.assistantId, text).catch(() => undefined);
+    if (!state.place.groupId) await this.remember(state.assistantId, text, state.place).catch(() => undefined);
   }
 
   private async fail(state: RouterState, error: unknown): Promise<void> {
@@ -1730,11 +1738,12 @@ export class RouterManager {
    * 记进助手的会话但不开一轮：正在回复就等这一轮说完再记。
    * 用户在任务卡上直接对任务说的话走这里，之后任务来问、交结果时助手知道用户说过什么。
    */
-  async remember(assistantId: string, text: string, groupId?: string): Promise<void> {
-    const gid = this.groupFor(assistantId, groupId)?.id;
-    const state = await this.ensure(assistantId, gid);
+  async remember(assistantId: string, text: string, place?: Place): Promise<void> {
+    const gid = this.groupFor(assistantId, place)?.id;
+    const target = gid ? { groupId: gid } : place?.groupId ? undefined : place;
+    const state = await this.ensure(assistantId, target);
     await this.waitForCompaction(state);
-    await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
+    await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, target)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
   async deliverMember(
@@ -1746,7 +1755,7 @@ export class RouterManager {
     workDone = true,
     origin: { userInitiated?: boolean; bypassBusy?: boolean } = {},
   ): Promise<TurnOutcome | undefined> {
-    const state = await this.ensure(assistantId, groupId);
+    const state = await this.ensure(assistantId, { groupId });
     return this.deliver(state, text, {
       received,
       files,
@@ -1772,7 +1781,7 @@ export class RouterManager {
   }
 
   async steerMember(groupId: string, assistantId: string, text: string, files: string[] = [], received?: () => void): Promise<boolean> {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+    const state = this.routers.get(sessionKey(assistantId, { groupId }));
     if (!state?.session?.isStreaming) return false;
     const images = state.session.model?.input.includes("image") ? imageContents(files) : [];
     const unsubscribe = this.onUserReceived(state, text, received);
@@ -1794,7 +1803,7 @@ export class RouterManager {
     text: string,
     options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean; userInitiated?: boolean; bypassBusy?: boolean } = {},
   ): Promise<TurnOutcome | undefined> {
-    this.clearSuggestions(state.assistantId, state.groupId);
+    this.clearSuggestions(state.assistantId, state.place);
     const previousDelivery = state.pendingDelivery;
     let releaseDelivery!: () => void;
     const delivery = new Promise<void>((resolve) => { releaseDelivery = resolve; });
@@ -1854,8 +1863,8 @@ export class RouterManager {
     return outcome;
   }
 
-  async stop(assistantId: string, groupId?: string): Promise<void> {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+  async stop(assistantId: string, place?: Place): Promise<void> {
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (state) {
       state.stalled = true;
       this.setActivity(state, null);
@@ -1885,12 +1894,12 @@ export class RouterManager {
       state.turnBypassBusy = false;
       state.turnCardTitle = undefined;
       const pending = state.pendingEvents?.splice(0) ?? [];
-      this.forgetSession(state.assistantId, state.groupId);
+      this.forgetSession(state.assistantId, state.place);
       this.publishBusy(state);
       // 排着的事件（多半是任务的结果）换到重新打开的会话里送，不跟这份会话一起丢
       for (const event of pending) {
         const settle = (success: boolean) => event.waiters.forEach((resolve) => resolve(success));
-        void this.pushEvent(state.assistantId, event.text, event.details, event.knowledgeQuery).then(settle, () => settle(false));
+        void this.pushEvent(state.assistantId, event.text, event.details, event.knowledgeQuery, state.place).then(settle, () => settle(false));
       }
     } finally {
       state.stopping -= 1;
@@ -1898,8 +1907,8 @@ export class RouterManager {
     }
   }
 
-  isBusy(assistantId: string, groupId?: string): boolean {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+  isBusy(assistantId: string, place?: Place): boolean {
+    const state = this.routers.get(sessionKey(assistantId, place));
     // 只看助手自己在不在回复：任务不阻塞对话，任务的进度在任务卡上，不再算进来（不然任务跑多久「…」就挂多久）
     return (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
   }
@@ -1908,7 +1917,7 @@ export class RouterManager {
   busyMembers(groupId: string): string[] {
     const busy: string[] = [];
     for (const state of this.routers.values()) {
-      if (state.groupId !== groupId) continue;
+      if (state.place.groupId !== groupId) continue;
       if ((state.running ?? 0) > 0 || state.session?.isStreaming) busy.push(state.assistantId);
     }
     return busy;
@@ -1917,18 +1926,18 @@ export class RouterManager {
   /** 这个群里正在说话的成员各自在做什么（页面刚打开时补上「正在思考」）。 */
   groupActivity(groupId: string): Record<string, RouterActivity> {
     const activity: Record<string, RouterActivity> = {};
-    for (const state of this.routers.values()) if (state.groupId === groupId && state.activity) activity[state.assistantId] = state.activity;
+    for (const state of this.routers.values()) if (state.place.groupId === groupId && state.activity) activity[state.assistantId] = state.activity;
     return activity;
   }
 
   /** 等到这个助手没有在跑的回复，并且会话条目已经落定（测试和冒烟用）。 */
-  async waitIdle(assistantId: string, timeoutMs = 15_000, groupId?: string): Promise<void> {
+  async waitIdle(assistantId: string, timeoutMs = 15_000, place?: Place): Promise<void> {
     const started = Date.now();
     let stable = 0;
     let lastCount = -1;
     await new Promise((resolve) => setTimeout(resolve, 20));
     while (Date.now() - started < timeoutMs) {
-      const state = this.routers.get(this.keyOf(assistantId, groupId));
+      const state = this.routers.get(sessionKey(assistantId, place));
       const busy = (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
       const count = state?.manager?.getEntryCount() ?? -1;
       if (!busy) {
@@ -1946,11 +1955,11 @@ export class RouterManager {
    * 这个会话的实际消息记录（单聊或群里的那一份）：数轮次用。
    * 会话开着就取内存里的，没开就读文件；读不到就是空的。
    */
-  sessionEntries(assistantId: string, groupId?: string): SessionEntry[] {
-    const state = this.routers.get(this.keyOf(assistantId, groupId));
+  sessionEntries(assistantId: string, place?: Place): SessionEntry[] {
+    const state = this.routers.get(sessionKey(assistantId, place));
     if (state?.manager) return state.manager.getEntries();
     try {
-      return readEntries(groupId ? this.store.groupMemberFile(groupId, assistantId) : this.store.routerFile(assistantId));
+      return readEntries(this.sessionFile(assistantId, place));
     } catch {
       return [];
     }
@@ -1974,8 +1983,8 @@ export class RouterManager {
     return { ok: true, itemId: target.id };
   }
 
-  items(assistantId: string, options: { before?: string; limit?: number } = {}): ItemsPage {
-    const derived = this.derived(assistantId);
+  items(assistantId: string, options: { before?: string; limit?: number } = {}, place?: Place): ItemsPage {
+    const derived = this.derived(assistantId, place);
     const all = derived.result.items;
     const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
     const end = options.before ? derived.positions.get(options.before) ?? all.length : all.length;
@@ -2014,18 +2023,18 @@ export class RouterManager {
     };
   }
 
-  read(assistantId: string): void {
+  read(assistantId: string, _place?: Place): void {
     this.store.saveState(assistantId, { readAt: new Date().toISOString() });
   }
 
-  unread(assistantId: string): number {
+  unread(assistantId: string, place?: Place): number {
     const readAt = this.store.state(assistantId).readAt;
     // 从没记过已读：从现在开始算，以前的都当读过。不记的话未读永远是 0，前端也就永远不会来标已读
     if (!readAt) {
-      this.read(assistantId);
+      this.read(assistantId, place);
       return 0;
     }
-    const times = this.derived(assistantId).assistantTimes;
+    const times = this.derived(assistantId, place).assistantTimes;
     let lo = 0, hi = times.length;
     while (lo < hi) {
       const mid = (lo + hi) >>> 1;
@@ -2035,24 +2044,24 @@ export class RouterManager {
     return times.length - lo;
   }
 
-  last(assistantId: string): { text: string; at: Iso } | undefined {
-    return this.derived(assistantId).last;
+  last(assistantId: string, place?: Place): { text: string; at: Iso } | undefined {
+    return this.derived(assistantId, place).last;
   }
 
-  private suggestionKey(assistantId: string, groupId?: string): string {
-    return groupId ? `group:${groupId}` : assistantId;
+  private suggestionKey(assistantId: string, place?: Place): string {
+    return place?.groupId ? `group:${place.groupId}` : place?.topicId ? `topic:${place.topicId}` : assistantId;
   }
 
-  suggestionsFor(assistantId: string, groupId?: string): string[] | undefined {
-    return this.suggestions.get(this.suggestionKey(assistantId, groupId));
+  suggestionsFor(assistantId: string, place?: Place): string[] | undefined {
+    return this.suggestions.get(this.suggestionKey(assistantId, place));
   }
 
-  clearSuggestions(assistantId: string, groupId?: string): void {
-    const key = this.suggestionKey(assistantId, groupId);
+  clearSuggestions(assistantId: string, place?: Place): void {
+    const key = this.suggestionKey(assistantId, place);
     this.suggestionEpoch.set(key, (this.suggestionEpoch.get(key) ?? 0) + 1);
     const had = this.suggestions.delete(key);
     if (!had) return;
-    if (groupId) this.runtime.groups?.publish(groupId);
+    if (place?.groupId) this.runtime.groups?.publish(place.groupId);
     else {
       const assistant = this.store.assistant(assistantId);
       if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
@@ -2060,28 +2069,28 @@ export class RouterManager {
   }
 
   /** 在一轮真正停下后后台生成推荐提问；结果只接受当前这一轮。 */
-  async generateSuggestionsFor(assistantId: string, groupId?: string): Promise<void> {
-    const key = this.suggestionKey(assistantId, groupId);
+  async generateSuggestionsFor(assistantId: string, place?: Place): Promise<void> {
+    const key = this.suggestionKey(assistantId, place);
     const epoch = this.suggestionEpoch.get(key) ?? 0;
     const assistant = this.store.assistant(assistantId);
     if (!assistant) return;
     try {
       await this.runtime.models.get();
-      const group = groupId ? this.store.group(groupId) : undefined;
+      const group = place?.groupId ? this.store.group(place.groupId) : undefined;
       const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
       const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
       const pick = followUpPick(this.runtime.settings.settings.models, effective, this.runtime.models);
       if (!pick) return;
       const model = await this.runtime.pi.model(pick.ref);
-      const turns = groupId
-        ? groupHistory(this.store.groupItems(groupId), (speaker) => speaker === "user" ? "用户" : this.store.assistant(speaker)?.name ?? speaker)
-        : routerHistory(this.entries(assistantId));
+      const turns = place?.groupId
+        ? groupHistory(this.store.groupItems(place.groupId), (speaker) => speaker === "user" ? "用户" : this.store.assistant(speaker)?.name ?? speaker)
+        : routerHistory(this.entries(assistantId, place));
       const suggestions = await generateFollowUpSuggestions(await this.runtime.pi.runtime(), model, turns);
       if ((this.suggestionEpoch.get(key) ?? 0) !== epoch || !suggestions.length) return;
-      const state = this.routers.get(this.keyOf(assistantId, groupId));
+      const state = this.routers.get(sessionKey(assistantId, place));
       if (state && (state.running > 0 || state.session?.isStreaming || this.hasIdleWork(state))) return;
       this.suggestions.set(key, suggestions);
-      if (groupId) this.runtime.groups?.publish(groupId);
+      if (place?.groupId) this.runtime.groups?.publish(place.groupId);
       else this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
     } catch (error) {
       console.error("推荐提问准备失败：", error instanceof Error ? error.message : String(error));
@@ -2148,7 +2157,7 @@ export class RouterManager {
   }
 
   /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文；群里提的问题回群会话）。 */
-  async answerEvent(assistantId: string, text: string, groupId?: string): Promise<void> {
-    await this.event(assistantId, text, { userInitiated: true }, groupId);
+  async answerEvent(assistantId: string, text: string, place?: Place): Promise<void> {
+    await this.event(assistantId, text, { userInitiated: true }, place);
   }
 }

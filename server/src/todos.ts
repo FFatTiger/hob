@@ -6,8 +6,9 @@ import { dirname } from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
-import type { Iso, TodoItem } from "../../shared/types.ts";
+import type { Iso, Place, TodoItem } from "../../shared/types.ts";
 import { assistantTodosPath, groupTodosPath } from "./config.ts";
+import { placeOf, samePlace } from "./place.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { agoText } from "./time.ts";
 
@@ -136,13 +137,13 @@ export function todosReminderText(entries: SessionEntry[], items: TodoItem[], up
  * 转交给别的助手时，把手上的待办交出去：还有没做完的项就清空当前这份（不进时间线）。
  * 全做完了的已经清过，没有待办就什么都不做。返回交出去的那几项，写进转交给对方的内容里。
  */
-export async function handOffTodos(runtime: HobRuntime, assistantId: string, groupId: string | undefined): Promise<TodoItem[]> {
-  const path = sessionTodosPath(runtime.home, assistantId, groupId);
+export async function handOffTodos(runtime: HobRuntime, assistantId: string, place?: Place): Promise<TodoItem[]> {
+  const path = sessionTodosPath(runtime.home, assistantId, place);
   const items = readTodos(path);
   const unfinished = items.filter((item) => item.status !== "done");
   if (!unfinished.length) return [];
   clearTodos(path);
-  publishTodos(runtime, assistantId, groupId);
+  publishTodos(runtime, assistantId, place);
   return unfinished;
 }
 
@@ -153,14 +154,14 @@ function isTodo(value: unknown): value is TodoItem {
 }
 
 /** 一个会话的待办在哪：群会话（综合、话题）在群目录下，单聊在助手目录下。 */
-export function sessionTodosPath(home: string, assistantId: string, groupId?: string): string {
-  return groupId ? groupTodosPath(home, groupId) : assistantTodosPath(home, assistantId);
+export function sessionTodosPath(home: string, assistantId: string, place?: Place): string {
+  return place?.groupId ? groupTodosPath(home, place.groupId) : assistantTodosPath(home, assistantId);
 }
 
 /** 待办变了：告诉界面（左栏、输入框上方那一条看它）。 */
-function publishTodos(runtime: HobRuntime, assistantId: string, groupId?: string): void {
-  if (groupId) {
-    runtime.groups.publish(groupId);
+function publishTodos(runtime: HobRuntime, assistantId: string, place?: Place): void {
+  if (place?.groupId) {
+    runtime.groups.publish(place.groupId);
     return;
   }
   const assistant = runtime.store.assistant(assistantId);
@@ -168,8 +169,8 @@ function publishTodos(runtime: HobRuntime, assistantId: string, groupId?: string
 }
 
 /** 这个会话里还有没有在跑的任务。 */
-function busyHere(runtime: HobRuntime, assistantId: string, groupId?: string): boolean {
-  return runtime.store.jobs().some((job) => job.groupId === groupId && ACTIVE.has(job.status) && (groupId !== undefined || job.assistantId === assistantId));
+function busyHere(runtime: HobRuntime, assistantId: string, place?: Place): boolean {
+  return runtime.store.jobs().some((job) => samePlace(placeOf(job), place) && ACTIVE.has(job.status) && (place?.groupId !== undefined || job.assistantId === assistantId));
 }
 
 /**
@@ -181,42 +182,42 @@ function busyHere(runtime: HobRuntime, assistantId: string, groupId?: string): b
  * - 这个会话里还在等用户回答的提问卡；
  * - 群会话里，还有别的成员在这个会话里跑着一轮。
  */
-export function todosBusy(runtime: HobRuntime, assistantId: string, groupId?: string): boolean {
-  if (busyHere(runtime, assistantId, groupId)) return true;
+export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Place): boolean {
+  if (busyHere(runtime, assistantId, place)) return true;
   // 转交和交给群只从单聊发出（群会话里没有 message_assistant、message_group），群会话不算这两样
-  const delegating = groupId === undefined && runtime.store
+  const delegating = !place?.groupId && runtime.store
     .delegations()
     .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
   if (delegating) return true;
-  const handedOver = groupId === undefined && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
+  const handedOver = !place?.groupId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
   if (handedOver) return true;
-  const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && (groupId ? approval.groupId === groupId : approval.assistantId === assistantId && !approval.groupId));
+  const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), place) && (place?.groupId !== undefined || approval.assistantId === assistantId));
   if (asking) return true;
-  return groupId !== undefined && runtime.router.busyMembers(groupId).some((id) => id !== assistantId);
+  return place?.groupId !== undefined && runtime.router.busyMembers(place.groupId).some((id) => id !== assistantId);
 }
 
 /**
  * 一轮结束、或者服务启动时：这个会话手上没活了，就把这份待办收起（不进时间线）。
  * 一轮出错结束的那一轮调用方不清，留到下一轮。
  */
-export function releaseIdleTodos(runtime: HobRuntime, assistantId: string, groupId?: string): void {
-  const path = sessionTodosPath(runtime.home, assistantId, groupId);
+export function releaseIdleTodos(runtime: HobRuntime, assistantId: string, place?: Place): void {
+  const path = sessionTodosPath(runtime.home, assistantId, place);
   if (!readTodos(path).length) return;
-  if (todosBusy(runtime, assistantId, groupId)) return;
+  if (todosBusy(runtime, assistantId, place)) return;
   clearTodos(path);
-  publishTodos(runtime, assistantId, groupId);
+  publishTodos(runtime, assistantId, place);
 }
 
 /** 启动时把各会话手上已经没活的待办收起：任务和转交都按中断处理过了，再没有手上的活。 */
 export function releaseIdleTodosAtStartup(runtime: HobRuntime): void {
   for (const assistant of runtime.store.assistants()) releaseIdleTodos(runtime, assistant.id);
-  for (const group of runtime.store.groups()) releaseIdleTodos(runtime, group.ownerId, group.id);
+  for (const group of runtime.store.groups()) releaseIdleTodos(runtime, group.ownerId, { groupId: group.id });
 }
 
 /** 待办工具的落点：会话（单聊、综合、话题）。待办只归助手，任务没有。 */
 export interface TodosTarget {
   assistantId: string;
-  groupId?: string;
+  place?: Place;
 }
 
 /**
@@ -226,17 +227,17 @@ export interface TodosTarget {
 export function updateTodosTool(runtime: HobRuntime, target: TodosTarget): ToolDefinition<any, any> {
   /** 会话里的一份做完或清掉时就清空（不进时间线）。 */
   const saveSession = async (items: TodoItem[]): Promise<string> => {
-    const path = sessionTodosPath(runtime.home, target.assistantId, target.groupId);
+    const path = sessionTodosPath(runtime.home, target.assistantId, target.place);
     const before = readTodos(path);
     const allDone = items.length > 0 && todoProgress(items).done === items.length;
     const cleared = items.length === 0 && todoUnfinishedCount(before) > 0;
     if (!allDone && !cleared) {
       writeTodos(path, items);
-      publishTodos(runtime, target.assistantId, target.groupId);
+      publishTodos(runtime, target.assistantId, target.place);
       return todosText(items);
     }
     clearTodos(path);
-    publishTodos(runtime, target.assistantId, target.groupId);
+    publishTodos(runtime, target.assistantId, target.place);
     if (allDone) {
       const { total } = todoProgress(items);
       return `待办 ${total}/${total}，都做完了，已经清掉。`;

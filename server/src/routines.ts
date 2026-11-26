@@ -12,6 +12,7 @@ import type { Routine, RoutineCheck, RoutineChecks, RoutineTick } from "../../sh
 import type { HobRuntime } from "./runtime.ts";
 import { timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
+import { placeOf } from "./place.ts";
 import { assistantDir, engineDir, groupDir } from "./config.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 
@@ -231,7 +232,7 @@ export class RoutineScheduler {
         kind: "note",
         icon: "routine",
         text: t("定时任务「{name}」启动失败：{error}", { name: routine.name, error: error instanceof Error ? error.message : String(error) }),
-      }, this.destination(routine));
+      }, placeOf({ groupId: this.destination(routine) }));
     }
     await this.settle(routineId, outcome);
   }
@@ -263,7 +264,7 @@ export class RoutineScheduler {
       kind: "note",
       icon: "routine",
       text: reason === "hit" ? t("定时任务「{name}」已触发，已按设置停止", { name: routine.name }) : t("定时任务「{name}」已完成最后一次运行，已停止", { name: routine.name }),
-    }, this.destination(routine));
+    }, placeOf({ groupId: this.destination(routine) }));
   }
 
   /** 到点做一次：没检查脚本就直接交给助手，有就先跑脚本。 */
@@ -274,15 +275,15 @@ export class RoutineScheduler {
     if (result.outcome === "quiet") return { outcome: "quiet" };
     const output = result.output ?? "";
     if (routine.check.then === "notify") {
-      const gid = this.destination(routine);
+      const place = placeOf({ groupId: this.destination(routine) });
       await this.runtime.router.addItem(routine.assistantId, {
         kind: "assistant",
         text: output,
         routine: { id: routine.id, name: routine.name },
-      }, gid);
+      }, place);
       pushAssistantTurnEnd(
         { push: this.runtime.push, store: this.runtime.store },
-        { assistantId: routine.assistantId, ...(gid ? { groupId: gid } : {}), text: output },
+        { assistantId: routine.assistantId, place, text: output },
       );
       return { outcome: "notify" };
     }
@@ -320,7 +321,7 @@ export class RoutineScheduler {
     const calls: string[] = [];
     const credential = this.runtime.scriptTools.issue({
       tools: async () => {
-        const builtin = buildRouterTools(this.runtime, routine.assistantId, routine.groupId, dir);
+        const builtin = buildRouterTools(this.runtime, routine.assistantId, placeOf(routine), dir);
         const reserved = new Set(builtin.map((tool) => tool.name));
         const plugins = pluginToolsForAssistant(this.runtime.plugins, routine.assistantId, reserved);
         for (const tool of plugins) reserved.add(tool.name);
@@ -367,9 +368,9 @@ export class RoutineScheduler {
     this.runtime.store.saveRoutine(next);
     this.runtime.bus.emit({ type: "routine", routine: next });
     if (result.outcome === "failed" && !wasFailing) {
-      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查失败：{reason}", { name: routine.name, reason: result.reason ?? "" }) }, this.destination(routine));
+      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查失败：{reason}", { name: routine.name, reason: result.reason ?? "" }) }, placeOf({ groupId: this.destination(routine) }));
     } else if (result.outcome !== "failed" && wasFailing) {
-      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查恢复正常", { name: routine.name }) }, this.destination(routine));
+      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查恢复正常", { name: routine.name }) }, placeOf({ groupId: this.destination(routine) }));
     }
     return result;
   }

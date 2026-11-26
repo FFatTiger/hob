@@ -13,7 +13,7 @@ import {
   validateCustomProp,
 } from "../../shared/sprites.ts";
 import { THINKING_TEXT } from "../../shared/thinking.ts";
-import type { Assistant, Draft, Group, GroupItem } from "../../shared/types.ts";
+import type { Assistant, Draft, Group, GroupItem, Place } from "../../shared/types.ts";
 import type { AssistantPatch } from "./actions.ts";
 import { createFromDraft, updateAssistant } from "./actions.ts";
 import { listAssistantSkills } from "./assistant-skills.ts";
@@ -103,7 +103,8 @@ function byAssistantOrder(a: Assistant, b: Assistant): number {
  * 管理助手、群和话题的工具；主助手有完整管理权限，普通助手有建、查看以及修改自己的工具。
  * 群会话里仍由 router.ts 的工具名单决定实际可用范围。
  */
-export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupId?: string, options: { primary?: boolean } = {}): Tool[] {
+export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?: Place, options: { primary?: boolean } = {}): Tool[] {
+  const groupId = place?.groupId;
   const { store, router } = runtime;
   const primary = options.primary ?? store.assistant(assistantId)?.primary === true;
   const nameOf = (id: string) => store.assistant(id)?.name ?? id;
@@ -117,10 +118,10 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
     const targetGroupId = note.targetGroupId ?? note.group?.gid;
     const target = targetGroupId ? { targetGroupId } : {};
     if (note.group && note.group.gid === groupId) {
-      await router.addItem(assistantId, { kind: "note", icon: "info", text: note.group.text, ...target }, groupId);
+      await router.addItem(assistantId, { kind: "note", icon: "info", text: note.group.text, ...target }, place);
       return;
     }
-    await router.addItem(assistantId, { kind: "note", icon: "info", text: note.conversation, ...target }, groupId);
+    await router.addItem(assistantId, { kind: "note", icon: "info", text: note.conversation, ...target }, place);
     if (note.group) runtime.groups.appendItem(note.group.gid, assistantId, { kind: "note", icon: "info", text: note.group.text, ...target });
   };
 
@@ -420,7 +421,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, groupI
           if (!changes.length) return fail("没有要改的项：至少填一项和现在不一样的。");
           const result = await updateAssistant(runtime, id, patch);
           if (result.status !== 200) return fail((result.body as { error?: string }).error ?? "修改失败");
-          await router.addItem(assistantId, { kind: "note", icon: "info", text: t("修改了自己的资料：{changes}", { changes: changes.join("、") }) }, groupId);
+          await router.addItem(assistantId, { kind: "note", icon: "info", text: t("修改了自己的资料：{changes}", { changes: changes.join("、") }) }, place);
           return ok(`已修改自己的资料：${changes.join("、")}。`);
         }
         const patch: AssistantPatch = {};

@@ -231,7 +231,7 @@ describe("plugin commands (extensions.com.hob.plugins.bin & _meta['hob/command']
         text("群里已拿到"),
       ]);
       await hob.runtime.groups.send(group.id, { text: "测试群命令" });
-      await waitFor(() => existsSync(groupOut) && !hob.runtime.router.isBusy("hob", group.id));
+      await waitFor(() => existsSync(groupOut) && !hob.runtime.router.isBusy("hob", { groupId: group.id }));
       expect(readFileSync(groupOut, "utf8").trim()).toBe("fixture-token-267");
 
       // --- 4. Background job (worker bash) ---

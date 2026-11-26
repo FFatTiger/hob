@@ -22,11 +22,12 @@ import {
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
-import type { Approval, ApprovalQuestion, ApprovalQuestionInput, CardRecord, CustomProp, Job, Routine, RoutineCheck } from "../../shared/types.ts";
+import type { Approval, ApprovalQuestion, ApprovalQuestionInput, CardRecord, CustomProp, Job, Place, Routine, RoutineCheck } from "../../shared/types.ts";
 import { loginCard, prepareLogin } from "./login.ts";
 import { prepareFillNewPassword } from "./new-password.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
+import { placeFields, placeOf, samePlace } from "./place.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { generateImage, imageConfigured } from "./image.ts";
 import { assistantInGroup, defaultWorkRef, jobModel, noteOf, thinkingLevelsOf, usableRefs } from "./models.ts";
@@ -80,7 +81,7 @@ const QUESTIONS_DESCRIPTION =
  * 把 ask_user 的参数变成审批卡：有 questions 就是一张问几个问题的卡，没有就是原来那张单问题卡。
  * 参数不合规时给一句写清怎么改的话。
  */
-function approvalFromParams(assistantId: string, groupId: string | undefined, params: any): Approval | { error: string } {
+function approvalFromParams(assistantId: string, place: Place | undefined, params: any): Approval | { error: string } {
   const base = {
     id: newId("q-"),
     assistantId,
@@ -88,7 +89,7 @@ function approvalFromParams(assistantId: string, groupId: string | undefined, pa
     ...(params.detail ? { detail: String(params.detail) } : {}),
     status: "pending" as const,
     source: "router" as const,
-    ...(groupId ? { groupId } : {}),
+    ...placeFields(place),
     createdAt: new Date().toISOString(),
   };
   const remember = typeof params.remember === "string" ? params.remember.trim() : "";
@@ -215,12 +216,13 @@ function fileMeta(path: string): string | undefined {
 export function buildRouterTools(
   runtime: HobRuntime,
   assistantId: string,
-  groupId?: string,
+  place?: Place,
   cwd = runtime.home,
   ownWorkDir = assistantWorkDir(runtime.home, assistantId),
 ): Tool[] {
   const { store, bus, router, jobs, routines } = runtime;
-  const resolvedWorkspace = resolveWorkspaceCwd(store, runtime.home, assistantId, groupId);
+  const groupId = place?.groupId;
+  const resolvedWorkspace = resolveWorkspaceCwd(store, runtime.home, assistantId, place);
   const boundSession = Boolean(resolvedWorkspace.bound);
   const currentGroup = groupId ? store.group(groupId) : undefined;
   const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
@@ -232,7 +234,7 @@ export function buildRouterTools(
     return found;
   };
   const note = (icon: "memory" | "rule" | "routine" | "split" | "info" | "skill", text: string) =>
-    router.addItem(assistantId, { kind: "note", icon, text }, groupId);
+    router.addItem(assistantId, { kind: "note", icon, text }, place);
   const presentApproval = async (approval: Approval, signal?: AbortSignal) => {
     const cancel = () => {
       const current = store.approval(approval.id);
@@ -245,7 +247,7 @@ export function buildRouterTools(
     if (signal?.aborted) cancel(); else signal?.addEventListener("abort", cancel, { once: true });
     try {
       signal?.throwIfAborted();
-      await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
+      await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, place);
       signal?.throwIfAborted();
       bus.emit({ type: "approval", approval });
       pushApproval({ push: runtime.push, store }, approval);
@@ -280,7 +282,7 @@ export function buildRouterTools(
     return !!job && (groupId ? sameGroup(groupId, job.groupId) : assistant().primary || job.assistantId === assistantId);
   };
   /** 任务不是这个会话开的：它在哪（给模型看的出处）；是的话 undefined。 */
-  const jobOrigin = (job: Job) => (job.groupId ?? undefined) === (groupId ?? undefined) ? undefined : sessionOrigin(store, job.groupId, groupId);
+  const jobOrigin = (job: Job) => samePlace(placeOf(job), place) ? undefined : sessionOrigin(store, placeOf(job), place);
 
   // 检查脚本试运行的结果写成事实交给模型：脚本写错了，现在就能改，不用等到执行时间才失败
   const trialFact = async (routine: Routine): Promise<string> => {
@@ -426,7 +428,7 @@ export function buildRouterTools(
         if (!job || !canManageJob(params.jobId)) return fail(`没有这个任务：${params.jobId}`);
         try {
           const transcript = jobs.transcript(params.jobId);
-          if (router.checkJobUnchanged(assistantId, groupId, params.jobId, job, transcript)) {
+          if (router.checkJobUnchanged(assistantId, place, params.jobId, job, transcript)) {
             return ok("和你上次查看时一样，没有新的步骤。任务结束或提问时会通知你。");
           }
           return ok(jobView({ ...job, cwd: job.cwd ?? store.workDir(job.id) }, transcript, store.approvals(), visibleSkills(runtime, job.assistantId, job.groupId ? store.group(job.groupId) : undefined), runtime.settings.settings.general.timezone, undefined, jobOrigin(job)));
@@ -450,7 +452,7 @@ export function buildRouterTools(
           if (found.problem || !found.dir) return fail(found.problem!);
           const title = found.skill?.title ?? params.name;
           const text = deleteSkill(runtime, target.id, params.name, params.replaced_by || undefined, groupId);
-          await router.addItem(assistantId, { kind: "note", icon: "skill", text: t("已删除{whose}技能「{title}」", { whose: whoseSkill(found.dir, target.id), title }) }, groupId);
+          await router.addItem(assistantId, { kind: "note", icon: "skill", text: t("已删除{whose}技能「{title}」", { whose: whoseSkill(found.dir, target.id), title }) }, place);
           return ok(text);
         } catch (error) { return fail(error instanceof Error ? error.message : String(error)); }
       },
@@ -547,8 +549,8 @@ export function buildRouterTools(
             ...(files.length ? { files } : {}),
             ...(params.model ? { model: String(params.model) } : {}),
             ...(params.thinking ? { thinking: String(params.thinking) } : {}),
-            ...(router.currentDelegation(assistantId, groupId) ? { delegationId: router.currentDelegation(assistantId, groupId) } : {}),
-            ...(router.currentRoutineId(assistantId, groupId) ? { routineId: router.currentRoutineId(assistantId, groupId) } : {}),
+            ...(router.currentDelegation(assistantId, place) ? { delegationId: router.currentDelegation(assistantId, place) } : {}),
+            ...(router.currentRoutineId(assistantId, place) ? { routineId: router.currentRoutineId(assistantId, place) } : {}),
           }, signal);
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
           if (assignee.id !== assistantId) return ok(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
@@ -600,7 +602,7 @@ export function buildRouterTools(
           const job = store.job(jobId)!;
           const origin = jobOrigin(job);
           // 停止原因里写清在哪停的，这句话界面上也会显示
-          await jobs.stop(jobId, origin ? `${assistant().name}在${sessionOrigin(store, groupId, job.groupId)}停止了` : `${assistant().name}停止了`);
+          await jobs.stop(jobId, origin ? `${assistant().name}在${sessionOrigin(store, place, placeOf(job))}停止了` : `${assistant().name}停止了`);
           return ok(origin ? `已停止。这个任务是${origin}创建的。` : "已停止。");
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
@@ -644,12 +646,12 @@ export function buildRouterTools(
         const record: CardRecord = {
           id: newId("c-"),
           owner: { type: "assistant", assistantId },
-          ...(groupId ? { groupId } : {}),
+          ...placeFields(place),
           card: result.value.card,
           status: "open",
           createdAt: new Date().toISOString(),
         };
-        await router.addCard(assistantId, record, groupId);
+        await router.addCard(assistantId, record, place);
         const shown = result.value.interactive
           ? "卡片已显示给用户，用户操作完结果会回到对话。"
           : "卡片已显示给用户。";
@@ -680,20 +682,20 @@ export function buildRouterTools(
           if (prepared.kind === "mismatch") {
             const approval: Approval = {
               id: newId("q-"), assistantId, title: "没有填写密码", detail: prepared.text, options: [], status: "answered", source: "router",
-              ...(groupId ? { groupId } : {}), login: { site, reason, fillLogin: prepared.approval }, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
+              ...placeFields(place), login: { site, reason, fillLogin: prepared.approval }, createdAt: new Date().toISOString(), answeredAt: new Date().toISOString(),
             };
             store.saveApproval(approval);
-            await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, groupId);
+            await router.addItem(assistantId, { kind: "question", approvalId: approval.id }, place);
             bus.emit({ type: "approval", approval });
             return ok(prepared.text);
           }
           const card = loginCard(prepared, site, reason);
           const approval: Approval = {
             id: newId("q-"), assistantId, title: card.title, ...(card.detail ? { detail: card.detail } : {}),
-            options: card.options, status: "pending", source: "router", ...(groupId ? { groupId } : {}), login: card.login, createdAt: new Date().toISOString(),
+            options: card.options, status: "pending", source: "router", ...placeFields(place), login: card.login, createdAt: new Date().toISOString(),
           };
           store.saveApproval(approval);
-          const delegationId = router.currentDelegation(assistantId, groupId);
+          const delegationId = router.currentDelegation(assistantId, place);
           if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
           await presentApproval(approval, signal);
           return endTurn(card.endTurn);
@@ -722,12 +724,12 @@ export function buildRouterTools(
           const approval: Approval = {
             id: newId("q-"), assistantId, title: prepared.title, detail: prepared.detail,
             options: [{ key: "A", label: "不允许" }, { key: "B", label: "生成并填写" }],
-            status: "pending", source: "router", ...(groupId ? { groupId } : {}),
+            status: "pending", source: "router", ...placeFields(place),
             login: { site: prepared.approval.host, reason: prepared.detail, fillNewPassword: prepared.approval },
             createdAt: new Date().toISOString(),
           };
           store.saveApproval(approval);
-          const delegationId = router.currentDelegation(assistantId, groupId);
+          const delegationId = router.currentDelegation(assistantId, place);
           if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
           await presentApproval(approval, signal);
           return endTurn(`已请用户批准在 ${prepared.approval.host} ${prepared.approval.mode === "register" ? "注册新账号" : "修改密码"}，这一轮先到这里；用户批准后 Hob 会生成、保存并填好。`);
@@ -772,12 +774,12 @@ export function buildRouterTools(
         remember: Type.Optional(Type.String({ description: "这类事以后可以不再问时，填这类事的简称（如「清理临时文件」）；卡片上会多一个「以后直接执行」的选项。" })),
       }),
       execute: async (_id, params: any, signal) => {
-        const approval = approvalFromParams(assistantId, groupId, params);
+        const approval = approvalFromParams(assistantId, place, params);
         if ("error" in approval) return fail(approval.error);
         store.saveApproval(approval);
         // 话题里挂了待答的提问卡：左栏和话题卡上的「等你」跟着变
         if (groupId) runtime.groups.publish(groupId);
-        const delegationId = router.currentDelegation(assistantId, groupId);
+        const delegationId = router.currentDelegation(assistantId, place);
         if (delegationId) runtime.delegations.addApproval(delegationId, approval.id);
         await presentApproval(approval, signal);
         return endTurn("问题卡已显示给用户。");
@@ -999,7 +1001,7 @@ export function buildRouterTools(
           const unescape = (value: string) => value.replace(/&(amp|lt|gt|quot);/g, (_, key: string) => ({ amp: "&", lt: "<", gt: ">", quot: '"' })[key]!);
           if (title !== undefined && summary !== undefined) { name = unescape(title); meta = unescape(summary); }
         }
-        await router.addItem(assistantId, { kind: "file", path, name, ...(meta ? { meta } : {}) }, groupId);
+        await router.addItem(assistantId, { kind: "file", path, name, ...(meta ? { meta } : {}) }, place);
         return ok("已发送。");
       },
     },
@@ -1073,18 +1075,18 @@ export function buildRouterTools(
         const config = runtime.settings.settings.image;
         const prompt = String(params.prompt ?? "");
         const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
-        const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() }, groupId);
+        const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() }, place);
         try {
           const path = await generateImage({ home: runtime.home, dir: join(runtime.home, "assistants", assistantId, "files", "images"), config, signal }, {
             prompt,
             ...(params.size ? { size: String(params.size) } : {}),
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
           });
-          await router.updateImage(assistantId, item.id, { status: "done", path }, groupId);
+          await router.updateImage(assistantId, item.id, { status: "done", path }, place);
           return ok(`图片已经显示在对话里。路径：${path}，之后修改图片可以作为参考图。`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
-          await router.updateImage(assistantId, item.id, { status: "failed", error: message }, groupId);
+          await router.updateImage(assistantId, item.id, { status: "failed", error: message }, place);
           return fail(message);
         }
       },
@@ -1096,7 +1098,7 @@ export function buildRouterTools(
   {
     tools.push(
       overviewTool(runtime),
-      ...buildAdminTools(runtime, assistantId, groupId, { primary: assistant().primary }),
+      ...buildAdminTools(runtime, assistantId, place, { primary: assistant().primary }),
       {
         name: "message_assistant",
         label: "转交其他助手",
@@ -1111,7 +1113,7 @@ export function buildRouterTools(
           const target = store.assistant(targetId);
           if (!target) return fail(`没有这个助手：${targetId}`);
           if (targetId === assistantId) return fail("不能转交给自己。");
-          const currentDelegationId = router.currentDelegation(assistantId, groupId);
+          const currentDelegationId = router.currentDelegation(assistantId, place);
           if (currentDelegationId) {
             const current = store.delegation(currentDelegationId);
             const sourceName = current ? nameOf(current.from) : "发起委派的助手";
@@ -1123,14 +1125,14 @@ export function buildRouterTools(
             const note = String(params.note ?? "").trim();
             if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
             const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
-            const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, groupId)).filter((item) => item.status !== "done");
+            const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, place)).filter((item) => item.status !== "done");
             const carried = unfinished.length
               ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
               : note;
             await runtime.delegations.start(assistantId, targetId, carried, files, signal);
             signal?.throwIfAborted();
             if (!unfinished.length) return endTurn(`已转交给「${target.name}」。`);
-            await handOffTodos(runtime, assistantId, groupId);
+            await handOffTodos(runtime, assistantId, place);
             return endTurn(`已转交给「${target.name}」。你手上那份待办（没做完 ${unfinished.length} 项）一起交过去了，已经清掉。`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
@@ -1179,7 +1181,7 @@ export function buildRouterTools(
             signal?.addEventListener("abort", cancel, { once: true });
             try {
               // 这次说话所在的对话里落一张话题卡：进度、等你回答、结论都在卡上
-              await router.addItem(assistantId, { kind: "topic", topicId: topic.id }, groupId);
+              await router.addItem(assistantId, { kind: "topic", topicId: topic.id }, place);
               signal?.throwIfAborted();
             } finally {
               signal?.removeEventListener("abort", cancel);
@@ -1206,7 +1208,7 @@ export function buildRouterTools(
         const reason = String(params.reason ?? "").trim();
         if (!text || !reason) return fail("请写清用户要求和交回原因。");
         try {
-          const delegationId = router.currentDelegation(assistantId, groupId);
+          const delegationId = router.currentDelegation(assistantId, place);
           if (delegationId) {
             const delegation = store.delegation(delegationId);
             const destinationName = delegation ? nameOf(delegation.from) : "发起委派的助手";
@@ -1302,7 +1304,7 @@ export function buildRouterTools(
           const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
           const event = `这个话题是你从综合创建的，上面是交接说明。\n\n${note}`;
 
-          const origin = router.turnOrigin(assistantId, gid);
+          const origin = router.turnOrigin(assistantId, place);
           try {
             if (topicId) {
               if (!groupHasBoundCwd && params.cwd !== undefined) return fail(CWD_IMMUTABLE);
@@ -1331,7 +1333,7 @@ export function buildRouterTools(
     }
   }
 
-  tools.push(updateTodosTool(runtime, { assistantId, ...(groupId ? { groupId } : {}) }), findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search, () => runtime.settings.settings.providers));
+  tools.push(updateTodosTool(runtime, { assistantId, ...(place ? { place } : {}) }), findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search, () => runtime.settings.settings.providers));
   return tools;
 }
 

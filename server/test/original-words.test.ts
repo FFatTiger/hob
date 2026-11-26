@@ -3,7 +3,7 @@ import { buildRouterTools } from "../src/router-tools.ts";
 import { makeHob } from "./helpers.ts";
 
 function toolOf(hob: ReturnType<typeof makeHob>, name: string, groupId?: string) {
-  const tool = buildRouterTools(hob.runtime, "hob", groupId).find((item) => item.name === name);
+  const tool = buildRouterTools(hob.runtime, "hob", groupId ? { groupId } : undefined).find((item) => item.name === name);
   if (!tool) throw new Error(`没有这个工具：${name}`);
   return tool;
 }

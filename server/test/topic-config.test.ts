@@ -469,8 +469,8 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
 
       const directTools = buildRouterTools(hob.runtime, "dev");
       const primaryTools = buildRouterTools(hob.runtime, "hob");
-      const overviewTools = buildRouterTools(hob.runtime, "hob", group.id);
-      const topicTools = buildRouterTools(hob.runtime, "hob", topic.id);
+      const overviewTools = buildRouterTools(hob.runtime, "hob", { groupId: group.id });
+      const topicTools = buildRouterTools(hob.runtime, "hob", { groupId: topic.id });
 
       // 综合、单聊、主助手里 set_rule / remove_rule 没有 scope 参数
       for (const list of [directTools, primaryTools, overviewTools]) {

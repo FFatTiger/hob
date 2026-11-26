@@ -74,12 +74,13 @@ describe("script tools", () => {
     try {
       const group = hob.runtime.groups.create({ name: "研究", purpose: "研究资料", ownerId: "hob", members: ["hob"] });
       for (const groupId of [undefined, group.id]) {
-        const names = scriptToolList(buildRouterTools(hob.runtime, "hob", groupId), false).map((tool) => tool.name);
+        const place = groupId ? { groupId } : undefined;
+        const names = scriptToolList(buildRouterTools(hob.runtime, "hob", place), false).map((tool) => tool.name);
         expect(names).toContain("find_knowledge");
         expect(names).not.toContain("search_knowledge");
         expect(names).not.toContain("start_job");
         expect(names).not.toContain("ask_user");
-        const routineTool = buildRouterTools(hob.runtime, "hob", groupId).find((tool) => tool.name === "create_routine")!;
+        const routineTool = buildRouterTools(hob.runtime, "hob", place).find((tool) => tool.name === "create_routine")!;
         expect(JSON.stringify(routineTool.parameters)).toContain("脚本里要调用你的工具（包括插件），用 node 运行 JS，全局对象 tools 就是你能用的工具。");
       }
       const routine = hob.runtime.routines.create({ assistantId: "hob", name: "检查", instruction: "检查", schedules: ["0 9 * * *"], check: { script: "node -e 'tools.find_knowledge({}).then(() => {})'", then: "notify" } });

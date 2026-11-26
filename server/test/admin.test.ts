@@ -44,7 +44,7 @@ function setup(): { hob: TestHob; group: Group } {
 }
 
 async function run(hob: TestHob, assistantId: string, name: string, args: Record<string, unknown>, groupId?: string): Promise<Result> {
-  const tool = buildRouterTools(hob.runtime, assistantId, groupId).find((item) => item.name === name);
+  const tool = buildRouterTools(hob.runtime, assistantId, groupId ? { groupId } : undefined).find((item) => item.name === name);
   if (!tool) throw new Error(`没有工具：${name}`);
   return (await tool.execute("call", args)) as Result;
 }
@@ -94,13 +94,13 @@ describe("只有主助手有管理工具", () => {
   it("主助手在群里能管理助手和群，成员都能管理群规则", async () => {
     const { hob, group } = setup();
     try {
-      const primary = await hob.runtime.router.ensure("hob", group.id);
+      const primary = await hob.runtime.router.ensure("hob", { groupId: group.id });
       const names = primary.session!.getActiveToolNames();
       for (const name of ["show_assistant", "show_group", "create_assistant", "update_assistant", "create_group", "update_group", "manage_topic", "set_rule", "create_routine", "save_skill", "delete_skill"]) {
         expect(names, name).toContain(name);
       }
       expect(names).not.toContain("message_assistant");
-      const member = await hob.runtime.router.ensure("ops", group.id);
+      const member = await hob.runtime.router.ensure("ops", { groupId: group.id });
       const memberNames = member.session!.getActiveToolNames();
       expect(memberNames).toContain("set_rule");
       expect(memberNames).toContain("remove_rule");

@@ -68,7 +68,7 @@ describe("群任务权限", () => {
       save("t-inside", topic.id); save("t-outside", other.id); save("t-direct");
       const reply = vi.spyOn(hob.runtime.jobs, "reply").mockResolvedValue(undefined as never);
       const stop = vi.spyOn(hob.runtime.jobs, "stop").mockResolvedValue(undefined as never);
-      const tools = buildRouterTools(hob.runtime, "ops", group.id);
+      const tools = buildRouterTools(hob.runtime, "ops", { groupId: group.id });
       const invoke = (name: string, jobId: string) => tools.find((tool) => tool.name === name)!.execute("test", { jobId, text: "继续" });
       expect((await invoke("check_job", "t-inside")).isError).not.toBe(true);
       expect((await invoke("reply_job", "t-inside")).isError).not.toBe(true);
@@ -87,7 +87,7 @@ describe("群规则", () => {
     try {
       const first = hob.runtime.groups.createTopic(group.id, "第一件事", "user");
       const second = hob.runtime.groups.createTopic(group.id, "第二件事", "user");
-      const tool = buildRouterTools(hob.runtime, "ops", first.id).find((item) => item.name === "set_rule")!;
+      const tool = buildRouterTools(hob.runtime, "ops", { groupId: first.id }).find((item) => item.name === "set_rule")!;
       await tool.execute("rule", { text: "只在这个话题确认", mode: "ask" });
       expect(hob.runtime.store.rules("ops")).toEqual([]);
       expect(hob.runtime.store.groupRules(first.id)).toMatchObject([{ text: "只在这个话题确认", mode: "ask", from: "topic" }]);
@@ -199,7 +199,7 @@ describe("群里的卡片和结果回流", () => {
     try {
       const state = await hob.runtime.router.ensure("ops");
       state.currentDelegationId = "dg-test";
-      const tools = buildRouterTools(hob.runtime, "ops", group.id);
+      const tools = buildRouterTools(hob.runtime, "ops", { groupId: group.id });
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("好")]);
       await tools.find((tool) => tool.name === "start_job")!.execute("call", { title: "测试任务", note: "测试任务交接说明" });
       const job = hob.runtime.store.jobs().find((item) => item.title === "测试任务")!;
@@ -234,7 +234,7 @@ describe("群里的卡片和结果回流", () => {
     const { hob, group } = setup();
     const outside = mkdtempSync(join(tmpdir(), "hob-send-"));
     try {
-      const send = buildRouterTools(hob.runtime, "ops", group.id).find((tool) => tool.name === "send_file")!;
+      const send = buildRouterTools(hob.runtime, "ops", { groupId: group.id }).find((tool) => tool.name === "send_file")!;
       const shot = join(outside, "截图.png");
       writeFileSync(shot, PNG);
       const sent = await send.execute("call", { path: shot });
@@ -263,7 +263,7 @@ describe("群里的卡片和结果回流", () => {
     });
     await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
     try {
-      const tools = buildRouterTools(hob.runtime, "ops", group.id);
+      const tools = buildRouterTools(hob.runtime, "ops", { groupId: group.id });
       const file = join(hob.home, "报告.txt");
       writeFileSync(file, "内容");
       const sent = await tools.find((tool) => tool.name === "send_file")!.execute("call", { path: file });
@@ -276,7 +276,7 @@ describe("群里的卡片和结果回流", () => {
       writeSecret(hob.home, "imageApiKey", "fake");
       const events: GroupItem[] = [];
       hob.runtime.bus.subscribe((event) => { if (event.type === "group-item" && event.item.kind === "image") events.push(event.item); });
-      const image = buildRouterTools(hob.runtime, "ops", group.id).find((tool) => tool.name === "generate_image")!.execute("call", { prompt: "猫" });
+      const image = buildRouterTools(hob.runtime, "ops", { groupId: group.id }).find((tool) => tool.name === "generate_image")!.execute("call", { prompt: "猫" });
       await waitFor(() => !!respond);
       expect(events[0]).toMatchObject({ kind: "image", speaker: "ops", status: "pending", prompt: "猫" });
       respond!();
@@ -314,12 +314,12 @@ describe("群里的卡片和结果回流", () => {
     const { hob, group } = setup();
     try {
       hob.runtime.groups.update(group.id, { members: ["hob", "write"] });
-      const card = await hob.runtime.router.addItem("ops", { kind: "note", icon: "info", text: "给用户的一句话" }, group.id);
+      const card = await hob.runtime.router.addItem("ops", { kind: "note", icon: "info", text: "给用户的一句话" }, { groupId: group.id });
       expect(card.id.startsWith("g-")).toBe(false);
       expect(hob.runtime.router.items("ops").items.at(-1)).toMatchObject({ kind: "note", text: "给用户的一句话" });
 
       hob.faux.setResponses([text("收到")]);
-      await hob.runtime.router.event("ops", "结果回来了", undefined, group.id);
+      await hob.runtime.router.event("ops", "结果回来了", undefined, { groupId: group.id });
       await hob.runtime.router.waitIdle("ops");
       expect(readFileSync(hob.runtime.store.routerFile("ops"), "utf8")).toContain("[hob-event] 结果回来了");
       expect(groupItems(hob, group.id).some((item) => item.kind === "note" && item.text === "给用户的一句话")).toBe(false);
@@ -335,7 +335,7 @@ describe("群里的卡片和结果回流", () => {
       hob.faux.setResponses([text("收到")]);
       await hob.runtime.groups.send(group.id, { text: "你好" });
       await settled(hob, group.id, 1);
-      const state = await hob.runtime.router.ensure("hob", group.id);
+      const state = await hob.runtime.router.ensure("hob", { groupId: group.id });
       expect(state.session!.getActiveToolNames()).toContain("memory_read");
     } finally {
       hob.close();
@@ -345,7 +345,7 @@ describe("群里的卡片和结果回流", () => {
   it("群会话的工具里没有 show_page，也没有改档案和规矩的；能把自己的任务沉淀成技能", async () => {
     const { hob, group } = setup();
     try {
-      const state = await hob.runtime.router.ensure("ops", group.id);
+      const state = await hob.runtime.router.ensure("ops", { groupId: group.id });
       const names = state.session!.getActiveToolNames();
       expect(names).toContain("start_job");
       expect(names).toContain("ask_user");
@@ -366,7 +366,7 @@ describe("群里的卡片和结果回流", () => {
       hob.faux.setResponses([call("bash", { command: "sleep 0.5" }), text("好了")]);
       await hob.runtime.groups.send(group.id, { text: "跑一下" });
       await waitFor(() => Boolean(hob.runtime.groups.summary(group.id).activity?.[owner]));
-      await hob.runtime.router.waitIdle(owner, 15_000, group.id);
+      await hob.runtime.router.waitIdle(owner, 15_000, { groupId: group.id });
       await waitFor(() => hob.runtime.groups.summary(group.id).activity === undefined);
     } finally {
       hob.close();
@@ -383,7 +383,7 @@ describe("群里的卡片和结果回流", () => {
       expect(hob.runtime.groups.summary(group.id).busy).toContain("ops");
 
       await hob.runtime.jobs.waitIdle();
-      await hob.runtime.router.waitIdle("ops", 15_000, group.id);
+      await hob.runtime.router.waitIdle("ops", 15_000, { groupId: group.id });
       await waitFor(() => hob.runtime.groups.summary(group.id).busy.length === 0);
     } finally {
       hob.close();

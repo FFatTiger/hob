@@ -56,7 +56,7 @@ describe("任务查看", () => {
       const group = hob.runtime.groups.create({ name: "团队", purpose: "协作", ownerId: "hob", members: ["hob"] });
       const topic = hob.runtime.groups.createTopic(group.id, "相册", "user");
       hob.runtime.store.saveJob({ ...base, groupId: topic.id });
-      const check = async (jobId: string) => (await buildRouterTools(hob.runtime, "hob", group.id).find((tool) => tool.name === "check_job")!.execute("id", { jobId }, undefined, undefined, {} as never)).content[0].text as string;
+      const check = async (jobId: string) => (await buildRouterTools(hob.runtime, "hob", { groupId: group.id }).find((tool) => tool.name === "check_job")!.execute("id", { jobId }, undefined, undefined, {} as never)).content[0].text as string;
       const lines = (await check("t-1")).split("\n");
       expect(lines[0]).toContain(`任务「检查」（t-1）：`);
       expect(lines[1]).toBe("这个任务是话题「相册」开的，结果回到那边。");
@@ -173,7 +173,7 @@ describe("Router 技能工具", () => {
       hob.runtime.store.saveJob({ ...base, groupId: topicA.id });
       const reply = vi.spyOn(hob.runtime.jobs, "reply").mockResolvedValue();
       const stop = vi.spyOn(hob.runtime.jobs, "stop").mockResolvedValue();
-      const run = async (gid: string, name: string) => (await buildRouterTools(hob.runtime, "hob", gid).find((tool) => tool.name === name)!.execute("id", { jobId: "t-1", text: "再查一次" }, undefined, undefined, {} as never)).content[0].text as string;
+      const run = async (gid: string, name: string) => (await buildRouterTools(hob.runtime, "hob", { groupId: gid }).find((tool) => tool.name === name)!.execute("id", { jobId: "t-1", text: "再查一次" }, undefined, undefined, {} as never)).content[0].text as string;
       // 在综合里：任务在话题「相册」
       expect(await run(group.id, "reply_job")).toBe("已交给任务「检查」（t-1），它会接着做。这个任务是话题「相册」创建的，结果回到那边。");
       expect(await run(group.id, "stop_job")).toBe("已停止。这个任务是话题「相册」创建的。");

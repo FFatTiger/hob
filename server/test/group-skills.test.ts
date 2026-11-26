@@ -18,7 +18,7 @@ describe("群技能", () => {
       const dir = groupSkillsDir(hob.home, group.id);
       saveSkill(dir, info); setSkillEnabled(dir, info.name, false);
       const own = saveAssistantSkill(hob.home, "hob", { ...info, content: "个人步骤" });
-      const edit = buildRouterTools(hob.runtime, "hob", group.id).find((tool) => tool.name === "save_skill")!;
+      const edit = buildRouterTools(hob.runtime, "hob", { groupId: group.id }).find((tool) => tool.name === "save_skill")!;
       expect((await edit.execute("edit", { name: info.name, edits: [{ old: "个人步骤", new: "新个人步骤" }] })).isError).not.toBe(true);
       expect(readFileSync(own.path, "utf8")).toContain("新个人步骤");
       hob.runtime.store.saveJob({ id: "t-active", assistantId: "hob", groupId: group.id, title: "任务", instruction: "测试", status: "running", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [], skillsUsed: [info.name] });
@@ -56,7 +56,7 @@ describe("群技能", () => {
       const second = saveAssistantSkill(hob.home, "hob", { name: "own-only", title: "个人技能", description: "自己做事", content: "个人步骤" });
       const open = vi.spyOn(hob.runtime.pi, "open");
       hob.faux.setResponses([call("report", { outcome: "done", result: "完成" }), text("完成")]);
-      const tools = buildRouterTools(hob.runtime, "hob", topic.id);
+      const tools = buildRouterTools(hob.runtime, "hob", { groupId: topic.id });
       expect((await tools.find((tool) => tool.name === "start_job")!.execute("start", { title: "测试", note: "按群里的资料完成测试", skills: ["missing"] })).isError).not.toBe(true);
       await hob.runtime.jobs.waitIdle();
       const job = hob.runtime.store.jobs().find((item) => item.groupId === topic.id)!;

@@ -72,7 +72,7 @@ describe("现在", () => {
       const store = { jobs: () => jobs, group: (id: string) => groups[id], groupMatches: (filter: string, id?: string) => !!id && !!root(id) && root(filter) === root(id), delegations: () => [], approvals: () => approvals, assistant: () => ({ name: "写作" }) };
       const runtime = { store, home: "/tmp/hob-now-empty", settings: { settings: { general: { timezone: "Asia/Shanghai" } } } } as unknown as HobRuntime;
       // 综合：只看自己的，别处是同一个群的话题；单聊和别的群里的管不了，不列
-      expect(nowBlock(runtime, "hob", "g-a")).toBe([
+      expect(nowBlock(runtime, "hob", { groupId: "g-a" })).toBe([
         "【现在】2026-11-04 17:07 周三",
         "进行中：t-g「综合里的」，运行 3 分钟",
         "等用户选：综合里的问题",
@@ -81,7 +81,7 @@ describe("现在", () => {
         "别处等用户选：话题「打印机」里「话题里的问题」",
       ].join("\n"));
       // 话题：自己只列这个话题的，别处是综合和别的话题
-      expect(nowBlock(runtime, "hob", "g-a1")).toBe([
+      expect(nowBlock(runtime, "hob", { groupId: "g-a1" })).toBe([
         "【现在】2026-11-04 17:07 周三",
         "进行中：t-topic「话题里的」，排队中",
         "别处进行中：综合里 t-g「综合里的」，运行 3 分钟；话题「打印机」里 t-sibling「别的话题」，运行 3 分钟",

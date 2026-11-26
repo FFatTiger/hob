@@ -15,12 +15,14 @@ import type {
   JobRound,
   JobStatus,
   JobStep,
+  Place,
   RoutineRun,
   SedimentStatus,
   SavedSkill,
 } from "../../shared/types.ts";
 import { IMAGE_TYPES, isImagePath } from "../../shared/media.ts";
 import { newId } from "./ids.ts";
+import { placeOf } from "./place.ts";
 import { resolveMovedPath } from "./layout.ts";
 import { availableDesktopTools, browserShellEnv, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
@@ -46,6 +48,7 @@ import { pauseToolTimeoutForUser } from "./tool-timeout.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
 import { CWD_BOUND_LOCKED, isInside, loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
+import { samePlace } from "./place.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const ACTIVITY_LIMIT = 200;
@@ -331,7 +334,7 @@ export class JobManager {
       }
     }
     const explicitCwd = normalizeWorkspaceCwdInput(input.cwd);
-    const boundCwd = resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId).bound;
+    const boundCwd = resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId ? { groupId: input.groupId } : undefined).bound;
     let validatedCwd: string | undefined;
     if (boundCwd) {
       validatedCwd = validateJobCwd(this.runtime.home, boundCwd);
@@ -395,7 +398,7 @@ export class JobManager {
     };
     this.store.saveJob(job);
     if (job.delegationId) this.runtime.delegations.addJob(job.delegationId, job.id);
-    await this.runtime.router.addItem(assistantId, { kind: "job", jobId: job.id }, job.groupId);
+    await this.runtime.router.addItem(assistantId, { kind: "job", jobId: job.id }, placeOf(job));
     if (signal?.aborted) {
       await this.finish(job.id, "stopped", undefined, t("创建任务调用已中止"));
       signal.throwIfAborted();
@@ -417,7 +420,8 @@ export class JobManager {
   /** 事件送到哪个助手的会话：群里的任务回它的群会话，其余回单聊。派给别的成员做的，回派任务的助手。 */
   private notifyAssistant(job: Job, text: string, details?: EventDetails): Promise<boolean> {
     const speaker = job.startedBy ?? job.assistantId;
-    if (job.groupId) return this.runtime.router.event(speaker, text, details, job.groupId);
+    const place = placeOf(job);
+    if (place.groupId || place.topicId) return this.runtime.router.event(speaker, text, details, place);
     return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
 
@@ -505,7 +509,7 @@ export class JobManager {
       !!this.runtime.models.find(job.model ?? this.runtime.settings.settings.models.work.ref)?.input.includes("image"),
       job.title,
       join(this.store.workDir(job.id), "screenshots"),
-      { jobId: job.id, place: job.groupId ? { groupId: job.groupId } : {} },
+      { jobId: job.id, place: placeOf(job) },
     );
     const credentialsEnabled = !!desktop && this.runtime.plugins.hasCredentialProvider(job.assistantId);
     customTools.push(registerLoginTool(this.runtime, job.id, sediment, credentialsEnabled));
@@ -958,7 +962,7 @@ export class JobManager {
           .event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
             ...resultDetails,
-          }, next.groupId)
+          }, placeOf(next))
           .catch((error) => console.error("发送定时任务结果失败：", error));
       }
     } else if (assistant) {
@@ -978,7 +982,7 @@ export class JobManager {
     const target = this.store.job(jobId);
     if (!target) throw new Error("没有这个任务。");
     // 用户绕过助手直接对任务说的话，助手也要知道：任务之后来问、交结果时它才对得上
-    if (source === "user") void this.runtime.router.remember(target.assistantId, `用户给任务「${target.title}」（${target.id}）追加了回复：${text}`, target.groupId).catch((error) => console.error("记进助手会话失败：", error));
+    if (source === "user") void this.runtime.router.remember(target.assistantId, `用户给任务「${target.title}」（${target.id}）追加了回复：${text}`, placeOf(target)).catch((error) => console.error("记进助手会话失败：", error));
     const interrupted = this.sediments.has(jobId) ? await this.stopSediment(jobId) : undefined;
     const job = this.store.job(jobId);
     if (!job) throw new Error("没有这个任务。");
@@ -996,7 +1000,7 @@ export class JobManager {
       const queued: Job = { ...rest, rounds, status: "queued", expect: { minutes: 10, source: "default" }, startedAt: undefined };
       this.store.saveJob(queued);
       try {
-        await this.runtime.router.addItem(job.assistantId, { kind: "job", jobId, round: rounds.length }, job.groupId);
+        await this.runtime.router.addItem(job.assistantId, { kind: "job", jobId, round: rounds.length }, placeOf(job));
       } catch (error) {
         this.store.saveJob(job);
         throw error;
@@ -1271,13 +1275,15 @@ export class JobManager {
   }
 
   /** 同一回合结束时，任务的提问没有被助手接住就结束它，避免永久占着等待名额。 */
-  async finishUnansweredQuestions(assistantId: string, groupId?: string): Promise<void> {
-    const hasUserCard = this.store.approvals().some((approval) => approval.status === "pending" && approval.source === "router" && approval.assistantId === assistantId && (groupId ? approval.groupId === groupId : !approval.groupId));
+  async finishUnansweredQuestions(assistantId: string, place?: Place): Promise<void> {
+    const hasUserCard = this.store.approvals().some((approval) =>
+      approval.status === "pending" && approval.source === "router" && approval.assistantId === assistantId && samePlace(placeOf(approval), place),
+    );
     if (hasUserCard) return;
     const waiting = this.store.jobs().filter((job) => {
       if (job.status !== "waiting") return false;
-      if (groupId !== undefined) return job.groupId === groupId && (job.startedBy ?? job.assistantId) === assistantId;
-      return !job.groupId && job.assistantId === assistantId;
+      if (!samePlace(placeOf(job), place)) return false;
+      return place?.groupId !== undefined ? (job.startedBy ?? job.assistantId) === assistantId : job.assistantId === assistantId;
     });
     for (const job of waiting) {
       const approval = this.store.approvals().find((item) => item.jobId === job.id && item.status === "pending");

@@ -24,11 +24,11 @@ describe("群成员模型回归", () => {
       const first = "正在完成原来的回复。".repeat(6);
       hob.faux.setResponses([response(first, seen), response("第二轮完成", seen)]);
       await hob.runtime.groups.send(group.id, { text: "开始" });
-      await waitFor(() => seen.length === 1 && hob.runtime.router.isBusy("hob", group.id));
+      await waitFor(() => seen.length === 1 && hob.runtime.router.isBusy("hob", { groupId: group.id }));
       await hob.runtime.groups.updateModels(group.id, { conversation: pick("smart") });
-      expect(hob.runtime.router.isBusy("hob", group.id)).toBe(true);
+      expect(hob.runtime.router.isBusy("hob", { groupId: group.id })).toBe(true);
       await waitFor(() => hob.runtime.groups.items(group.id).items.some((item) => item.kind === "assistant" && !item.streaming && item.text === first));
-      await hob.runtime.router.waitIdle("hob", 15_000, group.id);
+      await hob.runtime.router.waitIdle("hob", 15_000, { groupId: group.id });
       await hob.runtime.groups.send(group.id, { text: "下一轮" });
       await waitFor(() => hob.runtime.groups.items(group.id).items.some((item) => item.kind === "assistant" && !item.streaming && item.text === "第二轮完成"));
       expect(seen).toEqual(["fast", "smart"]);
@@ -76,7 +76,7 @@ describe("群成员模型回归", () => {
       vi.spyOn(hob.runtime.pi, "open").mockImplementation(async (options) => { opened.push(options as any); return open(options); });
       for (const model of ["smart", "eyes"]) {
         await hob.runtime.groups.updateMemberModels(group.id, "hob", { work: pick(model) });
-        await hob.runtime.router.ensure("hob", group.id);
+        await hob.runtime.router.ensure("hob", { groupId: group.id });
         const start = opened.at(-1)!.customTools.find((tool) => tool.name === "start_job")!;
         expect(start.parameters.properties.model.description).toContain(`hob-faux/${model}（默认）`);
         const result = await start.execute("test", { title: `任务${model}`, note: "按当前模型执行任务" });
@@ -96,8 +96,8 @@ describe("群成员模型回归", () => {
       const opened: any[] = [];
       const open = hob.runtime.pi.open.bind(hob.runtime.pi);
       vi.spyOn(hob.runtime.pi, "open").mockImplementation(async (options) => { opened.push(options); return open(options); });
-      const a = await hob.runtime.router.ensure("hob", group.id);
-      const b = await hob.runtime.router.ensure("hob", second.id);
+      const a = await hob.runtime.router.ensure("hob", { groupId: group.id });
+      const b = await hob.runtime.router.ensure("hob", { groupId: second.id });
       expect(a.desktop).not.toBe(b.desktop);
       expect(a.session!.getActiveToolNames()).toEqual(expect.arrayContaining(["bash", "read", "edit", "write"]));
       expect(b.session!.getActiveToolNames()).toEqual(expect.arrayContaining(["bash", "read", "edit", "write"]));

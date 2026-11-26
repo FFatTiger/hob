@@ -48,7 +48,7 @@ describe("群定时", () => {
       hob.runtime.store.saveAssistant({ ...main, id: "ops", name: "服务器", primary: false });
       const group = hob.runtime.groups.create({ name: "团队", purpose: "协作", ownerId: "hob", members: ["hob", "ops"] });
       const topic = hob.runtime.groups.createTopic(group.id, "话题", "user");
-      const tool = buildRouterTools(hob.runtime, "ops", topic.id).find((item) => item.name === "create_routine")!;
+      const tool = buildRouterTools(hob.runtime, "ops", { groupId: topic.id }).find((item) => item.name === "create_routine")!;
       expect(tool.parameters.properties).not.toHaveProperty("by");
       const result = await tool.execute("routine", { name: "检查", instruction: "检查", schedules: ["0 9 * * *"], skill: "ignored" });
       expect(result.isError).not.toBe(true);
@@ -286,7 +286,7 @@ describe("群话题的定时归话题（P2）", () => {
       const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
       const topic = hob.runtime.groups.createTopic(group.id, "发布检查", "user");
       const said = (result: { content: unknown[] }) => (result.content as { text?: string }[]).map((part) => part.text ?? "").join("");
-      const toolIn = (gid: string, name: string) => buildRouterTools(hob.runtime, "hob", gid).find((item) => item.name === name)!;
+      const toolIn = (gid: string, name: string) => buildRouterTools(hob.runtime, "hob", { groupId: gid }).find((item) => item.name === name)!;
 
       const createdTopic = await toolIn(topic.id, "create_routine").execute("c1", { name: "发布巡检", instruction: "查日志", schedules: ["0 9 * * *"] });
       expect(said(createdTopic)).toContain("到执行时间会在这个话题里执行");

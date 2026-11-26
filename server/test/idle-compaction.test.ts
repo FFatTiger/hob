@@ -10,12 +10,12 @@ async function openIdleConversation(hob: ReturnType<typeof makeHob>, groupId?: s
   hob.faux.setResponses([text("旧回复")]);
   if (groupId) {
     await hob.runtime.groups.send(groupId, { text: "旧消息" });
-    await hob.runtime.router.waitIdle("hob", 15_000, groupId);
+    await hob.runtime.router.waitIdle("hob", 15_000, { groupId });
   } else {
     await hob.runtime.router.send("hob", { text: "旧消息" });
     await hob.runtime.router.waitIdle("hob");
   }
-  const state = await hob.runtime.router.ensure("hob", groupId);
+  const state = await hob.runtime.router.ensure("hob", groupId ? { groupId } : undefined);
   vi.spyOn(state.session!, "getContextUsage").mockReturnValue(context);
   return state;
 }
@@ -217,7 +217,7 @@ describe("Router 闲置会话整理", () => {
       await hob.runtime.router.compactIdleSessions();
       expect(open).toHaveBeenCalledTimes(2);
       expect((await hob.runtime.router.ensure("hob")).session!.compact).toHaveBeenCalledTimes(1);
-      expect((await hob.runtime.router.ensure("hob", group.id)).session!.compact).toHaveBeenCalledTimes(1);
+      expect((await hob.runtime.router.ensure("hob", { groupId: group.id })).session!.compact).toHaveBeenCalledTimes(1);
 
       hob.runtime.router.disposeAll();
       await hob.runtime.router.compactIdleSessions();

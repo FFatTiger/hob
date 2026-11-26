@@ -92,7 +92,7 @@ describe("群", () => {
       hob.faux.setResponses([text("看到了")]);
       await hob.runtime.groups.send(group.id, { text: "看图", files: [path] });
       await settled(hob, group.id, 1);
-      const session = await hob.runtime.router.ensure("hob", group.id);
+      const session = await hob.runtime.router.ensure("hob", { groupId: group.id });
       const user = session.session!.messages.find((message) => message.role === "user");
       expect(user?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: expect.stringMatching(/^image\//) })]));
     } finally { hob.close(); }
@@ -100,7 +100,7 @@ describe("群", () => {
   it("会话启动预检成功但消息未接收时不推进游标", async () => {
     const { hob, group } = setup();
     try {
-      const state = await hob.runtime.router.ensure("hob", group.id);
+      const state = await hob.runtime.router.ensure("hob", { groupId: group.id });
       vi.spyOn(state.session!, "prompt").mockImplementation(async (_text, options) => {
         options?.preflightResult?.("started");
         throw new Error("提交前出错");

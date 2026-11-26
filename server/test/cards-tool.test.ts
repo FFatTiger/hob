@@ -36,7 +36,7 @@ const EXPECTED_SEND_CARD_DESCRIPTION = `**说明**：在对话里发一张卡片
   - 表单：单独一行 \`:::form{name=…}\` 开始，单独一行 \`:::\` 结束，里面的输入在点 \`submit\` 按钮时一起交回。表单里的每个输入都要有不重复的 \`name\`。`;
 
 function tool(hob: ReturnType<typeof makeHob>, groupId?: string) {
-  return buildRouterTools(hob.runtime, "hob", groupId).find((entry) => entry.name === "send_card")!;
+  return buildRouterTools(hob.runtime, "hob", groupId ? { groupId } : undefined).find((entry) => entry.name === "send_card")!;
 }
 
 describe("send_card", () => {

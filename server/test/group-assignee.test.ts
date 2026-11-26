@@ -33,7 +33,7 @@ function setup(): { hob: TestHob; group: Group; topic: Group } {
 }
 
 async function runTool(hob: TestHob, assistantId: string, gid: string | undefined, name: string, params: Record<string, unknown>) {
-  const tool = buildRouterTools(hob.runtime, assistantId, gid).find((item) => item.name === name)!;
+  const tool = buildRouterTools(hob.runtime, assistantId, gid ? { groupId: gid } : undefined).find((item) => item.name === name)!;
   const handoff = ["start_job", "message_assistant", "message_group", "open_topic"].includes(name) && !("note" in params) ? { ...params, note: "测试交接说明" } : params;
   return tool.execute("call-1", handoff, undefined, undefined, {} as never) as Promise<{ content: { text: string }[] }>;
 }
@@ -116,7 +116,7 @@ describe("群里派任务可以指定成员", () => {
   it("参数说明照原文；单聊里没有这个参数", () => {
     const { hob, topic } = setup();
     try {
-      const groupTool = buildRouterTools(hob.runtime, "hob", topic.id).find((item) => item.name === "start_job")!;
+      const groupTool = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).find((item) => item.name === "start_job")!;
       expect(groupTool.parameters.properties.assistantId.description).toBe("谁来做：群里一位成员的 id，任务以它的身份运行，用它的技能和记忆。不填就是你自己。");
       const single = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "start_job")!;
       expect(single.parameters.properties.assistantId).toBeUndefined();

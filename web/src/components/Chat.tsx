@@ -10,7 +10,7 @@ import { fileIcon } from "../file-icons.ts";
 import { Icon } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { Avatar } from "../sprites.tsx";
-import { applyMention, filterMembers, mentionAt, stepPick } from "../mention.ts";
+import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
   expandPanel,
   toggleSideCollapsed,
@@ -588,6 +588,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
           }}
           onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? 0)}
           onKeyDown={(e) => {
+            if (isImeCompositionEvent(e.nativeEvent)) return;
             if (showing) {
               if (e.key === "ArrowDown") {
                 e.preventDefault();
@@ -610,7 +611,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
                 return;
               }
             }
-            if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
+            if (e.key === "Enter" && !e.shiftKey) {
               e.preventDefault();
               void send();
             }

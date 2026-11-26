@@ -988,6 +988,37 @@ describe("转交挪进话题完整状态机", () => {
       expect(textOf(blocked)).toContain("待答提问");
       expect(hob.runtime.assistantTopics.list("multi")).toHaveLength(0);
       expect(hob.runtime.store.delegation(dWait.id)?.toTopicId).toBeUndefined();
+
+      // 场景 C：主对话存在非本转交的历史未答单聊审批时，新转交仍可正常 open_topic 挪进话题
+      hob.runtime.store.saveApproval({
+        id: "q-legacy-main-chat",
+        assistantId: "multi",
+        title: "历史单聊未答提问",
+        options: [{ key: "A", label: "知道" }, { key: "B", label: "算了" }],
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      const dFresh: Delegation = {
+        id: "dg-fresh-with-legacy-approval",
+        from: "hob",
+        to: "multi",
+        text: "全新转交",
+        status: "running",
+        approvalIds: [],
+        createdAt: new Date().toISOString(),
+        jobIds: [],
+      };
+      hob.runtime.store.saveDelegation(dFresh);
+      stateB.currentDelegationId = dFresh.id;
+      hob.faux.setResponses([text("话题里处理完了。")]);
+      const allowed = await openTool.execute("allow-fresh", { title: "新转交话题", note: "历史单聊提问不应拦截全新转交" });
+      expect(allowed.isError).toBeUndefined();
+      const topics = hob.runtime.assistantTopics.list("multi");
+      expect(topics).toHaveLength(1);
+      await waitFor(() => Boolean(hob.runtime.store.delegation(dFresh.id)?.reportedAt));
+      expect(hob.runtime.store.delegation(dFresh.id)?.toTopicId).toBe(topics[0].id);
+      await hob.runtime.router.waitIdle("multi", { topicId: topics[0].id });
     } finally {
       hob.close();
     }

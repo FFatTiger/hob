@@ -1495,8 +1495,7 @@ export function buildRouterTools(
                 !approval.topicId &&
                 !approval.groupId &&
                 (current?.approvalIds?.includes(approval.id) ||
-                  (approval.jobId && (current?.jobIds.includes(approval.jobId) || store.job(approval.jobId)?.delegationId === delegationId)) ||
-                  (approval.source === "router" && approval.assistantId === assistantId)),
+                  (approval.jobId && (current?.jobIds.includes(approval.jobId) || store.job(approval.jobId)?.delegationId === delegationId))),
             );
             if (hasMainApproval) {
               return "这件转交已经在主对话向用户发了待答提问，等用户答复后再决定是否转到话题，或继续在主对话处理。";

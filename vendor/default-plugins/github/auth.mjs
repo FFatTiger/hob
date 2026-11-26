@@ -438,11 +438,11 @@ export function createAuthManager(env = process.env, options = {}) {
   async function signedOutStatus() {
     if (appConfigured) {
       const slug = (await getAppInfo().catch(() => null))?.slug;
-      return { signedIn: false, optional: true, detail: `正在用 GitHub App${slug ? `（${slug}）` : ""}。也可以再用 hob-bot 登录，App 没装的仓库会改用登录的身份。` };
+      return { signedIn: false, optional: true, detail: `正在用 GitHub App${slug ? `（${slug}）` : ""}，不用再登录。App 没装的仓库，可以再用 hob-bot 登录补上。`, startLabel: "用 hob-bot 登录" };
     }
     if (pat) {
       const login = (await getUserForToken(pat))?.login;
-      return { signedIn: false, optional: true, detail: `正在用个人访问令牌${login ? `（${login}）` : ""}。也可以改用 hob-bot 登录，不用自己建令牌。` };
+      return { signedIn: false, optional: true, detail: `正在用个人访问令牌${login ? `（${login}）` : ""}，不用再登录。`, startLabel: "改用 hob-bot 登录" };
     }
     return { signedIn: false };
   }

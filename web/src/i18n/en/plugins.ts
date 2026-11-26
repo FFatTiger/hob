@@ -100,7 +100,7 @@ export const pluginsEn = {
   "卸载插件": "Uninstall plugin",
   "卸载插件「{name}」？": "Uninstall “{name}”?",
   "更多": "More",
-  "更多设置": "More settings",
+  "选填设置": "Optional settings",
   "修改配置": "Edit configuration",
   "停用": "Disable",
   "登录": "Sign in",

@@ -51,6 +51,8 @@ export interface PluginToolLoginStatus {
   signedIn: boolean;
   /** 不登录插件也能用（比如已经填了令牌）：登录只是附加选项，不提示「未登录」 */
   optional?: boolean;
+  /** 登录按钮上的字，比如「改用 xx 登录」；不给就是「登录」 */
+  startLabel?: string;
   account?: string;
   detail?: string;
   error?: string;

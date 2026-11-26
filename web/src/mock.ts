@@ -67,7 +67,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.17.1" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -88,6 +88,7 @@ export const SCENE_UI: Record<
   "tool-login-signed-out": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "tool-login-device": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "tool-login-signed-in": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
+  "tool-login-optional": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-demo": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-install-progress": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   "provider-install-done": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
@@ -2910,7 +2911,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       makeConnected(readmeCatalog[4]!, "vault"),
       readmeCopilot,
     );
-  } else if (scene === "tool-login-signed-out" || scene === "tool-login-device" || scene === "tool-login-signed-in") {
+  } else if (scene === "tool-login-signed-out" || scene === "tool-login-device" || scene === "tool-login-signed-in" || scene === "tool-login-optional") {
     const codeforgePlugin: PluginView = {
       plugin: {
         id: "codeforge",
@@ -2974,7 +2975,14 @@ export function createMock(scene: SceneId = "s1"): HobApi {
                 "Signed in as lin-dev · Installed on 2 workspaces · [Manage access](https://codeforge.example/apps)",
               ),
             }
-          : { signedIn: false },
+          : scene === "tool-login-optional"
+            ? {
+                signedIn: false,
+                optional: true,
+                detail: L("正在用访问令牌（lin-dev），不用再登录。", "Using the access token (lin-dev); no sign-in needed."),
+                startLabel: L("改用 CodeForge 登录", "Sign in with CodeForge instead"),
+              }
+            : { signedIn: false },
       },
       services: [
         {

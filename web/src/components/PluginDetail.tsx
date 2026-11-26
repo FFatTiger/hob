@@ -58,7 +58,7 @@ export function ToolPluginLoginRow({
       <div className="plugin-connection-top plugin-connection-detail">
         <span>{status.detail ? <InlineLinks text={status.detail} /> : null}</span>
         <span className="sp" />
-        {canStart && !inDeviceFlow ? <button type="button" className="hob-btn plugin-btn-white" disabled={busy} onClick={onStart}>{t("登录")}</button> : null}
+        {canStart && !inDeviceFlow ? <button type="button" className="plugin-link-btn" disabled={busy} onClick={onStart}>{status.startLabel || t("登录")}</button> : null}
       </div>
     );
   }
@@ -109,7 +109,7 @@ export function FileField({ configured, onChange }: { configured: boolean; onCha
 
 export function MoreSettings({ initialOpen, children }: { initialOpen: boolean; children: React.ReactNode }) {
   const [open, setOpen] = useState(initialOpen);
-  return <Disclosure className="plugin-more" label={t("更多设置")} count={t("{n} 项", { n: Children.count(children) })} open={open} onToggle={() => setOpen(value => !value)}>{children}</Disclosure>;
+  return <Disclosure className="plugin-more" label={t("选填设置")} count={t("{n} 项", { n: Children.count(children) })} open={open} onToggle={() => setOpen(value => !value)}>{children}</Disclosure>;
 }
 
 export function configGroups(config: PluginView["config"], values: Record<string, unknown>) {

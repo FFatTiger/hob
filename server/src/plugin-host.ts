@@ -88,6 +88,7 @@ function parseLoginStatus(
   return {
     signedIn: data.signedIn,
     ...(data.optional === true ? { optional: true } : {}),
+    ...(typeof data.startLabel === "string" && data.startLabel.trim() ? { startLabel: redact(data.startLabel.trim()) } : {}),
     ...(typeof data.account === "string" && data.account ? { account: redact(data.account) } : {}),
     ...(typeof data.detail === "string" && data.detail ? { detail: redact(data.detail) } : {}),
   };

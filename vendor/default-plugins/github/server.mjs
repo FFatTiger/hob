@@ -6,7 +6,7 @@ import { appendAttribution, appendCoAuthor, commitMessageArg, shouldAttributeToo
 import { AuthError, createAuthManager, extractScopeFromArgs } from "./auth.mjs";
 import { RemoteMcpClient } from "./remote-mcp.mjs";
 
-const SERVER_INFO = { name: "github", version: "2.0.5" };
+const SERVER_INFO = { name: "github", version: "2.0.6" };
 const DEFAULT_PROTOCOL_VERSION = "2025-03-26";
 
 function errorToolResult(message) {

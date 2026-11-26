@@ -286,6 +286,7 @@ test("没登录 hob-bot 但填了个人令牌：登录只是附加选项，状�
     assert.equal(status.structuredContent.signedIn, false);
     assert.equal(status.structuredContent.optional, true);
     assert.match(status.structuredContent.detail, /个人访问令牌（octocat）/);
+    assert.equal(status.structuredContent.startLabel, "改用 hob-bot 登录");
   } finally {
     await client.close();
     await fake.close();

@@ -20,7 +20,10 @@
 .plugin-main { min-width: 0; }
 .plugins .setmain > .plugin-content { max-width: 656px; }
 .plugin-title { font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
-.plugin-sub { font-size: 14px; color: var(--text2); line-height: 1.6; margin-top: 6px; }
+.plugin-sub { font-size: 14px; color: var(--text2); line-height: 1.6; margin-top: 6px; white-space: pre-line; }
+/* 可选的登录：一行里的文字按钮，不抢「已连接」的意思 */
+.plugin-link-btn { flex: none; padding: 0; background: none; border: 0; color: var(--text2); font: inherit; font-size: 13px; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
+.plugin-link-btn:disabled { opacity: .45; cursor: not-allowed; }
 .plugin-count { margin: 24px 0 10px; }
 .plugin-icon { width: 46px; height: 46px; border-radius: 12px; background: var(--field); display: grid; place-items: center; color: var(--text3); flex: none; }
 .plugin-icon img { width: 28px; height: 28px; object-fit: contain; }

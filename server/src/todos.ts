@@ -7,7 +7,7 @@ import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { Iso, Place, TodoItem } from "../../shared/types.ts";
-import { assistantTodosPath, groupTodosPath } from "./config.ts";
+import { assistantTodosPath, assistantTopicTodosPath, groupTodosPath } from "./config.ts";
 import { placeOf, samePlace } from "./place.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { agoText } from "./time.ts";
@@ -153,15 +153,21 @@ function isTodo(value: unknown): value is TodoItem {
   return typeof entry.text === "string" && STATUSES.includes(entry.status as TodoStatus);
 }
 
-/** 一个会话的待办在哪：群会话（综合、话题）在群目录下，单聊在助手目录下。 */
+/** 一个会话的待办在哪：群会话（综合、话题）在群目录下，助手话题在话题目录下，单聊在助手目录下。 */
 export function sessionTodosPath(home: string, assistantId: string, place?: Place): string {
-  return place?.groupId ? groupTodosPath(home, place.groupId) : assistantTodosPath(home, assistantId);
+  if (place?.groupId) return groupTodosPath(home, place.groupId);
+  if (place?.topicId) return assistantTopicTodosPath(home, assistantId, place.topicId);
+  return assistantTodosPath(home, assistantId);
 }
 
 /** 待办变了：告诉界面（左栏、输入框上方那一条看它）。 */
 function publishTodos(runtime: HobRuntime, assistantId: string, place?: Place): void {
   if (place?.groupId) {
     runtime.groups.publish(place.groupId);
+    return;
+  }
+  if (place?.topicId) {
+    runtime.assistantTopics.publish(assistantId, place.topicId);
     return;
   }
   const assistant = runtime.store.assistant(assistantId);
@@ -184,12 +190,12 @@ function busyHere(runtime: HobRuntime, assistantId: string, place?: Place): bool
  */
 export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Place): boolean {
   if (busyHere(runtime, assistantId, place)) return true;
-  // 转交和交给群只从单聊发出（群会话里没有 message_assistant、message_group），群会话不算这两样
-  const delegating = !place?.groupId && runtime.store
+  // 转交和交给群只从单聊/主对话发出（群会话与话题各自不混算）
+  const delegating = !place?.groupId && !place?.topicId && runtime.store
     .delegations()
     .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
   if (delegating) return true;
-  const handedOver = !place?.groupId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
+  const handedOver = !place?.groupId && !place?.topicId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
   if (handedOver) return true;
   const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), place) && (place?.groupId !== undefined || approval.assistantId === assistantId));
   if (asking) return true;
@@ -210,7 +216,12 @@ export function releaseIdleTodos(runtime: HobRuntime, assistantId: string, place
 
 /** 启动时把各会话手上已经没活的待办收起：任务和转交都按中断处理过了，再没有手上的活。 */
 export function releaseIdleTodosAtStartup(runtime: HobRuntime): void {
-  for (const assistant of runtime.store.assistants()) releaseIdleTodos(runtime, assistant.id);
+  for (const assistant of runtime.store.assistants()) {
+    releaseIdleTodos(runtime, assistant.id);
+    for (const topic of runtime.store.assistantTopics(assistant.id)) {
+      releaseIdleTodos(runtime, assistant.id, { topicId: topic.id });
+    }
+  }
   for (const group of runtime.store.groups()) releaseIdleTodos(runtime, group.ownerId, { groupId: group.id });
 }
 

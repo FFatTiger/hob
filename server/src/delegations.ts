@@ -1,4 +1,4 @@
-import type { Delegation } from "../../shared/types.ts";
+import type { Delegation, Place } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
 import { jobResultEvent } from "./jobs.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -44,10 +44,11 @@ export class DelegationManager {
     return delegation;
   }
 
-  takeOver(to: string): void {
+  takeOver(to: string, place?: Place): void {
     const { store, bus } = this.runtime;
+    const targetTopicId = place?.topicId || undefined;
     for (const record of store.internalDelegations()) {
-      if (record.to !== to || record.reportedAt || (record as StoredDelegation).pendingResult || record.status === "interrupted") continue;
+      if (record.to !== to || (record.toTopicId || undefined) !== targetTopicId || record.reportedAt || (record as StoredDelegation).pendingResult || record.status === "interrupted") continue;
       const now = new Date().toISOString();
       const delegation: StoredDelegation = { ...record, status: "takenOver", endedAt: now, pendingResult: `转交给「${store.assistant(to)?.name ?? to}」的事已被用户接手。交接说明：${record.text}` };
       store.saveDelegation(delegation);

@@ -258,6 +258,7 @@ export interface CardRecord {
   /** 插件卡的回调目标，只在服务端使用，不展示给模型。 */
   plugin?: { service: string; callbackTool?: string; pluginName: string };
   groupId?: string;
+  topicId?: string;
   card: Card;
   status: "open" | "done";
   result?: CardActionResult;

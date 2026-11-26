@@ -290,6 +290,7 @@ const EVENT_TYPES: HobEvent["type"][] = [
   "rules",
   "assistant",
   "assistant_removed",
+  "assistant_topic",
   "item",
   "delta",
   "job",

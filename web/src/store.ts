@@ -1221,7 +1221,7 @@ async function loadBootstrap(reconnect = false) {
 
 const closedLivePages = new Set<string>();
 export function applyEvent(ev: HobEvent) {
-  if (ev.type === "item" || ev.type === "delta") itemEvents.get(ev.assistantId)?.push(ev);
+  if ((ev.type === "item" || ev.type === "delta") && !ev.topicId) itemEvents.get(ev.assistantId)?.push(ev);
   if (ev.type === "group-item" || ev.type === "group-delta") groupEvents.get(ev.groupId)?.push(ev);
   switch (ev.type) {
     case "stars":
@@ -1256,6 +1256,7 @@ export function applyEvent(ev: HobEvent) {
       break;
     }
     case "router-activity":
+      if (ev.topicId) break;
       set((s) => ({ assistants: s.assistants.map((a) => a.id === ev.assistantId ? { ...a, activity: ev.activity } : a) }));
       break;
     case "assistant_removed":
@@ -1266,6 +1267,7 @@ export function applyEvent(ev: HobEvent) {
       }));
       break;
     case "item": {
+      if (ev.topicId) break;
       const list = state.items[ev.assistantId];
       if (!list) break;
       const outbox = state.pending[ev.assistantId] ?? [];
@@ -1278,6 +1280,7 @@ export function applyEvent(ev: HobEvent) {
       break;
     }
     case "delta": {
+      if (ev.topicId) break;
       const list = state.items[ev.assistantId];
       if (!list) break;
       const next = applyDelta(list, ev.itemId, ev.text);

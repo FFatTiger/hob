@@ -13,6 +13,12 @@ export const CWD_IMMUTABLE = "工作目录仅支持在创建时绑定，创建�
 export const CWD_BOUND_LOCKED = "当前工作目录已绑定，任务只能在它里面的目录运行：cwd 换成绑定目录下的子目录，或者不填。";
 export const topicCwdLockedByGroup = (path: string) =>
   `所属群已绑定工作目录（${path}），话题自动沿用群目录，不支持单独指定。`;
+export function topicCwdLockedByAssistant(cwd: string): string;
+export function topicCwdLockedByAssistant(assistant: unknown, cwd: string): string;
+export function topicCwdLockedByAssistant(first: unknown, second?: string): string {
+  const path = typeof second === "string" ? second : String(first);
+  return `助手绑定了工作目录 ${path}，话题沿用它，不能另外绑定`;
+}
 
 export type WorkspaceSource = "topic" | "group" | "assistant" | "default";
 
@@ -130,6 +136,12 @@ export function resolveWorkspaceCwd(
   if (assistant && !assistant.primary && assistant.cwd) {
     return { bound: assistant.cwd, source: "assistant", sessionCwd: assistant.cwd };
   }
+  if (place?.topicId) {
+    const topic = store.assistantTopic(assistantId, place.topicId);
+    if (topic?.cwd) {
+      return { bound: topic.cwd, source: "topic", sessionCwd: topic.cwd };
+    }
+  }
   return { source: "default", sessionCwd: assistantWorkDir(home, assistantId) };
 }
 
@@ -182,6 +194,11 @@ export function allowedWorkspaceDirs(store: Store): string[] {
   const dirs = new Set<string>();
   for (const assistant of store.assistants()) {
     if (!assistant.primary && assistant.cwd) dirs.add(assistant.cwd);
+    if (!assistant.primary) {
+      for (const topic of store.assistantTopics(assistant.id)) {
+        if (topic.cwd) dirs.add(topic.cwd);
+      }
+    }
   }
   for (const group of store.groups()) {
     if (group.cwd) dirs.add(group.cwd);

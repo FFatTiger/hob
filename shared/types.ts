@@ -836,6 +836,7 @@ export interface Delegation {
   returnedText?: string; // 退回时补充的用户要求
   endedAt?: Iso;
   approvalIds?: string[];
+  toTopicId?: string;
   turnFinished?: boolean;
   turnFailed?: boolean;
   reportedAt?: Iso;
@@ -942,6 +943,7 @@ export interface Job {
   skillsUsed?: string[]; // 这次读过的沉淀技能（AssistantSkill.name：助手自己的和群里沉淀的）
   delegationId?: string; // 转交回合创建的任务
   groupId?: string; // 在群里开的任务：卡片进群的时间线，结果回到这个成员在群里的会话
+  topicId?: string; // 在助手话题里开的任务：卡片进话题，结果回话题
   startedBy?: string; // 群里派给别的成员时，派活的那个助手：结果和提问回到它，不回执行人的单聊
   /** 续做前每一轮结束时的样子（第 0 轮起）。任务详情里切换着看前几轮；对话里只留最新一轮那张卡，跟着任务实时变 */
   rounds?: JobRound[];
@@ -1063,6 +1065,7 @@ export interface Approval {
   source: "router" | "job";
   jobId?: string;
   groupId?: string; // 在群里提的问题：卡片进群的时间线
+  topicId?: string; // 在助手话题里提的问题：答案回话题
   ruleText?: string; // always 选项要写进规则的文字，如 "发布公众号"
   login?: { site: string; reason: string; fillLogin?: FillLoginApproval; entry?: LoginEntryApproval; fillNewPassword?: FillNewPasswordApproval }; // login 工具的交接信息：自己登录卡、批准卡、录入卡，或新密码批准卡
   createdAt: Iso;
@@ -1095,7 +1098,7 @@ export interface Draft {
 export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info" | "skill";
 
 export type Item = (
-  | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string }; reactions?: { by: string; emoji: string }[] }
+  | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string }; forwardedFrom?: { groupId: string; itemId: string } | { assistantId: string; itemId?: string }; reactions?: { by: string; emoji: string }[] }
   | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string; jobId?: string }; quote?: { itemId: string; text: string } }
   | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; routineId?: string; handbackId?: string; path?: string; targetGroupId?: string; detail?: string } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
   | { kind: "todos"; id: string; at: Iso; items: TodoItem[]; why: TodoArchiveWhy } // 老数据：以前收起的一份待办。现在不再写入，界面不显示（对话里只放用户需要看的东西）
@@ -1448,6 +1451,7 @@ export interface JobFilesView {
 
 export interface Bootstrap {
   assistants: AssistantSummary[];
+  assistantTopics: AssistantTopicSummary[];
   jobs: Job[]; // 在跑的 + 最近 24 小时结束的
   routines: Routine[];
   approvals: Approval[]; // pending
@@ -1464,17 +1468,18 @@ export type HobEvent =
   | ({ type: "page-live" } & PageLive)
   | { type: "assistant"; assistant: AssistantSummary } // 新建或变化
   | { type: "assistant_removed"; id: string }
+  | { type: "assistant_topic"; topic: AssistantTopicSummary } // 助手话题新建或变化
   | { type: "group"; group: GroupSummary } // 新建或变化
   | { type: "group_removed"; id: string }
   | { type: "group-item"; groupId: string; item: GroupItem } // 新条目，或按 id 替换
   | { type: "group-delta"; groupId: string; itemId: string; text: string } // 流式追加
   | { type: "group-activity"; groupId: string; speaker: string; activity: RouterActivity | null }
-  | { type: "item"; assistantId: string; item: Item } // 新条目，或按 id 替换
-  | { type: "delta"; assistantId: string; itemId: string; text: string } // 流式追加到 assistant 条目
+  | { type: "item"; assistantId: string; topicId?: string; item: Item } // 新条目，或按 id 替换
+  | { type: "delta"; assistantId: string; topicId?: string; itemId: string; text: string } // 流式追加到 assistant 条目
   | { type: "job"; job: Job }
   | { type: "delegation"; delegation: Delegation }
   | { type: "job_step"; jobId: string; step: JobStep } // 新的一步，或按 id 替换（输出流式更新、跑完补结果）
-  | { type: "router-activity"; assistantId: string; activity: RouterActivity | null }
+  | { type: "router-activity"; assistantId: string; topicId?: string; activity: RouterActivity | null }
   | { type: "activity"; jobId: string; line: ActivityLine; stats: Job["stats"] }
   | { type: "approval"; approval: Approval }
   | { type: "card"; card: CardRecord }

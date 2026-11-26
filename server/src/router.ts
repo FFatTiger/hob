@@ -52,7 +52,9 @@ import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
-import { reactionsList } from "./store.ts";
+import { reactionsList, type AssistantState } from "./store.ts";
+import { TOPIC_CLOSED } from "./groups.ts";
+import { TopicError } from "./assistant-topics.ts";
 import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./follow-up.ts";
 
 export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
@@ -327,7 +329,7 @@ function walk(entries: SessionEntry[]): { items: Item[]; lead: boolean } {
   };
   for (const entry of entries) {
     if (entry.type === "custom" && entry.customType === USER_TYPE) {
-      const data = (entry.data ?? {}) as { text?: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string } };
+      const data = (entry.data ?? {}) as { text?: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string }; forwardedFrom?: { assistantId: string; itemId?: string } };
       items.push({
         kind: "user",
         id: entry.id,
@@ -336,6 +338,7 @@ function walk(entries: SessionEntry[]): { items: Item[]; lead: boolean } {
         ...(data.quote ? { quote: data.quote } : {}),
         ...(data.files?.length ? { files: data.files } : {}),
         ...(data.from ? { from: data.from } : {}),
+        ...(data.forwardedFrom ? { forwardedFrom: data.forwardedFrom } : {}),
       });
       lead = false;
       continue;
@@ -397,9 +400,10 @@ export class RouterManager {
   /** 不在内存里的会话：上次查过的会话文件修改时间，文件没变就不再打开 */
   private idleChecked = new Map<string, number>();
 
-  private liveUpdate(assistantId: string, callId: string, args: Record<string, unknown>, flush = false): void {
-    let pages = this.livePages.get(assistantId);
-    if (!pages) this.livePages.set(assistantId, pages = new Map());
+  private liveUpdate(assistantId: string, callId: string, args: Record<string, unknown>, flush = false, place?: Place): void {
+    const key = sessionKey(assistantId, place);
+    let pages = this.livePages.get(key);
+    if (!pages) this.livePages.set(key, pages = new Map());
     let live = pages.get(callId);
     if (!live) {
       live = { page: { assistantId, callId, html: "", state: "writing" }, last: 0 };
@@ -413,11 +417,11 @@ export class RouterManager {
     } else if (!live.timer) live.timer = setTimeout(emit, 200 - (Date.now() - live.last));
   }
 
-  private liveFinish(assistantId: string, callId: string, path?: string, error?: string): void {
-    const pages = this.livePages.get(assistantId);
+  private liveFinish(assistantId: string, callId: string, path?: string, error?: string, place?: Place): void {
+    const pages = this.livePages.get(sessionKey(assistantId, place));
     const live = pages?.get(callId);
     if (!live) return;
-    this.liveUpdate(assistantId, callId, {}, true);
+    this.liveUpdate(assistantId, callId, {}, true, place);
     live.page = { ...live.page, state: path ? "done" : "failed", ...(path ? { path } : { error: error || "页面生成中断" }) };
     this.bus.emit({ type: "page-live", ...live.page });
     this.liveJson.delete(callId);
@@ -431,12 +435,17 @@ export class RouterManager {
     this.idleCompactionTimer = setInterval(() => { void this.compactIdleSessions().catch((error) => console.error("闲置会话检查失败：", error)); }, IDLE_COMPACTION_INTERVAL_MS);
     this.idleCompactionTimer.unref?.();
     for (const assistant of runtime.store.assistants()) {
-      const file = runtime.store.routerFile(assistant.id);
-      if (!existsSync(file)) continue;
-      const pending = deriveItems(readEntries(file)).filter((item) => item.kind === "image" && item.status === "pending");
-      if (!pending.length) continue;
-      const manager = SessionManagerImpl.open(file, dirname(file), runtime.home);
-      for (const item of pending) manager.appendCustomEntry(ITEM_UPDATE_TYPE, { id: item.id, status: "failed", error: "生成被中断" });
+      const files = [
+        runtime.store.routerFile(assistant.id),
+        ...runtime.store.assistantTopics(assistant.id).map((topic) => runtime.store.assistantTopicRouterFile(assistant.id, topic.id)),
+      ];
+      for (const file of files) {
+        if (!existsSync(file)) continue;
+        const pending = deriveItems(readEntries(file)).filter((item) => item.kind === "image" && item.status === "pending");
+        if (!pending.length) continue;
+        const manager = SessionManagerImpl.open(file, dirname(file), runtime.home);
+        for (const item of pending) manager.appendCustomEntry(ITEM_UPDATE_TYPE, { id: item.id, status: "failed", error: "生成被中断" });
+      }
     }
   }
 
@@ -499,6 +508,10 @@ export class RouterManager {
   async ensure(assistantId: string, place?: Place): Promise<RouterState> {
     const assistant = this.assistant(assistantId);
     const normalized = placeOf(place);
+    if (normalized.topicId) {
+      const topic = this.store.assistantTopic(assistantId, normalized.topicId);
+      if (!topic || topic.assistantId !== assistantId) throw new TopicError("话题不存在", 404);
+    }
     const key = sessionKey(assistantId, normalized);
     let state = this.routers.get(key);
     if (!state) {
@@ -533,9 +546,41 @@ export class RouterManager {
     return state;
   }
 
-  /** 这个会话的文件：群会话在 groups/<gid>/members/ 下，单聊还是 router.jsonl。 */
+  /** 这个会话的文件：群会话在 groups/<gid>/members/ 下，助手话题在 topics/<tid>/router.jsonl，单聊还是 router.jsonl。 */
   private sessionFile(assistantId: string, place?: Place): string {
-    return place?.groupId ? this.store.groupMemberFile(place.groupId, assistantId) : this.store.routerFile(assistantId);
+    if (place?.groupId) return this.store.groupMemberFile(place.groupId, assistantId);
+    if (place?.topicId) return this.store.assistantTopicRouterFile(assistantId, place.topicId);
+    return this.store.routerFile(assistantId);
+  }
+
+  private stateOf(assistantId: string, place?: Place): AssistantState {
+    return place?.topicId ? this.store.assistantTopicState(assistantId, place.topicId) : this.store.state(assistantId);
+  }
+
+  private saveStateOf(assistantId: string, patch: AssistantState, place?: Place): void {
+    if (place?.topicId) this.store.saveAssistantTopicState(assistantId, place.topicId, patch);
+    else this.store.saveState(assistantId, patch);
+  }
+
+  private emitItem(assistantId: string, item: Item, place?: Place): void {
+    this.bus.emit({ type: "item", assistantId, ...(place?.topicId ? { topicId: place.topicId } : {}), item });
+  }
+
+  private emitDelta(assistantId: string, itemId: string, text: string, place?: Place): void {
+    this.bus.emit({ type: "delta", assistantId, ...(place?.topicId ? { topicId: place.topicId } : {}), itemId, text });
+  }
+
+  private publishPlaceSummary(assistantId: string, place?: Place): void {
+    if (place?.groupId) {
+      this.runtime.groups?.publish(place.groupId);
+      return;
+    }
+    if (place?.topicId) {
+      this.runtime.assistantTopics?.publish(assistantId, place.topicId);
+      return;
+    }
+    const assistant = this.store.assistant(assistantId);
+    if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
   }
 
   private async openSession(state: RouterState, assistant: Assistant): Promise<void> {
@@ -843,7 +888,7 @@ export class RouterManager {
       }
       if (event.toolName === "show_page") {
         const result = event.result as { details?: { path?: string }; content?: { text?: string }[] } | undefined;
-        this.liveFinish(assistantId, event.toolCallId, event.isError ? undefined : result?.details?.path, result?.content?.[0]?.text);
+        this.liveFinish(assistantId, event.toolCallId, event.isError ? undefined : result?.details?.path, result?.content?.[0]?.text, state.place);
       }
       const toolFailed = event.isError || Boolean((event.result as { isError?: boolean } | undefined)?.isError);
       const terminated = Boolean((event.result as { terminate?: boolean } | undefined)?.terminate);
@@ -876,12 +921,12 @@ export class RouterManager {
         if (update.type === "toolcall_start") this.liveJson.set(part.id, "");
         if (update.type === "toolcall_delta") this.liveJson.set(part.id, (this.liveJson.get(part.id) ?? "") + update.delta);
         const args = Object.keys(part.arguments).length ? part.arguments : parseStreamingJson(this.liveJson.get(part.id));
-        this.liveUpdate(assistantId, part.id, args);
+        this.liveUpdate(assistantId, part.id, args, false, state.place);
       }
     }
     if ((event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted", "length"].includes(event.message.stopReason)) || event.type === "agent_end") {
       const reason = event.type === "message_end" && event.message.role === "assistant" ? event.message.errorMessage : undefined;
-      for (const [id, live] of this.livePages.get(assistantId) ?? []) if (live.page.state === "writing") this.liveFinish(assistantId, id, undefined, reason || "页面生成中断");
+      for (const [id, live] of this.livePages.get(sessionKey(assistantId, state.place)) ?? []) if (live.page.state === "writing") this.liveFinish(assistantId, id, undefined, reason || "页面生成中断", state.place);
     }
     if (event.type === "message_update" && event.assistantMessageEvent.type === "text_delta") {
       this.setActivity(state, null);
@@ -894,20 +939,16 @@ export class RouterManager {
       const streaming = state.streaming;
       if (!streaming.shown) {
         streaming.shown = true;
-        this.bus.emit({
-          type: "item",
-          assistantId,
-          item: {
-            kind: "assistant",
-            id: streaming.itemId,
-            at: new Date().toISOString(),
-            text: "",
-            streaming: true,
-            ...(this.derived(assistantId, state.place).result.lead ? { lead: true } : {}),
-          },
-        });
+        this.emitItem(assistantId, {
+          kind: "assistant",
+          id: streaming.itemId,
+          at: new Date().toISOString(),
+          text: "",
+          streaming: true,
+          ...(this.derived(assistantId, state.place).result.lead ? { lead: true } : {}),
+        }, state.place);
       }
-      this.bus.emit({ type: "delta", assistantId, itemId: streaming.itemId, text: event.assistantMessageEvent.delta });
+      this.emitDelta(assistantId, streaming.itemId, event.assistantMessageEvent.delta, state.place);
       return;
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
@@ -932,11 +973,11 @@ export class RouterManager {
       // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说
       const clean = stripNoReply(text);
       if (!clean) {
-        if (streaming?.shown) this.bus.emit({ type: "item", assistantId, item: { kind: "assistant", id: streaming.itemId, at: new Date().toISOString(), text: "" } });
+        if (streaming?.shown) this.emitItem(assistantId, { kind: "assistant", id: streaming.itemId, at: new Date().toISOString(), text: "" }, state.place);
         return;
       }
       // pi 在 message_end 之后才把消息写进会话文件，等一拍再按条目发，内容和 id 才和刷新后一致
-      setTimeout(() => this.emitSettledAssistant(assistantId, clean, streaming?.itemId), 0);
+      setTimeout(() => this.emitSettledAssistant(assistantId, clean, streaming?.itemId, state.place), 0);
     }
   }
 
@@ -982,7 +1023,7 @@ export class RouterManager {
   private emitSettledAssistant(assistantId: string, text: string, expectedId?: string, place?: Place): void {
     const list = this.derived(assistantId, place).result.items.filter((item) => item.kind === "assistant");
     const item = list.find((entry) => entry.id === expectedId) ?? list.filter((entry) => entry.text === text).pop();
-    if (item) this.bus.emit({ type: "item", assistantId, item });
+    if (item) this.emitItem(assistantId, item, place);
     const state = this.routers.get(sessionKey(assistantId, place));
     if (state) this.touch(state);
   }
@@ -997,7 +1038,7 @@ export class RouterManager {
     if (state.activity?.state === activity?.state && state.activity?.label === activity?.label) return;
     state.activity = activity;
     if (state.place.groupId) this.bus.emit({ type: "group-activity", groupId: state.place.groupId, speaker: state.assistantId, activity });
-    else this.bus.emit({ type: "router-activity", assistantId: state.assistantId, activity });
+    else this.bus.emit({ type: "router-activity", assistantId: state.assistantId, ...(state.place.topicId ? { topicId: state.place.topicId } : {}), activity });
   }
 
   /** 一轮开始了：清掉上一轮的“已停”标记和没报完的失败，起看门狗。 */
@@ -1095,10 +1136,20 @@ export class RouterManager {
     }
   }
 
-  /** 助手没了（归档）：关掉它的会话（含它所在的群会话），内存里也不留 —— 它的目录随后会被移进归档。 */
+  /** 助手没了（归档）：关掉它的会话（含它所在的群会话和话题会话），内存里也不留 —— 它的目录随后会被移进归档。 */
   forget(assistantId: string): void {
     for (const key of [...this.itemCache.keys()]) {
       if (key === assistantId || key.startsWith(`${assistantId}@`)) this.itemCache.delete(key);
+    }
+    for (const key of [...this.livePages.keys()]) {
+      if (key === assistantId || key.startsWith(`${assistantId}@`)) this.livePages.delete(key);
+    }
+    for (const key of [...this.idleChecked.keys()]) {
+      if (key === assistantId || key.startsWith(`${assistantId}@`)) this.idleChecked.delete(key);
+    }
+    this.suggestions.delete(assistantId);
+    for (const topic of this.store.assistantTopics(assistantId)) {
+      this.suggestions.delete(`topic:${topic.id}`);
     }
     for (const [key, state] of [...this.routers]) {
       if (state.assistantId !== assistantId) continue;
@@ -1147,7 +1198,7 @@ export class RouterManager {
     const active = new Set(["running", "queued", "waiting"]);
     const jobs = this.store.jobs().some((job) => samePlace(placeOf(job), state.place) && active.has(job.status) && (state.place.groupId !== undefined || job.assistantId === state.assistantId));
     if (jobs) return true;
-    if (!state.place.groupId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
+    if (!state.place.groupId && !state.place.topicId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
     return this.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), state.place) && (state.place.groupId !== undefined || approval.assistantId === state.assistantId));
   }
 
@@ -1197,7 +1248,10 @@ export class RouterManager {
    */
   async compactIdleSessions(now = Date.now()): Promise<void> {
     const sessions: { assistantId: string; place?: Place }[] = [
-      ...this.store.assistants().map((assistant) => ({ assistantId: assistant.id })),
+      ...this.store.assistants().flatMap((assistant) => [
+        { assistantId: assistant.id },
+        ...this.store.assistantTopics(assistant.id).map((topic) => ({ assistantId: assistant.id, place: { topicId: topic.id } })),
+      ]),
       ...this.store.groups().flatMap((group) => group.members.map((assistantId) => ({ assistantId, place: { groupId: group.id } }))),
     ];
     for (const { assistantId, place } of sessions) {
@@ -1248,7 +1302,7 @@ export class RouterManager {
       const lead = this.derived(assistantId, fallback).result.lead;
       const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
       full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
-      this.bus.emit({ type: "item", assistantId, item: full });
+      this.emitItem(assistantId, full, fallback);
     }
     if (full.kind === "file") {
       const page = isInPagesDir(relative(this.runtime.home, resolve(full.path)));
@@ -1281,7 +1335,7 @@ export class RouterManager {
     if (state?.manager) {
       const id = state.manager.appendCustomEntry(ITEM_TYPE, item);
       full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) };
-      this.bus.emit({ type: "item", assistantId, item: full });
+      this.emitItem(assistantId, full, normalized);
       state.releaseAfterTurn = true;
       this.maybeRelease(state);
     } else {
@@ -1292,7 +1346,7 @@ export class RouterManager {
       const at = manager.getEntries().find((entry) => entry.id === id)?.timestamp ?? new Date().toISOString();
       full = { ...item, ...(lead ? { lead: true } : {}), id, at };
       this.itemCache.delete(key);
-      this.bus.emit({ type: "item", assistantId, item: full });
+      this.emitItem(assistantId, full, normalized);
     }
     return full;
   }
@@ -1355,7 +1409,7 @@ export class RouterManager {
     const item = this.derived(assistantId, fallback).result.items.find((entry) => entry.id === id && entry.kind === "image");
     if (!item) throw new Error(`图片条目不存在：${id}`);
     state.manager!.appendCustomEntry(ITEM_UPDATE_TYPE, { id, ...update });
-    this.bus.emit({ type: "item", assistantId, item: { ...item, ...update } });
+    this.emitItem(assistantId, { ...item, ...update }, fallback);
     this.collectGeneratedImage(item, assistantId, update);
   }
 
@@ -1373,13 +1427,13 @@ export class RouterManager {
     return this.routers.get(sessionKey(assistantId, place))?.turnRoutine?.id;
   }
 
-  async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob", files: string[] = []): Promise<Item> {
-    const state = await this.ensure(assistantId);
+  async addForwarded(assistantId: string, text: string, delegationId: string, sourceId = "hob", files: string[] = [], place?: Place): Promise<Item> {
+    const state = await this.ensure(assistantId, place);
     const from = { assistantId: sourceId, name: this.store.assistant(sourceId)?.name ?? sourceId, delegationId };
     const data = { text, from, ...(files.length ? { files } : {}) };
     const id = state.manager!.appendCustomEntry(USER_TYPE, data);
     const item: Item = { kind: "user", id, at: this.entryAt(state, id), ...data };
-    this.bus.emit({ type: "item", assistantId, item });
+    this.emitItem(assistantId, item, place);
     return item;
   }
 
@@ -1557,7 +1611,7 @@ export class RouterManager {
       .jobs()
       .some((job) => samePlace(placeOf(job), normalized) && ACTIVE_JOB_STATUSES.has(job.status) && (normalized.groupId !== undefined || job.assistantId === assistantId));
     if (activeJobs) return true;
-    if (normalized.groupId !== undefined) return false;
+    if (normalized.groupId !== undefined || normalized.topicId !== undefined) return false;
     const openDelegations = this.store
       .delegations()
       .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
@@ -1583,8 +1637,8 @@ export class RouterManager {
     const busy = todosBusy(this.runtime, state.assistantId, state.place);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.place);
     // 收到了用户的消息、这一轮回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
-    if (!state.place.groupId && state.turnSilent && state.turnUserItem && !this.store.state(state.assistantId).reactions?.[state.turnUserItem]?.[state.assistantId]) {
-      this.react(state.assistantId, "👀", state.turnUserItem);
+    if (!state.place.groupId && state.turnSilent && state.turnUserItem && !this.stateOf(state.assistantId, state.place).reactions?.[state.turnUserItem]?.[state.assistantId]) {
+      this.react(state.assistantId, "👀", state.turnUserItem, state.place);
     }
     const bodyText = state.turnLastText || state.turnCardTitle;
     const reactedOnly = Boolean(state.turnReacted && !bodyText);
@@ -1650,12 +1704,7 @@ export class RouterManager {
 
   /** 忙闲变了告诉前端（“正在想”要看它）。 */
   private publishBusy(state: RouterState): void {
-    if (state.place.groupId) {
-      this.runtime.groups?.publish(state.place.groupId);
-      return;
-    }
-    const assistant = this.store.assistant(state.assistantId);
-    if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
+    this.publishPlaceSummary(state.assistantId, state.place);
   }
 
   /**
@@ -1703,8 +1752,8 @@ export class RouterManager {
    * 没有模型时也要把话完整接住：用户那句和一条说明都进对话（不需要模型，只开会话文件）。
    * 配好模型之后再发话就接着聊。
    */
-  private sendWithoutModel(assistantId: string, body: SendMessageBody, note: string): Item {
-    const file = this.store.routerFile(assistantId);
+  private sendWithoutModel(assistantId: string, body: SendMessageBody, note: string, place?: Place): Item {
+    const file = this.sessionFile(assistantId, place);
     mkdirSync(dirname(file), { recursive: true });
     // 会话文件先建空：引擎看到空文件会马上写头，之后的条目才落盘（不然只存在内存里，刷新就没了）
     if (!existsSync(file)) writeFileSync(file, "");
@@ -1717,28 +1766,32 @@ export class RouterManager {
     const id = manager.appendCustomEntry(USER_TYPE, data);
     const item: Item = { kind: "user", id, at: new Date().toISOString(), ...data };
     for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
-    this.bus.emit({ type: "item", assistantId, item });
+    this.emitItem(assistantId, item, place);
     const noteId = manager.appendCustomEntry(ITEM_TYPE, { kind: "note", icon: "info", text: note });
-    this.bus.emit({
-      type: "item",
-      assistantId,
-      item: { kind: "note", id: noteId, at: new Date().toISOString(), icon: "info", text: note },
-    });
+    this.emitItem(assistantId, { kind: "note", id: noteId, at: new Date().toISOString(), icon: "info", text: note }, place);
     return item;
   }
 
-  async send(assistantId: string, body: SendMessageBody): Promise<Item> {
-    this.clearSuggestions(assistantId);
-    this.runtime.delegations.takeOver(assistantId);
+  async send(assistantId: string, body: SendMessageBody, place?: Place): Promise<Item> {
+    const target = placeOf(place);
+    if (target.topicId) {
+      this.assistant(assistantId);
+      const topic = this.store.assistantTopic(assistantId, target.topicId);
+      if (!topic || topic.assistantId !== assistantId) throw new TopicError("话题不存在", 404);
+      if (topic.closedAt) throw new TopicError(TOPIC_CLOSED, 400);
+    }
+    this.clearSuggestions(assistantId, target);
+    this.runtime.delegations.takeOver(assistantId, target);
     for (const approval of this.store.approvals()) {
-      if (approval.assistantId !== assistantId || approval.groupId || approval.source !== "router" || approval.status !== "pending") continue;
+      if (approval.assistantId !== assistantId || approval.source !== "router" || approval.status !== "pending") continue;
+      if (!samePlace(placeOf(approval), target)) continue;
       const expired = { ...approval, status: "expired" as const };
       this.store.saveApproval(expired);
       this.bus.emit({ type: "approval", approval: expired });
     }
     const gap = await this.modelGap(assistantId);
-    if (gap) return this.sendWithoutModel(assistantId, body, gap);
-    const state = await this.ensure(assistantId);
+    if (gap) return this.sendWithoutModel(assistantId, body, gap, target);
+    const state = await this.ensure(assistantId, target);
     const data = {
       text: body.text,
       ...(body.quote ? { quote: body.quote } : {}),
@@ -1753,14 +1806,14 @@ export class RouterManager {
       ...(body.quote ? { quote: body.quote } : {}),
       ...(body.files?.length ? { files: body.files } : {}),
     };
-    this.bus.emit({ type: "item", assistantId, item });
+    this.emitItem(assistantId, item, target);
     for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
 
     const lines = [body.text];
 
     if (body.quote) lines.unshift(`（引用我之前的话：「${body.quote.text}」）`);
     if (body.files?.length) lines.push(`附件：${body.files.join("、")}`);
-    const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
+    const basePrompt = `${nowBlock(this.runtime, assistantId, target)}\n\n${lines.filter(Boolean).join("\n")}`;
     // 模型收到这条时记下来：你的消息下面挂 👀，看得出到了
     const received = () => { state.turnUserItem = id; };
     void this.deliver(state, basePrompt, {
@@ -2010,16 +2063,16 @@ export class RouterManager {
     return this.derived(assistantId).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
   }
 
-  /** 给单聊里最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */
-  react(assistantId: string, emoji: string, itemId?: string): { ok: true; itemId: string } | { ok: false; error: string } {
+  /** 给单聊或话题里最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */
+  react(assistantId: string, emoji: string, itemId?: string, place?: Place): { ok: true; itemId: string } | { ok: false; error: string } {
     this.assistant(assistantId);
-    const target = this.derived(assistantId).result.items.findLast((item) => item.kind === "user" && (!itemId || item.id === itemId));
+    const target = this.derived(assistantId, place).result.items.findLast((item) => item.kind === "user" && (!itemId || item.id === itemId));
     if (!target || target.kind !== "user") return { ok: false, error: "对话里还没有用户的消息，无法添加表情回应。" };
-    const all = this.store.state(assistantId).reactions ?? {};
+    const all = this.stateOf(assistantId, place).reactions ?? {};
     const forItem = { ...(all[target.id] ?? {}), [assistantId]: emoji };
-    this.store.saveState(assistantId, { reactions: { ...all, [target.id]: forItem } });
+    this.saveStateOf(assistantId, { reactions: { ...all, [target.id]: forItem } }, place);
     const reactions = reactionsList(forItem);
-    this.bus.emit({ type: "item", assistantId, item: { ...target, ...(reactions ? { reactions } : {}) } });
+    this.emitItem(assistantId, { ...target, ...(reactions ? { reactions } : {}) }, place);
     return { ok: true, itemId: target.id };
   }
 
@@ -2029,7 +2082,7 @@ export class RouterManager {
     const limit = Math.max(1, Math.min(options.limit ?? 50, 200));
     const end = options.before ? derived.positions.get(options.before) ?? all.length : all.length;
     const start = Math.max(0, end - limit);
-    const storedReactions = this.store.state(assistantId).reactions;
+    const storedReactions = this.stateOf(assistantId, place).reactions;
     const page = all.slice(start, end).map((item) => {
       if (item.kind !== "user") return item;
       const reactions = reactionsList(storedReactions?.[item.id]);
@@ -2052,7 +2105,7 @@ export class RouterManager {
       for (const id of delegation.approvalIds ?? []) approvalIds.add(id);
     }
     return {
-      ...(!options.before ? { pageLive: [...(this.livePages.get(assistantId)?.values() ?? [])].map((live) => live.page) } : {}),
+      ...(!options.before ? { pageLive: [...(this.livePages.get(sessionKey(assistantId, place))?.values() ?? [])].map((live) => live.page) } : {}),
       items: page,
       approvals: this.store.approvals().filter((approval) => approvalIds.has(approval.id)),
       jobs: [...jobIds].flatMap((id) => { const job = this.store.job(id); return job ? [job] : []; }),
@@ -2063,15 +2116,16 @@ export class RouterManager {
     };
   }
 
-  read(assistantId: string, _place?: Place): void {
-    this.store.saveState(assistantId, { readAt: new Date().toISOString() });
+  read(assistantId: string, place?: Place): void {
+    this.saveStateOf(assistantId, { readAt: new Date().toISOString() }, place);
+    if (place?.topicId) this.publishPlaceSummary(assistantId, place);
   }
 
   unread(assistantId: string, place?: Place): number {
-    const readAt = this.store.state(assistantId).readAt;
+    const readAt = this.stateOf(assistantId, place).readAt;
     // 从没记过已读：从现在开始算，以前的都当读过。不记的话未读永远是 0，前端也就永远不会来标已读
     if (!readAt) {
-      this.read(assistantId, place);
+      this.saveStateOf(assistantId, { readAt: new Date().toISOString() }, place);
       return 0;
     }
     const times = this.derived(assistantId, place).assistantTimes;
@@ -2088,6 +2142,10 @@ export class RouterManager {
     return this.derived(assistantId, place).last;
   }
 
+  activityOf(assistantId: string, place?: Place): RouterActivity | null {
+    return this.routers.get(sessionKey(assistantId, place))?.activity ?? null;
+  }
+
   private suggestionKey(assistantId: string, place?: Place): string {
     return place?.groupId ? `group:${place.groupId}` : place?.topicId ? `topic:${place.topicId}` : assistantId;
   }
@@ -2101,11 +2159,7 @@ export class RouterManager {
     this.suggestionEpoch.set(key, (this.suggestionEpoch.get(key) ?? 0) + 1);
     const had = this.suggestions.delete(key);
     if (!had) return;
-    if (place?.groupId) this.runtime.groups?.publish(place.groupId);
-    else {
-      const assistant = this.store.assistant(assistantId);
-      if (assistant) this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
-    }
+    this.publishPlaceSummary(assistantId, place);
   }
 
   /** 在一轮真正停下后后台生成推荐提问；结果只接受当前这一轮。 */
@@ -2130,8 +2184,7 @@ export class RouterManager {
       const state = this.routers.get(sessionKey(assistantId, place));
       if (state && (state.running > 0 || state.session?.isStreaming || this.hasIdleWork(state))) return;
       this.suggestions.set(key, suggestions);
-      if (place?.groupId) this.runtime.groups?.publish(place.groupId);
-      else this.bus.emit({ type: "assistant", assistant: this.summary(assistant) });
+      this.publishPlaceSummary(assistantId, place);
     } catch (error) {
       console.error("推荐提问准备失败：", error instanceof Error ? error.message : String(error));
     }
@@ -2166,6 +2219,7 @@ export class RouterManager {
     const update = this.runtime.update.status();
     return {
       assistants: this.store.assistants().map((assistant) => this.summary(assistant)),
+      assistantTopics: this.runtime.assistantTopics.allSummaries(),
       jobs: this.store
         .jobs()
         .filter((job) => job.status === "running" || job.status === "queued" || job.status === "waiting" || (job.endedAt ?? job.createdAt) > jobCutoff),

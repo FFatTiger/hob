@@ -10,6 +10,7 @@ import { DesktopControl } from "./desktop-control.ts";
 import { DesktopEvents } from "./desktop-events.ts";
 import { DelegationManager } from "./delegations.ts";
 import type { GroupManager } from "./groups.ts";
+import type { AssistantTopicManager } from "./assistant-topics.ts";
 import type { HobConfig } from "./config.ts";
 import { memoryDir } from "./config.ts";
 import { ModelCatalog } from "./models.ts";
@@ -26,6 +27,7 @@ import type { UsageService } from "./usage.ts";
 import { Bus as BusImpl } from "./bus.ts";
 import { seedDevTeam, seedHacker, migrateProductOwnerDuty } from "./dev-team.ts";
 import { GroupManager as GroupManagerImpl } from "./groups.ts";
+import { AssistantTopicManager as AssistantTopicManagerImpl } from "./assistant-topics.ts";
 import { JobManager as JobManagerImpl } from "./jobs.ts";
 import { PushService as PushServiceImpl } from "./push.ts";
 import { ProviderService as ProviderServiceImpl } from "./providers.ts";
@@ -67,6 +69,8 @@ export interface HobRuntime {
   router: RouterManager;
   /** 群：时间线、成员会话、轮到谁 */
   groups: GroupManager;
+  /** 助手话题：多话题助手的独立对话与生命周期 */
+  assistantTopics: AssistantTopicManager;
   jobs: JobManager;
   delegations: DelegationManager;
   routines: RoutineScheduler;
@@ -162,6 +166,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   runtime.router = new RouterManagerImpl(runtime);
   plugins.onToolsChanged = () => runtime.router.releaseSessions();
   runtime.groups = new GroupManagerImpl(runtime);
+  runtime.assistantTopics = new AssistantTopicManagerImpl(runtime);
   runtime.initializeLocale = (locale) => {
     runtime.store.initializeDefaults(locale);
     seedDevTeam(runtime.store, (input) => runtime.groups.create(input), locale);

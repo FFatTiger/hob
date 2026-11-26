@@ -3413,6 +3413,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     logout: async () => {},
     bootstrap: async () => ({
       assistants: clone(db.assistants),
+      assistantTopics: [],
       jobs: clone(Object.values(db.jobs)),
       delegations: clone(Object.values(db.delegations)),
       routines: clone(db.routines),

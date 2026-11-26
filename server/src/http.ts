@@ -30,6 +30,7 @@ import type {
   UsagePriceSaved,
 } from "../../shared/types.ts";
 import { answerApproval, answerCard, archiveAssistant, retirePluginCards, createFromDraft, dismissDraft, enableAssistantTopics, updateAssistant } from "./actions.ts";
+import { TopicError } from "./assistant-topics.ts";
 import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
@@ -1337,6 +1338,130 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/assistants/:id/topic-mode", async (c) => {
     const result = await enableAssistantTopics(runtime, c.req.param("id"));
     return c.json(result.body as Record<string, unknown>, result.status as 200);
+  });
+
+  const topicErr = (c: { json: (data: unknown, status?: any) => any }, error: unknown) => {
+    const status = error instanceof TopicError ? error.status : 400;
+    return c.json({ error: error instanceof Error ? error.message : String(error) }, status);
+  };
+
+  app.get("/api/assistants/:id/topics", (c) => {
+    try {
+      return c.json(runtime.assistantTopics.list(c.req.param("id")));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as {
+      title?: unknown;
+      cwd?: unknown;
+      text?: unknown;
+      quote?: unknown;
+      files?: unknown;
+    };
+    try {
+      const result = await runtime.assistantTopics.create(c.req.param("id"), body);
+      return c.json(result, 201);
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.patch("/api/assistants/:id/topics/:tid", async (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    const body = (await c.req.json().catch(() => ({}))) as { title?: unknown; cwd?: unknown };
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      if (body.cwd !== undefined) return c.json({ error: CWD_IMMUTABLE }, 400);
+      return c.json(runtime.assistantTopics.rename(id, tid, body.title));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/close", async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
+    try {
+      return c.json(runtime.assistantTopics.close(c.req.param("id"), c.req.param("tid"), body.note));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/reopen", (c) => {
+    try {
+      return c.json(runtime.assistantTopics.reopen(c.req.param("id"), c.req.param("tid")));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.get("/api/assistants/:id/topics/:tid/items", (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      const limit = Number(c.req.query("limit") ?? 50);
+      const before = c.req.query("before") ?? undefined;
+      return c.json(router.items(id, { ...(before ? { before } : {}), limit }, { topicId: tid }));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/messages", async (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      const body = (await c.req.json().catch(() => ({}))) as { text?: unknown; quote?: unknown; files?: unknown };
+      const text = typeof body.text === "string" ? body.text.trim() : "";
+      const files = Array.isArray(body.files) ? body.files.filter((path): path is string => typeof path === "string" && !!path) : [];
+      if (!text && !files.length) return c.json({ error: "消息内容为空" }, 400);
+      const quote = body.quote as { itemId?: unknown; text?: unknown } | undefined;
+      if (quote !== undefined && (typeof quote?.itemId !== "string" || typeof quote?.text !== "string")) {
+        return c.json({ error: "引用的消息无效：要 itemId 和 text" }, 400);
+      }
+      const item = await router.send(
+        id,
+        {
+          text,
+          ...(quote ? { quote: { itemId: quote.itemId as string, text: quote.text as string } } : {}),
+          ...(files.length ? { files } : {}),
+        },
+        { topicId: tid },
+      );
+      return c.json({ item }, 202);
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/read", (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      router.read(id, { topicId: tid });
+      return c.json({ ok: true });
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/stop", async (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      await router.stop(id, { topicId: tid });
+      return c.json({ ok: true });
+    } catch (error) {
+      return topicErr(c, error);
+    }
   });
 
   // 归档助手：档案、对话、规则和定时进归档，助手从列表移除

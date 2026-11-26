@@ -391,7 +391,7 @@ export function buildRouterTools(
       execute: async (_id, params: { emoji: string }) => {
         const emoji = typeof params.emoji === "string" ? params.emoji.trim() : "";
         if (!isSingleEmoji(emoji)) return fail("emoji 要正好一个表情，比如 👍");
-        const result = groupId ? runtime.groups.react(groupId, assistantId, emoji) : router.react(assistantId, emoji);
+        const result = groupId ? runtime.groups.react(groupId, assistantId, emoji) : router.react(assistantId, emoji, undefined, place);
         if (!result.ok) return fail(result.error);
         return ok(`已给用户的消息点了 ${emoji}。`);
       },

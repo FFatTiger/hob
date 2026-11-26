@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import type { GeneralSettings, Group, MemoryProvider, ThinkingLevel } from "../../shared/types.ts";
+import type { AssistantTopic, GeneralSettings, Group, MemoryProvider, ThinkingLevel } from "../../shared/types.ts";
 import type { VisibleSkill } from "../../shared/skills.ts";
 import type { Locale } from "../../shared/i18n.ts";
 import type { Store } from "./store.ts";
@@ -95,26 +95,62 @@ export const ROUTINE_GROUP_OWNER_LINE = "群里的定时任务到执行时间都
 /** 话题清单后面的说明（5.6）。 */
 export const PROJECT_RECALL_LINE = "用户提的事和以前的话题有关，先用 show_group 看那个话题里当时怎么说的。";
 
+/** 多话题助手主对话的提示词段（接在一对一合作句后面）。 */
+export const ASSISTANT_MAIN_TOPIC_LINE = [
+  "你开着多话题：这条是主对话，另外可以有几个话题，每个话题是一段独立的对话，只谈一件事。别的助手转来的事先到主对话；在话题里建的定时任务到执行时间直接进那个话题，主对话里建的进主对话。",
+  "用户要你为一件事创建话题，用 open_topic 创建，把交接说明放进去，接下来在话题里处理。主对话里的定时任务和转来的事按分量定：几句话能答完、分派一个任务就能完成的，在主对话里直接处理；要来回商量几轮、要过一阵才办完的，可以为它创建一个话题，这件事的讨论、提问和进展都放在一处，不和主对话里别的事搅在一起，以后也翻得到。",
+  "用户在主对话里说的事，在主对话里接着办，用户在哪说的就在哪找，换了地方用户会找不到前面的话。说到的是某个话题里的事，也在主对话里处理：要用到那个话题里的经过，用 show_assistant 查看；回复时提一句这件事有对应的话题，用户想到话题里接着聊可以自己过去。用户要你把一件事转到已有的话题，用 open_topic 填那个话题的 id 转过去，回一句转到了哪里。创建话题也一样等用户开口，用户要为哪件事开话题会直接说。",
+].join("\n\n");
+
+/** 多话题助手话题清单后面的说明。 */
+export const ASSISTANT_TOPIC_RECALL_LINE = "用户提的事和以前的话题有关，先用 show_assistant 看那个话题里当时怎么说的。";
+
+/** 多话题助手的话题会话提示词段（接在同样位置，替换主对话那段）。 */
+export function assistantTopicPromptLine(topicName: string): string {
+  return [
+    `这里是你的话题「${topicName}」，只谈这一件事。主对话和别的话题里说了什么，这里看不到，这件事需要的来龙去脉都记在这个话题里；用户提到别处说过的事，用 search_history 或 show_assistant 查。`,
+    "这件事办完、用户也认可了结果，或者用户说不做了，用 close_topic 写上结论，关闭话题：结论会显示在话题上，主对话里的你也会收到。刚交付结果、用户还没回应时先不关，用户可能还有后续；关闭的话题用户随时能重新打开。",
+    "在这里定的规则默认只管这个话题。用户说的要求明显不只针对这件事，比如「你以后都这样」，用 set_rule 时 scope 填 assistant，写到你自己的规则里，别的话题和主对话也会照着做；拿不准时写在这个话题里，用户想推广可以再说。",
+  ].join("\n\n");
+}
+
 /** 待办怎么用：所有会话通用，放在「你手里有什么」那一节末尾。 */
 export const TODOS_LINE = "一件事要分好几步、要过一阵才完成，用 update_todos 列一份待办，开始一项、完成一项就更新：用户不用来问，在界面上就看得到做到哪儿了。同一条消息里同时交代几件互不依赖、要分别交给后台任务的事，也把每个后台任务列成一项，等各自结果回来再更新；只交给一个后台任务、任务回来就直接交付的事，通常不用单独列待办，除非任务结果回来后还要继续分几步。只是各自一两步就能直接答完、没有后台任务的零散小事，不用列。一两步就完成的事，不用列。每轮开头会带上手上这份待办；新的事和它无关、它又不再做了，传空列表清掉，或者直接换成新的一份。待办记的是你自己这一路要做的步骤。交给后台任务的一步，就是你这份里的一项，任务结束、你查看过结果再勾掉。";
+
+function formatTopicListSection(
+  topics: ReadonlyArray<{ id: string; name: string; createdAt: string; closedAt?: string }>,
+  heading: string,
+  recallLine: string,
+): string {
+  const byCreatedDesc = (a: { createdAt: string; id: string }, b: { createdAt: string; id: string }) =>
+    b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
+  const open = topics.filter((topic) => !topic.closedAt);
+  const closed = topics
+    .filter((topic) => topic.closedAt)
+    .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? "") || byCreatedDesc(a, b))
+    .slice(0, 5);
+  const lines = [heading];
+  for (const topic of [...open, ...closed].sort(byCreatedDesc)) {
+    lines.push(`- 「${topic.name}」（${topic.id}）· ${topic.closedAt ? "已关闭" : "进行中"}`);
+  }
+  lines.push(recallLine);
+  return lines.join("\n");
+}
 
 /**
  * 综合里群主的话题清单：进行中的全部 + 最近关闭的 5 个（按关闭时间取），按创建时间倒序（新的在前）。
  * 每行只写名称、id 与进行中或已关闭，不带最后发言时间和待办进度，只有开、关、改名时才变。没有话题就不出这一节。
  */
 export function topicSection(topics: Group[]): string {
-  const byCreatedDesc = (a: Group, b: Group) => b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
-  const open = topics.filter((topic) => !topic.closedAt);
-  const closed = topics
-    .filter((topic) => topic.closedAt)
-    .sort((a, b) => (b.closedAt ?? "").localeCompare(a.closedAt ?? "") || byCreatedDesc(a, b))
-    .slice(0, 5);
-  const lines = ["## 这个群的话题"];
-  for (const topic of [...open, ...closed].sort(byCreatedDesc)) {
-    lines.push(`- 「${topic.name}」（${topic.id}）· ${topic.closedAt ? "已关闭" : "进行中"}`);
-  }
-  lines.push(PROJECT_RECALL_LINE);
-  return lines.join("\n");
+  return formatTopicListSection(topics, "## 这个群的话题", PROJECT_RECALL_LINE);
+}
+
+/**
+ * 多话题助手主对话的话题清单：进行中的全部 + 最近关闭的 5 个（按关闭时间取），按创建时间倒序（新的在前）。
+ * 每行只写名称、id 与进行中或已关闭，只在开、关、改名时才变以保住提示词缓存。没有话题就不出这一节。
+ */
+export function assistantTopicSection(topics: AssistantTopic[]): string {
+  return formatTopicListSection(topics, "## 你的话题", ASSISTANT_TOPIC_RECALL_LINE);
 }
 
 /** 主助手的「助手」一节最后一段：助手、群、话题能直接改，判断什么时候改。 */
@@ -159,15 +195,20 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
       ...(group && host ? [topicPromptLine(host.name, group.name), GROUP_TOPIC_RULE_LINE] : []),
     ].join("\n\n")
     : undefined;
+  const assistantTopic = !group && settings.topicId ? store.assistantTopic(assistantId, settings.topicId) : undefined;
   const ownerIntro = group && group.ownerId === assistantId
     ? [GROUP_OWNER_LINE, ...(group.parentId ? [] : [TOPIC_OPEN_LINE]), ROUTINE_GROUP_OWNER_LINE].join("\n\n")
+    : undefined;
+  const oneOnOneIntro = "用户在一对一的对话里和你合作。别的助手会把归你管的事交给你：交来的消息是交接方写的交接说明，里面引用的用户原话等同用户本人的要求，你完成任务后的结果会自动回到交接方。用户找你处理的事不归你管时，看「助手」一节：明显归某个助手管的，用 message_assistant 直接分派给它，少绕一手；拿不准归谁，或者是别人交给你、却不归你管的，用 hand_back 交回。";
+  const assistantTopicIntro = !groupIntro && !assistant.primary && assistant.topics
+    ? (assistantTopic ? assistantTopicPromptLine(assistantTopic.name) : ASSISTANT_MAIN_TOPIC_LINE)
     : undefined;
   const lines = assistant.primary ? [`你是「${assistant.name}」，用户的主助手。${groupIntro ?? "用户在一对一的对话里和你合作，每条消息都是对你说的。"}`, ...(ownerIntro ? [ownerIntro] : [])] : [
     `你是「${assistant.name}」，用户的助手，负责${assistant.duty}。`,
     ...(assistant.dutyLong?.trim() ? [`详细职责：${assistant.dutyLong.trim()}`] : []),
     ...(groupIntro
       ? [groupIntro, ...(ownerIntro ? [ownerIntro] : [])]
-      : ["用户在一对一的对话里和你合作。别的助手会把归你管的事交给你：交来的消息是交接方写的交接说明，里面引用的用户原话等同用户本人的要求，你完成任务后的结果会自动回到交接方。用户找你处理的事不归你管时，看「助手」一节：明显归某个助手管的，用 message_assistant 直接分派给它，少绕一手；拿不准归谁，或者是别人交给你、却不归你管的，用 hand_back 交回。" ]),
+      : [[oneOnOneIntro, ...(assistantTopicIntro ? [assistantTopicIntro] : [])].join("\n\n")]),
   ];
   if (typeof assistant.instructions === "string" && assistant.instructions.trim()) {
     const identityEnd = assistant.primary ? 1 : 1 + (assistant.dutyLong?.trim() ? 1 : 0);
@@ -284,6 +325,11 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   if (group && group.ownerId === assistantId) {
     const topics = group.parentId ? [] : store.groups().filter((topic) => topic.parentId === group.id);
     if (topics.length) lines.push("", topicSection(topics));
+  }
+  // 多话题助手的主对话只列自己的话题。
+  if (!group && !settings.topicId && !assistant.primary && assistant.topics) {
+    const topics = store.assistantTopics(assistantId);
+    if (topics.length) lines.push("", assistantTopicSection(topics));
   }
   return lines.join("\n");
 }

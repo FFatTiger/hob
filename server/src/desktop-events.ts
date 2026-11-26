@@ -1,5 +1,6 @@
 import { WebSocket } from "ws";
 import type { DesktopScreen } from "../../shared/types.ts";
+import { desktopScreenUsers } from "./desktop-tools.ts";
 import type { HobRuntime } from "./runtime.ts";
 
 /** 监听 desktopd 的屏幕快照，连接中断时清空并退避重连。 */
@@ -26,9 +27,13 @@ export class DesktopEvents {
     this.publish([]);
   }
 
+  emit() {
+    this.runtime.bus.emit({ type: "desktop-screens", screens: this.screens, users: desktopScreenUsers(this.runtime) });
+  }
+
   private publish(screens: DesktopScreen[]) {
     this.screens = screens;
-    this.runtime.bus.emit({ type: "desktop-screens", screens });
+    this.emit();
   }
 
   private connect(generation: number) {

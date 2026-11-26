@@ -507,7 +507,15 @@ export class RouterManager {
     const desktopEnabled = desktop.enabled && !!desktop.url && desktop.tokenConfigured;
     let cliEnvironment: Awaited<ReturnType<DesktopToolSession["preparePlaywrightCli"]>> | undefined;
     if (desktopEnabled) {
-      state.desktop = new DesktopToolSession(this.runtime, assistant.id, false, undefined, true);
+      state.desktop = new DesktopToolSession(
+        this.runtime,
+        assistant.id,
+        false,
+        undefined,
+        true,
+        undefined,
+        { place: state.groupId ? { groupId: state.groupId } : {} },
+      );
       cliEnvironment = await state.desktop.preparePlaywrightCli();
     }
     const abilities = assistant.abilities ?? { exec: true, write: true, image: true };

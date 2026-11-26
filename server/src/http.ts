@@ -34,7 +34,7 @@ import { setPassword, assistantFilesDir, cacheDir } from "./config.ts";
 import { newId } from "./ids.ts";
 import { claudeStatus } from "./claude-status.ts";
 import { checkDesktopUrl } from "./desktop.ts";
-import { desktopProfile, openDesktopBrowser } from "./desktop-tools.ts";
+import { desktopProfile, desktopScreenUsers, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
 import { allowedWorkspaceDirs, CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN } from "./workspace.ts";
 import { thumbnail } from "./thumbs.ts";
@@ -239,7 +239,11 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
   const validScreen = (id: string) => runtime.store.assistants().some((assistant) => desktopProfile(assistant.id) === id);
-  app.get("/api/desktop/screens", (c) => c.json({ screens: runtime.desktopEvents.screens, profiles: Object.fromEntries(runtime.store.assistants().map((assistant) => [assistant.id, desktopProfile(assistant.id)])) }));
+  app.get("/api/desktop/screens", (c) => c.json({
+    screens: runtime.desktopEvents.screens,
+    profiles: Object.fromEntries(runtime.store.assistants().map((assistant) => [assistant.id, desktopProfile(assistant.id)])),
+    users: desktopScreenUsers(runtime),
+  }));
   app.post("/api/desktop/screens/:id/start", async (c) => {
     const id = c.req.param("id");
     if (!/^[a-z0-9-]{1,64}$/.test(id)) return c.json({ error: "屏幕 id 无效。" }, 400);

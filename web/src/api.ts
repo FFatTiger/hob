@@ -13,6 +13,7 @@ import type {
   DiscoveredModels,
   Draft,
   DesktopScreen,
+  DesktopScreenUser,
   DesktopView,
   DesktopTestResult,
   HobEvent,
@@ -167,7 +168,7 @@ export interface HobApi {
   deleteSkill(id: string): Promise<void>;
   rollbackGeneralSkill(name: string): Promise<AssistantSkill>;
   desktop(): Promise<DesktopView>;
-  desktopScreens(): Promise<{ screens: DesktopScreen[]; profiles: Record<string, string> }>;
+  desktopScreens(): Promise<{ screens: DesktopScreen[]; profiles: Record<string, string>; users?: Record<string, DesktopScreenUser[]> }>;
 
   saveDesktop(body: { revision: number; url: string; enabled: boolean; token?: string }): Promise<DesktopView>;
   testDesktop(): Promise<DesktopTestResult>;
@@ -365,7 +366,7 @@ export const realApi: HobApi = {
   deleteSkill: (id) => req<void>(`/api/skills/${encodeURIComponent(id)}`, { method: "DELETE" }),
   rollbackGeneralSkill: (name) => req<AssistantSkill>(`/api/skills/${encodeURIComponent(name)}/rollback`, { method: "POST" }),
   desktop: () => req<DesktopView>("/api/desktop"),
-  desktopScreens: () => req<{ screens: DesktopScreen[]; profiles: Record<string, string> }>("/api/desktop/screens"),
+  desktopScreens: () => req<{ screens: DesktopScreen[]; profiles: Record<string, string>; users?: Record<string, DesktopScreenUser[]> }>("/api/desktop/screens"),
   saveDesktop: (body) => req<DesktopView>("/api/desktop", json(body, "PUT")),
   testDesktop: () => req<DesktopTestResult>("/api/desktop/test", json({})),
   plugins: () => req<PluginsView>("/api/plugins"),

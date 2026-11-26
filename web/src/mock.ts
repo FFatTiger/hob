@@ -2940,6 +2940,19 @@ export function createMock(scene: SceneId = "s1"): HobApi {
           default: true,
           value: true,
         },
+        WORKSPACE: {
+          type: "string",
+          title: L("工作区", "Workspace"),
+          description: L("选填。只用这个工作区的仓库；不填就是账号能访问的全部。", "Optional. Limit to repositories in this workspace; leave blank for all you can access."),
+          value: "",
+        },
+        API_TOKEN: {
+          type: "string",
+          title: L("访问令牌", "Access token"),
+          description: L("选填。不登录时用它连接，在 CodeForge 的个人设置里创建。", "Optional. Used when not signed in; create it in CodeForge personal settings."),
+          sensitive: true,
+          configured: true,
+        },
         DEPLOY_KEY: {
           type: "file",
           title: L("部署密钥", "Deploy key"),

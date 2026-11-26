@@ -100,7 +100,7 @@ export function FileField({ configured, onChange }: { configured: boolean; onCha
     onChange(await file.text());
   };
   return <div className="plugin-file">
-    <button type="button" className="hob-btn" onClick={() => input.current?.click()}>{configured || name ? t("重新选择文件") : t("选择文件")}</button>
+    <button type="button" className="hob-btn plugin-btn-white" onClick={() => input.current?.click()}>{configured || name ? t("重新选择文件") : t("选择文件")}</button>
     <span>{name ? t("已选 {name}，保存后生效", { name }) : configured ? t("已上传") : t("还没选文件")}</span>
     <input ref={input} type="file" hidden onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
     {error ? <span className="badline" role="alert">{error}</span> : null}
@@ -332,8 +332,14 @@ export function PluginDetail({ id }: { id: string }) {
   const renderField = ([key, field]: typeof fields[number]) => {
     const value = values[key] ?? (field.sensitive ? "" : field.value ?? "");
     const label = String(field.title ?? key);
+    if (field.type === "boolean") {
+      return <div className="lbl plugin-bool" key={key}>
+        <div className="plugin-bool-row"><span>{label}</span><button type="button" role="switch" aria-label={label} aria-checked={Boolean(value)} className={`tog${value ? "" : " off"}`} onClick={() => setValues({ ...values, [key]: !value })} /></div>
+        {typeof field.description === "string" && <Description text={field.description} />}
+      </div>;
+    }
     return <label className="lbl" key={key}>{label}{field.required ? " *" : ""}
-      {field.type === "file" ? <FileField configured={Boolean(field.configured || field.value)} onChange={text => setValues({ ...values, [key]: text })} /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
+      {field.type === "file" ? <FileField configured={Boolean(field.configured || field.value)} onChange={text => setValues({ ...values, [key]: text })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
       {typeof field.description === "string" && <Description text={field.description} />}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
@@ -433,7 +439,7 @@ export function PluginDetail({ id }: { id: string }) {
       {configFields && configOpen ? <div className="plugin-config-form">
         {required.map(renderField)}
         {optional.length > 0 && <MoreSettings key={`${id}:single`} initialOpen={initialOpen}>{optional.map(renderField)}</MoreSettings>}
-        <div className="plugin-actions"><button className="hob-btn" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
+        <div className="plugin-actions"><button className="hob-btn hob-btn-primary" disabled={busy} onClick={() => void run(save)}>{t("保存")}</button></div>
       </div> : null}
     </section> : null}
 

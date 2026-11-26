@@ -50,7 +50,6 @@
 .plugin-section { padding: 24px 0 0; }
 .plugin-section h2 { display: flex; align-items: baseline; gap: 8px; white-space: nowrap; min-width: 0; font-size: 16px; font-weight: 500; color: var(--text2); }
 .plugin-section h2 .plugin-state { font-weight: 400; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
-.plugin-section .lbl { display: block; margin-top: 16px; }
 .plugin-section .field { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; }
 .plugin-section input { width: 100%; color: var(--text); font: inherit; }
 .plugin-section a { color: var(--text); text-underline-offset: 3px; }
@@ -80,6 +79,15 @@
 .plugin-profile-disclosure .profile-status { flex: none; }
 .plugin-profile-disclosure .expand > div { padding: 0 12px 12px; }
 .plugin-config-form { margin-top: 4px; }
+/* 配置项：标题小号灰字，说明更小更淡，项和项之间靠间距分开 */
+.plugin-config-form .lbl, .plugin-section .lbl { display: block; margin-top: 18px; }
+.plugin-config-form > .lbl:first-child { margin-top: 12px; }
+.plugin-config-form .field { background: var(--bg); margin-top: 6px; }
+.lbl .plugin-sub { font-size: 12.5px; color: var(--text3); line-height: 1.55; margin-top: 6px; }
+.plugin-bool-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.plugin-bool .tog { border: 0; cursor: pointer; flex: none; }
+.plugin-bool .tog.off { background: var(--text3); }
+.plugin-bool .tog.off::after { right: auto; left: 3px; }
 .plugin-retry { color: var(--text2); }
 .plugin-profile-form { padding: 0; }
 .plugin-profile-form .field { background: var(--bg); }

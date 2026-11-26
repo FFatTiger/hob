@@ -401,7 +401,7 @@ export function pushTarget(assistantId: string, groupId?: string): string {
   return groupId ? `group:${groupId}` : `assistant:${assistantId}`;
 }
 
-/** 一轮结束后推送；是否已经从有活变成没活由 Router 按 todosBusy 判断。 */
+/** 一轮结束后推送；是否需要推送由 Router 按本轮面向用户状态与分派任务/已推标记判断。 */
 export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
   const assistant = deps.store.assistant(turn.assistantId);
   if (!assistant?.notify) return;
@@ -414,6 +414,27 @@ export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): 
       : t("已完成");
   void deps.push
     .send({ title, body, url: openUrl(turn.assistantId, turn.groupId) }, pushTarget(turn.assistantId, turn.groupId))
+    .catch(() => undefined);
+}
+
+/** 交互卡片推送参数。 */
+export interface InteractiveCardPush {
+  assistantId: string;
+  groupId?: string;
+  title?: string;
+}
+
+/** 交互卡片（含按钮/表单/选择器等）：这个助手开了通知就推送一条「等待你的操作」。 */
+export function pushInteractiveCard(deps: NotifyDeps, card: InteractiveCardPush): void {
+  const assistant = deps.store.assistant(card.assistantId);
+  if (!assistant?.notify) return;
+  const group = card.groupId ? deps.store.group(card.groupId) : undefined;
+  const title = card.title?.trim() ? plainText(card.title) : (group?.name ?? assistant.name);
+  void deps.push
+    .send(
+      { title, body: t("{assistant} · 等待你的操作", { assistant: assistant.name }), url: openUrl(card.assistantId, card.groupId) },
+      pushTarget(card.assistantId, card.groupId),
+    )
     .catch(() => undefined);
 }
 

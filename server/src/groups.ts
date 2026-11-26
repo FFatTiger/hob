@@ -22,6 +22,7 @@ import { nowBlock } from "./now.ts";
 import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem } from "./router.ts";
+import { pushAssistantTurnEnd } from "./push.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, topicCwdLockedByGroup, validateWorkspaceCwd } from "./workspace.ts";
 
@@ -705,7 +706,7 @@ export class GroupManager {
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
+  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
     wave.pending += 1;
@@ -783,7 +784,7 @@ export class GroupManager {
    * 开一轮（不然流式的文字没有归属，会被丢掉），它说的话照常进时间线。
    * 一个事件算新的一串回合（新的 Wave）。
    */
-  async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = false): Promise<void> {
+  async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = true): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
     await this.schedule(gid, assistantId, { turns: 0, stopped: false, pending: 0 }, triggerId, text, workDone);
@@ -808,7 +809,7 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
+  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
     // 用户按了停止：这一轮不再开始
@@ -843,6 +844,10 @@ export class GroupManager {
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       const message = error instanceof Error ? error.message : String(error);
       this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
+      pushAssistantTurnEnd(
+        { push: this.runtime.push, store: this.store },
+        { assistantId, groupId: gid, error: message },
+      );
     } finally {
       this.turns.delete(key);
     }

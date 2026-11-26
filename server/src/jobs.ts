@@ -1238,7 +1238,7 @@ export class JobManager {
     signal?.addEventListener("abort", cancel, { once: true });
     const sentence = (value: string) => /[。！？.!?]\s*$/.test(value) ? value : `${value}。`;
     const text = `任务「${job.title}」（${job.id}）在等你回复：${sentence(input.title)}${input.detail ? sentence(input.detail) : ""}选项：${input.options.map((option) => `${option.key} ${option.label}${option.key === input.recommended ? "（推荐）" : ""}`).join("、")}。`;
-    const questionDetails: EventDetails = { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "question" } };
+    const questionDetails: EventDetails = { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "question" }, workDone: false };
     let delivered = false;
     if (delegationId) {
       delivered = await this.runtime.router.relay(job.assistantId, text, delegationId, questionDetails).catch((error) => {
@@ -1358,7 +1358,7 @@ export class JobManager {
             }
             const lines = jobProcessLines(steps, this.runtime.settings.settings.general.timezone, new Date(now)).slice(0, 10);
             const text = `${prefix}（${job.id}）已运行 ${Math.floor(elapsed / 60_000)} 分钟，超过预计的 ${job.expect.minutes} 分钟（${source}）。\n最近的过程（新的在前）：${lines.length ? `\n${lines.join("\n")}` : ""}`;
-            void this.notifyAssistant(job, text, { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "timeout" } }).catch((error) => console.error("任务超时通知失败：", error));
+            void this.notifyAssistant(job, text, { job: { id: job.id, round: job.rounds?.length ?? 0, kind: "timeout" }, workDone: false }).catch((error) => console.error("任务超时通知失败：", error));
           }
         }
       }

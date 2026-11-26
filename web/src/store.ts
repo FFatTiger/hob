@@ -1579,11 +1579,50 @@ export async function openTopic(groupId: string, title: string, cwd?: string): P
   }
 }
 
+/** 置顶或取消置顶话题；失败回滚并提示。 */
+export async function pinTopic(id: string, pinned: boolean): Promise<string | null> {
+  const before = state.groups.find((g) => g.id === id);
+  if (!before) return null;
+  const optimistic = pinned ? (before.pinnedAt ?? new Date().toISOString()) : undefined;
+  set((s) => ({
+    groups: s.groups.map((g) => {
+      if (g.id !== id) return g;
+      if (optimistic) return { ...g, pinnedAt: optimistic };
+      const { pinnedAt: _pinnedAt, ...rest } = g;
+      return rest;
+    }),
+  }));
+  try {
+    const topic = await api.patchGroup(id, { pinned });
+    set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id !== id) return g;
+        const { pinnedAt: _pinnedAt, ...rest } = g;
+        return { ...rest, ...topic };
+      }),
+    }));
+    return null;
+  } catch (e) {
+    const message = t("保存失败：{error}", { error: errText(e) });
+    set((s) => ({
+      groups: s.groups.map((g) => (g.id === id ? before : g)),
+      notice: message,
+    }));
+    return message;
+  }
+}
+
 /** 关闭话题：里面没做完的待办一起关，服务端会给原因。 */
 export async function closeTopic(id: string, note?: string): Promise<string | null> {
   try {
     const topic = await api.closeTopic(id, note ? { note } : undefined);
-    set((s) => ({ groups: s.groups.map((g) => (g.id === id ? { ...g, ...topic } : g)) }));
+    set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id !== id) return g;
+        const { pinnedAt: _pinnedAt, ...rest } = g;
+        return { ...rest, ...topic };
+      }),
+    }));
     return null;
   } catch (e) {
     return errText(e);
@@ -1594,7 +1633,13 @@ export async function closeTopic(id: string, note?: string): Promise<string | nu
 export async function reopenTopic(id: string): Promise<string | null> {
   try {
     const topic = await api.reopenTopic(id);
-    set((s) => ({ groups: s.groups.map((g) => (g.id === id ? { ...g, ...topic } : g)) }));
+    set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id !== id) return g;
+        const { closedAt: _closedAt, closeNote: _closeNote, pinnedAt: _pinnedAt, ...rest } = g;
+        return { ...rest, ...topic };
+      }),
+    }));
     return null;
   } catch (e) {
     return errText(e);

@@ -353,6 +353,8 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "如需在手机上接收推送，请先在 设置 → 通知 中开启本机推送。": "To receive push notifications on your phone, enable this device in Settings → Notifications.",
   "位置": "Position",
   "放在顶部": "Pin to top",
+  "置顶": "Pin",
+  "已置顶": "Pinned",
   "取消置顶": "Unpin",
   "放回列表": "Show in list",
   "收起这个助手": "Hide this assistant",

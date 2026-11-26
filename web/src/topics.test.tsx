@@ -11,6 +11,7 @@ vi.mock("./store.ts", () => ({
   selectGroup: async (id: string) => { selected.push(id); },
   openGroupHome: async (id: string) => { selected.push(id); },
   openTopic: async () => null,
+  pinTopic: async () => null,
   closeTopic: async () => null,
   reopenTopic: async () => null,
   goHome: () => undefined,
@@ -23,7 +24,7 @@ vi.mock("./store.ts", () => ({
 }));
 vi.mock("react-dom", async (importOriginal) => ({ ...(await importOriginal<typeof import("react-dom")>()), createPortal: (node: unknown) => node }));
 
-import { topicFace, topicGroups, topicPreview, groupSidebarFor } from "../src/topics.ts";
+import { topicFace, topicGroups, topicPreview, groupSidebarFor, partitionTopics } from "../src/topics.ts";
 import { ClosedTopic, GroupSidebar, NewTopicDialog, PlaceJobs, TopicRow, membersLine } from "./components/Topics.tsx";
 import { TopicCard } from "./components/Items.tsx";
 
@@ -108,6 +109,28 @@ describe("话题的数据", () => {
     expect(topicGroups([host], "g-topics")).toEqual({ active: [], closed: [] });
   });
 
+  it("置顶话题排在最前并按置顶时间倒序，已关闭列表不区分置顶", () => {
+    const pinnedOld = { ...waiting, id: "t-pin-old", pinnedAt: at(10, 0), last: { at: at(9, 10), speaker: "po", text: "早期置顶" } };
+    const pinnedNew = { ...reviewing, id: "t-pin-new", pinnedAt: at(10, 5), last: { at: at(9, 20), speaker: "qa", text: "刚置顶" } };
+    const unpinnedLatest = { ...doing, id: "t-unpinned-latest", last: { at: at(11, 0), speaker: "dev", text: "最新消息但没置顶" } };
+    const stalePinnedClosed = { ...closedDone, id: "t-closed-stale-pin", pinnedAt: at(12, 0), closedAt: at(3, 16) };
+    const newerClosed = { ...closedDropped, id: "t-closed-newer", closedAt: at(5, 11) };
+
+    const { active, closed } = topicGroups([host, unpinnedLatest, pinnedOld, pinnedNew, stalePinnedClosed, newerClosed], "g-topics");
+    expect(active.map((g) => g.id)).toEqual(["t-pin-new", "t-pin-old", "t-unpinned-latest"]);
+    expect(closed.map((g) => g.id)).toEqual(["t-closed-newer", "t-closed-stale-pin"]);
+
+    // 通用排序：不依赖 GroupSummary（未来助手话题共用）
+    const generic = partitionTopics([
+      { id: "a", createdAt: at(8, 0), last: { at: at(9, 30) } },
+      { id: "b", createdAt: at(8, 5), pinnedAt: at(9, 0), last: { at: at(8, 10) } },
+      { id: "c", createdAt: at(8, 10), pinnedAt: at(9, 15), last: { at: at(8, 20) } },
+      { id: "d", createdAt: at(7, 0), closedAt: at(9, 50), pinnedAt: at(9, 40) },
+    ]);
+    expect(generic.active.map((x) => x.id)).toEqual(["c", "b", "a"]);
+    expect(generic.closed.map((x) => x.id)).toEqual(["d"]);
+  });
+
   it("头像取最后一条是助手说的那位，否则取群主", () => {
     expect(topicFace(doing)).toBe("dev");
     expect(topicFace({ ...doing, last: { at: at(9), speaker: "user", text: "我说的" } })).toBe("po");
@@ -187,6 +210,27 @@ describe("话题行和话题卡", () => {
     expect(done).toContain("4 条完成标准都过了，已上线");
     expect(done).not.toContain("topic-stamp");
     expect(render(<TopicRow g={closedDropped} />)).toContain("closed");
+  });
+
+  it("置顶的进行中话题显示置顶标识，在左栏排在综合之后、普通进行中之前", () => {
+    const pinnedTopic = { ...waiting, pinnedAt: at(10, 0) };
+    setState([host, doing, pinnedTopic, closedDone], "g-topics");
+    const rowHtml = render(<TopicRow g={pinnedTopic} />);
+    expect(rowHtml).toContain("topic-row pinned");
+    expect(rowHtml).toContain("topic-pin");
+    expect(rowHtml).toContain('aria-label="已置顶"');
+
+    // 已关闭行即使带了旧 pinnedAt 也不展示置顶标识
+    expect(render(<TopicRow g={{ ...closedDone, pinnedAt: at(10, 0) }} />)).not.toContain("topic-pin");
+
+    // 综合仍在最前，其次是置顶话题，再其次是普通进行中话题
+    const sideHtml = render(<GroupSidebar />);
+    const generalIdx = sideHtml.indexOf("综合");
+    const pinnedIdx = sideHtml.indexOf("导出月度报表");
+    const unpinnedIdx = sideHtml.indexOf("登录页加「记住我」");
+    expect(generalIdx).toBeGreaterThan(-1);
+    expect(pinnedIdx).toBeGreaterThan(generalIdx);
+    expect(unpinnedIdx).toBeGreaterThan(pinnedIdx);
   });
 
   it("话题卡写名字、最后一条和「进入话题」，关了的写已关闭和结论", () => {

@@ -650,6 +650,7 @@ export interface Group {
   createdAt: Iso;
   parentId?: string; // 有它的是话题：所属的群
   createdBy?: string; // 话题：谁开的，"user" 或成员 assistantId
+  pinnedAt?: Iso; // 话题：置顶时间；关闭时清掉
   closedAt?: Iso; // 话题：关了的时间；关了不能再发消息，能重新打开
   closeNote?: string; // 话题：关的时候写的结论或原因
   handover?: TopicHandover; // 主助手交来的话题：谁交的，关的时候要送回给它的结论

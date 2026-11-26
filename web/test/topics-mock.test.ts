@@ -79,6 +79,22 @@ describe("mock：话题和待办", () => {
     expect(sent?.item.text).toBe("在吗");
   });
 
+  it("话题置顶：支持置顶/取消置顶，关闭后置顶失效且重开不恢复", async () => {
+    const { api } = mock("topics");
+    expect(await error(() => api.patchGroup("g-topics", { pinned: true }))).toBe("置顶仅适用于话题。");
+    const pinned = await api.patchGroup("t-export", { pinned: true });
+    expect(pinned.pinnedAt).toBeTruthy();
+    const unpinned = await api.patchGroup("t-export", { pinned: false });
+    expect(unpinned.pinnedAt).toBeUndefined();
+
+    await api.patchGroup("t-export", { pinned: true });
+    const closed = await api.closeTopic("t-export", { note: "完成了" });
+    expect(closed.pinnedAt).toBeUndefined();
+    expect(await error(() => api.patchGroup("t-export", { pinned: true }))).toContain("已关闭的话题不能置顶");
+    const reopened = await api.reopenTopic("t-export");
+    expect(reopened.pinnedAt).toBeUndefined();
+  });
+
   it("话题只能改名字", async () => {
     const { api } = mock("topics");
     expect(await error(() => api.patchGroup("t-remember", { purpose: "改负责什么" }))).toBe("话题只能改名字。");

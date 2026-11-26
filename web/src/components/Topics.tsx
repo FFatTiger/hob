@@ -1,28 +1,46 @@
 // 群的话题：桌面左栏的二级页、手机的话题列表、开话题对话框。
 // 行怎么分组、头像取谁在 ../topics.ts，左栏话题行的待办标签在 ./status-meta.tsx，这里只管画。
 import { t } from "../../../shared/i18n.ts";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { DialogShell } from "./DialogShell.tsx";
-import type { GroupSummary, Job } from "../../../shared/types.ts";
+import type { GroupSummary, Job, TodoItem } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { Avatar } from "../sprites.tsx";
-import { closeTopic, goHome, leaveTopicList, openGroupHome, openJob, openKnowledge, openSettings, openTopic, reopenTopic, selectGroup, toggleSideCollapsed, useApp } from "../store.ts";
+import { closeTopic, goHome, leaveTopicList, openGroupHome, openJob, openKnowledge, openSettings, openTopic, pinTopic, reopenTopic, selectGroup, toggleSideCollapsed, useApp } from "../store.ts";
 import { fmtElapsed, fmtList } from "../util.ts";
 import { JOB_STATUS } from "./status-meta.tsx";
 import { ownerGroup, topicFace, topicGroups, topicPreview } from "../topics.ts";
 import { GroupCluster, groupPreview } from "./Groups.tsx";
 import { todoStamp } from "./status-meta.tsx";
 import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
+import { useContextBox, useHoldMenu } from "./hold-menu.ts";
 
 /** 群头部第二行：几个成员。 */
 export function membersLine(g: GroupSummary): string {
   return t("{n} 位成员", { n: g.members.length });
 }
 
-function Unread({ g }: { g: GroupSummary }) {
+function Unread({ g }: { g: { unread: number; busy: string[] } }) {
   if (g.unread > 0) return <span className="topic-unread">{g.unread}</span>;
   if (g.busy.length) return <span className="topic-busy" title={t("进行中")} aria-label={t("进行中")} />;
   return null;
+}
+
+/** 通用于群话题和未来助手话题的行数据。 */
+export interface TopicRowData {
+  id: string;
+  name: string;
+  purpose?: string;
+  ownerId?: string;
+  createdAt: string;
+  closedAt?: string;
+  closeNote?: string;
+  pinnedAt?: string;
+  last?: { at: string; speaker: string | "user"; text: string };
+  unread: number;
+  busy: string[];
+  todos?: TodoItem[];
 }
 
 /** 「综合」那一行：井号方块、最后一条的预览、时间、未读。 */
@@ -43,34 +61,86 @@ export function GeneralRow({ g, sel, onClick }: { g: GroupSummary; sel?: boolean
   );
 }
 
-/** 一行话题：现在轮到谁的头像、标题和时间、状态标签加预览、未读。关了的灰一些。 */
-export function TopicRow({ g, sel }: { g: GroupSummary; sel?: boolean }) {
+/** 一行话题：头像、标题、置顶标识与时间、状态标签加预览、未读；进行中支持右键 / 长按置顶。关了的灰一些。 */
+export function TopicRow<T extends TopicRowData>({
+  g,
+  sel,
+  face,
+  onSelect,
+  onPin,
+}: {
+  g: T;
+  sel?: boolean;
+  face?: ReactNode;
+  onSelect?: () => void;
+  onPin?: (pinned: boolean) => void;
+}) {
   const s = useApp();
-  const face = s.assistants.find((a) => a.id === topicFace(g));
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
+  const canPin = !g.closedAt;
+  const hold = useHoldMenu((x, y) => setMenuPos({ x, y }), canPin);
+  const menuBox = useContextBox(canPin ? menuPos : null, () => setMenuPos(null));
+
+  const faceId = face === undefined ? topicFace(g) : undefined;
+  const faceAssistant = faceId ? s.assistants.find((a) => a.id === faceId) : undefined;
+  const avatar = face !== undefined
+    ? face
+    : faceAssistant
+      ? <Avatar sprite={faceAssistant.sprite} prop={faceAssistant.prop} size={36} />
+      : <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={18} /></span>;
   const stamp = todoStamp(g);
+  const pinned = Boolean(!g.closedAt && g.pinnedAt);
+  const togglePin = () => {
+    setMenuPos(null);
+    if (onPin) onPin(!g.pinnedAt);
+    else void pinTopic(g.id, !g.pinnedAt);
+  };
+
   return (
-    <button
-      className={`list-row home-row topic-row${sel ? " sel" : ""}${g.closedAt ? " closed" : ""}`}
-      onClick={() => void selectGroup(g.id)}
-    >
-      {face ? <Avatar sprite={face.sprite} prop={face.prop} size={36} /> : <span className="topic-hash" aria-hidden="true"><Icon name="hash" size={18} /></span>}
-      <div className="main">
-        <div className="l1">
-          <span className="nm">{g.name}</span>
-          <span className="tm">{fmtList(g.closedAt ?? g.last?.at)}</span>
+    <>
+      <button
+        className={`list-row home-row topic-row${sel ? " sel" : ""}${g.closedAt ? " closed" : ""}${pinned ? " pinned" : ""}`}
+        onPointerDown={hold.handlers.onPointerDown}
+        onPointerMove={hold.handlers.onPointerMove}
+        onPointerUp={hold.handlers.onPointerUp}
+        onPointerCancel={hold.handlers.onPointerCancel}
+        onContextMenu={hold.handlers.onContextMenu}
+        onClick={() => {
+          if (hold.takeHeld()) return;
+          if (onSelect) onSelect();
+          else void selectGroup(g.id);
+        }}
+      >
+        {avatar}
+        <div className="main">
+          <div className="l1">
+            <span className="nm">{g.name}</span>
+            <span className="topic-l1-end">
+              {pinned ? <span className="topic-pin" title={t("已置顶")} aria-label={t("已置顶")}><Icon name="pin" size={12} /></span> : null}
+              <span className="tm">{fmtList(g.closedAt ?? g.last?.at)}</span>
+            </span>
+          </div>
+          <div className="pv">
+            {stamp ? <span className="topic-stamp" title={stamp.title}>{stamp.text}</span> : null}
+            <span className="topic-preview">{topicPreview(g, s.assistants)}</span>
+          </div>
         </div>
-        <div className="pv">
-          {stamp ? <span className="topic-stamp" title={stamp.title}>{stamp.text}</span> : null}
-          <span className="topic-preview">{topicPreview(g, s.assistants)}</span>
-        </div>
-      </div>
-      <Unread g={g} />
-    </button>
+        <Unread g={g} />
+      </button>
+      {canPin && menuPos ? createPortal(
+        <div className="amenu topic-menu" ref={menuBox} role="menu" onContextMenu={(e) => e.preventDefault()}>
+          <button type="button" role="menuitem" onClick={togglePin}>
+            {g.pinnedAt ? t("取消置顶") : t("置顶")}
+          </button>
+        </div>,
+        document.body,
+      ) : null}
+    </>
   );
 }
 
 /** 已关闭那一节默认列最近 5 个，多了给一个「查看全部」。 */
-function ClosedRows({ list, showAll, onMore }: { list: GroupSummary[]; showAll: boolean; onMore: () => void }) {
+function ClosedRows<T extends TopicRowData>({ list, showAll, onMore }: { list: T[]; showAll: boolean; onMore: () => void }) {
   const s = useApp();
   const rows = showAll ? list : list.slice(0, 5);
   return (

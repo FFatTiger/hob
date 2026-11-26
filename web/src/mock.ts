@@ -3955,6 +3955,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (topic.closedAt) throw new ApiError(400, "这个话题已经关闭了。");
       const now = new Date().toISOString();
       topic.closedAt = now;
+      delete topic.pinnedAt;
       if (body?.note?.trim()) topic.closeNote = body.note.trim();
       topic.busy = [];
       emitGroup(topicId);
@@ -3966,6 +3967,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!topic?.parentId) throw new ApiError(404, "话题不存在。");
       delete topic.closedAt;
       delete topic.closeNote;
+      delete topic.pinnedAt;
       emitGroup(topicId);
       emitGroup(topic.parentId);
       return clone(topic);
@@ -3979,9 +3981,16 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         if (existing) Object.assign(existing, patch.rule, { changedAt: new Date().toISOString() });
         else if (patch.rule.text && patch.rule.mode) rules.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: new Date().toISOString() });
       }
-      // 话题只能改名字：成员、群主都取所属的群
+      // 话题只能改名字、回应方式和置顶：成员、群主都取所属的群
       if (group.parentId && (patch.members || patch.ownerId || patch.purpose !== undefined)) {
         throw new ApiError(400, "话题只能改名字。");
+      }
+      if (patch.pinned !== undefined) {
+        if (!group.parentId) throw new ApiError(400, "置顶仅适用于话题。");
+        if (typeof patch.pinned !== "boolean") throw new ApiError(400, "置顶状态无效");
+        if (patch.pinned && group.closedAt) throw new ApiError(400, "已关闭的话题不能置顶，请先重新打开。");
+        if (patch.pinned) group.pinnedAt = group.pinnedAt ?? new Date().toISOString();
+        else delete group.pinnedAt;
       }
       if (patch.members) {
         const members = [...new Set(patch.members)];

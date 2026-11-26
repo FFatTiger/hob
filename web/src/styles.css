@@ -7496,11 +7496,26 @@ button.screen,
   padding-bottom: 8px;
   min-height: 56px;
 }
+.topic-row .l1 {
+  align-items: center;
+}
 .topic-row .pv {
   display: flex;
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+.topic-l1-end {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: none;
+}
+.topic-pin {
+  display: inline-flex;
+  align-items: center;
+  color: var(--accent);
+  flex: none;
 }
 .topic-preview {
   min-width: 0;

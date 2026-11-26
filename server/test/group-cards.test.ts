@@ -82,24 +82,32 @@ describe("群任务权限", () => {
 });
 
 describe("群规则", () => {
-  it("话题记的规则归群，其他话题和任务能看到，单聊规则不受影响", async () => {
+  it("话题记的规则默认只管本话题，带 scope: group 才写到群规则", async () => {
     const { hob, group } = setup();
     try {
       const first = hob.runtime.groups.createTopic(group.id, "第一件事", "user");
       const second = hob.runtime.groups.createTopic(group.id, "第二件事", "user");
       const tool = buildRouterTools(hob.runtime, "ops", first.id).find((item) => item.name === "set_rule")!;
-      await tool.execute("rule", { text: "发布前确认", mode: "ask" });
+      await tool.execute("rule", { text: "只在这个话题确认", mode: "ask" });
       expect(hob.runtime.store.rules("ops")).toEqual([]);
-      expect(hob.runtime.store.groupRules(second.id)).toMatchObject([{ text: "发布前确认", mode: "ask" }]);
+      expect(hob.runtime.store.groupRules(first.id)).toMatchObject([{ text: "只在这个话题确认", mode: "ask", from: "topic" }]);
+      expect(hob.runtime.store.groupRules(second.id)).toEqual([]);
+
+      await tool.execute("group-rule", { text: "发布前确认", mode: "ask", scope: "group" });
+      expect(hob.runtime.store.groupRules(second.id)).toMatchObject([{ text: "发布前确认", mode: "ask", from: "parent" }]);
       const options = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
-      const onlyGroup = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: second });
-      expect(onlyGroup).toContain("本群的规则：");
-      expect(onlyGroup).not.toContain("你自己的规则：");
-      expect(onlyGroup).not.toContain("本群的规则和你自己的规则说法不一样时");
+      const onlyTopic = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: hob.runtime.store.group(second.id)! });
+      expect(onlyTopic).toContain("这个话题的规则：");
+      expect(onlyTopic).not.toContain("本群的规则：");
+      expect(onlyTopic).not.toContain("你自己的规则：");
+      expect(onlyTopic).not.toContain("这个话题的规则和你自己的规则说法不一样时");
       hob.runtime.store.saveRules("ops", [{ id: "own-ask", text: "个人先问", mode: "ask", changedAt: new Date().toISOString() }, { id: "own-allow", text: "个人直接做", mode: "allow", changedAt: new Date().toISOString() }]);
-      const prompt = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: second });
-      expect(prompt).toContain("本群的规则：\n- 执行前确认：发布前确认\n你自己的规则：");
-      expect(prompt).toContain("本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
+      const prompt = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: hob.runtime.store.group(second.id)! });
+      expect(prompt).toContain("这个话题的规则：\n- 执行前确认：发布前确认\n你自己的规则：");
+      expect(prompt).toContain("这个话题的规则和你自己的规则说法不一样时，在这里按这个话题的规则执行。");
+      const parentPrompt = buildSystemPrompt(hob.runtime.store, "ops", { ...options, group: hob.runtime.store.group(group.id)! });
+      expect(parentPrompt).toContain("本群的规则：\n- 执行前确认：发布前确认\n你自己的规则：");
+      expect(parentPrompt).toContain("本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
       hob.runtime.store.saveJob({ id: "t-rules", assistantId: "ops", title: "规则测试", instruction: "测试", groupId: second.id, status: "done", createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [] });
       const worker = buildWorkerPrompt(hob.runtime.store, "t-rules", options);
       expect(worker).toContain("发布前确认");
@@ -108,14 +116,19 @@ describe("群规则", () => {
     } finally { hob.close(); }
   });
 
-  it("群内确认卡的 always 选项写入群规则", async () => {
+  it("话题内确认卡的 always 写入话题层，综合内写入群规则", async () => {
     const { hob, group } = setup();
     try {
       const topic = hob.runtime.groups.createTopic(group.id, "话题", "user");
-      hob.runtime.store.saveApproval({ id: "a-group-rule", assistantId: "ops", groupId: topic.id, title: "发布？", options: [{ key: "A", label: "以后直接发布", always: true }], status: "pending", source: "router", createdAt: new Date().toISOString() });
-      await answerApproval(hob.runtime, "a-group-rule", { key: "A" });
-      expect(hob.runtime.store.groupRules(group.id)).toMatchObject([{ text: "以后直接发布", mode: "allow" }]);
+      hob.runtime.store.saveApproval({ id: "a-topic-rule", assistantId: "ops", groupId: topic.id, title: "发布？", options: [{ key: "A", label: "以后直接发布", always: true }], status: "pending", source: "router", createdAt: new Date().toISOString() });
+      await answerApproval(hob.runtime, "a-topic-rule", { key: "A" });
+      expect(hob.runtime.store.groupRules(topic.id)).toMatchObject([{ text: "以后直接发布", mode: "allow", from: "topic" }]);
+      expect(hob.runtime.store.groupParentRules(group.id)).toEqual([]);
       expect(hob.runtime.store.rules("ops")).toEqual([]);
+
+      hob.runtime.store.saveApproval({ id: "a-group-rule", assistantId: "ops", groupId: group.id, title: "部署？", options: [{ key: "A", label: "以后直接部署", always: true }], status: "pending", source: "router", createdAt: new Date().toISOString() });
+      await answerApproval(hob.runtime, "a-group-rule", { key: "A" });
+      expect(hob.runtime.store.groupParentRules(group.id)).toMatchObject([{ text: "以后直接部署", mode: "allow" }]);
     } finally { hob.close(); }
   });
 });

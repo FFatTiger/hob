@@ -228,3 +228,31 @@ it("云桌面在单聊和群话题下按占用者呈现：本会话在用内嵌�
   expect(topicIdle).not.toContain('class="now-desk"');
   expect(topicIdle).toContain("<span>云桌面</span><small>空闲</small>");
 });
+
+it("群成员详情页只渲染默认任务模型下拉，不渲染成员对话模型下拉", () => {
+  const g: GroupSummary = { id: "g-1", name: "产品群", purpose: "协作", ownerId: "hob", members: ["hob"], createdAt: "2026-01-01T00:00:00Z", unread: 0, busy: [] };
+  data.groups = [g];
+  data.sel = null;
+  data.gsel = "g-1";
+  data.panelStack = [{ kind: "member", id: "hob" }];
+  const pick = { ref: "p/m", thinking: "low" as const };
+  data.groupProfiles = {
+    "g-1": {
+      value: {
+        group: g,
+        rules: [],
+        memberModels: {
+          hob: {
+            conversation: { source: "group", pick, inherited: { source: "group", pick } },
+            work: { source: "group", pick, inherited: { source: "group", pick } },
+          },
+        },
+      },
+    },
+  };
+  const html = renderToStaticMarkup(<Panel />);
+  expect(html).toContain("在「产品群」里");
+  expect(html).toContain('aria-label="默认任务模型"');
+  expect(html).not.toContain('aria-label="对话模型"');
+  expect(html).not.toContain(">对话模型<");
+});

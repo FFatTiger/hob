@@ -25,7 +25,7 @@ describe("群成员模型回归", () => {
       hob.faux.setResponses([response(first, seen), response("第二轮完成", seen)]);
       await hob.runtime.groups.send(group.id, { text: "开始" });
       await waitFor(() => seen.length === 1 && hob.runtime.router.isBusy("hob", group.id));
-      await hob.runtime.groups.updateMemberModels(group.id, "hob", { conversation: pick("smart") });
+      await hob.runtime.groups.updateModels(group.id, { conversation: pick("smart") });
       expect(hob.runtime.router.isBusy("hob", group.id)).toBe(true);
       await waitFor(() => hob.runtime.groups.items(group.id).items.some((item) => item.kind === "assistant" && !item.streaming && item.text === first));
       await hob.runtime.router.waitIdle("hob", 15_000, group.id);

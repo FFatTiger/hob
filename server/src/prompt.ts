@@ -81,6 +81,9 @@ export function topicPromptLine(hostName: string, topicName: string): string {
   return `这里是群「${hostName}」的话题「${topicName}」，只谈这一件事。综合和别的话题里说了什么，这里看不到；这件事需要的来龙去脉都记在这个话题里。`;
 }
 
+/** 群话题里规则写哪一层的说明：接在 topicPromptLine 后面。 */
+export const GROUP_TOPIC_RULE_LINE = "在这个话题里定的规则默认只管这个话题。用户说的要求明显是整个群以后都要这样，用 set_rule 时 scope 填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时写在这个话题里。";
+
 /** 群主在综合里什么时候开话题：只给群主的综合会话，接在群主那段后面。 */
 export const TOPIC_OPEN_LINE = "一件事要来回商量几轮，或者要几个人接力执行一阵子，用 open_topic 为它创建一个话题，到话题里接着处理：这件事的讨论、提问和进展都放在一处，不和别的事、闲聊搅在一起，以后也翻得到。几句话能答完、分派一个任务就能完成的，在综合里直接处理。用户在综合里说的事属于已有的话题，转到那个话题去处理，那里有这件事前面的经过。";
 
@@ -151,7 +154,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
       groupPromptLine(store, introGroup),
       GROUP_NO_REPLY_LINE,
       ...(group?.replyMode === "all" ? [GROUP_ALL_REPLY_LINE] : []),
-      ...(group && host ? [topicPromptLine(host.name, group.name)] : []),
+      ...(group && host ? [topicPromptLine(host.name, group.name), GROUP_TOPIC_RULE_LINE] : []),
     ].join("\n\n")
     : undefined;
   const ownerIntro = group && group.ownerId === assistantId
@@ -241,11 +244,13 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   if (globalRules.length || groupRules.length || rules.length) {
     lines.push("", "## 用户定的规则");
     for (const rule of globalRules) lines.push(`- ${rule.mode === "ask" ? "执行前确认：" : ""}${rule.text}`);
-    if (group && groupRules.length) lines.push("本群的规则：");
+    if (group && groupRules.length) lines.push(group.parentId ? "这个话题的规则：" : "本群的规则：");
     for (const rule of groupRules) lines.push(`- ${rule.mode === "ask" ? "执行前确认" : "直接执行"}：${rule.text}`);
     if (group && rules.length) lines.push("你自己的规则：");
     for (const rule of rules) lines.push(`- ${rule.mode === "ask" ? "执行前确认" : "直接执行"}：${rule.text}`);
-    if (groupRules.length && rules.length) lines.push("本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
+    if (groupRules.length && rules.length) {
+      lines.push(group?.parentId ? "这个话题的规则和你自己的规则说法不一样时，在这里按这个话题的规则执行。" : "本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
+    }
   }
   const memory = memoryPromptLines(settings.memory);
   if (memory.length) lines.push("", ...memory);

@@ -7,14 +7,17 @@ import type {
   Delegation,
   DesktopView,
   Draft,
+  EffectiveRule,
   Group,
   GroupItem,
   GroupItemsPage,
+  GroupMemberModel,
   GroupSummary,
   HobEvent,
   ImageKeyView,
   ImageSettings,
   ImageTestResult,
+  InheritedGroupModel,
   Item,
   Job,
   JobFilesView,
@@ -24,10 +27,13 @@ import type {
   LoreTestResult,
   MemoryConfig,
   MemoryProvider,
+  ModelPick,
   Profile,
   Routine,
   RoutineRun,
   Rule,
+  RuleOverrides,
+  TopicOverrides,
   ThinkingLevelMapSetting,
   ModelsView,
   ModelThinkingView,
@@ -3860,21 +3866,60 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     groupProfile: async (id) => {
       const selected = db.groups.find((g) => g.id === id);
       const group = db.groups.find((g) => g.id === (selected?.parentId ?? id));
-      if (!group) throw new ApiError(404, "群不存在。");
+      if (!selected || !group) throw new ApiError(404, "群不存在。");
+      const isTopic = Boolean(selected.parentId);
+      const ov: TopicOverrides = isTopic ? (selected.overrides ?? {}) : {};
       const models = db.settings.settings.models;
+      const defaultModel = (key: "conversation" | "work"): GroupMemberModel => {
+        const topicPick = isTopic ? ov.models?.[key] : undefined;
+        const groupPick = group.models?.[key];
+        const inheritedPick = groupPick ?? models[key];
+        const inheritedSource: InheritedGroupModel["source"] = groupPick ? "group" : "global";
+        const pick = topicPick ?? inheritedPick;
+        const source: GroupMemberModel["source"] = topicPick ? "topic" : inheritedSource;
+        return { source, pick, inherited: isTopic ? { source: inheritedSource, pick: inheritedPick } : { source: "global", pick: models[key] } };
+      };
       const memberModels = Object.fromEntries(group.members.map((aid) => {
         const member = db.assistants.find((a) => a.id === aid);
-        const resolved = (key: "conversation" | "work") => {
-          const override = group.memberModels?.[aid]?.[key];
-          const inheritedPick = group.models?.[key] ?? member?.models?.[key] ?? models[key];
-          const inheritedSource = group.models?.[key] ? "group" as const : member?.models?.[key] ? "assistant" as const : "global" as const;
-          const pick = override ?? inheritedPick;
-          const source = override ? "member" as const : inheritedSource;
-          return { source, pick, inherited: { source: inheritedSource, pick: inheritedPick } };
+        const convCandidates: readonly (readonly [GroupMemberModel["source"], ModelPick | undefined])[] = [
+          ...(isTopic ? ([["topic", ov.models?.conversation]] as const) : []),
+          ["group", group.models?.conversation],
+          ["assistant", member?.models?.conversation],
+          ["global", models.conversation],
+        ];
+        const convHit = convCandidates.find(([, pick]) => Boolean(pick))!;
+        const conversation: GroupMemberModel = {
+          source: convHit[0],
+          pick: convHit[1]!,
+          inherited: { source: convHit[0] as InheritedGroupModel["source"], pick: convHit[1]! },
         };
-        return [aid, { conversation: resolved("conversation"), work: resolved("work") }];
+
+        const workCandidates: readonly (readonly [GroupMemberModel["source"], ModelPick | undefined])[] = [
+          ...(isTopic ? ([["topicMember", ov.memberModels?.[aid]?.work]] as const) : []),
+          ["member", group.memberModels?.[aid]?.work],
+          ...(isTopic ? ([["topic", ov.models?.work]] as const) : []),
+          ["group", group.models?.work],
+          ["assistant", member?.models?.work],
+          ["global", models.work],
+        ];
+        const workHit = workCandidates.find(([, pick]) => Boolean(pick))!;
+        const workInheritedHit = workCandidates.slice(1).find(([, pick]) => Boolean(pick))!;
+        const work: GroupMemberModel = {
+          source: workHit[0],
+          pick: workHit[1]!,
+          inherited: { source: workInheritedHit[0] as InheritedGroupModel["source"], pick: workInheritedHit[1]! },
+        };
+        return [aid, { conversation, work }];
       }));
-      return clone({ group, rules: groupRules[group.id] ?? [], memberModels });
+      const rules: EffectiveRule[] = (groupRules[group.id] ?? []).map((rule) => ({ ...rule, from: "parent" as const }));
+      return clone({
+        group: selected,
+        rules,
+        hiddenRules: [],
+        replyMode: { value: selected.replyMode ?? "owner", source: isTopic && ov.replyMode !== undefined ? "topic" as const : "group" as const },
+        models: { conversation: defaultModel("conversation"), work: defaultModel("work") },
+        memberModels,
+      });
     },
     groupSkills: async (id) => clone(db.assistantSkills[id] ?? []),
     patchGroupSkill: async (id, name, enabled) => {
@@ -3932,6 +3977,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         purpose: group.purpose,
         ownerId: group.ownerId,
         members: [...group.members],
+        overrides: {},
         ...(group.replyMode ? { replyMode: group.replyMode } : {}),
         ...(cwd ? { cwd } : {}),
         createdAt: now,
@@ -4007,15 +4053,43 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       }
       
       if (patch.models !== undefined) {
-        const models = { ...group.models };
-        for (const key of ["conversation", "work"] as const) {
-          if (patch.models[key] === null) delete models[key];
-          else if (patch.models[key]) models[key] = patch.models[key];
+        if (group.parentId) {
+          const ov: TopicOverrides = { ...group.overrides };
+          const models = { ...ov.models };
+          for (const key of ["conversation", "work"] as const) {
+            if (patch.models[key] === null) delete models[key];
+            else if (patch.models[key]) models[key] = patch.models[key];
+          }
+          if (models.conversation || models.work) ov.models = models;
+          else delete ov.models;
+          group.overrides = ov;
+          const parent = db.groups.find((g) => g.id === group.parentId);
+          group.models = { ...parent?.models, ...ov.models };
+        } else {
+          const models = { ...group.models };
+          for (const key of ["conversation", "work"] as const) {
+            if (patch.models[key] === null) delete models[key];
+            else if (patch.models[key]) models[key] = patch.models[key];
+          }
+          group.models = models;
         }
-        group.models = models;
       }
       if (patch.name !== undefined) group.name = patch.name.trim() || group.name;
-      if (patch.replyMode === "owner" || patch.replyMode === "all") group.replyMode = patch.replyMode;
+      if (patch.replyMode === null && group.parentId) {
+        const ov: TopicOverrides = { ...group.overrides };
+        delete ov.replyMode;
+        group.overrides = ov;
+        const parent = db.groups.find((g) => g.id === group.parentId);
+        group.replyMode = parent?.replyMode;
+      } else if (patch.replyMode === "owner" || patch.replyMode === "all") {
+        if (group.parentId) group.overrides = { ...group.overrides, replyMode: patch.replyMode };
+        group.replyMode = patch.replyMode;
+        if (!group.parentId) {
+          for (const topic of db.groups.filter((g) => g.parentId === group.id)) {
+            if (topic.overrides?.replyMode === undefined) { topic.replyMode = patch.replyMode; emitGroup(topic.id); }
+          }
+        }
+      }
       if (patch.purpose !== undefined) {
         group.purpose = patch.purpose;
         for (const topic of db.groups.filter((g) => g.parentId === groupId)) topic.purpose = patch.purpose;
@@ -4025,17 +4099,35 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       return clone(group);
     },
     patchGroupMemberModels: async (groupId, assistantId, patch) => {
+      if ("conversation" in patch) throw new ApiError(400, "成员只能单设任务模型，对话模型在群设置里改");
       const selected = db.groups.find((g) => g.id === groupId);
-      const group = db.groups.find((g) => g.id === (selected?.parentId ?? groupId));
+      if (!selected) throw new ApiError(404, "群不存在。");
+      const group = selected.parentId ? db.groups.find((g) => g.id === selected.parentId) : selected;
       if (!group) throw new ApiError(404, "群不存在。");
       if (!group.members.includes(assistantId)) throw new ApiError(400, "助手不是这个群的成员。");
-      const models = { ...group.memberModels?.[assistantId] };
-      for (const key of ["conversation", "work"] as const) {
-        if (patch[key] === null) delete models[key];
-        else if (patch[key]) models[key] = patch[key];
+      if (selected.parentId) {
+        const ov: TopicOverrides = { ...selected.overrides };
+        const memberModels = { ...ov.memberModels };
+        if (patch.work === null) delete memberModels[assistantId];
+        else if (patch.work) memberModels[assistantId] = { work: patch.work };
+        if (Object.keys(memberModels).length) ov.memberModels = memberModels;
+        else delete ov.memberModels;
+        selected.overrides = ov;
+        selected.memberModels = { ...group.memberModels, ...ov.memberModels };
+        emitGroup(selected.id);
+        return clone(selected);
       }
-      group.memberModels = { ...group.memberModels, [assistantId]: models };
-      for (const topic of db.groups.filter((g) => g.parentId === group.id)) { topic.memberModels = group.memberModels; emitGroup(topic.id); }
+      const models = { ...group.memberModels?.[assistantId] };
+      if (patch.work === null) delete models.work;
+      else if (patch.work) models.work = patch.work;
+      const memberModels = { ...group.memberModels };
+      if (models.work) memberModels[assistantId] = { work: models.work };
+      else delete memberModels[assistantId];
+      group.memberModels = memberModels;
+      for (const topic of db.groups.filter((g) => g.parentId === group.id)) {
+        topic.memberModels = { ...group.memberModels, ...topic.overrides?.memberModels };
+        emitGroup(topic.id);
+      }
       emitGroup(group.id);
       return clone(group);
     },

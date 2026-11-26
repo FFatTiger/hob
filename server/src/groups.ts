@@ -8,11 +8,13 @@ import type {
   GroupReplyMode,
   GroupSummary,
   JobStatus,
+  ModelPick,
   NoteIcon,
   SendMessageBody,
 } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
 import { reactionsList } from "./store.ts";
+import { patchOverrides } from "./topic-config.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
@@ -255,7 +257,7 @@ export class GroupManager {
       purpose: group.purpose,
       ownerId: group.ownerId,
       members: group.members,
-      ...(group.replyMode ? { replyMode: group.replyMode } : {}),
+      overrides: {},
       ...(cwd ? { cwd } : {}),
       createdAt: new Date().toISOString(),
       parentId: gid,
@@ -425,54 +427,88 @@ export class GroupManager {
     return next;
   }
 
-  /** 保存本群的模型覆盖，话题共用所属群的设置。 */
+  /** 保存群或话题的模型覆盖：话题写进 overrides.models，群写进 group.models。 */
   async updateModels(gid: string, patch: unknown): Promise<Group> {
     if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("模型设置无效");
     await this.runtime.models.get();
     const selected = this.group(gid);
-    const group = selected.parentId ? this.group(selected.parentId) : selected;
-    const models = this.modelPatch(group.models, patch as Record<string, unknown>);
-    const next = { ...group, models };
+    const parsed = this.parseModelInputs(patch as Record<string, unknown>, ["conversation", "work"]);
+    if (selected.parentId) {
+      patchOverrides(this.store.groupTopicConfigHost(selected.id), { models: parsed });
+      for (const id of selected.members) this.runtime.router.releaseGroupMemberSessions(id, [selected.id]);
+      this.publish(selected.id);
+      return this.group(selected.id);
+    }
+    const models = this.applyModelInputs(selected.models, parsed);
+    const next = { ...selected, models };
     this.store.saveGroup(next);
-    const ids = [group.id, ...this.topicsOf(group.id).map((topic) => topic.id)];
-    for (const id of group.members) this.runtime.router.releaseGroupMemberSessions(id, ids);
+    const ids = [selected.id, ...this.topicsOf(selected.id).map((topic) => topic.id)];
+    for (const id of selected.members) this.runtime.router.releaseGroupMemberSessions(id, ids);
     for (const id of ids) this.publish(id);
     return next;
   }
 
-  /** 保存一个成员在所属群的模型覆盖。 */
+  /** 保存一个成员在群或话题的任务模型覆盖（成员层不再单设对话模型）。 */
   async updateMemberModels(gid: string, assistantId: string, patch: Record<string, unknown>): Promise<Group> {
+    if (!patch || typeof patch !== "object" || Array.isArray(patch)) throw new Error("模型设置无效");
+    if ("conversation" in patch) throw new Error("成员只能单设任务模型，对话模型在群设置里改");
     await this.runtime.models.get();
     const selected = this.group(gid);
-    const group = selected.parentId ? this.group(selected.parentId) : selected;
-    if (!group.members.includes(assistantId)) throw new Error("助手不是这个群的成员");
-    const models = this.modelPatch(group.memberModels?.[assistantId], patch);
-    const memberModels = { ...group.memberModels };
-    if (models.conversation || models.work) memberModels[assistantId] = models;
+    if (!selected.members.includes(assistantId)) throw new Error("助手不是这个群的成员");
+    const parsed = this.parseModelInputs(patch, ["work"]);
+    if (selected.parentId) {
+      if ("work" in parsed) {
+        patchOverrides(this.store.groupTopicConfigHost(selected.id), {
+          memberModels: { [assistantId]: { work: parsed.work ?? null } },
+        });
+      }
+      this.runtime.router.releaseGroupMemberSessions(assistantId, [selected.id]);
+      this.publish(selected.id);
+      return this.group(selected.id);
+    }
+    const models = this.applyModelInputs(selected.memberModels?.[assistantId], parsed);
+    const memberModels = { ...selected.memberModels };
+    if (models.work) memberModels[assistantId] = { work: models.work };
     else delete memberModels[assistantId];
-    const next = { ...group, memberModels };
+    const next = { ...selected, memberModels };
     this.store.saveGroup(next);
-    this.runtime.router.releaseGroupMemberSessions(assistantId, [group.id, ...this.topicsOf(group.id).map((topic) => topic.id)]);
-    this.publish(group.id);
-    for (const topic of this.topicsOf(group.id)) this.publish(topic.id);
-    return next;
+    this.runtime.router.releaseGroupMemberSessions(assistantId, [selected.id, ...this.topicsOf(selected.id).map((topic) => topic.id)]);
+    this.publish(selected.id);
+    for (const topic of this.topicsOf(selected.id)) this.publish(topic.id);
+    return this.group(selected.id);
   }
 
-  private modelPatch(current: Group["models"], patch: Record<string, unknown>): NonNullable<Group["models"]> {
-    const models = { ...current };
-    for (const key of ["conversation", "work"] as const) {
+  private parseModelInputs(
+    patch: Record<string, unknown>,
+    keys: readonly ("conversation" | "work")[],
+  ): { conversation?: ModelPick | null; work?: ModelPick | null } {
+    const out: { conversation?: ModelPick | null; work?: ModelPick | null } = {};
+    for (const key of keys) {
       if (!(key in patch)) continue;
-      if (patch[key] === null) delete models[key];
+      if (patch[key] === null) out[key] = null;
       else {
         const checked = checkAssistantModels({ models: { [key]: patch[key] } as never }, this.runtime.settings.settings.models.roster, this.runtime.models).models?.[key];
         if (!checked) throw new Error("模型设置无效");
-        models[key] = checked;
+        out[key] = checked;
       }
+    }
+    return out;
+  }
+
+  private applyModelInputs(
+    current: Group["models"],
+    parsed: { conversation?: ModelPick | null; work?: ModelPick | null },
+  ): NonNullable<Group["models"]> {
+    const models = { ...current };
+    for (const key of ["conversation", "work"] as const) {
+      if (!(key in parsed)) continue;
+      if (parsed[key] === null) delete models[key];
+      else if (parsed[key]) models[key] = parsed[key]!;
     }
     return models;
   }
 
-  /** 话题只能改名、回应方式和置顶：成员、群主、负责什么跟着所属的群。 */
+  /** 话题只能改名、回应方式、覆盖层模型和置顶：成员、群主、负责什么跟着所属的群。 */
   private updateTopic(topic: Group, patch: UpdateGroupInput): Group {
     if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
     if (patch.members !== undefined || patch.ownerId !== undefined || patch.purpose !== undefined) {
@@ -484,18 +520,24 @@ export class GroupManager {
     if (patch.pinned === true && topic.closedAt) {
       throw new Error("已关闭的话题不能置顶，请先重新打开。");
     }
-    const replyMode = this.replyModeOf(patch.replyMode);
-    const next: Group = {
-      ...topic,
-      ...(patch.name !== undefined ? { name: this.text(patch.name, "话题名", 40) } : {}),
-      ...(replyMode !== undefined ? { replyMode } : {}),
-      ...(patch.pinned === true ? { pinnedAt: topic.pinnedAt ?? new Date().toISOString() } : {}),
-    };
-    if (patch.pinned === false) delete next.pinnedAt;
-    this.store.saveGroup(next);
+    const name = patch.name !== undefined ? this.text(patch.name, "话题名", 40) : undefined;
+    const replyMode = patch.replyMode === null ? null : this.replyModeOf(patch.replyMode);
+    if (replyMode !== undefined) {
+      patchOverrides(this.store.groupTopicConfigHost(topic.id), { replyMode });
+    }
+    if (name !== undefined || patch.pinned !== undefined) {
+      const cur = this.group(topic.id);
+      const { pinnedAt: curPinnedAt, ...withoutPinned } = cur;
+      const next: Group = {
+        ...(patch.pinned === false ? withoutPinned : cur),
+        ...(name !== undefined ? { name } : {}),
+        ...(patch.pinned === true ? { pinnedAt: curPinnedAt ?? new Date().toISOString() } : {}),
+      };
+      this.store.saveGroup(next);
+    }
     this.publish(topic.id);
     if (topic.parentId) this.publish(topic.parentId);
-    return next;
+    return this.group(topic.id);
   }
 
   private forgetMemberSessions(groupIds: string[], assistantId: string): void {

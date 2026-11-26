@@ -466,21 +466,21 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
   const resolved = s.groupProfiles[group.id];
   const settings = s.settings.settings.models;
   const name = (ref: string) => view?.models.find((model) => model.ref === ref)?.name ?? ref;
+  // 成员层已取消单设对话模型（统一在群/话题设置里改），只留任务模型下拉
+  const effective = resolved?.value?.memberModels[aid]?.work;
+  const inherited = effective?.inherited;
+  const follow = inherited ? followingModel(inherited.source, name(inherited.pick.ref)) : undefined;
+  const pick = effective?.source === "member" ? effective.pick : undefined;
+  const label = t("默认任务模型");
   return <div className="group-card sidebar-info group-member-models">
     <div className="group-member-models-head"><span>{t("在「{name}」里", { name: group.name })}</span><small>{t("只在本群生效")}</small></div>
-    {([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => {
-      const effective = resolved?.value?.memberModels[aid]?.[key];
-      const inherited = effective?.inherited;
-      const follow = inherited ? followingModel(inherited.source, name(inherited.pick.ref)) : undefined;
-      const pick = effective?.source === "member" ? effective.pick : undefined;
-      return <label className="group-member-model-row" key={key}>
-        <span>{label}</span><span className={pick ? "" : "following"}><BrandIcon size={20} brand={brandForRef(pick?.ref ?? inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} />{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span><Icon name="updown" size={14} />
-        <Select aria-label={label} value={pick?.ref ?? ""} onChange={(ref) => {
-          const thinking = fitThinking(view?.models.find((model) => model.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings[key].thinking);
-          void patchGroupMemberModels(group.id, aid, { [key]: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(group.id); });
-        }} options={[{ value: "", label: follow?.option ?? t("跟随"), icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> }, ...rosterOptions(settings.roster, pick?.ref, name).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} />
-      </label>;
-    })}
+    <label className="group-member-model-row">
+      <span>{label}</span><span className={pick ? "" : "following"}><BrandIcon size={20} brand={brandForRef(pick?.ref ?? inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} />{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span><Icon name="updown" size={14} />
+      <Select aria-label={label} value={pick?.ref ?? ""} onChange={(ref) => {
+        const thinking = fitThinking(view?.models.find((model) => model.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings.work.thinking);
+        void patchGroupMemberModels(group.id, aid, { work: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(group.id); });
+      }} options={[{ value: "", label: follow?.option ?? t("跟随"), icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> }, ...rosterOptions(settings.roster, pick?.ref, name).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} />
+    </label>
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
   </div>;
 }

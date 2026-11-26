@@ -263,7 +263,7 @@ describe("群和话题的「全员回应」（replyMode）", () => {
     }
   });
 
-  it("新话题沿用所属群当时的 replyMode，之后群和话题可以各自单独修改", () => {
+  it("新话题继承所属群的 replyMode，覆盖后才独立，传 null 恢复跟随", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const group = hob.runtime.groups.create({
@@ -275,20 +275,26 @@ describe("群和话题的「全员回应」（replyMode）", () => {
       });
       const topic1 = hob.runtime.groups.createTopic(group.id, "预算讨论", "user");
       expect(topic1.replyMode).toBe("all");
+      expect(topic1.overrides).toEqual({});
       expect(hob.runtime.store.group(topic1.id)?.replyMode).toBe("all");
 
-      // 群改回群主回应，已有话题保持全员回应，之后新开的话题沿用群的新设置
+      // 群改回群主回应，没覆盖的话题跟着变
       hob.runtime.groups.update(group.id, { replyMode: "owner" });
       expect(hob.runtime.store.group(group.id)?.replyMode).toBe("owner");
-      expect(hob.runtime.store.group(topic1.id)?.replyMode).toBe("all");
+      expect(hob.runtime.store.group(topic1.id)?.replyMode).toBe("owner");
 
       const topic2 = hob.runtime.groups.createTopic(group.id, "排期讨论", "user");
       expect(topic2.replyMode).toBe("owner");
 
-      // 话题单独改成全员回应，不影响所属群
+      // 话题单独改成全员回应，之后群怎么改它都不变；传 null 恢复跟随
       hob.runtime.groups.update(topic2.id, { replyMode: "all" });
       expect(hob.runtime.store.group(topic2.id)?.replyMode).toBe("all");
+      expect(hob.runtime.store.group(topic2.id)?.overrides?.replyMode).toBe("all");
       expect(hob.runtime.store.group(group.id)?.replyMode).toBe("owner");
+
+      hob.runtime.groups.update(topic2.id, { replyMode: null });
+      expect(hob.runtime.store.group(topic2.id)?.replyMode).toBe("owner");
+      expect(hob.runtime.store.group(topic2.id)?.overrides?.replyMode).toBeUndefined();
 
       // 话题非法 replyMode 报错
       expect(() => hob.runtime.groups.update(topic2.id, { replyMode: "nobody" })).toThrow("owner 或 all");

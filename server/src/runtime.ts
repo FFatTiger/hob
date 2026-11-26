@@ -101,6 +101,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   store.validate();
   store.ensurePrimary();
   store.migrateInstructions();
+  store.migrateTopicOverrides();
   store.migrateAssistantDuties();
   migrateProductOwnerDuty(store);
   const bus = new BusImpl();

@@ -89,6 +89,29 @@ describe("server user-facing translations", () => {
     } finally { hob.close(); }
   });
 
+  it("translates member conversation-model error when locale is English", async () => {
+    const hob = makeHob({}, { settings: { general: { locale: "en" } } });
+    try {
+      const group = hob.runtime.groups.create({ name: "Ops", purpose: "Operations", ownerId: "hob", members: ["hob"] });
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: "test" }),
+      });
+      const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+      const response = await app.request(`/api/groups/${group.id}/members/hob/models`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ conversation: { ref: "faux/smart", thinking: "low" } }),
+      });
+      expect(response.status).toBe(400);
+      expect(await response.json()).toEqual({ error: "Members can only have their own task model. Change the chat model in group settings." });
+    } finally {
+      hob.close();
+    }
+  });
+
   it("translates push notification text", async () => {
     const sent: PushPayload[] = [];
     const hob = makeHob({}, { settings: { general: { locale: "en" } } });

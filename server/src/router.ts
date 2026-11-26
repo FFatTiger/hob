@@ -500,7 +500,9 @@ export class RouterManager {
   private async openSession(state: RouterState, assistant: Assistant): Promise<void> {
     // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
     await this.runtime.models.get();
-    const effectiveAssistant = assistantInGroup(assistant, state.groupId ? this.store.group(state.groupId) : undefined, this.runtime.models, this.runtime.settings.settings.models);
+    const group = state.groupId ? this.store.group(state.groupId) : undefined;
+    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
+    const effectiveAssistant = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const pick = conversationPick(this.runtime.settings.settings.models, effectiveAssistant);
     state.knowledgeNames = (await boundKnowledge(this.runtime, assistant.id)).map((collection) => collection.name);
     const desktop = this.runtime.desktop.view();
@@ -658,7 +660,9 @@ export class RouterManager {
   private promptModels(assistantId: string, groupId?: string): PromptModel[] {
     const found = this.store.assistant(assistantId);
     if (!found) return [];
-    const assistant = assistantInGroup(found, groupId ? this.store.group(groupId) : undefined, this.runtime.models, this.runtime.settings.settings.models);
+    const group = groupId ? this.store.group(groupId) : undefined;
+    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
+    const assistant = assistantInGroup(found, group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const settings = this.runtime.settings.settings.models;
     const catalog = this.runtime.models;
     const def = defaultWorkRef(settings, assistant, catalog);
@@ -678,7 +682,9 @@ export class RouterManager {
   /** 换了对话模型或思考档：下一轮生效，不重建会话（上下文保留）。 */
   private async applyConversationModel(state: RouterState): Promise<void> {
     if (!state.session) return;
-    const assistant = assistantInGroup(this.assistant(state.assistantId), state.groupId ? this.store.group(state.groupId) : undefined, this.runtime.models, this.runtime.settings.settings.models);
+    const group = state.groupId ? this.store.group(state.groupId) : undefined;
+    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
+    const assistant = assistantInGroup(this.assistant(state.assistantId), group, this.runtime.models, this.runtime.settings.settings.models, parent);
     const pick = conversationPick(this.runtime.settings.settings.models, assistant);
     const model = await this.runtime.pi.model(pick.ref);
     // 用拿到的模型本身算档：换服务商后名单缓存是空的，按缓存查会把思考档收成 off
@@ -1904,7 +1910,8 @@ export class RouterManager {
     try {
       await this.runtime.models.get();
       const group = groupId ? this.store.group(groupId) : undefined;
-      const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models);
+      const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
+      const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
       const pick = followUpPick(this.runtime.settings.settings.models, effective, this.runtime.models);
       if (!pick) return;
       const model = await this.runtime.pi.model(pick.ref);

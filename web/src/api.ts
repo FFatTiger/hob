@@ -261,8 +261,8 @@ export interface HobApi {
   deleteGroupRule(groupId: string, ruleId: string): Promise<void>;
   groups(): Promise<GroupSummary[]>;
   createGroup(body: { name: string; purpose: string; ownerId: string; members: string[]; replyMode?: import("../../shared/types.ts").GroupReplyMode; cwd?: string }): Promise<Group>;
-  patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; replyMode?: import("../../shared/types.ts").GroupReplyMode; listOrder?: number; pinned?: boolean; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
-  patchGroupMemberModels(groupId: string, assistantId: string, patch: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }): Promise<Group>;
+  patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; replyMode?: import("../../shared/types.ts").GroupReplyMode | null; listOrder?: number; pinned?: boolean; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
+  patchGroupMemberModels(groupId: string, assistantId: string, patch: { work?: import("../../shared/types.ts").ModelPick | null }): Promise<Group>;
   archiveGroup(groupId: string): Promise<void>;
   /** 在群里开一个话题 */
   createTopic(groupId: string, body: { title: string; cwd?: string }): Promise<Group>;

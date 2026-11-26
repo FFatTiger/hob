@@ -11,10 +11,15 @@ const data = vi.hoisted(() => ({
   jobs: {} as Record<string, Job>, routines: [] as any[], approvals: {} as Record<string, any>, delegations: {} as Record<string, any>, assistantSkills: { hob: { loading: false, loaded: true, skills: [] as any[], error: null as string | null } } as Record<string, any>,
   knowledge: { collections: [] as any[], collectionsLoaded: false, loading: false, error: null as string | null },
   plugins: { loaded: true, loading: false, error: null as string | null, items: [] as any[] },
+  desktop: {
+    profiles: { hob: "screen-a" } as Record<string, string>,
+    screens: [{ id: "screen-a", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }] as any[],
+    users: { "screen-a": [{ assistantId: "hob", place: {} }] } as Record<string, any[]>,
+  },
   settings: { settings: { general: { timezone: "UTC" }, models: { conversation: { ref: "p/m", thinking: "low" }, work: { ref: "p/m", thinking: "low" }, roster: [] }, image: { source: "off" }, providers: [] } },
 }));
 vi.mock("../store.ts", () => ({ useApp: () => data, openAssistantPanel: vi.fn(), openGroupSettings: vi.fn(), openMemberPanel: vi.fn(), archiveGroup: vi.fn(), archiveAssistant: vi.fn(), patchGroup: vi.fn(), patchAssistant: vi.fn(), patchGroupMemberModels: vi.fn(), loadModels: vi.fn(async () => ({ models: [], updatedAt: null, error: null })), loadPlugins: vi.fn(async () => undefined), loadGroupProfile: vi.fn(async () => undefined), loadAssistantSkills: vi.fn(async () => undefined), loadKnowledge: vi.fn(async () => undefined), collapsePanel: vi.fn(), openNewRoutine: vi.fn(), openJob: vi.fn(), openJobs: vi.fn(), openSidebarPage: vi.fn(), openFilePreview: vi.fn(), openKnowledge: vi.fn(), jumpToDelegation: vi.fn(), setNotice: vi.fn(), updateRule: vi.fn(), runRoutine: vi.fn(), saveRoutine: vi.fn(), showNowWide: vi.fn(), setNowWide: vi.fn(), toggleNowWide: vi.fn(), closeTopic: vi.fn(async () => null), reopenTopic: vi.fn(async () => null) }));
-vi.mock("../desktop-screens.ts", () => ({ useDesktopScreens: () => ({ profiles: { hob: "screen-a" }, screens: [{ id: "screen-a", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }] }) }));
+vi.mock("../desktop-screens.ts", () => ({ useDesktopScreens: () => data.desktop }));
 vi.mock("./PanelHead.tsx", () => ({ PanelHead: ({ children }: { children: React.ReactNode }) => <header>{children}</header>, CollapsePanelButton: () => <button title="收起右栏" /> }));
 vi.mock("./use-menu.ts", () => ({ useMenu: () => ({ menu: null }) }));
 vi.mock("../sprites.tsx", () => ({ Avatar: () => <span>头像</span> }));
@@ -33,6 +38,11 @@ beforeEach(() => {
   data.delegations = {};
   data.assistants = [{ id: "hob", name: "Hob", duty: "主助手", sprite: "hob", primary: true, knowledge: [], busy: false }];
   data.profiles = { hob: { assistant: { id: "hob", name: "Hob", duty: "主助手", sprite: "hob", primary: true, knowledge: [], busy: false }, rules: [], worklog: [] } };
+  data.desktop = {
+    profiles: { hob: "screen-a" },
+    screens: [{ id: "screen-a", running: true, browserRunning: true, viewers: 0, lastActiveAt: null }],
+    users: { "screen-a": [{ assistantId: "hob", place: {} }] },
+  };
 });
 it("助手自己工作时显示执行中但不显示命令行", () => { data.profiles.hob.assistant.busy = true; const html = renderToStaticMarkup(<Panel page={null} />); expect(html).toContain("执行中"); expect(html).not.toContain('class="screen '); });
 it("等待确认和排队不显示命令行", () => { data.jobs = { j: job("queued") }; data.approvals = { p: { assistantId: "hob", status: "pending" } }; const waiting = renderToStaticMarkup(<Panel page={null} />); expect(waiting).toContain("等你确认"); expect(waiting).not.toContain('class="screen '); data.approvals = {}; const queued = renderToStaticMarkup(<Panel page={null} />); expect(queued).toContain("排队中"); expect(queued).not.toContain('class="screen '); });
@@ -171,4 +181,50 @@ it("群与话题右栏及群编辑页按来源只读展示工作目录，未绑�
   expect(followHtml).toContain("工作目录 · 跟随群");
   expect(followHtml).toContain("/workspace/hob");
   expect(followHtml).not.toContain("本话题");
+});
+
+it("云桌面在单聊和群话题下按占用者呈现：本会话在用内嵌小屏、别处在用提示来源、无人用显示空闲", () => {
+  const g: GroupSummary = { id: "g-1", name: "网站项目", purpose: "开发", ownerId: "hob", members: ["hob", "dev"], createdAt: "2026-01-01T00:00:00Z", unread: 0, busy: [] };
+  const t1: GroupSummary = { ...g, id: "t-1", name: "深色模式", parentId: "g-1" };
+  const t2: GroupSummary = { ...g, id: "t-2", name: "登录改版", parentId: "g-1" };
+  data.assistants = [
+    { id: "hob", name: "Hob", duty: "主助手", sprite: "hob", primary: true, knowledge: [], busy: false },
+    { id: "dev", name: "开发", duty: "写代码", sprite: "page", primary: false, knowledge: [], busy: false },
+  ];
+  data.groups = [g, t1, t2];
+  data.desktop = {
+    profiles: { hob: "screen-a", dev: "screen-dev" },
+    screens: [
+      { id: "screen-a", running: true, browserRunning: true, viewers: 0, lastActiveAt: null },
+      { id: "screen-dev", running: true, browserRunning: true, viewers: 0, lastActiveAt: null },
+    ],
+    users: { "screen-dev": [{ assistantId: "dev", jobId: "j-1", place: { groupId: "t-2" } }] },
+  };
+
+  // 单聊看 dev：dev 正在 t-2 用 → 不内嵌小屏，显示「网站项目 · 登录改版」正在用
+  data.sel = "dev";
+  data.gsel = null;
+  const singleElsewhere = renderToStaticMarkup(<Panel page={null} />);
+  expect(singleElsewhere).not.toContain('class="now-desk"');
+  expect(singleElsewhere).toContain("「网站项目 · 登录改版」正在用");
+
+  // 群话题 t-1：dev 在 t-2 用 → 显示「登录改版」正在用，不内嵌小屏
+  data.sel = null;
+  data.gsel = "t-1";
+  const topicElsewhere = renderToStaticMarkup(<Panel page={null} />);
+  expect(topicElsewhere).not.toContain('class="now-desk"');
+  expect(topicElsewhere).toContain("「登录改版」正在用");
+
+  // 切换到 t-2：本话题在用 → 内嵌 dev 的小屏
+  data.gsel = "t-2";
+  const topicActive = renderToStaticMarkup(<Panel page={null} />);
+  expect(topicActive).toContain('class="now-desk"');
+  expect(topicActive).toContain("开发 · 实时");
+  expect(topicActive).not.toContain("正在用");
+
+  // 无人使用时即使屏幕仍 running 也显示空闲，不内嵌小屏
+  data.desktop.users = {};
+  const topicIdle = renderToStaticMarkup(<Panel page={null} />);
+  expect(topicIdle).not.toContain('class="now-desk"');
+  expect(topicIdle).toContain("<span>云桌面</span><small>空闲</small>");
 });

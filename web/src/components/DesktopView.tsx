@@ -72,7 +72,7 @@ export function DesktopMini({ screen }: { screen: string }) {
   );
 }
 
-export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", login = false }: { onClose: () => void; takeOver?: boolean; initialScreen?: string; login?: boolean }) {
+export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", login = false, usedBy }: { onClose: () => void; takeOver?: boolean; initialScreen?: string; login?: boolean; usedBy?: string }) {
   const target = useRef<HTMLDivElement>(null);
   const rfb = useRef<RFB | null>(null);
   const input = useRef<HTMLTextAreaElement>(null);
@@ -360,7 +360,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", 
       <div className="desktop-bar">
         <span className="desktop-title">{t("云桌面")}</span>
         <span className={`desktop-tag${control.mine ? " live" : ""}`}>{control.mine ? t("你在操作") : t("只看")}</span>
-        {takenByOther ? <span className="desktop-note">{t("其他人正在接管")}</span> : null}
+        {takenByOther ? <span className="desktop-note">{t("其他人正在接管")}</span> : !control.mine && usedBy ? <span className="desktop-note">{t("正在被「{where}」使用，接管会打断那边", { where: usedBy })}</span> : null}
         {control.mine && clipboard ? <span className="desktop-clipboard">{t("云桌面复制了文字")} <button className="hob-btn" onClick={() => {
           if (!navigator.clipboard) return setError(t("复制失败，请使用支持剪贴板的安全连接。"));
           void navigator.clipboard.writeText(clipboard).then(() => setClipboard("")).catch(() => setError(t("复制失败，请检查浏览器的剪贴板权限。")));
@@ -379,7 +379,7 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", 
         <button
           className="hob-btn hob-btn-primary"
           disabled={!canToggle}
-          title={takenByOther ? t("其他人正在接管") : undefined}
+          title={takenByOther ? t("其他人正在接管") : !control.mine && usedBy ? t("接管会打断「{where}」的操作", { where: usedBy }) : undefined}
           onClick={() => login && control.mine ? onClose() : void toggle()}
         >
           {login && control.mine ? t("完成") : control.mine ? t("交还") : t("接管")}

@@ -7,6 +7,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { Duplex } from "node:stream";
 import { WebSocket, WebSocketServer } from "ws";
 import { chromium, type Page } from "playwright-core";
+import type { DesktopScreenUser, Place } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { closePlaywrightSessions } from "./playwright-cli.ts";
 
@@ -43,7 +44,26 @@ type RelayConnection = {
   release: Release;
 };
 
-const jobConnections = new WeakMap<HobRuntime, Map<string, Map<DesktopToolSession, string>>>();
+const jobConnections = new WeakMap<HobRuntime, Map<string, Map<DesktopToolSession, { title: string; user: DesktopScreenUser }>>>();
+
+export interface DesktopToolUser {
+  jobId?: string;
+  place?: Place;
+}
+
+export function desktopScreenUsers(runtime: HobRuntime): Record<string, DesktopScreenUser[]> {
+  const sessions = jobConnections.get(runtime);
+  if (!sessions?.size) return {};
+  const users: Record<string, DesktopScreenUser[]> = {};
+  for (const [screen, entries] of sessions) {
+    const list: DesktopScreenUser[] = [];
+    for (const entry of entries.values()) {
+      list.push(entry.user);
+    }
+    if (list.length) users[screen] = list;
+  }
+  return users;
+}
 
 /** 这个助手的屏幕上 Hob 刚填进去的密码：只放在 Hob 进程的内存里，用来从浏览器命令的输出里抹掉。 */
 const filledSecrets = new WeakMap<HobRuntime, Map<string, string[]>>();
@@ -250,10 +270,18 @@ export class DesktopToolSession {
     private readonly jobTitle?: string,
     private readonly router = false,
     private readonly screenshotDir = join(runtime.home, "assistants", assistantId, "work", "screenshots"),
+    private readonly user?: DesktopToolUser,
   ) {}
 
   private get screen(): string { return desktopProfile(this.assistantId); }
   private get cacheDir(): string { return join(this.runtime.home, "cache", "playwright", this.sessionName); }
+  private get screenUser(): DesktopScreenUser {
+    return {
+      assistantId: this.assistantId,
+      ...(this.user?.jobId ? { jobId: this.user.jobId } : {}),
+      place: this.user?.place ? { ...this.user.place } : {},
+    };
+  }
 
   private check(): void {
     if (this.disposed) throw new Error("任务已结束。");
@@ -261,9 +289,9 @@ export class DesktopToolSession {
     if (!desktop.enabled || !desktop.url || !desktop.tokenConfigured) throw new Error("云桌面没有开启。");
     if (this.runtime.desktopControl.state("", this.screen).taken) throw new Error(TAKEN);
     const sessions = jobConnections.get(this.runtime)?.get(this.screen) ?? [];
-    for (const [session, title] of sessions) {
-      if (session === this || !session.inUse || !title) continue;
-      throw new Error(`任务「${title}」正在用浏览器，等它做完，或者用 reply_job 让它停下来。`);
+    for (const [session, entry] of sessions) {
+      if (session === this || !session.inUse || !entry.title) continue;
+      throw new Error(`任务「${entry.title}」正在用浏览器，等它做完，或者用 reply_job 让它停下来。`);
     }
   }
 
@@ -275,7 +303,9 @@ export class DesktopToolSession {
     if (!sessions) jobConnections.set(this.runtime, sessions = new Map());
     let screenSessions = sessions.get(this.screen);
     if (!screenSessions) sessions.set(this.screen, screenSessions = new Map());
-    screenSessions.set(this, this.jobTitle ?? "");
+    const added = !screenSessions.has(this);
+    screenSessions.set(this, { title: this.jobTitle ?? "", user: this.screenUser });
+    if (added) this.runtime.desktopEvents?.emit();
     let released = false;
     return () => {
       if (released) return;
@@ -284,8 +314,9 @@ export class DesktopToolSession {
       if (this.connectionCount) return;
       this.inUse = false;
       const current = jobConnections.get(this.runtime)?.get(this.screen);
-      current?.delete(this);
+      const removed = current?.delete(this) ?? false;
       if (current && !current.size) jobConnections.get(this.runtime)?.delete(this.screen);
+      if (removed) this.runtime.desktopEvents?.emit();
     };
   }
 
@@ -430,8 +461,9 @@ export async function availableDesktopTools(
   canSeeImages: boolean,
   jobTitle?: string,
   screenshotDir?: string,
+  user?: DesktopToolUser,
 ): Promise<DesktopToolSession | undefined> {
   const desktop = runtime.desktop.view();
   if (!desktop.enabled || !desktop.url || !desktop.tokenConfigured) return undefined;
-  return new DesktopToolSession(runtime, profile, canSeeImages, jobTitle, false, screenshotDir);
+  return new DesktopToolSession(runtime, profile, canSeeImages, jobTitle, false, screenshotDir, user);
 }

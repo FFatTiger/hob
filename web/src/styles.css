@@ -31,7 +31,7 @@
 .sidebar-facts span, .sidebar-delegation span { flex: 1; min-width: 0; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-delegation { border-top: 1px solid var(--line); margin-top: 8px; }
 .sidebar-info > button, .sidebar-info > .group-member-model-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 12px var(--sidebar-inset); text-align: left; }
-.sidebar-info > button > span { flex: 1; }
+.sidebar-info > button > span { flex: 1 0 auto; white-space: nowrap; }
 .sidebar-info small { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-info b, .sidebar-row b { color: var(--text3); font-weight: normal; }
 .pbody.sidebar-page-now { display: flex; flex-direction: column; flex: 1 0 auto; }

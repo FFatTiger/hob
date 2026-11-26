@@ -1282,7 +1282,14 @@ export interface DesktopView {
   tokenConfigured: boolean;
 }
 
+/**
+ * 一件事所在的会话。都不填：助手的主对话（单会话助手就是单聊）；
+ * groupId：群的综合或群话题；topicId：助手自己的话题。两个不会同时有。
+ */
+export interface Place { groupId?: string; topicId?: string }
+
 export interface DesktopScreen { id: string; running: boolean; browserRunning: boolean; viewers: number; lastActiveAt: string | null }
+export interface DesktopScreenUser { assistantId: string; jobId?: string; place: Place }
 export type DesktopTestResult = { ok: true; health: { version: string; display: { width: number; height: number }; screens: DesktopScreen[] } } | { ok: false; error: string };
 
 export interface SettingsFile {
@@ -1388,7 +1395,7 @@ export type HobEvent =
   | { type: "stars" }
   | { type: "rules" }
   | { type: "desktop-control"; screen: string; taken: boolean }
-  | { type: "desktop-screens"; screens: DesktopScreen[] }
+  | { type: "desktop-screens"; screens: DesktopScreen[]; users?: Record<string, DesktopScreenUser[]> }
   | ({ type: "page-live" } & PageLive)
   | { type: "assistant"; assistant: AssistantSummary } // 新建或变化
   | { type: "assistant_removed"; id: string }

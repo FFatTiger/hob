@@ -7,7 +7,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { browserShellEnv, DesktopToolSession } from "../src/desktop-tools.ts";
+import { browserShellEnv, desktopScreenUsers, DesktopToolSession } from "../src/desktop-tools.ts";
+import { createApp } from "../src/http.ts";
 import { ensurePlaywrightCli } from "../src/playwright-cli.ts";
 import { browserCommandLabel } from "../src/transcript.ts";
 import { activityLabel } from "../src/router-activity.ts";
@@ -305,6 +306,84 @@ describe("playwright-cli", () => {
     } finally {
       await session.dispose();
       await router.dispose();
+      remoteWss.close();
+      for (const socket of remoteWss.clients) socket.terminate();
+      await new Promise<void>((resolve) => remote.close(() => resolve()));
+      hob.close();
+    }
+  });
+
+  it("任务和会话占用、释放屏幕时推送 desktop-screens 的 users 并在接口快照返回", async () => {
+    const remote = createServer((request, response) => {
+      if (request.url === "/api/screens/hob/browser/start") {
+        response.writeHead(200, { "content-type": "application/json" }).end(JSON.stringify({ cdp: "/cdp/hob" }));
+        return;
+      }
+      response.writeHead(404).end();
+    });
+    const remoteWss = new WebSocketServer({ server: remote, path: "/cdp/hob" });
+    remote.listen(0, "127.0.0.1");
+    await once(remote, "listening");
+    const hob = makeHob();
+    const jobSession = new DesktopToolSession(hob.runtime, "hob", false, "查资料", false, undefined, { jobId: "t-job1", place: { groupId: "t-topic1" } });
+    const routerSession = new DesktopToolSession(hob.runtime, "hob", false, undefined, true, undefined, { place: {} });
+    const events: Array<Record<string, unknown>> = [];
+    const unsubscribe = hob.runtime.bus.subscribe((event) => {
+      if (event.type === "desktop-screens") events.push(event.users ?? {});
+    });
+    try {
+      const port = (remote.address() as AddressInfo).port;
+      hob.runtime.settings.setDesktop(hob.runtime.settings.get().revision, { url: `http://127.0.0.1:${port}`, enabled: true });
+      writeSecret(hob.home, "desktop:token", "cloud-token");
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const fetchScreens = async () => (await (await app.request("/api/desktop/screens", { headers: { cookie } })).json()) as { users: Record<string, unknown[]> };
+
+      expect((await fetchScreens()).users).toEqual({});
+
+      // 任务占用
+      const jobEnv = await jobSession.preparePlaywrightCli();
+      const jobWs = new WebSocket(jobEnv.PLAYWRIGHT_MCP_CDP_ENDPOINT, { headers: { Authorization: jobEnv.PLAYWRIGHT_MCP_CDP_HEADERS.slice("Authorization: ".length) } });
+      await once(jobWs, "open");
+      expect(desktopScreenUsers(hob.runtime)).toEqual({
+        hob: [{ assistantId: "hob", jobId: "t-job1", place: { groupId: "t-topic1" } }],
+      });
+      expect((await fetchScreens()).users).toEqual({
+        hob: [{ assistantId: "hob", jobId: "t-job1", place: { groupId: "t-topic1" } }],
+      });
+      expect(events.at(-1)).toEqual({
+        hob: [{ assistantId: "hob", jobId: "t-job1", place: { groupId: "t-topic1" } }],
+      });
+
+      // 任务释放
+      const jobClosed = once(jobWs, "close");
+      await jobSession.dispose();
+      await jobClosed;
+      await vi.waitFor(() => expect(desktopScreenUsers(hob.runtime)).toEqual({}));
+      expect((await fetchScreens()).users).toEqual({});
+      expect(events.at(-1)).toEqual({});
+
+      // 会话（单聊 Router）占用并释放
+      const routerEnv = await routerSession.preparePlaywrightCli();
+      const routerWs = new WebSocket(routerEnv.PLAYWRIGHT_MCP_CDP_ENDPOINT, { headers: { Authorization: routerEnv.PLAYWRIGHT_MCP_CDP_HEADERS.slice("Authorization: ".length) } });
+      await once(routerWs, "open");
+      expect((await fetchScreens()).users).toEqual({
+        hob: [{ assistantId: "hob", place: {} }],
+      });
+      expect(events.at(-1)).toEqual({
+        hob: [{ assistantId: "hob", place: {} }],
+      });
+
+      const routerClosed = once(routerWs, "close");
+      await routerSession.dispose();
+      await routerClosed;
+      await vi.waitFor(() => expect(desktopScreenUsers(hob.runtime)).toEqual({}));
+      expect(events.at(-1)).toEqual({});
+    } finally {
+      unsubscribe();
+      await jobSession.dispose();
+      await routerSession.dispose();
       remoteWss.close();
       for (const socket of remoteWss.clients) socket.terminate();
       await new Promise<void>((resolve) => remote.close(() => resolve()));

@@ -1217,7 +1217,8 @@ export class RouterManager {
     const active = new Set(["running", "queued", "waiting"]);
     const jobs = this.store.jobs().some((job) => samePlace(placeOf(job), state.place) && active.has(job.status) && (state.place.groupId !== undefined || job.assistantId === state.assistantId));
     if (jobs) return true;
-    if (!state.place.groupId && !state.place.topicId && this.store.delegations().some((record) => record.from === state.assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
+    const topicId = state.place.topicId || undefined;
+    if (!state.place.groupId && this.store.delegations().some((record) => record.from === state.assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"))) return true;
     return this.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), state.place) && (state.place.groupId !== undefined || approval.assistantId === state.assistantId));
   }
 
@@ -1325,7 +1326,8 @@ export class RouterManager {
     }
     if (full.kind === "file") {
       const page = isInPagesDir(relative(this.runtime.home, resolve(full.path)));
-      void this.runtime.knowledge.collect({ origin: "output", path: full.path, assistantId, itemId: full.id, ...(page ? { name: full.name, description: full.meta } : {}) }).catch((error) => console.error("知识库收集失败：", error));
+      const topicId = !group && place?.topicId ? place.topicId : undefined;
+      void this.runtime.knowledge.collect({ origin: "output", path: full.path, assistantId, itemId: full.id, ...(topicId ? { topicId } : {}), ...(page ? { name: full.name, description: full.meta } : {}) }).catch((error) => console.error("知识库收集失败：", error));
     }
     return full;
   }
@@ -1420,7 +1422,7 @@ export class RouterManager {
     if (group) {
       const item = this.runtime.groups.updateImageItem(group.id, id, update);
       if (!item) throw new Error(`图片条目不存在：${id}`);
-      this.collectGeneratedImage(item, assistantId, update);
+      this.collectGeneratedImage(item, assistantId, update, place);
       return;
     }
     const fallback = place?.groupId ? undefined : place;
@@ -1429,12 +1431,13 @@ export class RouterManager {
     if (!item) throw new Error(`图片条目不存在：${id}`);
     state.manager!.appendCustomEntry(ITEM_UPDATE_TYPE, { id, ...update });
     this.emitItem(assistantId, { ...item, ...update }, fallback);
-    this.collectGeneratedImage(item, assistantId, update);
+    this.collectGeneratedImage(item, assistantId, update, fallback);
   }
 
-  private collectGeneratedImage(item: Item, assistantId: string, update: { status: "done" | "failed"; path?: string }): void {
+  private collectGeneratedImage(item: Item, assistantId: string, update: { status: "done" | "failed"; path?: string }, place?: Place): void {
     if (item.kind === "image" && update.status === "done" && update.path) {
-      void this.runtime.knowledge.collect({ origin: "output", path: update.path, description: item.prompt, assistantId, itemId: item.id }).catch((error) => console.error("知识库收集失败：", error));
+      const topicId = !place?.groupId && place?.topicId ? place.topicId : undefined;
+      void this.runtime.knowledge.collect({ origin: "output", path: update.path, description: item.prompt, assistantId, itemId: item.id, ...(topicId ? { topicId } : {}) }).catch((error) => console.error("知识库收集失败：", error));
     }
   }
 
@@ -1606,20 +1609,41 @@ export class RouterManager {
       this.touch(state);
     }
   }
-  async delegationResult(assistantId: string, id: string, text: string, urgent = false): Promise<boolean> {
-    const state = await this.ensure(assistantId);
+  async delegationResult(assistantId: string, id: string, text: string, urgent = false, place?: Place): Promise<boolean> {
+    const target = placeOf(place);
+    const state = await this.ensure(assistantId, target);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true, ...(urgent ? { urgent: true } : {}) });
+    if (target.topicId) {
+      const delegation = this.store.delegation(id);
+      const name = (delegation ? this.store.assistant(delegation.to)?.name ?? delegation.to : undefined) ?? assistantId;
+      await this.runtime.assistantTopics.reopenForResult(
+        assistantId,
+        target.topicId,
+        t("「{name}」交回了转交的结果，话题已重新打开", { name }),
+      );
+    }
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true, ...(urgent ? { urgent: true } : {}) }, undefined, target);
     return success && received();
   }
 
-  /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string): Promise<boolean> {
-    const state = await this.ensure(assistantId);
+  /** 将交给群的话题的结论送回发起助手的会话（主对话或话题）；会话条目是去重依据。 */
+  async handoverResult(assistantId: string, topicId: string, text: string, place?: Place): Promise<boolean> {
+    const target = placeOf(place);
+    const state = await this.ensure(assistantId, target);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
+    if (target.topicId) {
+      const groupTopic = this.store.group(topicId);
+      const host = groupTopic?.parentId ? this.store.group(groupTopic.parentId) : groupTopic;
+      const name = host?.name ?? groupTopic?.parentId ?? topicId;
+      await this.runtime.assistantTopics.reopenForResult(
+        assistantId,
+        target.topicId,
+        t("群「{name}」的话题有了结论，话题已重新打开", { name }),
+      );
+    }
+    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true }, undefined, target);
     return success && received();
   }
 
@@ -1630,14 +1654,15 @@ export class RouterManager {
       .jobs()
       .some((job) => samePlace(placeOf(job), normalized) && ACTIVE_JOB_STATUSES.has(job.status) && (normalized.groupId !== undefined || job.assistantId === assistantId));
     if (activeJobs) return true;
-    if (normalized.groupId !== undefined || normalized.topicId !== undefined) return false;
+    if (normalized.groupId !== undefined) return false;
+    const topicId = normalized.topicId || undefined;
     const openDelegations = this.store
       .delegations()
-      .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
+      .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
     if (openDelegations) return true;
     return this.store
       .groups()
-      .some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
+      .some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId && (group.handover.fromTopicId || undefined) === topicId);
   }
 
   /** 读取当前正在进行的轮次来源（open_topic 转入话题时沿用）。 */
@@ -1785,7 +1810,7 @@ export class RouterManager {
     };
     const id = manager.appendCustomEntry(USER_TYPE, data);
     const item: Item = { kind: "user", id, at: new Date().toISOString(), ...data };
-    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
+    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id, ...(place?.topicId ? { topicId: place.topicId } : {}) }).catch((error) => console.error("知识库收集失败：", error));
     this.emitItem(assistantId, item, place);
     const noteId = manager.appendCustomEntry(ITEM_TYPE, { kind: "note", icon: "info", text: note });
     this.emitItem(assistantId, { kind: "note", id: noteId, at: new Date().toISOString(), icon: "info", text: note }, place);
@@ -1826,7 +1851,7 @@ export class RouterManager {
       ...(body.files?.length ? { files: body.files } : {}),
     };
     this.emitItem(assistantId, item, target);
-    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id }).catch((error) => console.error("知识库收集失败：", error));
+    for (const path of body.files ?? []) void this.runtime.knowledge.collect({ origin: "chat", path, assistantId, itemId: id, ...(target.topicId ? { topicId: target.topicId } : {}) }).catch((error) => console.error("知识库收集失败：", error));
 
     const lines = [body.text];
 
@@ -2267,8 +2292,15 @@ export class RouterManager {
     return success;
   }
 
-  /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文；群里提的问题回群会话）。 */
+  /** 审批答案或卡片操作回到 Router（router 来源的审批，答案作为事件进入上下文；群/话题里提的问题回对应会话）。 */
   async answerEvent(assistantId: string, text: string, place?: Place): Promise<void> {
+    if (place?.topicId) {
+      await this.runtime.assistantTopics.reopenForResult(
+        assistantId,
+        place.topicId,
+        t("提问有了回答，话题已重新打开"),
+      );
+    }
     await this.event(assistantId, text, { userInitiated: true }, place);
   }
 }

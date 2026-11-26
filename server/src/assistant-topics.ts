@@ -270,8 +270,9 @@ export class AssistantTopicManager {
     return summary;
   }
 
-  close(aid: string, tid: string, note?: unknown): AssistantTopicSummary {
+  async close(aid: string, tid: string, note?: unknown): Promise<AssistantTopicSummary> {
     const topic = this.requireTopic(aid, tid);
+    const wasClosed = Boolean(topic.closedAt);
     const hasNote = note !== undefined;
     const text = typeof note === "string" ? note.trim() : "";
     const { closeNote: _oldNote, ...base } = topic;
@@ -282,10 +283,17 @@ export class AssistantTopicManager {
       ...(nextCloseNote ? { closeNote: nextCloseNote } : {}),
     };
     this.store.saveAssistantTopic(next);
+    this.runtime.routines.pauseForAssistantTopic(aid, tid);
     const todosPath = assistantTopicTodosPath(this.runtime.home, aid, tid);
     if (readTodos(todosPath).length) clearTodos(todosPath);
     const summary = this.summaryOf(next);
     this.bus.emit({ type: "assistant_topic", topic: summary });
+    if (!wasClosed || (hasNote && nextCloseNote !== topic.closeNote)) {
+      const contextText = nextCloseNote
+        ? `话题「${next.name}」（${next.id}）已关闭。结论：${nextCloseNote}`
+        : `话题「${next.name}」（${next.id}）被用户关闭，没有写结论。`;
+      await this.runtime.router.remember(aid, contextText).catch(() => undefined);
+    }
     return summary;
   }
 
@@ -293,6 +301,7 @@ export class AssistantTopicManager {
     const topic = this.requireTopic(aid, tid);
     const { closedAt: _closedAt, closeNote: _closeNote, ...rest } = topic;
     this.store.saveAssistantTopic(rest);
+    this.runtime.routines.resumeForAssistantTopic(aid, tid);
     const summary = this.summaryOf(rest);
     this.bus.emit({ type: "assistant_topic", topic: summary });
     return summary;
@@ -365,5 +374,17 @@ export class AssistantTopicManager {
       }
     }
     return this.configView(aid, tid);
+  }
+
+  /** 已关闭的话题收到外部结果时自动重开，在时间线落一行说明后交由调用方投递事件。 */
+  async reopenForResult(aid: string, tid: string, noteText: string): Promise<boolean> {
+    if (!isValidTopicId(tid)) return false;
+    const assistant = this.store.assistant(aid);
+    if (!assistant) return false;
+    const topic = this.store.assistantTopic(aid, tid);
+    if (!topic || topic.assistantId !== aid || topic.id !== tid || !topic.closedAt) return false;
+    this.reopen(aid, tid);
+    await this.runtime.router.addItem(aid, { kind: "note", icon: "info", text: noteText }, { topicId: tid });
+    return true;
   }
 }

@@ -306,6 +306,15 @@ export class Store {
     writeJsonAtomic(assistantTopicFile(this.home, topic.assistantId, topic.id), topic);
   }
 
+  assistantTopicById(tid: string): AssistantTopic | undefined {
+    if (!isValidTopicId(tid)) return undefined;
+    for (const assistant of this.assistants()) {
+      const topic = this.assistantTopic(assistant.id, tid);
+      if (topic && topic.assistantId === assistant.id && topic.id === tid) return topic;
+    }
+    return undefined;
+  }
+
   assistantTopicRouterFile(aid: string, tid: string): string {
     return assistantTopicRouterPath(this.home, aid, tid);
   }

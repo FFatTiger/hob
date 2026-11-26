@@ -319,7 +319,7 @@ export class GroupManager {
    * 任意助手把一件事交给这个群：开一个话题，把交接说明作为第一条用户条目转进去，
    * 记下是谁交来的，综合里落一行。叫醒群主由调用方发（它还要结束这一轮）。
    */
-  handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string; cwd?: unknown }): { topic: Group; item: GroupItem } {
+  handOver(gid: string, title: unknown, by: string, original: { text: string; files: string[]; itemId?: string; cwd?: unknown; fromTopicId?: string }): { topic: Group; item: GroupItem } {
     const topic = this.createTopic(gid, title, by, original.cwd !== undefined ? { cwd: original.cwd } : undefined);
     const item = this.appendItem(topic.id, "user", {
       kind: "user",
@@ -327,7 +327,14 @@ export class GroupManager {
       ...(original.files.length ? { files: original.files } : {}),
       forwardedFrom: { assistantId: by, ...(original.itemId ? { itemId: original.itemId } : {}) },
     });
-    this.store.saveGroup({ ...this.group(topic.id), handover: { by, at: new Date().toISOString() } });
+    this.store.saveGroup({
+      ...this.group(topic.id),
+      handover: {
+        by,
+        at: new Date().toISOString(),
+        ...(original.fromTopicId ? { fromTopicId: original.fromTopicId } : {}),
+      },
+    });
     const byName = this.nameOf(by);
     this.note(gid, by, t("{name} 已将「{topic}」交由这个群处理", { name: byName, topic: topic.name }));
     return { topic: this.group(topic.id), item };
@@ -402,7 +409,8 @@ export class GroupManager {
     const handover = topic?.handover;
     if (!topic || !handover?.result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
-    void this.runtime.router.handoverResult(handover.by, tid, handover.result).then((received) => {
+    const targetPlace = handover.fromTopicId ? { topicId: handover.fromTopicId } : undefined;
+    void this.runtime.router.handoverResult(handover.by, tid, handover.result, targetPlace).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
       if (!current?.handover || current.handover.deliveredAt || current.handover.result !== handover.result) return;

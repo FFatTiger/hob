@@ -190,12 +190,12 @@ function busyHere(runtime: HobRuntime, assistantId: string, place?: Place): bool
  */
 export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Place): boolean {
   if (busyHere(runtime, assistantId, place)) return true;
-  // 转交和交给群只从单聊/主对话发出（群会话与话题各自不混算）
-  const delegating = !place?.groupId && !place?.topicId && runtime.store
+  const topicId = place?.topicId || undefined;
+  const delegating = !place?.groupId && runtime.store
     .delegations()
-    .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
+    .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
   if (delegating) return true;
-  const handedOver = !place?.groupId && !place?.topicId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
+  const handedOver = !place?.groupId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId && (group.handover.fromTopicId || undefined) === topicId);
   if (handedOver) return true;
   const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), place) && (place?.groupId !== undefined || approval.assistantId === assistantId));
   if (asking) return true;

@@ -1,3 +1,4 @@
+import { t } from "../../shared/i18n.ts";
 import type { Delegation, Place } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
 import { jobResultEvent } from "./jobs.ts";
@@ -21,15 +22,26 @@ export class DelegationManager {
     });
   }
 
-  async start(from: string, to: string, text: string, files: string[] = [], signal?: AbortSignal): Promise<Delegation> {
+  async start(from: string, to: string, text: string, files: string[] = [], signal?: AbortSignal, fromTopicId?: string): Promise<Delegation> {
     const source = this.runtime.store.assistant(from);
     const target = this.runtime.store.assistant(to);
     if (!source || !target || from === to) throw new Error("目标助手不存在或不能转交给自己。");
     signal?.throwIfAborted();
-    const delegation: Delegation = { id: newId("dg-"), from, to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
+    const delegation: Delegation = {
+      id: newId("dg-"),
+      from,
+      to,
+      text,
+      createdAt: new Date().toISOString(),
+      status: "running",
+      jobIds: [],
+      approvalIds: [],
+      ...(fromTopicId ? { fromTopicId } : {}),
+    };
     this.runtime.store.saveDelegation(delegation);
+    const fromPlace = fromTopicId ? { topicId: fromTopicId } : undefined;
     try {
-      await this.runtime.router.addItem(from, { kind: "delegation", delegationId: delegation.id });
+      await this.runtime.router.addItem(from, { kind: "delegation", delegationId: delegation.id }, fromPlace);
       signal?.throwIfAborted();
       await this.runtime.router.addForwarded(to, text, delegation.id, from, files);
       signal?.throwIfAborted();
@@ -133,7 +145,8 @@ export class DelegationManager {
     if (!record.pendingResult || this.delivering.has(record.id)) return;
     this.delivering.add(record.id);
     const urgent = record.status === "stuck" || record.status === "interrupted";
-    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent).then((received) => {
+    const fromPlace = record.fromTopicId ? { topicId: record.fromTopicId } : undefined;
+    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent, fromPlace).then((received) => {
       if (!received) return;
       const current = this.runtime.store.internalDelegation(record.id);
       if (!current || current.reportedAt || current.pendingResult !== record.pendingResult) return;
@@ -157,7 +170,17 @@ export class DelegationManager {
       this.runtime.store.saveDelegation(next);
       this.runtime.bus.emit({ type: "delegation", delegation: next });
       const name = this.runtime.store.assistant(record.to)?.name ?? record.to;
-      void this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`, { urgent: true }).catch(() => undefined);
+      const fromPlace = record.fromTopicId ? { topicId: record.fromTopicId } : undefined;
+      void (async () => {
+        if (record.fromTopicId) {
+          await this.runtime.assistantTopics.reopenForResult(
+            record.from,
+            record.fromTopicId,
+            t("「{name}」交回了转交的结果，话题已重新打开", { name }),
+          );
+        }
+        await this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`, { urgent: true }, fromPlace);
+      })().catch(() => undefined);
     }
   }
 }

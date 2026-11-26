@@ -284,7 +284,7 @@ export function buildRouterTools(
     return !!job && (groupId ? sameGroup(groupId, job.groupId) : assistant().primary || job.assistantId === assistantId);
   };
   /** 任务不是这个会话开的：它在哪（给模型看的出处）；是的话 undefined。 */
-  const jobOrigin = (job: Job) => samePlace(placeOf(job), place) ? undefined : sessionOrigin(store, placeOf(job), place);
+  const jobOrigin = (job: Job) => samePlace(placeOf(job), place) ? undefined : sessionOrigin(store, placeOf(job), place, job.assistantId);
 
   // 检查脚本试运行的结果写成事实交给模型：脚本写错了，现在就能改，不用等到执行时间才失败
   const trialFact = async (routine: Routine): Promise<string> => {
@@ -313,11 +313,17 @@ export function buildRouterTools(
     return ownerId !== assistantId || groupDir ? t("「{name}」的", { name: nameOf(ownerId) }) : "";
   };
 
-  /** 定时任务在哪个群会话（综合 / 话题「…」）；单聊返回 undefined。 */
+  /** 定时任务在哪个会话（综合 / 主对话 / 话题「…」）；单会话助手的单聊返回 undefined。 */
   const routinePlace = (routine: Routine): string | undefined => {
-    if (!routine.groupId) return undefined;
-    const dest = store.group(routine.groupId);
-    return dest?.parentId ? `话题「${dest.name}」` : dest ? "综合" : undefined;
+    if (routine.groupId) {
+      const dest = store.group(routine.groupId);
+      return dest?.parentId ? `话题「${dest.name}」` : dest ? "综合" : undefined;
+    }
+    const owner = store.assistant(routine.assistantId);
+    if (!owner?.topics) return undefined;
+    if (!routine.topicId) return "主对话";
+    const topic = store.assistantTopic(routine.assistantId, routine.topicId);
+    return `话题「${topic?.name ?? routine.topicId}」`;
   };
   /** 定时任务归属：本群的、另一个助手的写清楚；自己在单聊里建的不用说。 */
   const whoseRoutine = (ownerId: string): string => groupId ? t("本群的") : ownerId === assistantId ? "" : t("「{name}」的", { name: nameOf(ownerId) });
@@ -621,7 +627,7 @@ export function buildRouterTools(
           const job = store.job(jobId)!;
           const origin = jobOrigin(job);
           // 停止原因里写清在哪停的，这句话界面上也会显示
-          await jobs.stop(jobId, origin ? `${assistant().name}在${sessionOrigin(store, place, placeOf(job))}停止了` : `${assistant().name}停止了`);
+          await jobs.stop(jobId, origin ? `${assistant().name}在${sessionOrigin(store, place, placeOf(job), assistantId)}停止了` : `${assistant().name}停止了`);
           return ok(origin ? `已停止。这个任务是${origin}创建的。` : "已停止。");
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
@@ -913,6 +919,7 @@ export function buildRouterTools(
           const routine = routines.create({
             assistantId: target.id,
             ...(groupId ? { groupId } : {}),
+            ...(isAssistantTopic && target.id === assistantId ? { topicId: place!.topicId } : {}),
             name: String(params.name),
             instruction: String(params.instruction),
             instructionBy: assistantId,
@@ -922,7 +929,7 @@ export function buildRouterTools(
           });
           await note("routine", t("新增{whose}定时任务 · {name} · {schedules}", { whose: whoseRoutine(target.id), name: routine.name, schedules: routine.schedules.map((schedule) => cronToChinese(schedule)).join("、") }));
           profileChanged(target.id);
-          return ok(`定时任务「${routine.name}」已创建${isGroupTopic ? "，到执行时间会在这个话题里执行" : ""}${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
+          return ok(`定时任务「${routine.name}」已创建${isGroupTopic || isAssistantTopic ? "，到执行时间会在这个话题里执行" : ""}${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -1154,7 +1161,7 @@ export function buildRouterTools(
             const carried = unfinished.length
               ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
               : note;
-            await runtime.delegations.start(assistantId, targetId, carried, files, signal);
+            await runtime.delegations.start(assistantId, targetId, carried, files, signal, ...(place?.topicId ? [place.topicId] : []));
             signal?.throwIfAborted();
             if (!unfinished.length) return endTurn(`已转交给「${target.name}」。`);
             await handOffTodos(runtime, assistantId, place);
@@ -1196,6 +1203,7 @@ export function buildRouterTools(
               text: note,
               files,
               ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
+              ...(place?.topicId ? { fromTopicId: place.topicId } : {}),
             });
             const cancel = () => {
               const current = store.group(topic.id);
@@ -1245,7 +1253,7 @@ export function buildRouterTools(
           await router.ensure(destination.id);
           signal?.throwIfAborted();
           const handbackId = newId("hb-");
-          await router.addItem(assistantId, { kind: "note", icon: "info", text: `已交回「${destination.name}」：${reason}`, handbackId });
+          await router.addItem(assistantId, { kind: "note", icon: "info", text: `已交回「${destination.name}」：${reason}`, handbackId }, place);
           signal?.throwIfAborted();
           await router.addForwarded(destination.id, text, handbackId, assistantId);
           signal?.throwIfAborted();

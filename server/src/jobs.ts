@@ -22,7 +22,7 @@ import type {
 } from "../../shared/types.ts";
 import { IMAGE_TYPES, isImagePath } from "../../shared/media.ts";
 import { newId } from "./ids.ts";
-import { placeOf } from "./place.ts";
+import { placeFields, placeOf, samePlace } from "./place.ts";
 import { resolveMovedPath } from "./layout.ts";
 import { availableDesktopTools, browserShellEnv, type DesktopToolSession } from "./desktop-tools.ts";
 import { imageConfigured } from "./image.ts";
@@ -48,7 +48,6 @@ import { pauseToolTimeoutForUser } from "./tool-timeout.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { SKILL_WRITING_GUIDANCE } from "./skill-guidance.ts";
 import { CWD_BOUND_LOCKED, isInside, loadWorkspaceAgentsFile, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
-import { samePlace } from "./place.ts";
 
 const WORKER_TOOLS = ["read", "bash", "edit", "write", "grep", "find", "ls"];
 const ACTIVITY_LIMIT = 200;
@@ -412,7 +411,7 @@ export class JobManager {
     return job;
   }
 
-  /** 任务会改变“忙不忙”（前端用它显示“正在想”），所以状态一变就告诉前端；群里的任务还要让群的摘要跟上。 */
+  /** 任务会改变“忙不忙”（前端用它显示“正在想”），所以状态一变就告诉前端；群或话题里的任务还要让摘要跟上。 */
   private publishBusy(job: Job): void {
     const assistant = this.store.assistant(job.assistantId);
     if (assistant) this.bus.emit({ type: "assistant", assistant: this.runtime.router.summary(assistant) });
@@ -420,11 +419,19 @@ export class JobManager {
     if (job.topicId) this.runtime.assistantTopics?.publish(job.assistantId, job.topicId);
   }
 
-  /** 事件送到哪个助手的会话：群里的任务回它的群会话，其余回单聊。派给别的成员做的，回派任务的助手。 */
-  private notifyAssistant(job: Job, text: string, details?: EventDetails): Promise<boolean> {
+  /** 事件送到哪个助手的会话：群或话题里的任务回对应会话，其余回单聊/主对话。派给别的成员做的，回派任务的助手。 */
+  private async notifyAssistant(job: Job, text: string, details?: EventDetails): Promise<boolean> {
     const speaker = job.startedBy ?? job.assistantId;
     const place = placeOf(job);
-    if (place.groupId || place.topicId) return this.runtime.router.event(speaker, text, details, place);
+    if (place.topicId) {
+      await this.runtime.assistantTopics.reopenForResult(
+        speaker,
+        place.topicId,
+        t("任务「{title}」有了结果，话题已重新打开", { title: job.title }),
+      );
+      return this.runtime.router.event(speaker, text, details, place);
+    }
+    if (place.groupId) return this.runtime.router.event(speaker, text, details, place);
     return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
 
@@ -927,7 +934,7 @@ export class JobManager {
       ...(options.summary !== undefined ? { files: options.files ?? [] } : {}),
     };
     this.store.saveJob(next);
-    for (const path of options.files ?? []) void this.runtime.knowledge.collect({ origin: "output", path, description: job.title, assistantId: job.assistantId, jobId: job.id }).catch((error) => console.error("知识库收集失败：", error));
+    for (const path of options.files ?? []) void this.runtime.knowledge.collect({ origin: "output", path, description: job.title, assistantId: job.assistantId, jobId: job.id, ...(job.topicId ? { topicId: job.topicId } : {}) }).catch((error) => console.error("知识库收集失败：", error));
     // 转交里的任务：先把转交重新打开，结果由目标助手接着处理完才回流 Hob（见 DelegationManager.resume）
     const delegationId = !job.routineId && job.delegationId && this.runtime.delegations.resume(job.delegationId) ? job.delegationId : undefined;
     this.bus.emit({ type: "job", job: next });
@@ -961,12 +968,19 @@ export class JobManager {
         const updated = { ...routine, runs };
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
-        void this.runtime.router
-          .event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
+        void (async () => {
+          if (next.topicId) {
+            await this.runtime.assistantTopics.reopenForResult(
+              next.assistantId,
+              next.topicId,
+              t("任务「{title}」有了结果，话题已重新打开", { title: next.title }),
+            );
+          }
+          await this.runtime.router.event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
             ...resultDetails,
-          }, placeOf(next))
-          .catch((error) => console.error("发送定时任务结果失败：", error));
+          }, placeOf(next));
+        })().catch((error) => console.error("发送定时任务结果失败：", error));
       }
     } else if (assistant) {
       const text = assistantJobResultEvent(this.runtime.home, next, { toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills });
@@ -1205,8 +1219,7 @@ export class JobManager {
       status: "pending",
       source: "job",
       jobId,
-      ...(job.groupId ? { groupId: job.groupId } : {}),
-      ...(job.topicId ? { topicId: job.topicId } : {}),
+      ...placeFields(placeOf(job)),
       ...(input.ruleText ? { ruleText: input.ruleText } : {}),
       ...(input.login ? { login: input.login } : {}),
       createdAt: new Date().toISOString(),

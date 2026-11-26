@@ -17,7 +17,7 @@ function jobIdFromPath(rel: string): string | undefined {
 }
 
 type Entry = KnowledgeEntry & { sourceKey?: string };
-type CollectInput = { origin: "output" | "chat"; path: string; name?: string; description?: string; assistantId: string; itemId?: string; jobId?: string };
+type CollectInput = { origin: "output" | "chat"; path: string; name?: string; description?: string; assistantId: string; itemId?: string; jobId?: string; topicId?: string };
 type Query = { origin?: string; collection?: string; kind?: string; assistantId?: string; groupId?: string; exact?: boolean; q?: string; before?: string; limit?: number };
 type Collection = Omit<KnowledgeCollection, "count">;
 type IndexFile = { model: string; dims: number; name?: string; chunks: IndexedChunk[] };
@@ -158,7 +158,7 @@ export class KnowledgeStore {
   private timestamp(entries: Entry[]): string {
     return new Date(Math.max(Date.now(), ...entries.map((entry) => Date.parse(entry.updatedAt) + 1))).toISOString();
   }
-  private collectFile(input: { origin: KnowledgeOrigin; path: string; name?: string; description?: string; assistantId?: string; itemId?: string; jobId?: string }, collectionId?: string): Entry | undefined {
+  private collectFile(input: { origin: KnowledgeOrigin; path: string; name?: string; description?: string; assistantId?: string; itemId?: string; jobId?: string; topicId?: string }, collectionId?: string): Entry | undefined {
     let stat;
     try {
       stat = statSync(input.path);
@@ -208,6 +208,7 @@ export class KnowledgeStore {
     }
     const rel = relative(this.home, resolve(input.path));
     const jobId = input.jobId || jobIdFromPath(rel);
+    const topicId = input.topicId || (jobId ? this.store.job(jobId)?.topicId : undefined);
     const description = input.description || (jobId ? this.store.job(jobId)?.title : undefined);
     const now = this.timestamp(entries);
     if (previous) {
@@ -217,6 +218,7 @@ export class KnowledgeStore {
       if (previous.collections.length) { previous.index = { state: "queued" }; this.schedule(previous); }
       this.removeUnusedIndex(oldHash, entries);
       if (description) previous.description = description;
+      if (topicId && previous.source) previous.source = { ...previous.source, topicId };
       this.write("entries.json", entries);
       this.changed();
       return previous;
@@ -234,7 +236,7 @@ export class KnowledgeStore {
       updatedAt: now,
       collections: collectionId ? [collectionId] : [],
       ...(sourceKey ? { sourceKey } : {}),
-      ...(input.assistantId ? { source: { assistantId: input.assistantId, ...(input.itemId ? { itemId: input.itemId } : {}), ...(jobId ? { jobId } : {}) } } : {}),
+      ...(input.assistantId ? { source: { assistantId: input.assistantId, ...(input.itemId ? { itemId: input.itemId } : {}), ...(jobId ? { jobId } : {}), ...(topicId ? { topicId } : {}) } } : {}),
     };
     entries.push(entry);
     if (entry.collections.length) { entry.index = { state: "queued" }; this.schedule(entry); }

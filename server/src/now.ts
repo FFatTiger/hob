@@ -38,7 +38,7 @@ export function nowBlock(runtime: HobRuntime, assistantId: string, current?: Pla
     if (!current?.groupId) return true;
     return runtime.store.groupMatches(current.groupId, where.groupId);
   };
-  const originOf = (where: Place) => sessionOrigin(runtime.store, where, current);
+  const originOf = (where: Place) => sessionOrigin(runtime.store, where, current, assistantId);
   const stateOf = (job: Job) => {
     if (job.status !== "running") return job.status === "queued" ? "排队中" : "等你回复";
     const minutes = job.startedAt ? Math.floor((now.getTime() - new Date(job.startedAt).getTime()) / 60_000) : 0;
@@ -47,7 +47,7 @@ export function nowBlock(runtime: HobRuntime, assistantId: string, current?: Pla
   const activeLine = (job: Job) => `${job.id}「${short(job.title)}」，${stateOf(job)}`;
   const active = jobs.filter((job) => mine(placeOf(job)) && ACTIVE.has(job.status)).map(activeLine);
   if (active.length) lines.push(`进行中：${active.join("；")}`);
-  const delegations = runtime.store.delegations().filter((item) => item.from === assistantId && (item.status === "running" || item.status === "waiting"))
+  const delegations = runtime.store.delegations().filter((item) => item.from === assistantId && (item.status === "running" || item.status === "waiting") && samePlace(item.fromTopicId ? { topicId: item.fromTopicId } : undefined, current))
     .map((item) => `${runtime.store.assistant(item.to)?.name ?? item.to}「${short(item.text)}」，${clock(item.createdAt)} 起`);
   if (delegations.length) lines.push(`转交中：${delegations.join("；")}`);
   const pending = runtime.store.approvals().filter((item) => item.assistantId === assistantId && item.status === "pending" && item.source !== "job");

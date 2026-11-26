@@ -27,7 +27,7 @@ export interface KnowledgeEntry {
   createdAt: string;
   updatedAt: string; // 只跟内容走（新版本时更新），改名和整理不动；列表按它排序
   versions?: KnowledgeVersion[]; // 旧版本，旧的在前
-  source?: { assistantId: string; itemId?: string; jobId?: string }; // 出处
+  source?: { assistantId: string; itemId?: string; jobId?: string; topicId?: string }; // 出处
   collections: string[]; // 所在的用户知识库 id
   index?: KnowledgeIndex; // 二期：只在条目属于至少一个用户知识库时有
 }

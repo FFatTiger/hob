@@ -392,14 +392,18 @@ export interface AssistantTurnEnd {
   error?: string;
 }
 
-/** 点开推送去哪：群里提的问题、群里开的任务去群聊页，其余去这个助手的单聊。 */
+/** 点开推送去哪：群里提的问题、群里开的任务去群聊页，助手话题去对应话题页，其余去这个助手的单聊/主对话。 */
 function openUrl(assistantId: string, place?: Place): string {
-  return place?.groupId ? `/#/group/${encodeURIComponent(place.groupId)}` : `/?a=${encodeURIComponent(assistantId)}`;
+  if (place?.groupId) return `/#/group/${encodeURIComponent(place.groupId)}`;
+  if (place?.topicId) return `/#/chat/${encodeURIComponent(assistantId)}/topic/${encodeURIComponent(place.topicId)}`;
+  return `/?a=${encodeURIComponent(assistantId)}`;
 }
 
 /** 规范化会话目标标识，与前端上报的 ClientVisibility.target 保持一致。 */
 export function pushTarget(assistantId: string, place?: Place): string {
-  return place?.groupId ? `group:${place.groupId}` : `assistant:${assistantId}`;
+  if (place?.groupId) return `group:${place.groupId}`;
+  if (place?.topicId) return `topic:${place.topicId}`;
+  return `assistant:${assistantId}`;
 }
 
 /** 一轮结束后推送；是否需要推送由 Router 按本轮面向用户状态与分派任务/已推标记判断。 */

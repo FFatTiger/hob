@@ -144,17 +144,22 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/stars", async (c) => {
     const body = await c.req.json().catch(() => null) as import("../../shared/types.ts").StarRequest | null;
     const ref = body?.conversation;
-    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group") || typeof ref.id !== "string" || !ref.id || typeof body?.itemId !== "string" || !body.itemId) return c.json({ error: "对话或消息无效" }, 400);
-    if (ref.kind === "assistant" ? !store.assistant(ref.id) : !store.group(ref.id)) return c.json({ error: "对话不存在" }, 404);
+    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group" && ref.kind !== "topic") || typeof ref.id !== "string" || !ref.id || typeof body?.itemId !== "string" || !body.itemId) return c.json({ error: "对话或消息无效" }, 400);
+    const assistantTopic = ref.kind === "topic" ? store.assistantTopicById(ref.id) : undefined;
+    if (ref.kind === "assistant" ? !store.assistant(ref.id) : ref.kind === "group" ? !store.group(ref.id) : !assistantTopic) return c.json({ error: "对话不存在" }, 404);
     let before: string | undefined;
     let item: import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem | undefined;
     do {
-      const page = ref.kind === "assistant" ? router.items(ref.id, { before, limit: 200 }) : runtime.groups.items(ref.id, { before, limit: 200 });
+      const page = ref.kind === "assistant"
+        ? router.items(ref.id, { before, limit: 200 })
+        : ref.kind === "topic"
+          ? router.items(assistantTopic!.assistantId, { before, limit: 200 }, { topicId: assistantTopic!.id })
+          : runtime.groups.items(ref.id, { before, limit: 200 });
       item = page.items.find((entry) => entry.id === body.itemId);
       before = page.hasMore ? page.items[0]?.id : undefined;
     } while (!item && before);
     if (!item || (item.kind !== "user" && item.kind !== "assistant") || !item.text.trim() || (item.kind === "assistant" && item.streaming)) return c.json({ error: "原消息已不在，或不能收藏" }, 404);
-    const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : ref.id;
+    const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : assistantTopic ? assistantTopic.assistantId : ref.id;
     const star = store.saveStar({ conversation: ref, itemId: item.id, speaker, at: item.at, starredAt: new Date().toISOString(), text: item.text });
     bus.emit({ type: "stars" });
     return c.json({ star });
@@ -162,7 +167,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.delete("/api/stars", async (c) => {
     const body = await c.req.json().catch(() => null) as import("../../shared/types.ts").StarRequest | null;
     const ref = body?.conversation;
-    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group") || typeof ref.id !== "string" || typeof body?.itemId !== "string") return c.json({ error: "对话或消息无效" }, 400);
+    if (!ref || (ref.kind !== "assistant" && ref.kind !== "group" && ref.kind !== "topic") || typeof ref.id !== "string" || !ref.id || typeof body?.itemId !== "string") return c.json({ error: "对话或消息无效" }, 400);
     store.deleteStar(ref, body.itemId);
     bus.emit({ type: "stars" });
     return c.json({ ok: true });
@@ -1385,7 +1390,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.post("/api/assistants/:id/topics/:tid/close", async (c) => {
     const body = (await c.req.json().catch(() => ({}))) as { note?: unknown };
     try {
-      return c.json(runtime.assistantTopics.close(c.req.param("id"), c.req.param("tid"), body.note));
+      return c.json(await runtime.assistantTopics.close(c.req.param("id"), c.req.param("tid"), body.note));
     } catch (error) {
       return topicErr(c, error);
     }
@@ -1909,6 +1914,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const body = (await c.req.json().catch(() => ({}))) as {
       assistantId?: string;
       groupId?: string;
+      topicId?: string;
       active?: boolean;
       name?: string;
       instruction?: string;
@@ -1923,6 +1929,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const routine = routines.create({
         assistantId: body.assistantId ?? "",
         ...(body.groupId ? { groupId: body.groupId } : {}),
+        ...(body.topicId ? { topicId: body.topicId } : {}),
         name: body.name,
         instruction: body.instruction,
         // 界面上建的：「要做的事」是用户自己写的，也没有助手转述时那一轮的原话

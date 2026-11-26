@@ -35,39 +35,56 @@ export async function searchHistory(store: Store, options: { query?: string; sta
   const names = new Map(store.assistants().map((assistant) => [assistant.id, assistant.name]));
   const groups = store.groups();
   const groupNames = new Map(groups.map((group) => [group.id, group.name]));
+  const topicNames = new Map<string, string>();
+  for (const assistant of store.assistants()) {
+    for (const topic of store.assistantTopics(assistant.id)) {
+      topicNames.set(topic.id, `${assistant.name} · ${topic.name}`);
+    }
+  }
+  const conversationName = (ref: ConversationRef) =>
+    ref.kind === "assistant"
+      ? names.get(ref.id) ?? ref.id
+      : ref.kind === "group"
+        ? groupNames.get(ref.id) ?? ref.id
+        : topicNames.get(ref.id) ?? ref.id;
   const add = (ref: ConversationRef, item: { id: string; speaker: string; at: string; text: string }) => {
     if (!item.text.trim() || !words.every((word) => item.text.toLocaleLowerCase().includes(word))) return;
     const starred = marked.has(key(ref, item.id));
     if (options.starred && !starred) return;
-    found.push({ conversation: ref, conversationName: (ref.kind === "assistant" ? names : groupNames).get(ref.id) ?? ref.id, itemId: item.id, speaker: item.speaker, speakerName: item.speaker === "user" ? "用户" : names.get(item.speaker) ?? item.speaker, at: item.at, snippet: historySnippet(item.text, words, options.context ?? 60), starred });
+    found.push({ conversation: ref, conversationName: conversationName(ref), itemId: item.id, speaker: item.speaker, speakerName: item.speaker === "user" ? "用户" : names.get(item.speaker) ?? item.speaker, at: item.at, snippet: historySnippet(item.text, words, options.context ?? 60), starred });
+  };
+  const scanRouterFile = async (file: string, ref: ConversationRef, assistantId: string) => {
+    let assistantIndex = 0;
+    let event = false;
+    let held: { id: string; speaker: string; at: string; text: string }[] = [];
+    const flush = () => { if (held.length && !saysNoReply(held.at(-1)!.text)) held.forEach((item) => add(ref, { ...item, text: stripNoReply(item.text) })); held = []; };
+    for await (const entry of lines(file)) {
+      if (entry.type === "custom" && entry.customType === "hob.user") {
+        if (typeof entry.data?.text === "string") add(ref, { id: entry.id, speaker: "user", at: entry.timestamp, text: entry.data.text });
+      } else if (entry.type === "custom_message" && entry.customType === "hob.event") {
+        flush(); event = true;
+      } else if (entry.type === "message" && entry.message?.role === "user") {
+        flush(); event = false;
+      } else if (entry.type === "message" && entry.message?.role === "assistant") {
+        assistantIndex++;
+        const text = textOfContent(entry.message.content).trim();
+        const error = entry.message.errorMessage?.trim();
+        if ((entry.message.stopReason === "error" || entry.message.stopReason === "aborted") && error && text.includes(error)) continue;
+        const item = { id: `a-${assistantIndex}`, speaker: assistantId, at: entry.timestamp, text };
+        if (event) held.push(item); else add(ref, { ...item, text: stripNoReply(text) });
+      }
+    }
+    flush();
   };
   if (options.starred) {
     for (const star of stars) add(star.conversation, { id: star.itemId, speaker: star.speaker, at: star.at, text: star.text });
   } else {
     // ponytail: 每次逐行扫全部历史，结果最多返回 50 条；记录变大后可换增量索引。
     for (const assistant of store.assistants()) {
-      const ref: ConversationRef = { kind: "assistant", id: assistant.id };
-      let assistantIndex = 0;
-      let event = false;
-      let held: { id: string; speaker: string; at: string; text: string }[] = [];
-      const flush = () => { if (held.length && !saysNoReply(held.at(-1)!.text)) held.forEach((item) => add(ref, { ...item, text: stripNoReply(item.text) })); held = []; };
-      for await (const entry of lines(store.routerFile(assistant.id))) {
-        if (entry.type === "custom" && entry.customType === "hob.user") {
-          if (typeof entry.data?.text === "string") add(ref, { id: entry.id, speaker: "user", at: entry.timestamp, text: entry.data.text });
-        } else if (entry.type === "custom_message" && entry.customType === "hob.event") {
-          flush(); event = true;
-        } else if (entry.type === "message" && entry.message?.role === "user") {
-          flush(); event = false;
-        } else if (entry.type === "message" && entry.message?.role === "assistant") {
-          assistantIndex++;
-          const text = textOfContent(entry.message.content).trim();
-          const error = entry.message.errorMessage?.trim();
-          if ((entry.message.stopReason === "error" || entry.message.stopReason === "aborted") && error && text.includes(error)) continue;
-          const item = { id: `a-${assistantIndex}`, speaker: assistant.id, at: entry.timestamp, text };
-          if (event) held.push(item); else add(ref, { ...item, text: stripNoReply(text) });
-        }
+      await scanRouterFile(store.routerFile(assistant.id), { kind: "assistant", id: assistant.id }, assistant.id);
+      for (const topic of store.assistantTopics(assistant.id)) {
+        await scanRouterFile(store.assistantTopicRouterFile(assistant.id, topic.id), { kind: "topic", id: topic.id }, assistant.id);
       }
-      flush();
     }
     for (const group of groups) {
       const ref: ConversationRef = { kind: "group", id: group.id };

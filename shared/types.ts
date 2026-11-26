@@ -693,6 +693,7 @@ export interface Group {
 export interface TopicHandover {
   by: string; // 交给群的主助手
   at: Iso;
+  fromTopicId?: string; // 从助手话题交给群时记下来，结论回这个话题
   result?: string; // 关话题时送回给主助手的那句话
   deliveredAt?: Iso; // 送到主助手的对话的时间；没有就是还没送到
 }
@@ -853,6 +854,7 @@ export interface Delegation {
   returnedText?: string; // 退回时补充的用户要求
   endedAt?: Iso;
   approvalIds?: string[];
+  fromTopicId?: string;
   toTopicId?: string;
   turnFinished?: boolean;
   turnFailed?: boolean;
@@ -1144,7 +1146,7 @@ export interface PageLive {
   error?: string;
 }
 
-export type ConversationRef = { kind: "assistant" | "group"; id: string };
+export type ConversationRef = { kind: "assistant" | "group" | "topic"; id: string };
 
 /** 收藏保存消息快照，原消息消失后仍可查看。 */
 export interface StarredMessage {

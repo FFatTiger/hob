@@ -8,11 +8,11 @@ import { exec } from "node:child_process";
 import { mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { Cron } from "croner";
-import type { Routine, RoutineCheck, RoutineChecks, RoutineTick } from "../../shared/types.ts";
+import type { Place, Routine, RoutineCheck, RoutineChecks, RoutineTick } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
-import { placeOf } from "./place.ts";
+import { isValidTopicId, placeOf } from "./place.ts";
 import { assistantDir, engineDir, groupDir } from "./config.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 
@@ -26,6 +26,7 @@ const CHECK_ERROR_MAX = 300;
 export interface RoutineInput {
   assistantId: string;
   groupId?: string;
+  topicId?: string;
   active?: boolean;
   name: string;
   instruction: string;
@@ -90,7 +91,10 @@ export class RoutineScheduler {
       const group = routine.groupId ? this.runtime.store.group(routine.groupId) : undefined;
       if (group && routine.assistantId !== group.ownerId) this.transfer(routine, group.ownerId);
       const current = this.runtime.store.routine(routine.id) ?? routine;
-      if (group?.closedAt && current.active) {
+      const assistantTopic = !group && current.topicId
+        ? this.runtime.store.assistantTopic(current.assistantId, current.topicId)
+        : undefined;
+      if ((group?.closedAt || assistantTopic?.closedAt) && current.active) {
         this.pauseRoutineForClosedTopic(current);
         continue;
       }
@@ -132,6 +136,15 @@ export class RoutineScheduler {
     return routine.groupId ? this.runtime.store.group(routine.groupId)?.id : undefined;
   }
 
+  private place(routine: Routine): Place {
+    if (routine.groupId) return placeOf({ groupId: this.destination(routine) });
+    if (routine.topicId) {
+      const topic = this.runtime.store.assistantTopic(routine.assistantId, routine.topicId);
+      if (topic && topic.assistantId === routine.assistantId && topic.id === routine.topicId) return { topicId: topic.id };
+    }
+    return {};
+  }
+
   private pauseRoutineForClosedTopic(routine: Routine): void {
     const next: Routine = { ...routine, active: false, pausedBy: "topicClosed" };
     this.runtime.store.saveRoutine(next);
@@ -139,27 +152,50 @@ export class RoutineScheduler {
     this.runtime.bus.emit({ type: "routine", routine: next });
   }
 
-  /** 话题关闭时暂停名下启用中的定时任务，记 pausedBy，重开时只恢复这一类。 */
+  private resumeOneRoutine(routine: Routine): void {
+    const { pausedBy: _pausedBy, stoppedAt: _stoppedAt, stopReason: _stopReason, ...rest } = routine;
+    const next: Routine = { ...rest, active: true };
+    this.apply(next);
+    const timers = this.timers.get(next.id) ?? [];
+    if (timers.length && timers.every((cron) => cron.nextRun() === null)) {
+      void this.stopRoutine(next, "finished");
+      return;
+    }
+    this.runtime.store.saveRoutine(next);
+    this.runtime.bus.emit({ type: "routine", routine: next });
+  }
+
+  /** 群话题关闭时暂停名下启用中的定时任务，记 pausedBy，重开时只恢复这一类。 */
   pauseForTopic(groupId: string): void {
     for (const routine of this.runtime.store.routines()) {
       if (routine.groupId === groupId && routine.active) this.pauseRoutineForClosedTopic(routine);
     }
   }
 
-  /** 话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按完成停止。 */
+  /** 群话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按完成停止。 */
   resumeForTopic(groupId: string): void {
     for (const routine of this.runtime.store.routines()) {
-      if (routine.groupId !== groupId || routine.active || routine.pausedBy !== "topicClosed") continue;
-      const { pausedBy: _pausedBy, stoppedAt: _stoppedAt, stopReason: _stopReason, ...rest } = routine;
-      const next: Routine = { ...rest, active: true };
-      this.apply(next);
-      const timers = this.timers.get(next.id) ?? [];
-      if (timers.length && timers.every((cron) => cron.nextRun() === null)) {
-        void this.stopRoutine(next, "finished");
-        continue;
+      if (routine.groupId === groupId && !routine.active && routine.pausedBy === "topicClosed") {
+        this.resumeOneRoutine(routine);
       }
-      this.runtime.store.saveRoutine(next);
-      this.runtime.bus.emit({ type: "routine", routine: next });
+    }
+  }
+
+  /** 助手话题关闭时暂停名下启用中的定时任务，记 pausedBy，重开时只恢复这一类。 */
+  pauseForAssistantTopic(assistantId: string, topicId: string): void {
+    for (const routine of this.runtime.store.routines()) {
+      if (routine.assistantId === assistantId && routine.topicId === topicId && routine.active) {
+        this.pauseRoutineForClosedTopic(routine);
+      }
+    }
+  }
+
+  /** 助手话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动。 */
+  resumeForAssistantTopic(assistantId: string, topicId: string): void {
+    for (const routine of this.runtime.store.routines()) {
+      if (routine.assistantId === assistantId && routine.topicId === topicId && !routine.active && routine.pausedBy === "topicClosed") {
+        this.resumeOneRoutine(routine);
+      }
     }
   }
 
@@ -202,20 +238,26 @@ export class RoutineScheduler {
     this.runtime.bus.emit({ type: "routine", routine: next });
   }
 
-  /** 到执行时间的那条记录先交给所属助手；助手这一轮可以直接答复，也可以用 start_job。 */
+  /** 到执行时间的那条记录先交给所属助手（主对话或话题）；助手这一轮可以直接答复，也可以用 start_job。 */
   private async handToAssistant(routine: Routine, output?: string): Promise<RoutineTick> {
+    const place = this.place(routine);
     const text = this.dueText(routine, output);
     await this.runtime.router.addItem(routine.assistantId, {
       kind: "note",
       icon: "routine",
       text: this.dueNote(routine),
       routineId: routine.id,
-    });
+    }, ...(place.topicId ? [place] : []));
     this.recordHanded(routine);
-    await this.runtime.router.event(routine.assistantId, text, {
+    const details = {
       routine: { id: routine.id, name: routine.name },
       routineTrigger: { id: routine.id, name: routine.name },
-    });
+    };
+    if (place.topicId) {
+      await this.runtime.router.event(routine.assistantId, text, details, place);
+    } else {
+      await this.runtime.router.event(routine.assistantId, text, details);
+    }
     return { outcome: "handed" };
   }
 
@@ -224,6 +266,7 @@ export class RoutineScheduler {
     const routine = this.runtime.store.routine(routineId);
     if (!routine || !routine.active) return;
     if (routine.groupId && this.runtime.store.group(routine.groupId)?.closedAt) return;
+    if (routine.topicId && this.runtime.store.assistantTopic(routine.assistantId, routine.topicId)?.closedAt) return;
     let outcome: RoutineTick["outcome"] | undefined;
     try {
       outcome = (await this.tick(routine)).outcome;
@@ -232,7 +275,7 @@ export class RoutineScheduler {
         kind: "note",
         icon: "routine",
         text: t("定时任务「{name}」启动失败：{error}", { name: routine.name, error: error instanceof Error ? error.message : String(error) }),
-      }, placeOf({ groupId: this.destination(routine) }));
+      }, this.place(routine));
     }
     await this.settle(routineId, outcome);
   }
@@ -264,7 +307,7 @@ export class RoutineScheduler {
       kind: "note",
       icon: "routine",
       text: reason === "hit" ? t("定时任务「{name}」已触发，已按设置停止", { name: routine.name }) : t("定时任务「{name}」已完成最后一次运行，已停止", { name: routine.name }),
-    }, placeOf({ groupId: this.destination(routine) }));
+    }, this.place(routine));
   }
 
   /** 到点做一次：没检查脚本就直接交给助手，有就先跑脚本。 */
@@ -275,7 +318,7 @@ export class RoutineScheduler {
     if (result.outcome === "quiet") return { outcome: "quiet" };
     const output = result.output ?? "";
     if (routine.check.then === "notify") {
-      const place = placeOf({ groupId: this.destination(routine) });
+      const place = this.place(routine);
       await this.runtime.router.addItem(routine.assistantId, {
         kind: "assistant",
         text: output,
@@ -368,26 +411,34 @@ export class RoutineScheduler {
     this.runtime.store.saveRoutine(next);
     this.runtime.bus.emit({ type: "routine", routine: next });
     if (result.outcome === "failed" && !wasFailing) {
-      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查失败：{reason}", { name: routine.name, reason: result.reason ?? "" }) }, placeOf({ groupId: this.destination(routine) }));
+      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查失败：{reason}", { name: routine.name, reason: result.reason ?? "" }) }, this.place(routine));
     } else if (result.outcome !== "failed" && wasFailing) {
-      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查恢复正常", { name: routine.name }) }, placeOf({ groupId: this.destination(routine) }));
+      await this.runtime.router.addItem(routine.assistantId, { kind: "note", icon: "routine", text: t("定时任务「{name}」检查恢复正常", { name: routine.name }) }, this.place(routine));
     }
     return result;
   }
 
   create(input: RoutineInput): Routine {
     validate(input.schedules, this.runtime.settings.settings.general.timezone);
+    if (input.groupId && input.topicId) throw new Error("定时任务不能更改归属");
     if (input.groupId) {
       const group = this.runtime.store.group(input.groupId);
       if (!group) throw new Error("群不存在");
       input = { ...input, assistantId: group.ownerId };
       this.validateGroup(input.groupId!, input.assistantId);
+    } else if (input.topicId) {
+      if (!this.runtime.store.assistant(input.assistantId)) throw new Error(`助手不存在：${input.assistantId}`);
+      if (!isValidTopicId(input.topicId)) throw new Error("话题不存在");
+      const topic = this.runtime.store.assistantTopic(input.assistantId, input.topicId);
+      if (!topic || topic.assistantId !== input.assistantId || topic.id !== input.topicId) throw new Error("话题不存在");
+      if (topic.closedAt) throw new Error("话题已关闭");
     }
     if (input.active !== undefined && typeof input.active !== "boolean") throw new Error("启用状态无效");
     const routine: Routine = {
       id: newId("rt-"),
       assistantId: input.assistantId,
       ...(input.groupId ? { groupId: input.groupId } : {}),
+      ...(input.topicId ? { topicId: input.topicId } : {}),
       name: input.name,
       instruction: input.instruction,
       ...(input.instructionBy ? { instructionBy: input.instructionBy } : {}),
@@ -404,11 +455,12 @@ export class RoutineScheduler {
     return routine;
   }
 
-  update(id: string, patch: Partial<Pick<Routine, "name" | "instruction" | "schedules" | "active" | "once" | "assistantId" | "groupId" | "instructionBy">> & { check?: RoutineCheck | null }): Routine {
+  update(id: string, patch: Partial<Pick<Routine, "name" | "instruction" | "schedules" | "active" | "once" | "assistantId" | "groupId" | "topicId" | "instructionBy">> & { check?: RoutineCheck | null }): Routine {
     const routine = this.runtime.store.routine(id);
     if (!routine) throw new Error(`定时任务不存在：${id}`);
-    if (!routine.groupId && (patch.groupId !== undefined || patch.assistantId !== undefined)) throw new Error("个人定时任务不能更改归属");
+    if (!routine.groupId && (patch.groupId !== undefined || patch.assistantId !== undefined || (patch.topicId !== undefined && patch.topicId !== routine.topicId))) throw new Error("个人定时任务不能更改归属");
     if (routine.groupId && patch.assistantId !== undefined) throw new Error("群的定时由群主处理");
+    if (routine.groupId && patch.topicId !== undefined) throw new Error("只能移动到同一个群或其话题");
     if (routine.groupId) this.validateGroup(patch.groupId ?? routine.groupId, routine.assistantId, routine.groupId, patch.groupId === undefined);
     if (patch.schedules) validate(patch.schedules, this.runtime.settings.settings.general.timezone);
     const { check, instructionBy, ...rest } = patch;
@@ -417,6 +469,9 @@ export class RoutineScheduler {
     delete (rest as Record<string, unknown>).pausedBy;
     const targetGroupId = patch.groupId ?? routine.groupId;
     if (rest.active === true && targetGroupId && this.runtime.store.group(targetGroupId)?.closedAt) {
+      throw new Error("话题已关闭");
+    }
+    if (rest.active === true && !targetGroupId && routine.topicId && this.runtime.store.assistantTopic(routine.assistantId, routine.topicId)?.closedAt) {
       throw new Error("话题已关闭");
     }
     const next: Routine = { ...routine, ...rest };
@@ -457,6 +512,7 @@ export class RoutineScheduler {
     const routine = this.runtime.store.routine(id);
     if (!routine) throw new Error(`定时任务不存在：${id}`);
     if (routine.groupId && this.runtime.store.group(routine.groupId)?.closedAt) throw new Error("话题已关闭");
+    if (routine.topicId && this.runtime.store.assistantTopic(routine.assistantId, routine.topicId)?.closedAt) throw new Error("话题已关闭");
     const result = await this.tick(routine);
     if (routine.groupId) await this.settle(id, result.outcome);
     return result;

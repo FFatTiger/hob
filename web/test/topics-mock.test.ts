@@ -135,4 +135,28 @@ describe("mock：话题和待办", () => {
     expect(removed).toContain("g-topics");
     expect(removed.filter((id) => id.startsWith("t-"))).toHaveLength(5);
   });
+
+  it("关闭话题暂停启用中定时并记 pausedBy；重开只恢复 pausedBy 的", async () => {
+    const { api } = mock("topics");
+    const topicActive = (await api.createRoutine({ assistantId: "po", groupId: "t-remember", name: "话题巡检", instruction: "查进度", schedules: ["0 9 * * *"], active: true })).routine;
+    const topicPaused = (await api.createRoutine({ assistantId: "po", groupId: "t-remember", name: "手动暂停", instruction: "不用跑", schedules: ["0 10 * * *"], active: false })).routine;
+    const generalActive = (await api.createRoutine({ assistantId: "po", groupId: "g-topics", name: "综合汇总", instruction: "汇总", schedules: ["0 8 * * *"], active: true })).routine;
+
+    await api.closeTopic("t-remember", { note: "先告一段落" });
+    const afterClose = (await api.bootstrap()).routines;
+    expect(afterClose.find((r) => r.id === topicActive.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+    expect(afterClose.find((r) => r.id === topicPaused.id)?.active).toBe(false);
+    expect(afterClose.find((r) => r.id === topicPaused.id)?.pausedBy).toBeUndefined();
+    expect(afterClose.find((r) => r.id === generalActive.id)).toMatchObject({ active: true });
+
+    expect(await error(() => api.patchRoutine(topicActive.id, { active: true }))).toBe("话题已关闭");
+    expect(await error(() => api.runRoutine(topicActive.id))).toBe("话题已关闭");
+
+    await api.reopenTopic("t-remember");
+    const afterReopen = (await api.bootstrap()).routines;
+    expect(afterReopen.find((r) => r.id === topicActive.id)?.active).toBe(true);
+    expect(afterReopen.find((r) => r.id === topicActive.id)?.pausedBy).toBeUndefined();
+    expect(afterReopen.find((r) => r.id === topicPaused.id)?.active).toBe(false);
+    expect(afterReopen.find((r) => r.id === topicPaused.id)?.pausedBy).toBeUndefined();
+  });
 });

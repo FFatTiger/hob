@@ -309,12 +309,22 @@ export function buildRouterTools(
     return ownerId !== assistantId || groupDir ? t("「{name}」的", { name: nameOf(ownerId) }) : "";
   };
 
+  /** 定时任务在哪个群会话（综合 / 话题「…」）；单聊返回 undefined。 */
+  const routinePlace = (routine: Routine): string | undefined => {
+    if (!routine.groupId) return undefined;
+    const dest = store.group(routine.groupId);
+    return dest?.parentId ? `话题「${dest.name}」` : dest ? "综合" : undefined;
+  };
   /** 定时任务归属：本群的、另一个助手的写清楚；自己在单聊里建的不用说。 */
   const whoseRoutine = (ownerId: string): string => groupId ? t("本群的") : ownerId === assistantId ? "" : t("「{name}」的", { name: nameOf(ownerId) });
   /** 现在有哪些定时任务（带 id）：删完、或者 id 填错了，模型看得出该填哪个。 */
   const routinesLeft = (ownerId: string): string => {
     const left = store.routines().filter((routine) => groupId ? sameGroup(groupId, routine.groupId) : !routine.groupId && routine.assistantId === ownerId);
-    return `${groupId ? "本群" : ownerId === assistantId ? "你" : `「${store.assistant(ownerId)?.name ?? ownerId}」`}现在${left.length ? `的定时任务：${left.map((routine) => `「${routine.name}」（${routine.id}）`).join("、")}` : "没有定时任务"}。`;
+    const label = (routine: Routine) => {
+      const where = routinePlace(routine);
+      return `「${routine.name}」（${routine.id}${where ? ` · ${where}` : ""}）`;
+    };
+    return `${groupId ? "本群" : ownerId === assistantId ? "你" : `「${store.assistant(ownerId)?.name ?? ownerId}」`}现在${left.length ? `的定时任务：${left.map(label).join("、")}` : "没有定时任务"}。`;
   };
 
   // 能派的模型：写进 start_job 的参数说明，助手知道有哪些可选、哪个是默认
@@ -860,7 +870,7 @@ export function buildRouterTools(
     {
       name: "create_routine",
       label: "新增定时任务",
-      description: `新增一个定时任务。执行时间用 cron 表达式，如「0 9 * * *」每天 9 点；只运行一次就填具体时间；多个执行时间就传多个。${groupId ? "在群里创建的归这个群，到执行时间交给群主在这里处理。" : ""}`,
+      description: `新增一个定时任务。执行时间用 cron 表达式，如「0 9 * * *」每天 9 点；只运行一次就填具体时间；多个执行时间就传多个。${groupId ? (isGroupTopic ? "在这个话题里创建的归这个话题，到执行时间交给群主在这里处理。" : "在群里创建的归这个群，到执行时间交给群主在这里处理。") : ""}`,
       parameters: Type.Object({
         name: Type.String({ description: "定时任务名称，如「每日简报」" }),
         instruction: Type.String({ description: "到执行时间要执行的内容" }),
@@ -885,7 +895,7 @@ export function buildRouterTools(
           });
           await note("routine", t("新增{whose}定时任务 · {name} · {schedules}", { whose: whoseRoutine(target.id), name: routine.name, schedules: routine.schedules.map((schedule) => cronToChinese(schedule)).join("、") }));
           profileChanged(target.id);
-          return ok(`定时任务「${routine.name}」已创建${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
+          return ok(`定时任务「${routine.name}」已创建${isGroupTopic ? "，到执行时间会在这个话题里执行" : ""}${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。它的目录是 ${routines.dir(routine)}，检查脚本在这里运行；脚本要用的其他文件，可以分派任务写到这个目录。${await trialFact(routine)}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -924,7 +934,8 @@ export function buildRouterTools(
           });
           await note("routine", t("修改{whose}定时任务 · {name} · {schedules}", { whose: whoseRoutine(target.id), name: routine.name, schedules: routine.schedules.map((schedule) => cronToChinese(schedule)).join("、") }));
           profileChanged(target.id);
-          return ok(`已修改${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。目录是 ${routines.dir(routine)}。${params.check ? await trialFact(routine) : ""}`);
+          const where = routinePlace(routine);
+          return ok(`已修改${where ? `「${routine.name}」（${where}）` : ""}${routineFact(routine.schedules, routine.check, routine.once, !!groupId)}。目录是 ${routines.dir(routine)}。${params.check ? await trialFact(routine) : ""}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }
@@ -948,7 +959,8 @@ export function buildRouterTools(
           await note("routine", t("删除了{whose}定时任务「{name}」", { whose: whoseRoutine(target.id), name: found.name }));
           profileChanged(target.id);
           // 删完还剩哪些写清楚：模型以为有重复、删掉的其实是唯一一条时，看得出来
-          return ok(`已删除「${found.name}」。${routinesLeft(target.id)}`);
+          const where = routinePlace(found);
+          return ok(`已删除「${found.name}」${where ? `（${where}）` : ""}。${routinesLeft(target.id)}`);
         } catch (error) {
           return fail(error instanceof Error ? error.message : String(error));
         }

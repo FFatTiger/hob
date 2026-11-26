@@ -145,3 +145,165 @@ describe("检查脚本试跑", () => {
     } finally { hob.close(); }
   });
 });
+
+describe("群话题的定时归话题（P2）", () => {
+  it("关闭话题暂停启用中定时并记 pausedBy，到点不跑也不改发综合；重开只恢复 pausedBy 的", async () => {
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "上线检查", "user");
+
+      const topicActive = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "话题巡检",
+        instruction: "看下上线指标",
+        schedules: ["0 9 * * *"],
+      });
+      const topicUserPaused = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "用户暂停的定时",
+        instruction: "暂不用跑",
+        schedules: ["0 10 * * *"],
+        active: false,
+      });
+      const generalActive = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: group.id,
+        name: "综合早报",
+        instruction: "汇总进展",
+        schedules: ["0 8 * * *"],
+      });
+
+      const delivered: string[] = [];
+      hob.runtime.groups.deliverEvent = async (gid) => { delivered.push(gid); };
+
+      // 关闭话题：仅启用中的话题定时被暂停且记 pausedBy，cron 停止；用户手动暂停的与综合定时不受影响
+      hob.runtime.groups.closeByUser(topic.id, "先告一段落");
+      expect(hob.runtime.store.routine(topicActive.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.routines.nextRuns(topicActive.id)).toEqual([]);
+      expect(hob.runtime.store.routine(topicUserPaused.id)?.active).toBe(false);
+      expect(hob.runtime.store.routine(topicUserPaused.id)?.pausedBy).toBeUndefined();
+      expect(hob.runtime.store.routine(generalActive.id)).toMatchObject({ active: true });
+      expect(hob.runtime.store.routine(generalActive.id)?.pausedBy).toBeUndefined();
+      expect(hob.runtime.routines.nextRuns(generalActive.id)).toHaveLength(1);
+
+      // 关闭后到点不跑，也不会改发到综合
+      await hob.runtime.routines.fire(topicActive.id);
+      expect(delivered).toEqual([]);
+      expect(hob.runtime.store.routine(topicActive.id)?.runs).toEqual([]);
+      expect(hob.runtime.groups.items(group.id).items.some((item) => item.kind === "note" && item.routineId === topicActive.id)).toBe(false);
+      expect(hob.runtime.groups.items(topic.id).items.some((item) => item.kind === "note" && item.routineId === topicActive.id)).toBe(false);
+
+      // 关闭期间拒绝手动启用或立即运行
+      expect(() => hob.runtime.routines.update(topicActive.id, { active: true })).toThrow("话题已关闭");
+      await expect(hob.runtime.routines.runNow(topicActive.id)).rejects.toThrow("话题已关闭");
+
+      // 综合的定时照常在综合运行
+      await hob.runtime.routines.fire(generalActive.id);
+      expect(delivered).toEqual([group.id]);
+
+      // 重新打开话题：只恢复 pausedBy 为 topicClosed 的定时，用户自己暂停的不被恢复
+      hob.runtime.groups.reopen(topic.id);
+      expect(hob.runtime.store.routine(topicActive.id)?.active).toBe(true);
+      expect(hob.runtime.store.routine(topicActive.id)?.pausedBy).toBeUndefined();
+      expect(hob.runtime.routines.nextRuns(topicActive.id)).toHaveLength(1);
+      expect(hob.runtime.store.routine(topicUserPaused.id)?.active).toBe(false);
+      expect(hob.runtime.store.routine(topicUserPaused.id)?.pausedBy).toBeUndefined();
+      expect(hob.runtime.routines.nextRuns(topicUserPaused.id)).toEqual([]);
+
+      // 重开后到点直接发到话题本身
+      delivered.length = 0;
+      await hob.runtime.routines.fire(topicActive.id);
+      expect(delivered).toEqual([topic.id]);
+    } finally { hob.close(); }
+  });
+
+  it("重启恢复：老数据里已关闭话题留着 active 的定时在 start 时暂停并记 pausedBy", async () => {
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "历史话题", "user");
+      const routine = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "旧定时",
+        instruction: "检查",
+        schedules: ["0 9 * * *"],
+      });
+      // 模拟升级前的老数据：话题已关闭但定时还是 active
+      hob.runtime.store.saveGroup({ ...hob.runtime.store.group(topic.id)!, closedAt: new Date().toISOString() });
+      hob.runtime.routines.start();
+      expect(hob.runtime.store.routine(routine.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.routines.nextRuns(routine.id)).toEqual([]);
+      hob.runtime.groups.reopen(topic.id);
+      expect(hob.runtime.store.routine(routine.id)?.active).toBe(true);
+      expect(hob.runtime.store.routine(routine.id)?.pausedBy).toBeUndefined();
+    } finally { hob.close(); }
+  });
+
+  it("HTTP 接口：关闭话题后立即运行或启用定时返回 400", async () => {
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "接口话题", "user");
+      const routine = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: topic.id,
+        name: "巡检",
+        instruction: "检查",
+        schedules: ["0 9 * * *"],
+      });
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0]!;
+      const headers = { cookie, "content-type": "application/json" };
+
+      expect((await app.request(`/api/groups/${topic.id}/close`, { method: "POST", headers, body: JSON.stringify({ note: "先停" }) })).status).toBe(200);
+      const runRes = await app.request(`/api/routines/${routine.id}/run`, { method: "POST", headers });
+      expect(runRes.status).toBe(400);
+      expect(await runRes.json()).toEqual({ error: "话题已关闭" });
+      const patchRes = await app.request(`/api/routines/${routine.id}`, { method: "PATCH", headers, body: JSON.stringify({ active: true }) });
+      expect(patchRes.status).toBe(400);
+      expect(await patchRes.json()).toEqual({ error: "话题已关闭" });
+
+      expect((await app.request(`/api/groups/${topic.id}/reopen`, { method: "POST", headers })).status).toBe(200);
+      expect(hob.runtime.store.routine(routine.id)?.active).toBe(true);
+    } finally { hob.close(); }
+  });
+
+  it("工具返回：create_routine 说明进话题，update_routine 和 delete_routine 写明定时在哪", async () => {
+    const hob = makeHob();
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "发布检查", "user");
+      const said = (result: { content: unknown[] }) => (result.content as { text?: string }[]).map((part) => part.text ?? "").join("");
+      const toolIn = (gid: string, name: string) => buildRouterTools(hob.runtime, "hob", gid).find((item) => item.name === name)!;
+
+      const createdTopic = await toolIn(topic.id, "create_routine").execute("c1", { name: "发布巡检", instruction: "查日志", schedules: ["0 9 * * *"] });
+      expect(said(createdTopic)).toContain("到执行时间会在这个话题里执行");
+      const rtTopic = hob.runtime.store.routines().find((r) => r.name === "发布巡检")!;
+
+      const createdGeneral = await toolIn(group.id, "create_routine").execute("c2", { name: "每日站会", instruction: "汇总", schedules: ["0 10 * * *"] });
+      expect(said(createdGeneral)).not.toContain("到执行时间会在这个话题里执行");
+      const rtGeneral = hob.runtime.store.routines().find((r) => r.name === "每日站会")!;
+
+      // 在话题里修改综合的定时、在综合里修改话题的定时，都写明它实际在哪
+      const updatedGeneral = await toolIn(topic.id, "update_routine").execute("u1", { routineId: rtGeneral.id, name: "早会汇总" });
+      expect(said(updatedGeneral)).toContain("已修改「早会汇总」（综合）");
+      const updatedTopic = await toolIn(group.id, "update_routine").execute("u2", { routineId: rtTopic.id, name: "发版巡检" });
+      expect(said(updatedTopic)).toContain("已修改「发版巡检」（话题「发布检查」）");
+
+      // id 填错时「现在有哪些」列出各定时的位置
+      const missing = await toolIn(topic.id, "update_routine").execute("u3", { routineId: "rt-nope", name: "x" });
+      expect(said(missing)).toContain(`「早会汇总」（${rtGeneral.id} · 综合）`);
+      expect(said(missing)).toContain(`「发版巡检」（${rtTopic.id} · 话题「发布检查」）`);
+
+      // 删除时写明删了哪里的、还剩哪些在哪里
+      const deleted = await toolIn(group.id, "delete_routine").execute("d1", { routineId: rtTopic.id });
+      expect(said(deleted)).toContain("已删除「发版巡检」（话题「发布检查」）");
+      expect(said(deleted)).toContain(`「早会汇总」（${rtGeneral.id} · 综合）`);
+    } finally { hob.close(); }
+  });
+});

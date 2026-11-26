@@ -1,10 +1,10 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
-import type { AssistantSummary, GroupSummary } from "../../shared/types.ts";
+import type { AssistantSummary, GroupSummary, Routine } from "../../shared/types.ts";
 
 // 组件只看 store 里的数据；动作换成可断言的空函数（服务端行为另在 topics-mock.test.ts 里测）。
 const selected: string[] = [];
-const state = vi.hoisted(() => ({ groups: [] as GroupSummary[], assistants: [] as AssistantSummary[], gsel: null as string | null, groupItems: {}, jobs: {} as Record<string, unknown> }));
+const state = vi.hoisted(() => ({ groups: [] as GroupSummary[], assistants: [] as AssistantSummary[], gsel: null as string | null, groupItems: {}, jobs: {} as Record<string, unknown>, routines: [] as Routine[] }));
 
 vi.mock("./store.ts", () => ({
   useApp: () => state,
@@ -25,7 +25,7 @@ vi.mock("./store.ts", () => ({
 vi.mock("react-dom", async (importOriginal) => ({ ...(await importOriginal<typeof import("react-dom")>()), createPortal: (node: unknown) => node }));
 
 import { topicFace, topicGroups, topicPreview, groupSidebarFor, partitionTopics } from "../src/topics.ts";
-import { ClosedTopic, GroupSidebar, NewTopicDialog, PlaceJobs, TopicRow, membersLine } from "./components/Topics.tsx";
+import { ClosedTopic, GroupSidebar, NewTopicDialog, PlaceJobs, TopicClose, TopicRow, membersLine } from "./components/Topics.tsx";
 import { TopicCard } from "./components/Items.tsx";
 
 const at = (h: number, m = 0) => new Date(2026, 10, 8, h, m).toISOString();
@@ -305,5 +305,34 @@ describe("新建话题弹窗的工作目录", () => {
     expect(html).toContain("如 /workspace/app，创建后不可修改");
     expect(html).not.toContain("跟随群（");
     expect(html.match(/<input\b/g)).toHaveLength(2);
+  });
+});
+
+describe("关闭话题确认框的定时提示", () => {
+  it("有启用中的定时任务时提示数量，不计已暂停和综合的定时", () => {
+    const mk = (id: string, groupId: string, active: boolean): Routine => ({
+      id,
+      assistantId: "po",
+      groupId,
+      name: id,
+      instruction: "检查",
+      schedules: ["0 9 * * *"],
+      active,
+      createdAt: at(8),
+      runs: [],
+    });
+    state.routines = [
+      mk("r1", "t-remember", true),
+      mk("r2", "t-remember", true),
+      mk("r3", "t-remember", false),
+      mk("r4", "g-topics", true),
+    ];
+    const withRoutines = render(<TopicClose topic={doing} initialConfirming />);
+    expect(withRoutines).toContain("这个话题有 2 个定时任务，关闭后暂停，重新打开时恢复");
+
+    state.routines = [mk("r3", "t-remember", false), mk("r4", "g-topics", true)];
+    const withoutActive = render(<TopicClose topic={doing} initialConfirming />);
+    expect(withoutActive).not.toContain("关闭后暂停，重新打开时恢复");
+    state.routines = [];
   });
 });

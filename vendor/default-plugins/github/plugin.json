@@ -1,7 +1,7 @@
 {
   "name": "github",
   "displayName": "GitHub",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Connect official GitHub tools and bundled git/gh commands with hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution.",
   "homepage": "https://github.com/github/github-mcp-server",
   "userConfig": {
@@ -45,8 +45,8 @@
         "en": "Connect official GitHub tools and git/gh commands via hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution."
       },
       "description": {
-        "zh": "通过官方 GitHub 远程 MCP 与内置 git/gh 命令行封装操作仓库、Issue 与 PR，并自动附带 Hob 署名。支持三种身份（按优先级依次回退）：\n1. 自有 GitHub App（填写 App ID 与私钥路径）：完全以该 App 机器人身份操作，提交作者也是该机器人；未安装到目标仓库时自动回退。\n2. hob-bot 登录（点击上方「登录」完成设备码授权，无需手动建令牌）：GitHub 显示「用户头像 + hob-bot 徽标」，提交作者为你、hob-bot 为共同作者。\n3. 个人访问令牌（GITHUB_PERSONAL_ACCESS_TOKEN）：完全兼容 1.0，升级后无需改动即可继续使用。",
-        "en": "Operate GitHub repositories, issues, and pull requests via the official GitHub remote MCP server and bundled git/gh wrappers with automatic Hob attribution. Supports three identities in priority order:\n1. Your own GitHub App (App ID + private key path): acts completely as your App bot, including commit author; automatically falls back on repositories where the App is not installed.\n2. hob-bot sign-in (click Sign In above for device-code login, no token setup needed): shows your avatar with the hob-bot badge on GitHub, with you as commit author and hob-bot as co-author.\n3. Personal Access Token (GITHUB_PERSONAL_ACCESS_TOKEN): fully backwards-compatible with 1.0."
+        "zh": "通过官方 GitHub 远程 MCP 与内置 git/gh 命令行封装操作仓库、Issue 与 PR，并自动附带 Hob 署名。支持三种身份（按优先级依次回退）：\n1. 自有 GitHub App（填写 App ID 与私钥路径）：完全以该 App 机器人身份操作，提交作者也是该机器人；未安装到目标仓库时自动回退。\n2. hob-bot 登录（点击上方「登录」完成设备码授权，无需手动建令牌）：以你本人的身份操作，GitHub 上显示的是你；PR 和 issue 正文末尾带「Generated with Hob」，提交里 hob-bot 是共同作者。\n3. 个人访问令牌（GITHUB_PERSONAL_ACCESS_TOKEN）：完全兼容 1.0，升级后无需改动即可继续使用。",
+        "en": "Operate GitHub repositories, issues, and pull requests via the official GitHub remote MCP server and bundled git/gh wrappers with automatic Hob attribution. Supports three identities in priority order:\n1. Your own GitHub App (App ID + private key path): acts completely as your App bot, including commit author; automatically falls back on repositories where the App is not installed.\n2. hob-bot sign-in (click Sign In above for device-code login, no token setup needed): acts as you, so GitHub shows you; new PRs and issues end with \"Generated with Hob\" and commits list hob-bot as co-author.\n3. Personal Access Token (GITHUB_PERSONAL_ACCESS_TOKEN): fully backwards-compatible with 1.0."
       }
     }
   }

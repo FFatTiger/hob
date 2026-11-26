@@ -437,7 +437,7 @@ export function createAuthManager(env = process.env, options = {}) {
     }
     if (pat) {
       const login = (await getUserForToken(pat))?.login;
-      return { signedIn: false, optional: true, detail: `正在用个人访问令牌${login ? `（${login}）` : ""}。也可以改用 hob-bot 登录，PR 和评论会带上 hob-bot 标识。` };
+      return { signedIn: false, optional: true, detail: `正在用个人访问令牌${login ? `（${login}）` : ""}。也可以改用 hob-bot 登录，不用自己建令牌。` };
     }
     return { signedIn: false };
   }

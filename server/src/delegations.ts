@@ -131,7 +131,8 @@ export class DelegationManager {
   private deliverResult(record: StoredDelegation): void {
     if (!record.pendingResult || this.delivering.has(record.id)) return;
     this.delivering.add(record.id);
-    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult).then((received) => {
+    const urgent = record.status === "stuck" || record.status === "interrupted";
+    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent).then((received) => {
       if (!received) return;
       const current = this.runtime.store.internalDelegation(record.id);
       if (!current || current.reportedAt || current.pendingResult !== record.pendingResult) return;
@@ -155,7 +156,7 @@ export class DelegationManager {
       this.runtime.store.saveDelegation(next);
       this.runtime.bus.emit({ type: "delegation", delegation: next });
       const name = this.runtime.store.assistant(record.to)?.name ?? record.to;
-      void this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`).catch(() => undefined);
+      void this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`, { urgent: true }).catch(() => undefined);
     }
   }
 }

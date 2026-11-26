@@ -26,7 +26,7 @@ function runningJob(id: string, assistantId: string, groupId?: string): Job {
 }
 
 describe("推送触发全路径回归", () => {
-  it("群话题有 running 长任务时，用户新消息直接答复与并行任务先完成汇报均触发推送", async () => {
+  it("并行任务收紧：有在跑任务时用户新消息仍推，后台正常回流抑制，全部收口与失败/受阻回流照推", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
@@ -34,9 +34,10 @@ describe("推送触发全路径回归", () => {
       const topic = hob.runtime.groups.createTopic(group.id, "修复推送", "user");
 
       // 话题内已有运行中的长任务 A
-      hob.runtime.store.saveJob(runningJob("t-long-a", "hob", topic.id));
+      const jobA = runningJob("t-long-a", "hob", topic.id);
+      hob.runtime.store.saveJob(jobA);
 
-      // 用户新发一条消息，群主直接答复（未派新任务）-> 推送
+      // 1. 用户新发一条消息，群主直接答复（未分派新任务）-> 照常推送
       hob.faux.setResponses([text("可以先合并这个改动。")]);
       hob.runtime.groups.send(topic.id, { text: "这个改动现在能合并吗？" });
       await waitFor(() => push.mock.calls.length === 1);
@@ -45,14 +46,109 @@ describe("推送触发全路径回归", () => {
         `group:${topic.id}`,
       ]);
 
-      // 并行任务 B 先完成回报（任务 A 仍在 running），群主直接汇报 -> 推送
-      hob.faux.setResponses([text("任务 B 已完成，测试全过。")]);
+      // 2. 并行任务 B 正常完成回流（任务 A 仍在 running）-> 不推中间进度播报
+      const beforeMid = hob.faux.state.callCount;
+      hob.faux.setResponses([text("任务 B 已完成，还在等任务 A。")]);
       await hob.runtime.router.event("hob", "任务 B 已完成", { workDone: true }, topic.id);
+      await waitFor(() => hob.faux.state.callCount > beforeMid && hob.runtime.router.busyMembers(topic.id).length === 0);
+      expect(push).toHaveBeenCalledTimes(1);
+
+      // 3. 并行任务 C 失败/受阻回流（任务 A 仍在 running），群主直接回报问题未重试 -> 照常推送
+      hob.faux.setResponses([text("任务 C 执行受阻，需要检查凭证。")]);
+      await hob.runtime.router.event("hob", "任务 C 受阻", { workDone: true, urgent: true }, topic.id);
       await waitFor(() => push.mock.calls.length === 2);
       expect(push.mock.calls[1]).toEqual([
-        expect.objectContaining({ title: "修复推送", body: "任务 B 已完成，测试全过。" }),
+        expect.objectContaining({ title: "修复推送", body: "任务 C 执行受阻，需要检查凭证。" }),
         `group:${topic.id}`,
       ]);
+
+      // 4. 并行任务 C 失败回流但群主派了新任务重试 -> 不推过渡语
+      vi.spyOn(hob.runtime.jobs, "start").mockResolvedValueOnce(runningJob("t-retry", "hob", topic.id));
+      const beforeRetry = hob.faux.state.callCount;
+      hob.faux.setResponses([
+        fauxAssistantMessage([fauxText("我重新发起一次重试。"), fauxToolCall("start_job", { title: "重试任务 C", note: "重新执行" })]),
+        text("已重试。"),
+      ]);
+      await hob.runtime.router.event("hob", "任务 C 失败", { workDone: true, urgent: true }, topic.id);
+      await waitFor(() => hob.faux.state.callCount > beforeRetry && hob.runtime.router.busyMembers(topic.id).length === 0);
+      expect(push).toHaveBeenCalledTimes(2);
+
+      // 5. 所有在跑任务全部结束，最后一次收口汇报 -> 照常推送
+      hob.runtime.store.saveJob({ ...jobA, status: "done", endedAt: new Date().toISOString() });
+      hob.faux.setResponses([text("全部任务已完成，可以验收。")]);
+      await hob.runtime.router.event("hob", "任务 A 已完成", { workDone: true }, topic.id);
+      await waitFor(() => push.mock.calls.length === 3);
+      expect(push.mock.calls[2]).toEqual([
+        expect.objectContaining({ title: "修复推送", body: "全部任务已完成，可以验收。" }),
+        `group:${topic.id}`,
+      ]);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("单聊并行任务与未结转交收紧：未全部收口不推中间播报，用户新消息/失败回流/全部收口照推", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      const jobA = runningJob("t-dm-a", "hob");
+      hob.runtime.store.saveJob(jobA);
+
+      // 1. 单聊有在跑任务时，后台完成回流不推中间播报
+      hob.faux.setResponses([text("子任务 B 先跑完了，继续等 A。")]);
+      await hob.runtime.router.event("hob", "子任务 B 已完成", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+
+      // 2. 用户主动发消息 -> 即使任务 A 仍在 running，直接答复照推
+      hob.faux.setResponses([text("目前已完成一半，预计 5 分钟。")]);
+      await hob.runtime.router.send("hob", { text: "现在进度如何？" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(1);
+      expect(push.mock.calls[0]?.[0]).toMatchObject({ title: "Hob", body: "目前已完成一半，预计 5 分钟。" });
+
+      // 3. 失败/受阻回流（urgent=true）即使任务 A 仍在 running 也照推
+      hob.faux.setResponses([text("部署任务失败：缺少密钥。")]);
+      await hob.runtime.router.event("hob", "部署任务失败", { workDone: true, urgent: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(2);
+      expect(push.mock.calls[1]?.[0]).toMatchObject({ title: "Hob", body: "部署任务失败：缺少密钥。" });
+
+      // 4. 任务 A 收口但仍有未结转交 -> 不推；转交也结束后 -> 推送
+      hob.runtime.store.saveJob({ ...jobA, status: "done", endedAt: new Date().toISOString() });
+      addAssistant(hob, "dev", "开发", "写代码");
+      hob.runtime.store.saveDelegation({
+        id: "dg-open",
+        from: "hob",
+        to: "dev",
+        text: "帮忙排查",
+        createdAt: new Date().toISOString(),
+        status: "running",
+        jobIds: [],
+        approvalIds: [],
+      });
+      hob.faux.setResponses([text("任务 A 完了，还在等开发那边结果。")]);
+      await hob.runtime.router.event("hob", "任务 A 已完成", { workDone: true });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(2);
+
+      // 转交完成后回流 -> 无剩余活跃任务/转交，最终结论正常推送
+      hob.runtime.store.saveDelegation({
+        id: "dg-open",
+        from: "hob",
+        to: "dev",
+        text: "帮忙排查",
+        createdAt: new Date().toISOString(),
+        endedAt: new Date().toISOString(),
+        status: "done",
+        jobIds: [],
+        approvalIds: [],
+      });
+      hob.faux.setResponses([text("全部排查完毕，问题已定位。")]);
+      await hob.runtime.router.delegationResult("hob", "dg-open", "转交给「开发」的事已结束：已定位");
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(3);
+      expect(push.mock.calls[2]?.[0]).toMatchObject({ title: "Hob", body: "全部排查完毕，问题已定位。" });
     } finally {
       hob.close();
     }
@@ -148,12 +244,13 @@ describe("推送触发全路径回归", () => {
     }
   });
 
-  it("话题与转交路径：open_topic、转已有话题、message_group、hand_back、群接力超限收尾均推送", async () => {
+  it("话题与转交路径：open_topic、转已有话题、hand_back 推送；群 @ 接力中间轮不推、下游全 NO_REPLY 补推、超限仅推收尾", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
       addAssistant(hob, "ops", "运维", "服务器");
-      const group = hob.runtime.groups.create({ name: "运维组", purpose: "运维", ownerId: "hob", members: ["hob", "ops"] });
+      addAssistant(hob, "dev", "开发", "写代码");
+      const group = hob.runtime.groups.create({ name: "运维组", purpose: "运维", ownerId: "hob", members: ["hob", "ops", "dev"] });
 
       // 1. open_topic 创建话题，群主首轮直接答复（综合这轮调了 open_topic 不推，话题内首轮答复推）
       hob.faux.setResponses([
@@ -180,28 +277,67 @@ describe("推送触发全路径回归", () => {
         `group:${createdTopic.id}`,
       ]);
 
-      // 3. message_group 交群，群主首轮直接回复（未立即 close_topic）-> 推送
-      hob.faux.setResponses([
-        call("message_group", { groupId: group.id, title: "端口排查", note: "排查 8080 端口占用" }),
-        text("已查明是测试进程占用 8080。"),
-      ]);
-      await hob.runtime.router.send("hob", { text: "让运维组查下 8080" });
-      await waitFor(() => push.mock.calls.length === 3);
-      expect(push.mock.calls[2]?.[0]).toMatchObject({ title: "端口排查", body: "已查明是测试进程占用 8080。" });
-
-      // 4. 非主助手 hand_back 交回主助手，主助手直接回复 -> 推送
+      // 3. 非主助手 hand_back 交回主助手，主助手直接回复 -> 推送
       hob.faux.setResponses([
         call("hand_back", { text: "帮我写一封邮件", reason: "这归主助手处理" }),
         text("邮件草稿已经写好了。"),
       ]);
       await hob.runtime.router.send("ops", { text: "帮我写一封邮件" });
-      await waitFor(() => push.mock.calls.length === 4);
-      expect(push.mock.calls[3]).toEqual([
+      await waitFor(() => push.mock.calls.length === 3);
+      expect(push.mock.calls[2]).toEqual([
         expect.objectContaining({ title: "Hob", body: "邮件草稿已经写好了。", url: "/?a=hob" }),
         "assistant:hob",
       ]);
 
-      // 5. 群 @ 接力达到 MAX_WAVE_TURNS 上限后，群主收尾 -> 推送
+      // 4. 群内 @ 接力中间轮不推，仅最终收口轮推送 1 次
+      const beforeChain = push.mock.calls.length;
+      hob.faux.setResponses([
+        text("我先核对配置，@运维 你查一下机器日志。"),
+        text("日志看完了，@开发 你确认下代码逻辑。"),
+        text("代码已确认，根因是超时参数过短，现已修复。"),
+      ]);
+      hob.runtime.groups.send(createdTopic.id, { text: "帮我联合排查超时" });
+      await waitFor(() => push.mock.calls.length === beforeChain + 1 && hob.runtime.groups.summary(createdTopic.id).busy.length === 0);
+      expect(push.mock.calls.slice(beforeChain)).toEqual([
+        [
+          expect.objectContaining({ title: "磁盘清理", body: "代码已确认，根因是超时参数过短，现已修复。" }),
+          `group:${createdTopic.id}`,
+        ],
+      ]);
+
+      // 5. 上游有实质回复并 @ 下游，但下游全部 NO_REPLY -> 整波结束时补推上游实质回复
+      const beforeFallback = push.mock.calls.length;
+      const beforeFallbackCalls = hob.faux.state.callCount;
+      hob.faux.setResponses([
+        text("我已经把限流阈值调好了，@运维 @开发 如有补充再说。"),
+        text("NO_REPLY"),
+        text("NO_REPLY"),
+      ]);
+      hob.runtime.groups.send(createdTopic.id, { text: "调一下限流阈值" });
+      await waitFor(
+        () => hob.faux.state.callCount >= beforeFallbackCalls + 3 && hob.runtime.groups.summary(createdTopic.id).busy.length === 0 && push.mock.calls.length === beforeFallback + 1,
+      );
+      expect(push.mock.calls.slice(beforeFallback)).toEqual([
+        [
+          expect.objectContaining({ title: "磁盘清理", body: "我已经把限流阈值调好了，@运维 @开发 如有补充再说。" }),
+          `group:${createdTopic.id}`,
+        ],
+      ]);
+
+      // 6. 上游 @ 下游，下游调用 start_job 派发任务 -> 不回退推送上游 @ 过渡语
+      const beforeDispatchRelay = push.mock.calls.length;
+      const beforeDispatchCalls = hob.faux.state.callCount;
+      vi.spyOn(hob.runtime.jobs, "start").mockResolvedValueOnce(runningJob("t-relay-job", "ops", createdTopic.id));
+      hob.faux.setResponses([
+        text("@运维 跑一下全量巡检脚本。"),
+        fauxAssistantMessage([fauxText("好的，我开后台任务跑。"), fauxToolCall("start_job", { title: "全量巡检", note: "跑巡检" })]),
+        text("已启动。"),
+      ]);
+      hob.runtime.groups.send(createdTopic.id, { text: "跑一下全量巡检" });
+      await waitFor(() => hob.faux.state.callCount >= beforeDispatchCalls + 2 && hob.runtime.groups.summary(createdTopic.id).busy.length === 0);
+      expect(push).toHaveBeenCalledTimes(beforeDispatchRelay);
+
+      // 7. 群 @ 接力达到 MAX_WAVE_TURNS 上限后：中间轮全部不推，仅推群主收尾 1 次
       const relayGroup = hob.runtime.groups.create({ name: "接力群", purpose: "讨论", ownerId: "hob", members: ["hob", "ops"] });
       const beforeRelay = push.mock.calls.length;
       const responses = [];
@@ -212,8 +348,115 @@ describe("推送触发全路径回归", () => {
       hob.faux.setResponses(responses);
       hob.runtime.groups.send(relayGroup.id, { text: "开始讨论" });
       await waitFor(() =>
-        push.mock.calls.slice(beforeRelay).some(([payload]) => payload.body === "接力已到上限，这里给出最终汇总。"),
+        push.mock.calls.slice(beforeRelay).some(([payload]) => payload.body === "接力已到上限，这里给出最终汇总。") &&
+        hob.runtime.groups.summary(relayGroup.id).busy.length === 0,
       );
+      expect(push.mock.calls.slice(beforeRelay)).toEqual([
+        [
+          expect.objectContaining({ title: "接力群", body: "接力已到上限，这里给出最终汇总。" }),
+          `group:${relayGroup.id}`,
+        ],
+      ]);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("主助手 message_group 委托话题收紧：关闭前不推纯文字内部沟通，确认卡/报错/用户亲自发言照推，关闭后由委托方推最终结论", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      addAssistant(hob, "ops", "运维", "服务器");
+      const group = hob.runtime.groups.create({ name: "运维组", purpose: "运维", ownerId: "hob", members: ["hob", "ops"] });
+
+      // 1. 主助手 message_group 委托群办，群主内部接力并给出纯文字沟通 -> 未关闭前均不推送
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "端口排查", note: "排查 8080 端口占用" }),
+        text("@运维 先帮我查下 8080 进程。"),
+        text("查到了，是测试脚本占用了 8080，先汇报给群主。"),
+      ]);
+      await hob.runtime.router.send("hob", { text: "让运维组查下 8080" });
+      await waitFor(() => hob.runtime.groups.activeTopics(group.id).length === 1);
+      const handoverTopic = hob.runtime.groups.activeTopics(group.id)[0]!;
+      await waitFor(() => hob.faux.state.callCount >= 3 && hob.runtime.groups.summary(handoverTopic.id).busy.length === 0);
+      expect(push).not.toHaveBeenCalled();
+
+      // 2. 例外 1：委托话题内群成员发出 ask_user 确认卡 -> 照常推送
+      hob.faux.setResponses([
+        call("ask_user", {
+          title: "是否立即终止 8080 进程？",
+          detail: "终止后测试服务将下线",
+          options: [{ label: "终止" }, { label: "先保留" }],
+        }),
+        text("等待你确认。"),
+      ]);
+      await hob.runtime.groups.deliverEvent(handoverTopic.id, "ops", "需要用户确认是否终止进程");
+      await waitFor(() => push.mock.calls.length === 1);
+      expect(push.mock.calls[0]).toEqual([
+        expect.objectContaining({ title: "是否立即终止 8080 进程？", body: "运维 · 等待你的回答", url: `/#/group/${handoverTopic.id}` }),
+        `group:${handoverTopic.id}`,
+      ]);
+
+      // 3. 例外 3a：用户答复该确认卡（answerEvent）-> 针对用户这一轮的回复照常推送
+      hob.faux.setResponses([text("收到，先保留 8080 进程。")]);
+      await hob.runtime.router.answerEvent("ops", "用户选择了「先保留」", handoverTopic.id);
+      await waitFor(() => push.mock.calls.length === 2);
+      expect(push.mock.calls[1]).toEqual([
+        expect.objectContaining({ title: "端口排查", body: "收到，先保留 8080 进程。" }),
+        `group:${handoverTopic.id}`,
+      ]);
+
+      // 4. 例外 3b：用户本人主动进入委托话题发消息 -> 回复照常推送
+      hob.faux.setResponses([text("目前 8080 是 dev-server 在用。")]);
+      hob.runtime.groups.send(handoverTopic.id, { text: "具体是哪个进程？" });
+      await waitFor(() => push.mock.calls.length === 3);
+      expect(push.mock.calls[2]).toEqual([
+        expect.objectContaining({ title: "端口排查", body: "目前 8080 是 dev-server 在用。" }),
+        `group:${handoverTopic.id}`,
+      ]);
+
+      // 5. 例外 2：委托话题内群成员执行报错 -> 照常推送失败通知
+      vi.spyOn(hob.runtime.router, "deliverMember").mockRejectedValueOnce(new Error("模型超时"));
+      await hob.runtime.groups.deliverEvent(handoverTopic.id, "ops", "继续检查端口");
+      await waitFor(() => push.mock.calls.length === 4);
+      expect(push.mock.calls[3]).toEqual([
+        expect.objectContaining({ title: "端口排查", body: "执行失败：模型超时" }),
+        `group:${handoverTopic.id}`,
+      ]);
+
+      // 6. 例外 3c：委托话题内成员正在进行内部回合时，用户中途插话（steer）-> 回复照常推送
+      let releaseSteer = () => {};
+      const steerGate = new Promise<void>((resolve) => { releaseSteer = resolve; });
+      const beforeSteerCalls = hob.faux.state.callCount;
+      hob.faux.setResponses([
+        async () => { await steerGate; return text("收到你在委托话题里的插话，正在核对端口监听。"); },
+        text("收到你在委托话题里的插话，正在核对端口监听。"),
+      ]);
+      const internalTurn = hob.runtime.groups.deliverEvent(handoverTopic.id, "ops", "内部继续排查");
+      await waitFor(() => hob.faux.state.callCount > beforeSteerCalls);
+      const steered = await hob.runtime.router.steerMember(handoverTopic.id, "ops", "顺便告诉我监听地址是 0.0.0.0 吗？");
+      expect(steered).toBe(true);
+      releaseSteer();
+      await internalTurn;
+      await waitFor(() => push.mock.calls.length === 5);
+      expect(push.mock.calls[4]).toEqual([
+        expect.objectContaining({ title: "端口排查", body: "收到你在委托话题里的插话，正在核对端口监听。" }),
+        `group:${handoverTopic.id}`,
+      ]);
+
+      // 7. 群主关闭委托话题并提交结论：群话题内不推，deliverHandover -> Hob 汇报最终结论只推 1 次
+      hob.faux.setResponses([
+        call("close_topic", { note: "8080 端口由 dev-server 占用，已按用户要求保留。" }),
+        text("运维组排查完成：8080 端口由 dev-server 占用，已为你保留。"),
+      ]);
+      await hob.runtime.groups.deliverEvent(handoverTopic.id, "hob", "排查结束，可以关闭话题");
+      await waitFor(() => push.mock.calls.length === 6 && !hob.runtime.router.isBusy("hob"));
+      expect(push.mock.calls.slice(5)).toEqual([
+        [
+          expect.objectContaining({ title: "Hob", body: "运维组排查完成：8080 端口由 dev-server 占用，已为你保留。", url: "/?a=hob" }),
+          "assistant:hob",
+        ],
+      ]);
     } finally {
       hob.close();
     }
@@ -350,6 +593,43 @@ describe("推送触发全路径回归", () => {
       expect(push.mock.calls[1]).toEqual([
         expect.objectContaining({ title: "异常群", body: "执行失败：会话打开失败", url: `/#/group/${group.id}` }),
         `group:${group.id}`,
+      ]);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("真实后台任务 finish 联动：并行任务存在时 done 回流抑制、stuck 回流照推", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const push = vi.spyOn(hob.runtime.push, "send").mockResolvedValue({ sent: 1, removed: 0 });
+      // 预置一个仍在跑的并行长任务
+      hob.runtime.store.saveJob(runningJob("t-parallel-keep", "hob"));
+
+      // 1. 真实任务 1 正常 done -> 回流到 Hob，因仍有 t-parallel-keep 在跑，不推中间播报
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "子检查已通过" }),
+        text("已交结果。"),
+        text("子检查已通过，还在等另一个任务。"),
+      ]);
+      const doneJob = await hob.runtime.jobs.start("hob", { title: "子检查", instruction: "跑子检查" });
+      await waitFor(() => hob.runtime.store.job(doneJob.id)?.status === "done");
+      await waitFor(() => hob.faux.state.callCount >= 3 && !hob.runtime.router.isBusy("hob"));
+      expect(push).not.toHaveBeenCalled();
+
+      // 2. 真实任务 2 受阻 stuck -> jobs.finish 标 urgent=true，回流到 Hob 未重试 -> 照常推送
+      const beforeStuck = hob.faux.state.callCount;
+      hob.faux.setResponses([
+        call("report", { outcome: "stuck", result: "缺少发布凭据，无法继续" }),
+        text("已报告受阻。"),
+        text("发布任务受阻：缺少发布凭据，需要你补充。"),
+      ]);
+      const stuckJob = await hob.runtime.jobs.start("hob", { title: "发布任务", instruction: "执行发布" });
+      await waitFor(() => hob.runtime.store.job(stuckJob.id)?.status === "stuck");
+      await waitFor(() => hob.faux.state.callCount >= beforeStuck + 3 && push.mock.calls.length === 1);
+      expect(push.mock.calls[0]).toEqual([
+        expect.objectContaining({ title: "Hob", body: "发布任务受阻：缺少发布凭据，需要你补充。", url: "/?a=hob" }),
+        "assistant:hob",
       ]);
     } finally {
       hob.close();

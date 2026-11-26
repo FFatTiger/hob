@@ -299,7 +299,9 @@ export class RoutineScheduler {
     // 界面上只写一行「已到执行时间」：检查到的原始内容是给群主的材料，群主看过再告诉用户该知道的
     const item = this.runtime.groups.appendItem(gid, group.ownerId, { kind: "note", icon: "routine", text: this.dueNote(routine), routineId: routine.id, request: text });
     this.recordHanded(routine);
-    void this.runtime.groups.deliverEvent(gid, group.ownerId, text, item.id).catch((error) => console.error("定时事件没送到：", error));
+    void this.runtime.groups
+      .deliverEvent(gid, group.ownerId, text, item.id, { workDone: true, bypassBusy: true })
+      .catch((error) => console.error("定时事件没送到：", error));
     return { outcome: "handed" };
   }
 

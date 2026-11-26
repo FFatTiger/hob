@@ -80,7 +80,25 @@ export interface EventDetails {
   job?: { id: string; round: number; kind?: "result" | "question" | "timeout" };
   /** 本轮是否面向用户推送（默认 true；仅任务提问/超时提醒等纯后台维护事件显式传 false） */
   workDone?: boolean;
+  /** 本轮是否由用户主动触发（发消息、插话、答复审批/交互卡、直接交回） */
+  userInitiated?: boolean;
+  /** 本轮是否需要越过“仍有在跑任务/转交”抑制（如任务失败/受阻、转交中断） */
+  urgent?: boolean;
 }
+
+/** 一轮结束时的推送判定结果：单聊由 Router 直接发，群会话交给 GroupManager 按波次收口判定。 */
+export interface TurnOutcome {
+  text?: string;
+  error?: string;
+  workDone: boolean;
+  dispatched: boolean;
+  silent: boolean;
+  userInitiated: boolean;
+  bypassBusy: boolean;
+  delegation: boolean;
+}
+
+const ACTIVE_JOB_STATUSES = new Set<JobStatus>(["running", "queued", "waiting"]);
 
 /** 成功调用这些工具代表把活继续交出去异步执行，本轮收尾不推过渡语。 */
 const DISPATCH_TOOLS = new Set(["start_job", "message_assistant", "message_group", "open_topic", "hand_back", "reply_job"]);
@@ -170,6 +188,10 @@ interface RouterState {
   /** 本轮发出的纯展示卡片标题兜底（模型没附文字时作推送正文） */
   turnCardTitle?: string;
   turnWorkDone: boolean;
+  /** 本轮是否由用户主动触发（或中途被用户插话） */
+  turnUserInitiated: boolean;
+  /** 本轮是否可跳过“仍有其他在跑任务/转交”抑制（用户主动、失败/受阻任务回流、定时汇报） */
+  turnBypassBusy: boolean;
   turnDelegation: boolean;
   releaseAfterTurn?: boolean;
   /** 还在跑的记忆写入工具：参数只在 tool_execution_start 里有，按 toolCallId 存着给 note 用 */
@@ -476,7 +498,19 @@ export class RouterManager {
     const key = this.keyOf(assistantId, groupId);
     let state = this.routers.get(key);
     if (!state) {
-      state = { key, assistantId, ...(groupId ? { groupId } : {}), running: 0, lastEventAt: Date.now(), stalled: false, turnDispatched: false, turnWorkDone: false, turnDelegation: false };
+      state = {
+        key,
+        assistantId,
+        ...(groupId ? { groupId } : {}),
+        running: 0,
+        lastEventAt: Date.now(),
+        stalled: false,
+        turnDispatched: false,
+        turnWorkDone: false,
+        turnUserInitiated: false,
+        turnBypassBusy: false,
+        turnDelegation: false,
+      };
       this.routers.set(key, state);
     }
     if (state.session) {
@@ -1309,7 +1343,13 @@ export class RouterManager {
     const group = this.groupFor(assistantId, groupId);
     if (group) {
       // 进它的群会话，并且让 GroupManager 开一轮：它说的话才写得到时间线上；事件正文在真正开轮时再按任务状态取。
-      void this.runtime.groups.deliverEvent(group.id, assistantId, () => this.eventText(text, details), "", details?.workDone !== false).catch((error) => console.error("群事件投递失败：", error));
+      void this.runtime.groups
+        .deliverEvent(group.id, assistantId, () => this.eventText(text, details), "", {
+          workDone: details?.workDone !== false,
+          userInitiated: Boolean(details?.userInitiated),
+          bypassBusy: Boolean(details?.userInitiated || details?.urgent || details?.routine || details?.routineTrigger),
+        })
+        .catch((error) => console.error("群事件投递失败：", error));
       return true;
     }
     try {
@@ -1408,6 +1448,8 @@ export class RouterManager {
     try {
       this.touch(state);
       state.turnWorkDone ||= details?.workDone !== false;
+      state.turnUserInitiated ||= Boolean(details?.userInitiated);
+      state.turnBypassBusy ||= Boolean(details?.userInitiated || details?.urgent || details?.routine || details?.routineTrigger);
       state.turnDelegation ||= Boolean(details?.delegationId);
       this.armStall(state);
       this.publishBusy(state);
@@ -1421,6 +1463,12 @@ export class RouterManager {
         await session.sendCustomMessage(message, { deliverAs: "followUp" });
         await session.waitForIdle();
       } else {
+        state.turnDispatched = false;
+        state.turnSilent = undefined;
+        state.turnReacted = undefined;
+        state.turnLastText = undefined;
+        state.turnCardTitle = undefined;
+        state.turnFailure = undefined;
         await session.sendCustomMessage(message, { triggerTurn: true });
       }
       return true;
@@ -1439,11 +1487,11 @@ export class RouterManager {
       this.touch(state);
     }
   }
-  async delegationResult(assistantId: string, id: string, text: string): Promise<boolean> {
+  async delegationResult(assistantId: string, id: string, text: string, urgent = false): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true, ...(urgent ? { urgent: true } : {}) });
     return success && received();
   }
 
@@ -1456,9 +1504,34 @@ export class RouterManager {
     return success && received();
   }
 
-  /** 这一轮收尾：待办清理由 todosBusy 判断，推送只看本轮是否面向用户且未分派任务/已推专卡。 */
-  private finishTurn(state: RouterState): void {
-    if (state.running > 0) return;
+  /** 当前会话/话题里是否还有未收口的后台任务、未结转交或未关闭的交群话题。 */
+  hasPendingWork(assistantId: string, groupId?: string): boolean {
+    const activeJobs = this.store
+      .jobs()
+      .some((job) => job.groupId === groupId && ACTIVE_JOB_STATUSES.has(job.status) && (groupId !== undefined || job.assistantId === assistantId));
+    if (activeJobs) return true;
+    if (groupId !== undefined) return false;
+    const openDelegations = this.store
+      .delegations()
+      .some((record) => record.from === assistantId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
+    if (openDelegations) return true;
+    return this.store
+      .groups()
+      .some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId);
+  }
+
+  /** 读取当前正在进行的轮次来源（open_topic 转入话题时沿用）。 */
+  turnOrigin(assistantId: string, groupId?: string): { userInitiated: boolean; bypassBusy: boolean } {
+    const state = this.routers.get(this.keyOf(assistantId, groupId));
+    return {
+      userInitiated: Boolean(state?.turnUserInitiated),
+      bypassBusy: Boolean(state?.turnBypassBusy),
+    };
+  }
+
+  /** 这一轮收尾：待办清理由 todosBusy 判断，单聊推送在此判定，群会话交给 GroupManager 按波次收口判定。 */
+  private finishTurn(state: RouterState): TurnOutcome | undefined {
+    if (state.running > 0) return undefined;
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.groupId);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.groupId);
@@ -1469,19 +1542,31 @@ export class RouterManager {
     const bodyText = state.turnLastText || state.turnCardTitle;
     const reactedOnly = Boolean(state.turnReacted && !bodyText);
     const silent = Boolean(state.turnSilent || reactedOnly);
-    const shouldPush =
-      (state.turnWorkDone || Boolean(error)) &&
-      !state.turnDelegation &&
-      (Boolean(error) || (!silent && !state.turnDispatched && Boolean(bodyText)));
-    if (shouldPush) {
-      pushAssistantTurnEnd(
-        { push: this.runtime.push, store: this.store },
-        {
-          assistantId: state.assistantId,
-          ...(state.groupId ? { groupId: state.groupId } : {}),
-          ...(error ? { error } : { text: bodyText }),
-        },
-      );
+    const outcome: TurnOutcome = {
+      ...(bodyText && !silent ? { text: bodyText } : {}),
+      ...(error ? { error } : {}),
+      workDone: state.turnWorkDone,
+      dispatched: state.turnDispatched,
+      silent,
+      userInitiated: state.turnUserInitiated,
+      bypassBusy: state.turnBypassBusy,
+      delegation: state.turnDelegation,
+    };
+    if (!state.groupId) {
+      const suppressedByPendingWork = !outcome.bypassBusy && this.hasPendingWork(state.assistantId);
+      const shouldPush =
+        (outcome.workDone || Boolean(error)) &&
+        !outcome.delegation &&
+        (Boolean(error) || (!outcome.silent && !outcome.dispatched && Boolean(outcome.text) && !suppressedByPendingWork));
+      if (shouldPush) {
+        pushAssistantTurnEnd(
+          { push: this.runtime.push, store: this.store },
+          {
+            assistantId: state.assistantId,
+            ...(error ? { error } : { text: outcome.text }),
+          },
+        );
+      }
     }
     void this.runtime.jobs.finishUnansweredQuestions(state.assistantId, state.groupId).catch((error) => console.error("收尾任务提问失败：", error));
     if (!state.groupId && !error && !busy && !state.stalled && !silent && state.turnLastText && !this.hasIdleWork(state)) {
@@ -1489,6 +1574,8 @@ export class RouterManager {
     }
     state.turnDispatched = false;
     state.turnWorkDone = false;
+    state.turnUserInitiated = false;
+    state.turnBypassBusy = false;
     state.turnDelegation = false;
     state.turnFailure = undefined;
     state.turnSilent = undefined;
@@ -1496,6 +1583,7 @@ export class RouterManager {
     state.turnUserItem = undefined;
     state.turnLastText = undefined;
     state.turnCardTitle = undefined;
+    return outcome;
   }
 
   /** 同一模型回合内，判断 check_job 是否只是重复查看同一状态。 */
@@ -1627,7 +1715,13 @@ export class RouterManager {
     const basePrompt = `${nowBlock(this.runtime, assistantId)}\n\n${lines.filter(Boolean).join("\n")}`;
     // 模型收到这条时记下来：你的消息下面挂 👀，看得出到了
     const received = () => { state.turnUserItem = id; };
-    void this.deliver(state, basePrompt, { ...(body.files?.length ? { files: body.files } : {}), knowledgeQuery: body.text, received });
+    void this.deliver(state, basePrompt, {
+      ...(body.files?.length ? { files: body.files } : {}),
+      knowledgeQuery: body.text,
+      received,
+      userInitiated: true,
+      bypassBusy: true,
+    });
     return item;
   }
 
@@ -1643,9 +1737,23 @@ export class RouterManager {
     await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
-  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = true): Promise<void> {
+  async deliverMember(
+    groupId: string,
+    assistantId: string,
+    text: string,
+    received?: () => void,
+    files: string[] = [],
+    workDone = true,
+    origin: { userInitiated?: boolean; bypassBusy?: boolean } = {},
+  ): Promise<TurnOutcome | undefined> {
     const state = await this.ensure(assistantId, groupId);
-    await this.deliver(state, text, { received, files, workDone });
+    return this.deliver(state, text, {
+      received,
+      files,
+      workDone,
+      ...(origin.userInitiated ? { userInitiated: true } : {}),
+      ...(origin.bypassBusy ? { bypassBusy: true } : {}),
+    });
   }
 
   /**
@@ -1672,6 +1780,8 @@ export class RouterManager {
     catch (error) { unsubscribe(); throw error; }
     state.turnWorkDone = true;
     state.turnDispatched = false;
+    state.turnUserInitiated = true;
+    state.turnBypassBusy = true;
     return true;
   }
 
@@ -1682,8 +1792,8 @@ export class RouterManager {
   private async deliver(
     state: RouterState,
     text: string,
-    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
-  ): Promise<void> {
+    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean; userInitiated?: boolean; bypassBusy?: boolean } = {},
+  ): Promise<TurnOutcome | undefined> {
     this.clearSuggestions(state.assistantId, state.groupId);
     const previousDelivery = state.pendingDelivery;
     let releaseDelivery!: () => void;
@@ -1694,12 +1804,15 @@ export class RouterManager {
     state.running += 1;
     // 用户发来的话（单聊、群里成员接话）默认面向用户推送；后台维护事件才显式传 workDone: false
     state.turnWorkDone ||= options.workDone ?? true;
+    state.turnUserInitiated ||= Boolean(options.userInitiated);
+    state.turnBypassBusy ||= Boolean(options.bypassBusy || options.userInitiated);
     state.turnLastText = undefined;
     state.turnFailure = undefined;
     this.armStall(state);
     this.publishBusy(state);
     let unsubscribeReceived = () => {};
     let queued = false;
+    let outcome: TurnOutcome | undefined;
     try {
       const promptText = options.knowledgeQuery === undefined ? text : text + await this.automaticKnowledge(state, options.knowledgeQuery);
       await previousDelivery;
@@ -1714,6 +1827,10 @@ export class RouterManager {
         if (options.workDone !== false) {
           state.turnWorkDone = true;
           state.turnDispatched = false;
+        }
+        if (options.userInitiated) {
+          state.turnUserInitiated = true;
+          state.turnBypassBusy = true;
         }
         queued = true;
         releaseDelivery();
@@ -1731,9 +1848,10 @@ export class RouterManager {
       this.clearStall(state);
       this.publishBusy(state);
       this.maybeRelease(state);
-      this.finishTurn(state);
+      outcome = this.finishTurn(state);
       this.touch(state);
     }
+    return outcome;
   }
 
   async stop(assistantId: string, groupId?: string): Promise<void> {
@@ -1763,6 +1881,8 @@ export class RouterManager {
       if (state.running === (state.pendingEvents?.length ?? 0) && !session.isStreaming) return;
       state.turnDispatched = false;
       state.turnWorkDone = false;
+      state.turnUserInitiated = false;
+      state.turnBypassBusy = false;
       state.turnCardTitle = undefined;
       const pending = state.pendingEvents?.splice(0) ?? [];
       this.forgetSession(state.assistantId, state.groupId);
@@ -2029,6 +2149,6 @@ export class RouterManager {
 
   /** 审批答案回到 Router（router 来源的审批，答案作为事件进入上下文；群里提的问题回群会话）。 */
   async answerEvent(assistantId: string, text: string, groupId?: string): Promise<void> {
-    await this.event(assistantId, text, undefined, groupId);
+    await this.event(assistantId, text, { userInitiated: true }, groupId);
   }
 }

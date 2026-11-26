@@ -935,7 +935,11 @@ export class JobManager {
     const toolCount = this.workerSteps(job.id).filter((step) => step.kind === "tool" && (!next.startedAt || step.at >= next.startedAt)).length;
     // 结果里的「用了技能「X」」和沉淀提醒都要标题：任一档都算，只读的那几份没有 fromJobId，不会被当成沉淀目标
     const resultSkills = visibleSkills(this.runtime, job.assistantId, next.groupId ? this.store.group(next.groupId) : undefined);
-    const resultDetails: EventDetails = { job: { id: job.id, round: next.rounds?.length ?? 0, kind: "result" }, workDone: true };
+    const resultDetails: EventDetails = {
+      job: { id: job.id, round: next.rounds?.length ?? 0, kind: "result" },
+      workDone: true,
+      ...(status === "failed" || status === "stuck" ? { urgent: true } : {}),
+    };
 
     if (job.routineId) {
       const routine = this.store.routine(job.routineId);

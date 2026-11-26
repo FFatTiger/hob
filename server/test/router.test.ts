@@ -99,14 +99,19 @@ describe("Router", () => {
       await hob.runtime.router.waitIdle("hob");
       expect(push).not.toHaveBeenCalled();
 
-      // 会话里已有另一个 running 任务时，用户直接问答或并行任务先完成汇报仍应正常推送
+      // 会话里已有另一个 running 任务时：后台普通回流不推中间播报，用户主动提问的直接答复照常推送
       hob.runtime.store.saveJob(activeJob);
       hob.faux.setResponses([text("第一批结果先汇报给你。")]);
       await hob.runtime.router.event("hob", "任务结果已送到", { workDone: true });
       await hob.runtime.router.waitIdle("hob");
+      expect(push).not.toHaveBeenCalled();
+
+      hob.faux.setResponses([text("这是给你刚才问题的直接回答。")]);
+      await hob.runtime.router.send("hob", { text: "顺便问一下配置在哪" });
+      await hob.runtime.router.waitIdle("hob");
       expect(push).toHaveBeenCalledTimes(1);
       expect(push).toHaveBeenLastCalledWith(
-        expect.objectContaining({ title: "Hob", body: "第一批结果先汇报给你。" }),
+        expect.objectContaining({ title: "Hob", body: "这是给你刚才问题的直接回答。" }),
         "assistant:hob",
       );
 

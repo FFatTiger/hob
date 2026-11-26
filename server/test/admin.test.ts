@@ -314,7 +314,7 @@ describe("助手说明", () => {
     const assistant = { id: "hob", name: "Hob", duty: "主助手", primary: true };
     const store = { assistant: () => assistant, rules: () => [], globalRules: () => [], routines: () => [], assistants: () => [assistant], groups: () => [] } as unknown as Store;
     const prompt = buildSystemPrompt(store, "hob", { timezone: "UTC", aboutYou: { name: "", language: "", notes: "" }, memory: "off" });
-    expect(createHash("sha256").update(prompt).digest("hex")).toBe("b8943901c838ae13207795a92907634535e13b33c427268b5d879806b8bb0f42");
+    expect(createHash("sha256").update(prompt).digest("hex")).toBe("c351ab2f1561eb089196a0aac3e53d836464f1fdc3af7f1a4cfbc34b20a341e6");
   });
   it("创建、查看、替换和清空说明，长文本在重启迁移后保留", async () => {
     const { hob } = setup();

@@ -9,10 +9,7 @@ const state = vi.hoisted(() => ({
   nowWide: false,
   sideCollapsed: false,
   collapsed: false,
-  text: "",
-  quote: null as any,
   files: [] as any[],
-  attachments: [] as any[],
   uploading: 0,
   sending: false,
   section: "general" as const,
@@ -65,6 +62,7 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../store.ts", () => ({
   useApp: () => state,
+  composerDraft: () => ({ text: "", quote: null, attachments: [] }),
   groupById: (s: any, id: string | null) => s.groups.find((g: any) => g.id === id),
   groupChatItems: (s: any, id: string) => s.groupItems[id] ?? [],
   chatItems: (s: any, id: string | null) => (id ? s.items[id] ?? [] : []),

@@ -31,8 +31,10 @@ describe("群资源", () => {
 
   it("继承模型文字按服务端来源显示", () => {
     expect(followingModel("group", "模型甲")).toEqual({ text: "跟随本群 · 模型甲", option: "跟随本群（模型甲）" });
+    expect(followingModel("member", "模型戊")).toEqual({ text: "跟随本群 · 模型戊", option: "跟随本群（模型戊）" });
+    expect(followingModel("topic", "模型丁")).toEqual({ text: "跟随本话题默认 · 模型丁", option: "跟随本话题默认（模型丁）" });
     expect(followingModel("assistant", "模型乙")).toEqual({ text: "跟随助手 · 模型乙", option: "跟随助手（模型乙）" });
-    expect(followingModel("global", "模型丙").text).toBe("跟随助手 · 模型丙");
+    expect(followingModel("global", "模型丙").text).toBe("跟随全局 · 模型丙");
   });
 
   it("群定时不允许更换执行成员，由群主处理", async () => {
@@ -42,9 +44,11 @@ describe("群资源", () => {
     await expect(api.patchRoutine(routine!.id, { assistantId: "other" })).rejects.toThrow("群的定时由群主处理");
   });
 
-  it("按群和单聊筛选任务", async () => {
+  it("按群和单聊筛选任务（exact 仅返回当前会话）", async () => {
     const api = createMock("g-owns");
     expect((await api.jobs({ groupId: "g-dev" })).jobs.filter((job) => job.id.startsWith("owns-job-")).length).toBe(5);
+    expect((await api.jobs({ groupId: "g-owns-topic", exact: true })).jobs.filter((job) => job.id.startsWith("owns-job-")).length).toBe(2);
+    expect((await api.jobs({ groupId: "g-dev", exact: true })).jobs.filter((job) => job.id.startsWith("owns-job-")).length).toBe(3);
     expect((await api.jobs({ groupId: "none" })).jobs.every((job) => !job.groupId)).toBe(true);
   });
 });

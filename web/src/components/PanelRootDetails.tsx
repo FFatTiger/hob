@@ -13,14 +13,17 @@ import { fmtBytes, fmtDuration, fmtElapsed, fmtWhen } from "../util.ts";
 
 function LoadingRow() { return <div className="sidebar-loading" role="status"><DelayedText text={t("正在读取…")} /></div>; }
 
-export function PanelRootDetails({ groupId, part, desktopRow, replyModeRow }: { groupId?: string; part?: "info" | "tabs"; desktopRow?: ReactNode; replyModeRow?: ReactNode } = {}) {
+export function PanelRootDetails({ groupId, part, desktopRow, modelsRow, replyModeRow }: { groupId?: string; part?: "info" | "tabs"; desktopRow?: ReactNode; modelsRow?: ReactNode; replyModeRow?: ReactNode } = {}) {
   const s = useApp();
   const aid = groupId ?? panelAssistant(s.panelStack, s.sel);
+  const currentGroup = groupId ? s.groups.find((item) => item.id === groupId) : undefined;
+  const isTopic = Boolean(currentGroup?.parentId);
+  const skillsId = currentGroup?.parentId ?? aid;
   const groupProfile = groupId ? s.groupProfiles[groupId] : undefined;
   const profile = s.profiles[aid];
   const a = profile?.assistant ?? s.assistants.find((item) => item.id === aid);
-  const routines = s.routines.filter((item) => groupId ? item.groupId === groupId || s.groups.some((g) => g.id === item.groupId && g.parentId === groupId) : item.assistantId === aid && !item.groupId);
-  const skills = s.assistantSkills[aid];
+  const routines = s.routines.filter((item) => groupId ? (isTopic ? item.groupId === groupId : item.groupId === groupId || s.groups.some((g) => g.id === item.groupId && g.parentId === groupId)) : item.assistantId === aid && !item.groupId);
+  const skills = s.assistantSkills[skillsId];
   // 页签的键不跟语言走，显示的标签渲染时再翻
   const [tab, setTab] = useState<"jobs" | "files">("jobs");
   const [collectionsError, setCollectionsError] = useState("");
@@ -28,13 +31,13 @@ export function PanelRootDetails({ groupId, part, desktopRow, replyModeRow }: { 
   const jobsPage = s.sidebarJobs?.[aid];
   const filesPage = s.sidebarFiles?.[aid];
   const files = filesPage?.items ?? [];
-  const jobs = Object.values({ ...Object.fromEntries((jobsPage?.items ?? []).map((job) => [job.id, job])), ...s.jobs }).filter((job) => groupId ? job.groupId === groupId || s.groups.some((g) => g.id === job.groupId && g.parentId === groupId) : job.assistantId === aid && !job.groupId).sort(byStarted);
+  const jobs = Object.values({ ...Object.fromEntries((jobsPage?.items ?? []).map((job) => [job.id, job])), ...s.jobs }).filter((job) => groupId ? (isTopic ? job.groupId === groupId : job.groupId === groupId || s.groups.some((g) => g.id === job.groupId && g.parentId === groupId)) : job.assistantId === aid && !job.groupId).sort(byStarted);
   const seenJobs = useRef<{ aid: string; ids: Set<string> } | null>(null);
   const jobsReady = useRef(false);
   if (!seenJobs.current || seenJobs.current.aid !== aid) { seenJobs.current = { aid, ids: new Set() }; jobsReady.current = false; }
   const freshJobs = jobsPage?.loaded ? new Set(jobs.filter((job) => !seenJobs.current!.ids.has(job.id)).map((job) => job.id)) : new Set<string>();
   useEffect(() => { if (!jobsPage?.loaded) { jobsReady.current = false; return; } jobs.forEach((job) => seenJobs.current?.ids.add(job.id)); jobsReady.current = true; });
-  useEffect(() => { setTab("jobs"); if (part !== "tabs") { void loadAssistantSkills(aid); if (groupId) void loadGroupProfile(groupId); } if (part !== "info") void loadSidebarJobs(aid); }, [aid, groupId, part]);
+  useEffect(() => { setTab("jobs"); if (part !== "tabs") { void loadAssistantSkills(skillsId); if (groupId) void loadGroupProfile(groupId); } if (part !== "info") void loadSidebarJobs(aid); }, [aid, skillsId, groupId, part]);
   useEffect(() => { if (!groupId && !s.knowledge.collectionsLoaded) { setCollectionsLoading(true); setCollectionsError(""); void loadSidebarCollections().catch((e: unknown) => setCollectionsError(e instanceof Error ? e.message : String(e))).finally(() => setCollectionsLoading(false)); } }, [groupId, s.knowledge.collectionsLoaded]);
   useEffect(() => { if (tab === "files") void loadSidebarFiles(aid); }, [aid, tab]);
   const page = tab === "jobs" ? jobsPage : filesPage;
@@ -53,10 +56,11 @@ export function PanelRootDetails({ groupId, part, desktopRow, replyModeRow }: { 
     {part !== "tabs" ? <div className="group-card sidebar-info">
       <button onClick={() => openSidebarPage("routines", groupId)}><Icon name="clock" size={15} /><span>{t("定时任务")}</span><small>{routineSummary(routines, s.settings.settings.general.timezone)}</small><b>›</b></button>
       {desktopRow}
-      <button onClick={() => openSidebarPage("skills", groupId)}><Icon name="book" size={15} /><span>{t("技能")}</span><small>{skills?.error ? t("加载失败") : !skills?.loaded ? <DelayedText key={aid} text={t("正在加载…")} /> : values.skills}</small><b>›</b></button>
+      <button onClick={() => openSidebarPage("skills", skillsId)}><Icon name="book" size={15} /><span>{t("技能")}</span><small>{skills?.error ? t("加载失败") : !skills?.loaded ? <DelayedText key={skillsId} text={t("正在加载…")} /> : isTopic ? (skills.skills.length ? `${t("本群共用")} · ${values.skills}` : t("本群共用")) : values.skills}</small><b>›</b></button>
       {!groupId ? <button onClick={() => openPlugins()}><Icon name="plugin" size={15} /><span>{t("插件")}</span><b>›</b></button> : null}
       {!groupId ? <button onClick={() => openSidebarPage("knowledge")}><Icon name="archive" size={15} /><span>{t("知识库")}</span><small>{collectionsError ? t("加载失败") : collectionsLoading ? <DelayedText text={t("正在加载…")} /> : values.knowledge}</small><b>›</b></button> : null}
-      <button onClick={() => openSidebarPage("rules", groupId)}><Icon name="rule" size={15} /><span>{t("执行前确认")}</span><small>{groupId && groupProfile?.error ? t("加载失败") : groupId && !groupProfile?.value ? <DelayedText text={t("正在加载…")} /> : values.rules}</small><b>›</b></button>
+      <button onClick={() => openSidebarPage(isTopic ? "topicRules" : "rules", groupId)}><Icon name="rule" size={15} /><span>{t("执行前确认")}</span><small>{groupId && groupProfile?.error ? t("加载失败") : groupId && !groupProfile?.value ? <DelayedText text={t("正在加载…")} /> : values.rules}</small><b>›</b></button>
+      {modelsRow}
       {replyModeRow}
     </div> : null}
     {part !== "info" ? <>

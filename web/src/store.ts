@@ -209,9 +209,8 @@ export interface State {
 
 const params = new URLSearchParams(location.search);
 export const MOCK = params.get("mock") === "1";
-const SCENES: SceneId[] = ["cards-demo", "cards-gallery", "cards-gallery-dark", "ask-cards-single", "ask-cards-multi", "ask-cards-multi-answered", "ask-cards-job", "ask-cards-mobile", "ask-cards-dark", "login-cards", "plugin-demo", "tool-login-signed-out", "tool-login-device", "tool-login-signed-in", "tool-login-optional", "provider-demo", "provider-install-progress", "provider-install-done", "provider-errors", "provider-login-device", "provider-login-web", "provider-login-paste", "provider-login-apikey", "provider-login-cli", "provider-update-confirm", "vault", "vault-empty", "g-owns", "g-owns-dark", "readme-chat", "readme-cards", "readme-interactive-cards", "readme-plugins", "readme-desktop", "readme-knowledge", "readme-profile", "readme-group-now", "readme-mobile-list", "readme-mobile-chat", "readme-mobile-todos", "image", "act-demo", "act-think", "act-tool", "act-dark", "act-home", "boot", "bubbles", "bubbles-dark", "card-130", "card-130-dark", "job-after", "job-after-dark", "routine-check-dark", "routine-once", "routine-once-dark", "routine-once-list", "ask-rounds", "ask-rounds-answered", "ask-rounds-group", "ask-rounds-dark", "ask-rounds-mobile", "s1", "home-attention", "s2", "s3", "s4", "s6", "mlist", "mchat", "d-running", "d-waiting", "d-done", "d-dark", "d-source", "d-mobile", "h-hob", "h-dark", "h-source", "h-settings", "h-mobile", "g-chat", "g-mention", "g-mobile", "g-dark", "g-team", "todo-chat", "todo-topic", "todo-job", "topics", "topics-plain", "read-receipt", "read-receipt-hub", "read-receipt-chat", "workspace-cwd", "workspace-cwd-dark", "group-reply-all", "group-reply-all-dark"];
 const sceneParam = params.get("scene") as SceneId | null;
-const scene: SceneId = sceneParam && SCENES.includes(sceneParam) ? sceneParam : "s1";
+const scene: SceneId = sceneParam && sceneParam in SCENE_UI ? sceneParam : "s1";
 const THEME_KEY = "hob.theme";
 const LOCALE_KEY = "hob.locale";
 const HOME_FILTER_KEY = "hob.home.filter";
@@ -1345,7 +1344,7 @@ export function applyEvent(ev: HobEvent) {
       if (read) void api.markGroupRead(ev.group.id).catch(() => {});
       const previous = state.groups.find((group) => group.id === ev.group.id);
       set((s) => ({ groups: upsert(s.groups, read ? { ...ev.group, unread: 0 } : ev.group) }));
-      if (previous && JSON.stringify([previous.ownerId, previous.members, previous.models, previous.memberModels]) !== JSON.stringify([ev.group.ownerId, ev.group.members, ev.group.models, ev.group.memberModels])) {
+      if (previous && JSON.stringify([previous.ownerId, previous.members, previous.models, previous.memberModels, previous.replyMode, previous.overrides]) !== JSON.stringify([ev.group.ownerId, ev.group.members, ev.group.models, ev.group.memberModels, ev.group.replyMode, ev.group.overrides])) {
         for (const group of state.groups) if ((group.id === ev.group.id || group.parentId === ev.group.id) && state.groupProfiles[group.id]) void loadGroupProfile(group.id);
       }
       break;
@@ -1596,7 +1595,13 @@ export async function patchGroup(id: string, patch: Parameters<HobApi["patchGrou
 export async function patchGroupMemberModels(groupId: string, assistantId: string, patch: Parameters<HobApi["patchGroupMemberModels"]>[2]): Promise<string | null> {
   try {
     const group = await api.patchGroupMemberModels(groupId, assistantId, patch);
-    set((s) => ({ groups: s.groups.map((g) => g.id === group.id || g.parentId === group.id ? { ...g, memberModels: group.memberModels } : g) }));
+    set((s) => ({
+      groups: s.groups.map((g) => {
+        if (g.id === group.id) return { ...g, memberModels: group.memberModels, ...(group.overrides !== undefined ? { overrides: group.overrides } : {}) };
+        if (g.parentId === group.id) return { ...g, memberModels: { ...group.memberModels, ...g.overrides?.memberModels } };
+        return g;
+      }),
+    }));
     return null;
   } catch (e) { return errText(e); }
 }
@@ -2594,6 +2599,18 @@ export async function deleteRule(assistantId: string, ruleId: string) {
   }
 }
 
+export async function resetGroupRule(groupId: string, ruleId: string): Promise<string | null> {
+  try {
+    await api.resetGroupRule(groupId, ruleId);
+    await loadGroupProfile(groupId);
+    return null;
+  } catch (e) {
+    const message = t("保存失败：{error}", { error: errText(e) });
+    set({ notice: message });
+    return message;
+  }
+}
+
 /* ---------------- 界面状态 ---------------- */
 
 /* ---------------- 任务详情 / 任务记录 ---------------- */
@@ -2736,7 +2753,7 @@ export function openAssistantPanel() {
   set((s) => ({ panelStack: pushPage(s.panelStack, { kind: "assistant" }) }));
 }
 
-export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules", groupId?: string) {
+export function openSidebarPage(kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels", groupId?: string) {
   set((s) => ({ panelStack: pushPage(s.panelStack, { kind, groupId }) }));
 }
 
@@ -2747,8 +2764,8 @@ async function loadSidebarPage(kind: "sidebarJobs" | "sidebarFiles", assistantId
   set((s) => ({ [kind]: { ...s[kind], [assistantId]: { ...previous, loading: true, loadingMore: more, error: null } } }));
   try {
     const before = more ? previous.cursor : undefined;
-    const isGroup = state.groups.some((group) => group.id === assistantId);
-    const scope = isGroup ? { groupId: assistantId } : { assistantId, groupId: "none" };
+    const group = state.groups.find((item) => item.id === assistantId);
+    const scope = group ? { groupId: assistantId, ...(group.parentId ? { exact: true } : {}) } : { assistantId, groupId: "none" };
     const page = kind === "sidebarJobs"
       ? await api.jobs({ ...scope, before, limit: 20 }).then((p) => ({ items: p.jobs, hasMore: p.hasMore }))
       : await api.knowledge({ origin: "output", ...scope, before, limit: 30 }).then((p) => ({ items: p.entries, hasMore: p.hasMore }));

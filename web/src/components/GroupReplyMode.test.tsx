@@ -172,26 +172,36 @@ describe("群和话题「全员回应」界面", () => {
     vi.stubGlobal("window", { innerWidth: 1440, matchMedia: () => ({ matches: false, addEventListener: vi.fn(), removeEventListener: vi.fn() }) });
   });
 
-  it("群和话题右栏在设置组里显示「没点名时」及各自当前值", () => {
+  it("群和话题右栏在设置组里显示「没点名时」及各自当前值（含跟随群与本话题）", () => {
     // 群：群主回应
     state.gsel = "g-1";
     const groupHtml = renderToStaticMarkup(<Panel page={null} />);
     expect(groupHtml).toContain("<span>没点名时</span><small>群主回应</small><b>›</b>");
     expect(groupHtml.indexOf("执行前确认")).toBeLessThan(groupHtml.indexOf("没点名时"));
 
-    // 话题：全员回应（独立于所属群）
+    // 话题未覆盖时：跟随群 · 全员回应
     state.gsel = "t-1";
+    const followHtml = renderToStaticMarkup(<Panel page={null} />);
+    expect(followHtml).toContain("<span>没点名时</span><small>跟随群 · 全员回应</small><b>›</b>");
+
+    // 话题覆盖后：本话题 · 全员回应
+    state.groups[1] = makeGroup({ id: "t-1", parentId: "g-1", name: "预算讨论", replyMode: "all", overrides: { replyMode: "all" } });
     const topicHtml = renderToStaticMarkup(<Panel page={null} />);
-    expect(topicHtml).toContain("<span>没点名时</span><small>全员回应</small><b>›</b>");
+    expect(topicHtml).toContain("<span>没点名时</span><small>本话题 · 全员回应</small><b>›</b>");
   });
 
-  it("展开菜单（amenu）显示两项二选一且当前项打勾", () => {
+  it("展开菜单（amenu）在话题里显示「跟随群」与两项二选一且当前项打勾", () => {
     state.gsel = "t-1";
     state.replyMenuOpen = true;
-    const html = renderToStaticMarkup(<Panel page={null} />);
-    expect(html).toContain('class="amenu select-popup"');
-    expect(html).toContain('role="menuitemradio" aria-checked="false" aria-selected="false"><span>群主回应</span></button>');
-    expect(html).toContain('role="menuitemradio" aria-checked="true" aria-selected="true"><span>全员回应</span><svg');
+    const followHtml = renderToStaticMarkup(<Panel page={null} />);
+    expect(followHtml).toContain('class="amenu select-popup"');
+    expect(followHtml).toContain('role="menuitemradio" aria-checked="true" aria-selected="true"><span>跟随群（群主回应）</span><svg');
+    expect(followHtml).toContain('role="menuitemradio" aria-checked="false" aria-selected="false"><span>全员回应</span></button>');
+
+    state.groups[1] = makeGroup({ id: "t-1", parentId: "g-1", name: "预算讨论", replyMode: "all", overrides: { replyMode: "all" } });
+    const overrideHtml = renderToStaticMarkup(<Panel page={null} />);
+    expect(overrideHtml).toContain('role="menuitemradio" aria-checked="false" aria-selected="false"><span>跟随群（群主回应）</span></button>');
+    expect(overrideHtml).toContain('role="menuitemradio" aria-checked="true" aria-selected="true"><span>全员回应</span><svg');
   });
 
   it("输入框占位文字随群/话题的 replyMode 变化", () => {

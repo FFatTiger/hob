@@ -4,7 +4,14 @@ import type { Approval, AssistantSummary, Delegation, InheritedGroupModel, Job, 
 import type { KnowledgeEntry } from "../../shared/knowledge.ts";
 
 export function followingModel(source: InheritedGroupModel["source"], name: string) {
-  const label = source === "group" || source === "member" ? t("本群") : source === "topic" ? t("本话题") : t("助手");
+  const label =
+    source === "group" || source === "member"
+      ? t("本群")
+      : source === "topic"
+        ? t("本话题默认")
+        : source === "global"
+          ? t("全局")
+          : t("助手");
   return { text: t("跟随{label} · {name}", { label, name }), option: t("跟随{label}（{name}）", { label, name }) };
 }
 

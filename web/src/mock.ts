@@ -73,7 +73,7 @@ import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.19.0" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -166,6 +166,7 @@ export const SCENE_UI: Record<
   "g-dark": { sel: null, gsel: "g-home", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "g-owns-dark": { sel: null, gsel: "g-dev", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "g-owns": { sel: null, gsel: "g-dev", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "topic-panel": { sel: null, gsel: "t-p3-a", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "g-team": { sel: null, gsel: "g-dev", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   // 待办：单聊里一份在做、话题里一份在做、一张带进度的任务卡
   "todo-chat": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -3057,6 +3058,9 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const mockProfileMissing = (profile: NonNullable<PluginView["profiles"]>[number]) => profile.missing;
 
   const groupRules: Record<string, Rule[]> = {};
+  const groupRuleOverrides: Record<string, RuleOverrides> = {};
+  const ruleOverridesOf = (id: string): RuleOverrides => (groupRuleOverrides[id] ??= { own: [], changed: {}, hidden: {} });
+  let extraMockModels: ModelsView["models"] = [];
   if (scene === "g-owns" || scene === "g-owns-dark") {
     const group = db.groups.find((item) => item.id === "g-dev")!;
     
@@ -3071,6 +3075,107 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     delete db.jobs["t-g-dev"];
     group.busy = ["dev"];
     for (let i = 0; i < 5; i++) { const id = `owns-job-${i}`; db.jobs[id] = { ...example, id, groupId: i % 2 ? topic.id : group.id, assistantId: i === 0 ? "dev" : group.members[i % group.members.length]!, title: ["整理资料", "确定实现方案", "完成开发", "跑测试", "确认发布准备"][i]!, status: i === 0 ? "running" : "done", createdAt: at(0, 9, i * 5), startedAt: at(0, 9, i * 5), endedAt: i === 0 ? undefined : at(0, 9, i * 5 + 4), durationMs: i === 0 ? undefined : 240000, activity: [] }; }
+  }
+  if (scene === "topic-panel") {
+    const longClaude = "anthropic/claude-sonnet-4-6-20260901-enterprise-preview";
+    const longCodex = "openai/gpt-5.3-codex-high-throughput-20261015";
+    const longGemini = "google/gemini-3-pro-experimental-20261101";
+    extraMockModels = [
+      { ref: longClaude, provider: "anthropic", id: "claude-sonnet-4-6-20260901-enterprise-preview", name: "Claude Sonnet 4.6 · 20260901 Enterprise Preview", reasoning: true, thinkingLevels: ["off", "low", "medium", "high"], input: ["text", "image"], contextWindow: 200_000, maxTokens: 8_192, cost: { input: 3, output: 15 } },
+      { ref: longCodex, provider: "openai", id: "gpt-5.3-codex-high-throughput-20261015", name: "GPT-5.3 Codex High-Throughput (2026-10-15)", reasoning: true, thinkingLevels: ["off", "low", "medium", "high", "xhigh"], input: ["text", "image"], contextWindow: 256_000, maxTokens: 16_384, cost: { input: 5, output: 20 } },
+      { ref: longGemini, provider: "google", id: "gemini-3-pro-experimental-20261101", name: "Gemini 3 Pro Experimental Build 2026-11-01", reasoning: true, thinkingLevels: ["off", "low", "medium", "high"], input: ["text", "image"], contextWindow: 1_000_000, maxTokens: 8_192, cost: { input: 2, output: 12 } },
+    ];
+    db.settings.settings.models = {
+      ...db.settings.settings.models,
+      conversation: { ref: longClaude, thinking: "medium" },
+      work: { ref: longCodex, thinking: "high" },
+      roster: [
+        { ref: longClaude, note: "长文本与复杂评审", thinking: "medium" },
+        { ref: longCodex, note: "工程实现与调试", thinking: "high" },
+        { ref: longGemini, note: "长上下文检索", thinking: "high" },
+      ],
+    };
+    const longLead = db.assistants.find((item) => item.id === "po")!;
+    longLead.name = "产品需求分析与迭代统筹首席顾问";
+    longLead.duty = "拆解复杂产品目标、协调多方进度并把关发布节奏";
+    const longDev = db.assistants.find((item) => item.id === "dev")!;
+    longDev.name = "全栈工程与自动化运维首席助手";
+    longDev.duty = "负责前后端架构改造、测试覆盖与容器部署";
+    const longQa = db.assistants.find((item) => item.id === "qa")!;
+    longQa.name = "端到端质量保障与回归验证专员";
+    longQa.duty = "编写自动化组件测试与跨端浏览器验收";
+    longQa.models = { work: { ref: longGemini, thinking: "high" } };
+
+    const parentGroup = db.groups.find((item) => item.id === "g-dev")!;
+    parentGroup.members = ["po", "dev", "qa", "arch"];
+    parentGroup.models = { conversation: { ref: longClaude, thinking: "medium" }, work: { ref: longCodex, thinking: "high" } };
+    parentGroup.memberModels = { dev: { work: { ref: longGemini, thinking: "high" } } };
+    parentGroup.replyMode = "owner";
+    parentGroup.busy = ["qa"];
+
+    const topicA: GroupSummary = {
+      ...parentGroup,
+      id: "t-p3-a",
+      parentId: parentGroup.id,
+      name: "订单导出性能优化与分页重构方案",
+      replyMode: "all",
+      overrides: {
+        replyMode: "all",
+        models: { conversation: { ref: longGemini, thinking: "high" } },
+        memberModels: { po: { work: { ref: longClaude, thinking: "high" } } },
+      },
+      memberModels: {
+        ...parentGroup.memberModels,
+        po: { work: { ref: longClaude, thinking: "high" } },
+      },
+      busy: ["dev"],
+      unread: 0,
+    };
+    const topicB: GroupSummary = {
+      ...parentGroup,
+      id: "t-p3-b",
+      parentId: parentGroup.id,
+      name: "夜间日志归档脚本排查",
+      replyMode: "owner",
+      overrides: {},
+      busy: ["qa"],
+      unread: 0,
+    };
+    db.groups.push(topicA, topicB);
+    db.groupItems[topicA.id] = [
+      { kind: "user", id: "p3-u1", at: at(0, 9, 10), text: "先把订单导出接口的分页慢查询定位清楚，再定改造方案。", speaker: "user" },
+      { kind: "assistant", id: "p3-a1", at: at(0, 9, 11), text: "好，我让全栈工程与自动化运维首席助手跑一遍慢查询剖析，输出索引建议。", speaker: "po" },
+    ];
+    db.groupItems[topicB.id] = [
+      { kind: "user", id: "p3-u2", at: at(0, 8, 30), text: "看看昨晚的日志归档为什么超时。", speaker: "user" },
+    ];
+
+    groupRules[parentGroup.id] = [
+      { id: "p3-r1", text: "对外发布新版本或发公告前先确认", mode: "ask", changedAt: at(2, 9) },
+      { id: "p3-r2", text: "修改生产数据库索引前先备份计划", mode: "ask", changedAt: at(2, 9) },
+      { id: "p3-r3", text: "运行只读诊断命令可直接执行", mode: "allow", changedAt: at(2, 9) },
+    ];
+    groupRuleOverrides[topicA.id] = {
+      own: [{ id: "p3-own-1", text: "导出超过十万行时先拆分异步任务", mode: "ask", changedAt: at(0, 9) }],
+      changed: { "p3-r2": { text: "修改索引先在预发库压测验证", mode: "ask", changedAt: at(0, 9) } },
+      hidden: { "p3-r3": at(0, 9) },
+    };
+
+    db.assistantSkills[parentGroup.id] = [
+      { name: "sql-tuning", title: "慢查询定位流程", description: "先看执行计划再加联合索引", path: `/mock/groups/${parentGroup.id}/skills/sql-tuning/SKILL.md`, version: 1, createdAt: at(3, 9), updatedAt: at(1, 9), uses: 2, enabled: true },
+      { name: "release-check", title: "发版前回归核对", description: "核对类型检查、单测与端到端验证", path: `/mock/groups/${parentGroup.id}/skills/release-check/SKILL.md`, version: 1, createdAt: at(3, 9), updatedAt: at(1, 9), uses: 1, enabled: true },
+    ];
+
+    db.routines.push(
+      { id: "p3-rt-topicA", assistantId: parentGroup.ownerId, groupId: topicA.id, name: "导出慢查询巡检", instruction: "统计超过 2 秒的导出接口请求", schedules: ["0 9 * * *"], active: true, createdAt: at(1, 9), runs: [{ at: at(0, 9), status: "done" }] },
+      { id: "p3-rt-topicB", assistantId: parentGroup.ownerId, groupId: topicB.id, name: "归档脚本超时告警", instruction: "检查夜间归档脚本耗时", schedules: ["*/30 * * * *"], active: true, createdAt: at(1, 9), runs: [{ at: at(0, 8), status: "done" }] },
+    );
+
+    const example = Object.values(db.jobs)[0]!;
+    delete db.jobs["t-g-dev"];
+    db.jobs["p3-job-a1"] = { ...example, id: "p3-job-a1", groupId: topicA.id, assistantId: "dev", title: "剖析导出 SQL 执行计划", status: "running", createdAt: at(0, 9, 12), startedAt: at(0, 9, 12), activity: [{ at: at(0, 9, 13), verb: "跑", text: "EXPLAIN ANALYZE SELECT * FROM orders" }] };
+    db.jobs["p3-job-a2"] = { ...example, id: "p3-job-a2", groupId: topicA.id, assistantId: "po", title: "整理分批导出方案文档", status: "done", createdAt: at(0, 8, 50), startedAt: at(0, 8, 50), endedAt: at(0, 8, 55), durationMs: 300_000, activity: [] };
+    db.jobs["p3-job-b1"] = { ...example, id: "p3-job-b1", groupId: topicB.id, assistantId: "qa", title: "复现夜间归档脚本卡顿", status: "running", createdAt: at(0, 8, 35), startedAt: at(0, 8, 35), activity: [] };
   }
   let globalRules: Rule[] = scene.startsWith("readme-") ? [
     ...["删除或覆盖文件、数据和备份", "对外发送（消息、邮件、发布）、付费、充值、改计费", "停止或重启别人正在使用的服务和设备", "修改可能让你失去远程访问的设置（网络、防火墙、登录方式）"].map((text, i) => ({ id: `ask-${i}`, text, mode: "ask" as const, changedAt: at(10, 9) })),
@@ -3210,8 +3315,9 @@ export function createMock(scene: SceneId = "s1"): HobApi {
 
   const assistantName = (id: string) => db.assistants.find((a) => a.id === id)?.name ?? id;
 
-  function matchesGroup(actual: string | undefined, requested: string): boolean {
+  function matchesGroup(actual: string | undefined, requested: string, exact = false): boolean {
     if (requested === "none") return !actual;
+    if (exact) return actual === requested;
     const selected = db.groups.find((group) => group.id === requested);
     const root = selected?.parentId ?? requested;
     return actual === root || db.groups.some((group) => group.id === actual && group.parentId === root);
@@ -3287,7 +3393,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     knowledge: async (query = {}) => {
       const q = query.q?.toLowerCase();
-      const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.groupId || matchesGroup(e.source?.jobId ? db.jobs[e.source.jobId]?.groupId : undefined, query.groupId)) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
+      const matches = entries.filter((e) => (!query.origin || e.origin === query.origin) && (!query.collection || e.collections.includes(query.collection)) && (!query.kind || knowledgeGroup(e.kind) === query.kind) && (!query.assistantId || e.source?.assistantId === query.assistantId) && (!query.groupId || matchesGroup(e.source?.jobId ? db.jobs[e.source.jobId]?.groupId : undefined, query.groupId, query.exact)) && (!query.before || e.updatedAt < query.before) && (!q || `${e.name} ${e.description}`.toLowerCase().includes(q)));
       const limit = query.limit ?? 50;
       return { entries: clone(matches.slice(0, limit).map((e) => q ? { ...e, snippet: e.description ?? e.name } : e)), hasMore: matches.length > limit, collections: clone(collections.map((c) => ({ ...c, count: entries.filter((e) => e.collections.includes(c.id)).length, indexed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "ready").length, failed: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "failed").length, unsupported: entries.filter((e) => e.collections.includes(c.id) && e.index?.state === "unsupported").length }))) };
     },
@@ -3323,11 +3429,14 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     models: async () => ({
       ...clone(MOCK_MODELS),
-      models: mockPluginModels.length
-        ? clone(mockPluginModels)
-        : scene.startsWith("readme-")
-          ? clone(MOCK_MODELS.models.slice(0, 2)).map((model, i) => ({ ...model, ref: i ? "anthropic/claude-sonnet" : "openai/gpt-5", name: i ? "Claude Sonnet" : "GPT-5" }))
-          : clone(MOCK_MODELS.models),
+      models: [
+        ...(mockPluginModels.length
+          ? clone(mockPluginModels)
+          : scene.startsWith("readme-")
+            ? clone(MOCK_MODELS.models.slice(0, 2)).map((model, i) => ({ ...model, ref: i ? "anthropic/claude-sonnet" : "openai/gpt-5", name: i ? "Claude Sonnet" : "GPT-5" }))
+            : clone(MOCK_MODELS.models)),
+        ...clone(extraMockModels),
+      ],
       roster: clone(db.settings.settings.models.roster),
     }),
     providers: async () => providersView(),
@@ -3911,31 +4020,68 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         };
         return [aid, { conversation, work }];
       }));
-      const rules: EffectiveRule[] = (groupRules[group.id] ?? []).map((rule) => ({ ...rule, from: "parent" as const }));
+      const parentRules = groupRules[group.id] ?? [];
+      const rov = isTopic ? ruleOverridesOf(selected.id) : undefined;
+      const rules: EffectiveRule[] = isTopic && rov
+        ? [
+          ...parentRules.flatMap((rule): EffectiveRule[] => {
+            if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
+            const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
+            if (!changed) return [{ ...rule, from: "parent" }];
+            return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+          }),
+          ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
+        ]
+        : parentRules.map((rule) => ({ ...rule, from: "parent" as const }));
+      const hiddenRules = isTopic && rov ? parentRules.filter((rule) => Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) : [];
       return clone({
         group: selected,
         rules,
-        hiddenRules: [],
+        hiddenRules,
         replyMode: { value: selected.replyMode ?? "owner", source: isTopic && ov.replyMode !== undefined ? "topic" as const : "group" as const },
         models: { conversation: defaultModel("conversation"), work: defaultModel("work") },
         memberModels,
       });
     },
-    groupSkills: async (id) => clone(db.assistantSkills[id] ?? []),
+    groupSkills: async (id) => clone(db.assistantSkills[db.groups.find((g) => g.id === id)?.parentId ?? id] ?? []),
     patchGroupSkill: async (id, name, enabled) => {
-      const skill = db.assistantSkills[id]?.find((s) => s.name === name);
+      const rootId = db.groups.find((g) => g.id === id)?.parentId ?? id;
+      const skill = db.assistantSkills[rootId]?.find((s) => s.name === name);
       if (!skill) throw new ApiError(404, "技能不存在。");
       skill.enabled = enabled;
       return clone(skill);
     },
     rollbackGroupSkill: async (id, name) => {
-      const skill = db.assistantSkills[id]?.find((s) => s.name === name);
+      const rootId = db.groups.find((g) => g.id === id)?.parentId ?? id;
+      const skill = db.assistantSkills[rootId]?.find((s) => s.name === name);
       if (!skill || skill.version < 2) throw new ApiError(400, "没有可回退的版本。");
       skill.version--;
       return clone(skill);
     },
-    deleteGroupSkill: async (id, name) => { db.assistantSkills[id] = (db.assistantSkills[id] ?? []).filter((s) => s.name !== name); return { ok: true }; },
-    deleteGroupRule: async (id, ruleId) => { groupRules[id] = (groupRules[id] ?? []).filter((rule) => rule.id !== ruleId); },
+    deleteGroupSkill: async (id, name) => {
+      const rootId = db.groups.find((g) => g.id === id)?.parentId ?? id;
+      db.assistantSkills[rootId] = (db.assistantSkills[rootId] ?? []).filter((s) => s.name !== name);
+      return { ok: true };
+    },
+    deleteGroupRule: async (id, ruleId) => {
+      const selected = db.groups.find((g) => g.id === id);
+      if (selected?.parentId) {
+        const rov = ruleOverridesOf(id);
+        if (rov.own.some((rule) => rule.id === ruleId)) {
+          rov.own = rov.own.filter((rule) => rule.id !== ruleId);
+          return;
+        }
+        delete rov.changed[ruleId];
+        rov.hidden[ruleId] = new Date().toISOString();
+        return;
+      }
+      groupRules[id] = (groupRules[id] ?? []).filter((rule) => rule.id !== ruleId);
+    },
+    resetGroupRule: async (id, ruleId) => {
+      const rov = ruleOverridesOf(id);
+      delete rov.changed[ruleId];
+      delete rov.hidden[ruleId];
+    },
     groups: async () => clone(db.groups),
     createGroup: async (body) => {
       const members = [...new Set(body.members)];
@@ -4038,10 +4184,29 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const group = db.groups.find((g) => g.id === groupId);
       if (!group) throw new ApiError(404, "群不存在。");
       if (patch.rule) {
-        const rules = groupRules[group.id] ??= [];
-        const existing = rules.find((r) => r.id === patch.rule?.id);
-        if (existing) Object.assign(existing, patch.rule, { changedAt: new Date().toISOString() });
-        else if (patch.rule.text && patch.rule.mode) rules.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: new Date().toISOString() });
+        if (group.parentId) {
+          const rov = ruleOverridesOf(group.id);
+          const now = new Date().toISOString();
+          if (patch.rule.id) {
+            const own = rov.own.find((r) => r.id === patch.rule?.id);
+            if (own) Object.assign(own, patch.rule, { changedAt: now });
+            else {
+              const prev = rov.changed[patch.rule.id];
+              rov.changed[patch.rule.id] = {
+                ...(patch.rule.text !== undefined ? { text: patch.rule.text } : prev?.text !== undefined ? { text: prev.text } : {}),
+                ...(patch.rule.mode !== undefined ? { mode: patch.rule.mode } : prev?.mode !== undefined ? { mode: prev.mode } : {}),
+                changedAt: now,
+              };
+            }
+          } else if (patch.rule.text && patch.rule.mode) {
+            rov.own.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: now });
+          }
+        } else {
+          const rules = groupRules[group.id] ??= [];
+          const existing = rules.find((r) => r.id === patch.rule?.id);
+          if (existing) Object.assign(existing, patch.rule, { changedAt: new Date().toISOString() });
+          else if (patch.rule.text && patch.rule.mode) rules.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: new Date().toISOString() });
+        }
       }
       // 话题只能改名字、回应方式和置顶：成员、群主都取所属的群
       if (group.parentId && (patch.members || patch.ownerId || patch.purpose !== undefined)) {
@@ -4415,7 +4580,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     jobs: async (query = {}) => {
       let list = Object.values(db.jobs).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
       if (query.assistantId) list = list.filter((job) => job.assistantId === query.assistantId);
-      if (query.groupId) list = list.filter((job) => matchesGroup(job.groupId, query.groupId!));
+      if (query.groupId) list = list.filter((job) => matchesGroup(job.groupId, query.groupId!, query.exact));
       if (query.status) list = list.filter((job) => job.status === query.status);
       if (query.before) {
         const index = list.findIndex((job) => job.id === query.before);

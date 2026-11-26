@@ -273,12 +273,12 @@ export class JobManager {
   }
 
   /** 任务记录：全部任务，新的在前，可按助手 / 状态筛选，按 before（上一次最后一页的那条）分页。 */
-  page(options: { assistantId?: string; groupId?: string; status?: JobStatus; before?: string; limit?: number } = {}): JobsPage {
+  page(options: { assistantId?: string; groupId?: string; exact?: boolean; status?: JobStatus; before?: string; limit?: number } = {}): JobsPage {
     const limit = Math.max(1, Math.min(options.limit ?? 30, 200));
     // 新的在前，按这一轮开始的时间：续做的任务排回上面
     let list = this.store.jobs().sort((a, b) => (b.startedAt ?? b.createdAt).localeCompare(a.startedAt ?? a.createdAt));
     if (options.assistantId) list = list.filter((job) => job.assistantId === options.assistantId);
-    if (options.groupId) list = list.filter((job) => this.store.groupMatches(options.groupId!, job.groupId));
+    if (options.groupId) list = list.filter((job) => this.store.groupMatches(options.groupId!, job.groupId, options.exact));
     if (options.status) list = list.filter((job) => job.status === options.status);
     if (options.before) {
       const index = list.findIndex((job) => job.id === options.before);

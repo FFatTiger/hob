@@ -18,7 +18,7 @@ function decode(arg: string | undefined): string | null {
 function parsePanel(kind: string | undefined, arg: string | null): PanelPage | undefined {
   if (kind === "job" || kind === "routine") return arg ? { kind, id: arg } : undefined;
   if (kind === "file") return arg ? { kind, path: arg, full: false } : undefined;
-  if (kind === "routines" || kind === "skills" || kind === "knowledge" || kind === "rules" || kind === "assistant" || kind === "jobs" || kind === "newRoutine") return { kind };
+  if (kind === "routines" || kind === "skills" || kind === "knowledge" || kind === "rules" || kind === "topicRules" || kind === "topicModels" || kind === "assistant" || kind === "jobs" || kind === "newRoutine") return { kind };
 }
 
 function panelHash(page: PanelPage): string {

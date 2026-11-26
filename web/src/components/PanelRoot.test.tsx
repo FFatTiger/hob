@@ -229,13 +229,15 @@ it("云桌面在单聊和群话题下按占用者呈现：本会话在用内嵌�
   expect(topicIdle).toContain("<span>云桌面</span><small>空闲</small>");
 });
 
-it("群成员详情页只渲染默认任务模型下拉，不渲染成员对话模型下拉", () => {
+it("群成员详情页只读显示对话模型与来源并提示在群设置里改，仅留默认任务模型下拉", () => {
   const g: GroupSummary = { id: "g-1", name: "产品群", purpose: "协作", ownerId: "hob", members: ["hob"], createdAt: "2026-01-01T00:00:00Z", unread: 0, busy: [] };
-  data.groups = [g];
+  const t1: GroupSummary = { ...g, id: "t-1", name: "深色模式", parentId: "g-1" };
+  data.groups = [g, t1];
   data.sel = null;
   data.gsel = "g-1";
   data.panelStack = [{ kind: "member", id: "hob" }];
   const pick = { ref: "p/m", thinking: "low" as const };
+  const topicPick = { ref: "p/topic-chat", thinking: "medium" as const };
   data.groupProfiles = {
     "g-1": {
       value: {
@@ -249,10 +251,33 @@ it("群成员详情页只渲染默认任务模型下拉，不渲染成员对话�
         },
       },
     },
+    "t-1": {
+      value: {
+        group: t1,
+        rules: [],
+        memberModels: {
+          hob: {
+            conversation: { source: "topic", pick: topicPick, inherited: { source: "group", pick } },
+            work: { source: "topic", pick, inherited: { source: "topic", pick } },
+          },
+        },
+      },
+    },
   };
   const html = renderToStaticMarkup(<Panel />);
   expect(html).toContain("在「产品群」里");
+  expect(html).toContain("只在本群生效");
   expect(html).toContain('aria-label="默认任务模型"');
   expect(html).not.toContain('aria-label="对话模型"');
-  expect(html).not.toContain(">对话模型<");
+  expect(html).toContain('<div class="group-member-model-row ro"><span>对话模型</span>');
+  expect(html).toContain("跟随本群 · p/m");
+  expect(html).toContain("成员只能单设任务模型，对话模型在群设置里改");
+
+  // 在话题里进成员详情页：显示该话题，并跟随本话题的对话模型
+  data.gsel = "t-1";
+  const topicHtml = renderToStaticMarkup(<Panel />);
+  expect(topicHtml).toContain("在「深色模式」里");
+  expect(topicHtml).toContain("只在本话题生效");
+  expect(topicHtml).toContain("本话题 · p/topic-chat");
+  expect(topicHtml).toContain("跟随本话题默认 · p/m");
 });

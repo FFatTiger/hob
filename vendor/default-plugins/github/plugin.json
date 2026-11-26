@@ -1,7 +1,7 @@
 {
   "name": "github",
   "displayName": "GitHub",
-  "version": "2.0.3",
+  "version": "2.0.4",
   "description": "Connect official GitHub tools and bundled git/gh commands with hob-bot sign-in, your own GitHub App, or a personal access token, with automatic Hob attribution.",
   "homepage": "https://github.com/github/github-mcp-server",
   "userConfig": {
@@ -11,9 +11,9 @@
       "description": "想用自己的 GitHub App 身份操作时填，和私钥一起填。PR、评论和提交都会显示成这个 App 的机器人。"
     },
     "GITHUB_APP_PRIVATE_KEY": {
-      "type": "string",
+      "type": "file",
       "title": "GitHub App 私钥",
-      "description": "在 GitHub App 的设置页点「Generate a private key」会下载一个 .pem 文件。用文本编辑器打开，全部复制粘贴到这里。",
+      "description": "在 GitHub App 的设置页点「Generate a private key」，把下载的 .pem 文件选上来。",
       "sensitive": true
     },
     "GITHUB_PERSONAL_ACCESS_TOKEN": {

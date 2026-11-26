@@ -1117,6 +1117,7 @@ export type Item = (
 
 export interface PageLive {
   assistantId: string;
+  topicId?: string;
   callId: string;
   title?: string;
   summary?: string;

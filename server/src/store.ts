@@ -14,6 +14,7 @@ import {
   groupsDir,
 } from "./config.ts";
 import { newId } from "./ids.ts";
+import { isValidTopicId } from "./place.ts";
 import { effectiveRules, emptyRuleOverrides, layerOverrides, type TopicConfigHost } from "./topic-config.ts";
 import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
@@ -286,6 +287,7 @@ export class Store {
   }
 
   assistantTopic(aid: string, tid: string): AssistantTopic | undefined {
+    if (!isValidTopicId(tid)) return undefined;
     const file = assistantTopicFile(this.home, aid, tid);
     const raw = readJson<unknown>(file, null);
     if (raw === null) return undefined;

@@ -1093,7 +1093,7 @@ export function buildRouterTools(
     });
   }
 
-  if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId));
+  if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId, place));
 
   {
     tools.push(

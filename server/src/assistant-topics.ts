@@ -1,10 +1,13 @@
+import { rmSync } from "node:fs";
 import type { Assistant, AssistantTopic, AssistantTopicSummary, Item, Place } from "../../shared/types.ts";
 import { t } from "../../shared/i18n.ts";
 import { plainText } from "../../shared/plain-text.ts";
-import { assistantTopicTodosPath } from "./config.ts";
+import { assistantTopicDir, assistantTopicTodosPath } from "./config.ts";
 import { newId } from "./ids.ts";
+import { isValidTopicId } from "./place.ts";
 import { followUpPick } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
+import type { Store } from "./store.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { textOfContent } from "./transcript.ts";
 import { normalizeWorkspaceCwdInput, topicCwdLockedByAssistant, validateWorkspaceCwd } from "./workspace.ts";
@@ -17,6 +20,13 @@ export class TopicError extends Error {
   constructor(message: string, readonly status: 400 | 404) {
     super(message);
   }
+}
+
+export function assertAssistantTopic(store: Store, aid: string, tid: string): AssistantTopic {
+  if (!isValidTopicId(tid)) throw new TopicError("话题不存在", 404);
+  const topic = store.assistantTopic(aid, tid);
+  if (!topic || topic.assistantId !== aid || topic.id !== tid) throw new TopicError("话题不存在", 404);
+  return topic;
 }
 
 export interface CreateAssistantTopicInput {
@@ -74,9 +84,7 @@ export class AssistantTopicManager {
 
   requireTopic(aid: string, tid: string): AssistantTopic {
     this.requireAssistant(aid);
-    const topic = this.store.assistantTopic(aid, tid);
-    if (!topic || topic.assistantId !== aid) throw new TopicError("话题不存在", 404);
-    return topic;
+    return assertAssistantTopic(this.store, aid, tid);
   }
 
   private validateTitle(value: unknown): string {
@@ -124,10 +132,11 @@ export class AssistantTopicManager {
   }
 
   publish(aid: string, tid: string): void {
+    if (!isValidTopicId(tid)) return;
     const assistant = this.store.assistant(aid);
     if (!assistant) return;
     const topic = this.store.assistantTopic(aid, tid);
-    if (!topic || topic.assistantId !== aid) return;
+    if (!topic || topic.assistantId !== aid || topic.id !== tid) return;
     this.bus.emit({ type: "assistant_topic", topic: this.summaryOf(topic) });
   }
 
@@ -185,21 +194,27 @@ export class AssistantTopicManager {
     if (text || files.length) {
       // 先初始化 topic 的 readAt，确保随后到来的首条助手回复能正确计入未读
       this.summaryOf(topic);
-      const item = await this.runtime.router.send(
-        aid,
-        {
-          text,
-          ...(quote ? { quote } : {}),
-          ...(files.length ? { files } : {}),
-        },
-        { topicId: topic.id },
-      );
-      const summary = this.summaryOf(topic);
-      this.bus.emit({ type: "assistant_topic", topic: summary });
-      if (nameAuto && text) {
-        void this.autoName(aid, topic.id, text).catch(() => undefined);
+      try {
+        const item = await this.runtime.router.send(
+          aid,
+          {
+            text,
+            ...(quote ? { quote } : {}),
+            ...(files.length ? { files } : {}),
+          },
+          { topicId: topic.id },
+        );
+        const summary = this.summaryOf(topic);
+        this.bus.emit({ type: "assistant_topic", topic: summary });
+        if (nameAuto && text) {
+          void this.autoName(aid, topic.id, text).catch(() => undefined);
+        }
+        return { topic: summary, item };
+      } catch (error) {
+        this.runtime.router.forgetSession(aid, { topicId: topic.id });
+        rmSync(assistantTopicDir(this.runtime.home, aid, topic.id), { recursive: true, force: true });
+        throw error;
       }
-      return { topic: summary, item };
     }
 
     const summary = this.summaryOf(topic);
@@ -237,7 +252,7 @@ export class AssistantTopicManager {
     } catch {
       return;
     }
-    if (!latest || latest.assistantId !== aid || !latest.nameAuto) return;
+    if (!latest || latest.assistantId !== aid || latest.id !== tid || !latest.nameAuto) return;
     const next: AssistantTopic = { ...latest, name: generated };
     this.store.saveAssistantTopic(next);
     this.publish(aid, tid);

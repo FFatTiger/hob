@@ -1231,6 +1231,7 @@ export function applyEvent(ev: HobEvent) {
       if (state.page === "settings" && state.section === "rules") void loadRules();
       break;
     case "page-live": {
+      if (ev.topicId) break;
       const first = !state.livePages[ev.callId];
       set((s) => ({
         livePages: { ...s.livePages, [ev.callId]: ev },

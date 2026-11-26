@@ -3,6 +3,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { Type } from "typebox";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { Place } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { assistantFilesDir } from "./config.ts";
 import { pageHtml } from "../../shared/page-shell.ts";
@@ -36,7 +37,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
 - 需要特别的版式可以加 <style>（颜色仍用上面的变量），可以用 <script> 做交互。最多 ${MAX} 字。`;
 
 // 只给助手：任务和助手之间用 report 的 Markdown 和文件沟通，给用户怎么展示由助手决定
-export function pageTool(runtime: HobRuntime, assistantId: string): ToolDefinition<any, any> {
+export function pageTool(runtime: HobRuntime, assistantId: string, place?: Place): ToolDefinition<any, any> {
   return {
     name: "show_page", label: "展示页面", description,
     parameters: Type.Object({ title: Type.String(), summary: Type.String(), html: Type.String({ maxLength: MAX }) }),
@@ -47,7 +48,7 @@ export function pageTool(runtime: HobRuntime, assistantId: string): ToolDefiniti
         const summary = String(params.summary ?? "").trim();
         if (!title || !summary) throw new Error("标题和摘要不能为空。");
         const path = await renderPage(runtime.home, assistantId, title, summary, String(params.html ?? ""));
-        await runtime.router.addItem(assistantId, { kind: "file", path, name: title, meta: summary });
+        await runtime.router.addItem(assistantId, { kind: "file", path, name: title, meta: summary }, place);
         return { content: [{ type: "text" as const, text: `页面已展示：${path}` }], details: { path }, terminate: true };
       } catch (error) {
         return { content: [{ type: "text" as const, text: error instanceof Error ? error.message : String(error) }], details: undefined, isError: true };

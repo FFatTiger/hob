@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fauxAssistantMessage, fauxToolCall } from "@earendil-works/pi-ai";
@@ -22,6 +22,7 @@ import {
   assistantTopicDir,
   assistantTopicFile,
   assistantTopicRouterPath,
+  assistantTopicsDir,
   assistantTopicStatePath,
   assistantTopicTodosPath,
   assistantTodosPath,
@@ -759,13 +760,119 @@ describe("助手多话题：归档助手", () => {
       // topics/ 完整迁入归档目录
       expect(existsSync(assistantTopicFile(hob.home, aid, topic.id))).toBe(false);
       const archiveRoot = archiveAssistantsDir(hob.home);
-      const archivedDirName = (await import("node:fs")).readdirSync(archiveRoot).find((name) => name.startsWith(`${aid}-`));
+      const archivedDirName = readdirSync(archiveRoot).find((name) => name.startsWith(`${aid}-`));
       expect(archivedDirName).toBeTruthy();
       const archivedTopicDir = join(archiveRoot, archivedDirName!, "topics", topic.id);
       expect(existsSync(join(archivedTopicDir, "topic.json"))).toBe(true);
       expect(existsSync(join(archivedTopicDir, "router.jsonl"))).toBe(true);
       expect(existsSync(join(archivedTopicDir, "state.json"))).toBe(true);
       expect(existsSync(join(archivedTopicDir, "todos.json"))).toBe(true);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("话题内 show_page 的 page-live 广播带 topicId，且 forget(aid) 会清理防抖定时器", async () => {
+    const hob = makeHob({}, { memory: "off", tokensPerSecond: 100 });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { post, get } = await loggedIn(hob.runtime, hob.home);
+
+      const pageLiveEvents: Extract<HobEvent, { type: "page-live" }>[] = [];
+      const off = hob.runtime.bus.subscribe((ev) => {
+        if (ev.type === "page-live") pageLiveEvents.push(ev);
+      });
+
+      hob.faux.setResponses([call("show_page", { title: "周报图", summary: "测试摘要", html: "<h2>概览</h2><p>内容</p>" })]);
+      const createdRes = await post(`/api/assistants/${aid}/topics`, { title: "页面话题", text: "画一页" });
+      expect(createdRes.status).toBe(201);
+      const createdTopic = ((await createdRes.json()) as { topic: AssistantTopicSummary }).topic;
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: createdTopic.id });
+
+      expect(pageLiveEvents.some((ev) => ev.state === "writing" && ev.topicId === createdTopic.id)).toBe(true);
+      expect(pageLiveEvents.some((ev) => ev.state === "done" && ev.topicId === createdTopic.id)).toBe(true);
+
+      // 页面文件卡片进话题，不进主对话
+      const topicItems = (await (await get(`/api/assistants/${aid}/topics/${createdTopic.id}/items`)).json()) as ItemsPage;
+      const mainItems = (await (await get(`/api/assistants/${aid}/items`)).json()) as ItemsPage;
+      expect(topicItems.items.some((item) => item.kind === "file" && item.name === "周报图")).toBe(true);
+      expect(mainItems.items.some((item) => item.kind === "file" && item.name === "周报图")).toBe(false);
+
+      // 归档/forget 时清理尚未触发的 page-live 防抖 timer，不再滞后广播
+      pageLiveEvents.length = 0;
+      const routerAny = hob.runtime.router as unknown as {
+        liveUpdate: (assistantId: string, callId: string, args: Record<string, unknown>, flush?: boolean, place?: { topicId?: string }) => void;
+      };
+      routerAny.liveUpdate(aid, "call-debounced", { title: "首次" }, true, { topicId: createdTopic.id });
+      routerAny.liveUpdate(aid, "call-debounced", { html: "<p>延迟增量</p>" }, false, { topicId: createdTopic.id });
+      pageLiveEvents.length = 0;
+
+      const archived = await archiveAssistant(hob.runtime, aid);
+      expect(archived.status).toBe(200);
+      await new Promise((resolve) => setTimeout(resolve, 260));
+      off();
+      expect(pageLiveEvents).toEqual([]);
+    } finally {
+      hob.close();
+    }
+  });
+});
+
+describe("助手多话题：异常回滚与路径别名校验", () => {
+  it("create() 带首条消息时若 router.send 失败则回滚：释放会话并删除目录，不残留幽灵话题", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { post } = await loggedIn(hob.runtime, hob.home);
+
+      vi.spyOn(hob.runtime.pi, "open").mockRejectedValueOnce(new Error("打开会话失败"));
+      const res = await post(`/api/assistants/${aid}/topics`, { title: "应回滚的话题", text: "第一条消息" });
+      expect(res.status).toBe(400);
+      expect(await res.json()).toEqual({ error: "打开会话失败" });
+
+      expect(hob.runtime.assistantTopics.list(aid)).toEqual([]);
+      const dir = assistantTopicsDir(hob.home, aid);
+      expect(existsSync(dir) ? readdirSync(dir) : []).toEqual([]);
+      const routers = (hob.runtime.router as unknown as { routers: Map<string, unknown> }).routers;
+      expect([...routers.keys()].some((key) => key.startsWith(`${aid}@`))).toBe(false);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("异常 tid（含 .. / \\ . 或目录名不等于 topic.id）统一返回 404，防止路径别名双开会话", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const { get, post, patch } = await loggedIn(hob.runtime, hob.home);
+      const created = (await (await post(`/api/assistants/${aid}/topics`, { title: "正常话题" })).json()) as {
+        topic: AssistantTopicSummary;
+      };
+      const tid = created.topic.id;
+
+      // 造一个目录名与 topic.id 不一致的别名目录
+      const aliasDir = assistantTopicDir(hob.home, aid, "tp-alias");
+      mkdirSync(aliasDir, { recursive: true });
+      writeFileSync(join(aliasDir, "topic.json"), readFileSync(assistantTopicFile(hob.home, aid, tid)));
+
+      for (const badTid of [`../${tid}`, `./${tid}`, `${tid}/..`, "a\\b", "..tp", "tp-alias"]) {
+        const encoded = encodeURIComponent(badTid);
+        expect((await get(`/api/assistants/${aid}/topics/${encoded}/items`)).status, `GET items ${badTid}`).toBe(404);
+        expect((await patch(`/api/assistants/${aid}/topics/${encoded}`, { title: "改名" })).status, `PATCH ${badTid}`).toBe(404);
+        expect((await post(`/api/assistants/${aid}/topics/${encoded}/close`)).status, `close ${badTid}`).toBe(404);
+        expect((await post(`/api/assistants/${aid}/topics/${encoded}/reopen`)).status, `reopen ${badTid}`).toBe(404);
+        expect((await post(`/api/assistants/${aid}/topics/${encoded}/messages`, { text: "hi" })).status, `messages ${badTid}`).toBe(404);
+        expect((await post(`/api/assistants/${aid}/topics/${encoded}/read`)).status, `read ${badTid}`).toBe(404);
+        expect((await post(`/api/assistants/${aid}/topics/${encoded}/stop`)).status, `stop ${badTid}`).toBe(404);
+      }
+      for (const badTid of [".", "..", `../${tid}`, `./${tid}`, `${tid}/..`, "a\\b", "..tp", "tp-alias"]) {
+        expect(() => hob.runtime.assistantTopics.requireTopic(aid, badTid)).toThrow("话题不存在");
+        await expect(hob.runtime.router.ensure(aid, { topicId: badTid })).rejects.toThrow("话题不存在");
+        await expect(hob.runtime.router.send(aid, { text: "hi" }, { topicId: badTid })).rejects.toThrow("话题不存在");
+      }
     } finally {
       hob.close();
     }

@@ -54,7 +54,7 @@ import { briefModelError } from "./text.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { reactionsList, type AssistantState } from "./store.ts";
 import { TOPIC_CLOSED } from "./groups.ts";
-import { TopicError } from "./assistant-topics.ts";
+import { assertAssistantTopic, TopicError } from "./assistant-topics.ts";
 import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./follow-up.ts";
 
 export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
@@ -406,7 +406,16 @@ export class RouterManager {
     if (!pages) this.livePages.set(key, pages = new Map());
     let live = pages.get(callId);
     if (!live) {
-      live = { page: { assistantId, callId, html: "", state: "writing" }, last: 0 };
+      live = {
+        page: {
+          assistantId,
+          ...(place?.topicId ? { topicId: place.topicId } : {}),
+          callId,
+          html: "",
+          state: "writing",
+        },
+        last: 0,
+      };
       pages.set(callId, live);
     }
     live.page = { ...live.page, ...(typeof args.title === "string" ? { title: args.title } : {}), ...(typeof args.summary === "string" ? { summary: args.summary } : {}), ...(typeof args.html === "string" ? { html: args.html } : {}) };
@@ -509,8 +518,7 @@ export class RouterManager {
     const assistant = this.assistant(assistantId);
     const normalized = placeOf(place);
     if (normalized.topicId) {
-      const topic = this.store.assistantTopic(assistantId, normalized.topicId);
-      if (!topic || topic.assistantId !== assistantId) throw new TopicError("话题不存在", 404);
+      assertAssistantTopic(this.store, assistantId, normalized.topicId);
     }
     const key = sessionKey(assistantId, normalized);
     let state = this.routers.get(key);
@@ -1136,13 +1144,22 @@ export class RouterManager {
     }
   }
 
+  private clearLivePagesForKey(key: string): void {
+    const pages = this.livePages.get(key);
+    if (!pages) return;
+    for (const live of pages.values()) {
+      if (live.timer) clearTimeout(live.timer);
+    }
+    this.livePages.delete(key);
+  }
+
   /** 助手没了（归档）：关掉它的会话（含它所在的群会话和话题会话），内存里也不留 —— 它的目录随后会被移进归档。 */
   forget(assistantId: string): void {
     for (const key of [...this.itemCache.keys()]) {
       if (key === assistantId || key.startsWith(`${assistantId}@`)) this.itemCache.delete(key);
     }
     for (const key of [...this.livePages.keys()]) {
-      if (key === assistantId || key.startsWith(`${assistantId}@`)) this.livePages.delete(key);
+      if (key === assistantId || key.startsWith(`${assistantId}@`)) this.clearLivePagesForKey(key);
     }
     for (const key of [...this.idleChecked.keys()]) {
       if (key === assistantId || key.startsWith(`${assistantId}@`)) this.idleChecked.delete(key);
@@ -1158,9 +1175,13 @@ export class RouterManager {
     }
   }
 
-  /** 关掉一个会话（助手被移出群时用）。 */
+  /** 关掉一个会话（助手被移出群或回滚新建话题时用）。 */
   forgetSession(assistantId: string, place?: Place): void {
     const key = sessionKey(assistantId, place);
+    this.itemCache.delete(key);
+    this.idleChecked.delete(key);
+    this.clearLivePagesForKey(key);
+    this.suggestions.delete(this.suggestionKey(assistantId, place));
     const state = this.routers.get(key);
     if (!state) return;
     this.close(state);
@@ -1776,8 +1797,7 @@ export class RouterManager {
     const target = placeOf(place);
     if (target.topicId) {
       this.assistant(assistantId);
-      const topic = this.store.assistantTopic(assistantId, target.topicId);
-      if (!topic || topic.assistantId !== assistantId) throw new TopicError("话题不存在", 404);
+      const topic = assertAssistantTopic(this.store, assistantId, target.topicId);
       if (topic.closedAt) throw new TopicError(TOPIC_CLOSED, 400);
     }
     this.clearSuggestions(assistantId, target);

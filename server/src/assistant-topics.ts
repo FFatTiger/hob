@@ -1,16 +1,17 @@
 import { rmSync } from "node:fs";
-import type { Assistant, AssistantTopic, AssistantTopicSummary, Item, Place } from "../../shared/types.ts";
+import type { Assistant, AssistantTopic, AssistantTopicSummary, Item, ModelPick, Place, TopicConfigView } from "../../shared/types.ts";
 import { t } from "../../shared/i18n.ts";
 import { plainText } from "../../shared/plain-text.ts";
 import { assistantTopicDir, assistantTopicTodosPath } from "./config.ts";
 import { newId } from "./ids.ts";
 import { isValidTopicId } from "./place.ts";
-import { followUpPick } from "./models.ts";
+import { allowedRefs, assistantTopicModelPick, checkAssistantModels, followUpPick } from "./models.ts";
 import type { HobRuntime } from "./runtime.ts";
 import type { Store } from "./store.ts";
 import { clearTodos, readTodos } from "./todos.ts";
+import { hiddenRules as topicHiddenRules, patchOverrides } from "./topic-config.ts";
 import { textOfContent } from "./transcript.ts";
-import { normalizeWorkspaceCwdInput, topicCwdLockedByAssistant, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant, validateWorkspaceCwd } from "./workspace.ts";
 
 export const MAX_ASSISTANT_TOPIC_TITLE = 40;
 const AUTO_FALLBACK_TITLE_CHARS = 20;
@@ -295,5 +296,74 @@ export class AssistantTopicManager {
     const summary = this.summaryOf(rest);
     this.bus.emit({ type: "assistant_topic", topic: summary });
     return summary;
+  }
+
+  async configView(aid: string, tid: string): Promise<TopicConfigView> {
+    const assistant = this.requireAssistant(aid);
+    const topic = this.requireTopic(aid, tid);
+    await this.runtime.models.get();
+    const settings = this.runtime.settings.settings.models;
+    const ws = resolveWorkspaceCwd(this.store, this.runtime.home, aid, { topicId: tid });
+    const cwd = ws.bound && ws.source !== "default" ? { path: ws.bound, source: ws.source } : undefined;
+    return {
+      rules: this.store.topicRules(aid, tid),
+      hiddenRules: topicHiddenRules(this.store.rules(aid), this.store.assistantTopicRuleOverrides(aid, tid)),
+      models: {
+        conversation: assistantTopicModelPick(assistant, topic, this.runtime.models, settings, "conversation"),
+        work: assistantTopicModelPick(assistant, topic, this.runtime.models, settings, "work"),
+      },
+      ...(cwd ? { cwd } : {}),
+    };
+  }
+
+  async updateConfig(aid: string, tid: string, body: unknown): Promise<TopicConfigView> {
+    const assistant = this.requireAssistant(aid);
+    this.requireTopic(aid, tid);
+    if (!body || typeof body !== "object" || Array.isArray(body)) {
+      throw new TopicError("模型设置无效", 400);
+    }
+    const input = body as Record<string, unknown>;
+    if (input.cwd !== undefined) throw new TopicError(CWD_IMMUTABLE, 400);
+    if (input.models !== undefined) {
+      if (!input.models || typeof input.models !== "object" || Array.isArray(input.models)) {
+        throw new TopicError("模型设置无效", 400);
+      }
+      const modelsInput = input.models as Record<string, unknown>;
+      for (const key of Object.keys(modelsInput)) {
+        if (key !== "conversation" && key !== "work") throw new TopicError("模型设置无效", 400);
+      }
+      await this.runtime.models.get();
+      const roster = this.runtime.settings.settings.models.roster;
+      const allowed = allowedRefs(roster, assistant);
+      const parsed: { conversation?: ModelPick | null; work?: ModelPick | null } = {};
+      for (const key of ["conversation", "work"] as const) {
+        if (!(key in modelsInput)) continue;
+        const val = modelsInput[key];
+        if (val === null) {
+          parsed[key] = null;
+          continue;
+        }
+        if (!val || typeof val !== "object" || Array.isArray(val)) {
+          throw new TopicError("模型设置无效", 400);
+        }
+        let checked: ModelPick | undefined;
+        try {
+          checked = checkAssistantModels({ models: { [key]: val as ModelPick } }, roster, this.runtime.models).models?.[key];
+        } catch (error) {
+          throw new TopicError(error instanceof Error ? error.message : String(error), 400);
+        }
+        if (!checked) throw new TopicError("模型设置无效", 400);
+        if (key === "work" && !allowed.includes(checked.ref)) {
+          throw new TopicError(`模型 ${checked.ref} 不在可分派的模型列表中。`, 400);
+        }
+        parsed[key] = checked;
+      }
+      if ("conversation" in parsed || "work" in parsed) {
+        patchOverrides(this.store.assistantTopicConfigHost(aid, tid), { models: parsed });
+        this.runtime.router.forgetSession(aid, { topicId: tid });
+        this.publish(aid, tid);
+      }
+    }
+    return this.configView(aid, tid);
   }
 }

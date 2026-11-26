@@ -30,7 +30,7 @@ import { newId } from "./ids.ts";
 import { placeFields, placeOf, samePlace } from "./place.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { generateImage, imageConfigured } from "./image.ts";
-import { assistantInGroup, defaultWorkRef, jobModel, noteOf, thinkingLevelsOf, usableRefs } from "./models.ts";
+import { assistantForPlace, defaultWorkRef, jobModel, noteOf, thinkingLevelsOf, usableRefs } from "./models.ts";
 import { overviewTool } from "./overview.ts";
 import { pageTool } from "./pages.ts";
 import { pushApproval } from "./push.ts";
@@ -227,6 +227,8 @@ export function buildRouterTools(
   const currentGroup = groupId ? store.group(groupId) : undefined;
   const parentGroup = currentGroup?.parentId ? store.group(currentGroup.parentId) : currentGroup;
   const isGroupTopic = Boolean(currentGroup?.parentId);
+  const topicId = !groupId ? place?.topicId : undefined;
+  const isAssistantTopic = Boolean(topicId);
   const groupHasBoundCwd = Boolean(parentGroup?.cwd);
   const assistant = () => {
     const found = store.assistant(assistantId);
@@ -331,7 +333,7 @@ export function buildRouterTools(
 
   // 能派的模型：写进 start_job 的参数说明，助手知道有哪些可选、哪个是默认
   const modelSettings = runtime.settings.settings.models;
-  const modelAssistant = assistantInGroup(assistant(), currentGroup, runtime.models, modelSettings, isGroupTopic ? parentGroup : undefined);
+  const modelAssistant = assistantForPlace(store, assistant(), place, runtime.models, modelSettings);
   const usable = usableRefs(modelSettings, modelAssistant, runtime.models);
   const defaultModel = defaultWorkRef(modelSettings, modelAssistant, runtime.models);
   const modelList = usable.map((ref) => {
@@ -373,12 +375,28 @@ export function buildRouterTools(
     const desktop = runtime.desktop.view();
     return desktop.enabled && Boolean(desktop.url && desktop.tokenConfigured) && runtime.plugins.hasPasswordGenerator(assistantId);
   })();
-  const scopeSchema = Type.Optional(Type.Literal("group", { description: "可选。用户说这条规则不只是这件事、而是整个群以后都要这样时填，写到上级；不填只写这个话题。" }));
+  const topicScope = isGroupTopic ? ("group" as const) : isAssistantTopic ? ("assistant" as const) : undefined;
+  const scopeSchema = topicScope
+    ? Type.Optional(
+        Type.Literal(topicScope, {
+          description:
+            topicScope === "group"
+              ? "可选。用户说这条规则不只是这件事、而是整个群以后都要这样时填，写到上级；不填只写这个话题。"
+              : "可选。用户说这条规则不只是这件事、而是你以后都要这样时填，写到上级；不填只写这个话题。",
+        }),
+      )
+    : undefined;
   const badScope = (scope: unknown) =>
-    isGroupTopic && scope !== undefined && scope !== "group"
-      ? "scope 只能填 group（写到本群规则）或不填（只写这个话题）。"
+    topicScope && scope !== undefined && scope !== topicScope
+      ? topicScope === "group"
+        ? "scope 只能填 group（写到本群规则）或不填（只写这个话题）。"
+        : "scope 只能填 assistant（写到你的规则）或不填（只写这个话题）。"
       : undefined;
   const targetGroupOf = (scope: unknown) => (isGroupTopic && scope === "group" ? currentGroup!.parentId! : groupId);
+  const topicConfigHost = () =>
+    isGroupTopic ? store.groupTopicConfigHost(groupId!) : store.assistantTopicConfigHost(assistantId, topicId!);
+  const topicCurrentRules = () =>
+    isGroupTopic ? store.groupRules(groupId!) : store.topicRules(assistantId, topicId!);
 
   const tools: Tool[] = [
     {
@@ -541,6 +559,7 @@ export function buildRouterTools(
           const job = await jobs.start(assignee.id, {
             title: String(params.title),
             ...(groupId ? { groupId } : {}),
+            ...(topicId ? { topicId } : {}),
             ...(assignee.id === assistantId ? {} : { startedBy: assistantId }),
             ...(params.expect_minutes != null ? { expectMinutes: params.expect_minutes } : {}),
             instruction: note,
@@ -788,11 +807,11 @@ export function buildRouterTools(
     {
       name: "set_rule",
       label: "记录规则",
-      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里默认只在这个话题生效；填 scope 为 group 才写到整个群。" : "在群里记的，只在这个群生效。") : ""}`,
+      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里默认只在这个话题生效；填 scope 为 group 才写到整个群。" : "在群里记的，只在这个群生效。") : isAssistantTopic ? "在话题里默认只在这个话题生效；填 scope 为 assistant 才写到你的规则里。" : ""}`,
       parameters: Type.Object({
         text: Type.String({ description: "规则内容，如「发布公众号」" }),
         mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
-        ...(isGroupTopic ? { scope: scopeSchema } : {}),
+        ...(scopeSchema ? { scope: scopeSchema } : {}),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
       execute: async (_id, params: any) => {
@@ -803,10 +822,10 @@ export function buildRouterTools(
         const text = String(params.text).trim();
         if (!text) return fail("规则内容为空。");
         const mode = params.mode === "allow" ? "allow" : "ask";
-        if (isGroupTopic && params.scope !== "group") {
-          const existing = store.groupRules(groupId!).find((rule) => rule.text === text);
+        if (topicScope && params.scope !== topicScope) {
+          const existing = topicCurrentRules().find((rule) => rule.text === text);
           if (existing?.mode === mode) return ok("这条规则已经记着了，没有改动。");
-          setTopicRule(store.groupTopicConfigHost(groupId!), {
+          setTopicRule(topicConfigHost(), {
             ...(existing ? { id: existing.id } : {}),
             text,
             mode,
@@ -831,7 +850,13 @@ export function buildRouterTools(
         else store.saveRules(target.id, rules);
         await note("rule", t("已记入{owner}的规则 · {rule}", { owner: targetGroupId ? t("本群") : nameOf(target.id), rule: text }));
         profileChanged(target.id);
-        return ok(isGroupTopic ? "已加到本群的规则，没有单独改过这一条的话题都会用。" : "已记录规则。");
+        return ok(
+          isGroupTopic
+            ? "已加到本群的规则，没有单独改过这一条的话题都会用。"
+            : isAssistantTopic
+              ? "已加到你的规则，没有单独改过这一条的话题都会用。"
+              : "已记录规则。",
+        );
       },
     },
     {
@@ -840,7 +865,7 @@ export function buildRouterTools(
       description: "删除一条规则。",
       parameters: Type.Object({
         ruleId: Type.String({ description: "规则 id" }),
-        ...(isGroupTopic ? { scope: scopeSchema } : {}),
+        ...(scopeSchema ? { scope: scopeSchema } : {}),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
       execute: async (_id, params: any) => {
@@ -848,9 +873,9 @@ export function buildRouterTools(
         if ("error" in target) return fail(target.error);
         const scopeErr = badScope(params.scope);
         if (scopeErr) return fail(scopeErr);
-        if (isGroupTopic && params.scope !== "group") {
+        if (topicScope && params.scope !== topicScope) {
           try {
-            deleteTopicRule(store.groupTopicConfigHost(groupId!), String(params.ruleId));
+            deleteTopicRule(topicConfigHost(), String(params.ruleId));
           } catch {
             return fail("没有这条规则。");
           }
@@ -866,7 +891,7 @@ export function buildRouterTools(
         else store.saveRules(target.id, kept);
         await note("rule", t("删除了{owner}的一条规则", { owner: targetGroupId ? t("本群") : nameOf(target.id) }));
         profileChanged(target.id);
-        return ok(isGroupTopic ? "已从本群的规则里删除。" : "已删除。");
+        return ok(isGroupTopic ? "已从本群的规则里删除。" : isAssistantTopic ? "已从你的规则里删除。" : "已删除。");
       },
     },
     {

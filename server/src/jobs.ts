@@ -29,7 +29,7 @@ import { imageConfigured } from "./image.ts";
 import { boundKnowledge, findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { pluginCommandToolsForAssistant, pluginToolDisplayNames, pluginToolsForAssistant } from "./plugin-host.ts";
 import { engineDir } from "./config.ts";
-import { jobModel, assistantInGroup } from "./models.ts";
+import { jobModel, assistantForPlace } from "./models.ts";
 import { duration, jobProcessLines, reviewedSkillsText } from "./job-view.ts";
 import { overviewTool } from "./overview.ts";
 import { buildWorkerPrompt, type Abilities, type PromptSettings } from "./prompt.ts";
@@ -119,6 +119,8 @@ export interface StartJobInput {
   delegationId?: string;
   /** 在群里开的任务：卡片进这个群的时间线，结果回到这个成员在群里的会话 */
   groupId?: string;
+  /** 在助手话题里开的任务：卡片进话题时间线，结果回到该话题 */
+  topicId?: string;
   /** 群里派给别的成员时，派给它的那个助手（不填就是执行人自己派的） */
   startedBy?: string;
   /** 这些任务都做完了才开始（start_job 的 after） */
@@ -333,8 +335,9 @@ export class JobManager {
         throw new Error(`前置任务「${before.title}」（${id}）${endWord(before.status)}，无法等待它完成。`);
       }
     }
+    const place = placeOf(input);
     const explicitCwd = normalizeWorkspaceCwdInput(input.cwd);
-    const boundCwd = resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, input.groupId ? { groupId: input.groupId } : undefined).bound;
+    const boundCwd = resolveWorkspaceCwd(this.store, this.runtime.home, assistantId, place).bound;
     let validatedCwd: string | undefined;
     if (boundCwd) {
       validatedCwd = validateJobCwd(this.runtime.home, boundCwd);
@@ -354,11 +357,9 @@ export class JobManager {
       input.model || input.thinking
         ? { ...(input.model ? { model: input.model } : {}), ...(input.thinking ? { thinking: input.thinking } : {}) }
         : undefined;
-    const group = input.groupId ? this.store.group(input.groupId) : undefined;
-    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
     const picked = jobModel({
       settings: this.runtime.settings.settings.models,
-      assistant: assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent),
+      assistant: assistantForPlace(this.store, assistant, place, this.runtime.models, this.runtime.settings.settings.models),
       catalog: this.runtime.models,
       ...(requested ? { requested } : {}),
       ...(hasImageFiles(input.files) ? { hasImages: true } : {}),
@@ -394,6 +395,7 @@ export class JobManager {
       ...(after.length ? { after } : {}),
       ...(input.delegationId ? { delegationId: input.delegationId } : {}),
       ...(input.groupId ? { groupId: input.groupId } : {}),
+      ...(!input.groupId && input.topicId ? { topicId: input.topicId } : {}),
       ...(input.startedBy ? { startedBy: input.startedBy } : {}),
     };
     this.store.saveJob(job);
@@ -415,6 +417,7 @@ export class JobManager {
     const assistant = this.store.assistant(job.assistantId);
     if (assistant) this.bus.emit({ type: "assistant", assistant: this.runtime.router.summary(assistant) });
     if (job.groupId) this.runtime.groups.publish(job.groupId);
+    if (job.topicId) this.runtime.assistantTopics?.publish(job.assistantId, job.topicId);
   }
 
   /** 事件送到哪个助手的会话：群里的任务回它的群会话，其余回单聊。派给别的成员做的，回派任务的助手。 */
@@ -1203,6 +1206,7 @@ export class JobManager {
       source: "job",
       jobId,
       ...(job.groupId ? { groupId: job.groupId } : {}),
+      ...(job.topicId ? { topicId: job.topicId } : {}),
       ...(input.ruleText ? { ruleText: input.ruleText } : {}),
       ...(input.login ? { login: input.login } : {}),
       createdAt: new Date().toISOString(),

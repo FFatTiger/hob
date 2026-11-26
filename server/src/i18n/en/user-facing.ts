@@ -15,6 +15,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "插件源索引无效": "Invalid plugin source index.",
   "已存技能「{title}」第 {version} 版": "Saved skill “{title}”, version {version}",
   "模型 {ref} 不在已配置的服务商里。": "Model {ref} is not available from a configured provider.",
+  "模型 {ref} 不在可分派的模型列表中。": "Model {ref} isn't in this assistant's allowed models.",
   "定时任务不存在：{id}": "Schedule not found: {id}.",
   "定时处理失败：{items}": "Failed to create schedules: {items}",
   "我是{assistant}，负责{duty}。": "I am {assistant}, responsible for {duty}.",

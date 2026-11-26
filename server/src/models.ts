@@ -2,16 +2,19 @@
 import type { Model } from "@earendil-works/pi-ai";
 import type {
   Assistant,
+  AssistantTopic,
   Group,
   GroupMemberModel,
   InheritedGroupModel,
   ModelInfo,
   ModelPick,
   ModelSettings,
+  Place,
   RosterEntry,
   SettingsPatch,
   ThinkingLevel,
   ThinkingLevelMapSetting,
+  TopicConfigView,
   TopicOverrides,
 } from "../../shared/types.ts";
 import { contextText, guessModelScores, scoreSummary } from "../../shared/model-note.ts";
@@ -248,6 +251,83 @@ export function assistantInGroup(
   const conversation = groupModelPick(assistant, base, catalog, settings, "conversation", overrides).pick;
   const work = groupModelPick(assistant, base, catalog, settings, "work", overrides).pick;
   return { ...assistant, models: { ...assistant.models, conversation, work } };
+}
+
+/** 助手话题的模型解析：topic → assistant → global 逐键叠加，返回生效值与继承来源。 */
+export function assistantTopicModelPick(
+  assistant: Assistant,
+  topic: AssistantTopic | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+  key: "conversation" | "work",
+): TopicConfigView["models"]["conversation"] {
+  type Candidate = readonly ["topic" | "assistant" | "global", ModelPick | undefined];
+  const candidates: readonly Candidate[] = [
+    ...(topic ? ([["topic", topic.overrides?.models?.[key]]] as const) : []),
+    ["assistant", assistant.models?.[key]],
+    ["global", settings[key]],
+  ];
+  const choose = (start: number): { source: "topic" | "assistant" | "global"; pick: ModelPick } => {
+    const found = candidates
+      .slice(start)
+      .find(
+        ([, pick]) =>
+          pick &&
+          catalog.find(pick.ref) &&
+          (key !== "work" || allowedRefs(settings.roster, assistant).includes(pick.ref)),
+      );
+    const source = found?.[0] ?? "global";
+    let pick = found?.[1] ?? settings[key];
+    if (key === "work") {
+      try {
+        const effective = { ...assistant, models: { ...assistant.models, work: pick } };
+        pick = jobModel({ settings, assistant: effective, catalog }).model;
+      } catch { /* 没有可用模型时保留设置里的值供界面显示 */ }
+    } else {
+      const info = catalog.find(pick.ref);
+      if (info) pick = { ref: pick.ref, thinking: fitThinking(thinkingLevelsOf(info), pick.thinking) };
+    }
+    return { source, pick };
+  };
+  const chosen = choose(0);
+  const inherited = choose(topic ? 1 : 0);
+  return {
+    ...chosen,
+    inherited: { source: inherited.source, pick: inherited.pick },
+  };
+}
+
+/** 本助手话题覆盖有效时只影响这次选模，不改助手档案。 */
+export function assistantInTopic(
+  assistant: Assistant,
+  topic: AssistantTopic | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+): Assistant {
+  if (!topic) return assistant;
+  const conversation = assistantTopicModelPick(assistant, topic, catalog, settings, "conversation").pick;
+  const work = assistantTopicModelPick(assistant, topic, catalog, settings, "work").pick;
+  return { ...assistant, models: { ...assistant.models, conversation, work } };
+}
+
+/** 按会话地址解析生效的模型视图（群/群话题、助手话题、主对话/单聊）。 */
+export function assistantForPlace(
+  store: { group(id: string): Group | undefined; assistantTopic(aid: string, tid: string): AssistantTopic | undefined },
+  assistant: Assistant,
+  place: Place | undefined,
+  catalog: ModelCatalog,
+  settings: ModelSettings,
+): Assistant {
+  if (place?.groupId) {
+    const group = store.group(place.groupId);
+    const parent = group?.parentId ? store.group(group.parentId) : undefined;
+    return assistantInGroup(assistant, group, catalog, settings, parent);
+  }
+  if (place?.topicId) {
+    const topic = store.assistantTopic(assistant.id, place.topicId);
+    return assistantInTopic(assistant, topic, catalog, settings);
+  }
+  return assistant;
 }
 
 /** 这个助手能派的模型 ref：缺省名单全部。 */

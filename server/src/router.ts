@@ -32,7 +32,7 @@ import type {
 } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { refreshSystemPrompt } from "./pi.ts";
-import { conversationPick, assistantInGroup, defaultWorkRef, followUpPick, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
+import { conversationPick, assistantForPlace, defaultWorkRef, followUpPick, jobModel, nameOf, noteOf, thinkingForPick, thinkingLevelsOf, fitThinking, usableRefs, NO_MODEL_NOTE, NoModelError } from "./models.ts";
 import { scriptToolList } from "./script-tools.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 import { buildRouterTools } from "./router-tools.ts";
@@ -595,9 +595,7 @@ export class RouterManager {
     // 提示词里要写模型的显示名和定位，所以先把注册表拉一遍
     await this.runtime.models.get();
     const place = state.place;
-    const group = place.groupId ? this.store.group(place.groupId) : undefined;
-    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
-    const effectiveAssistant = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
+    const effectiveAssistant = assistantForPlace(this.store, assistant, place, this.runtime.models, this.runtime.settings.settings.models);
     const pick = conversationPick(this.runtime.settings.settings.models, effectiveAssistant);
     state.knowledgeNames = (await boundKnowledge(this.runtime, assistant.id)).map((collection) => collection.name);
     const desktop = this.runtime.desktop.view();
@@ -688,6 +686,7 @@ export class RouterManager {
           abilities,
           knowledgeNames: state.knowledgeNames,
           ...(group ? { group } : {}),
+          ...(!group && place.topicId ? { topicId: place.topicId } : {}),
           ...(workspacePrompt ? { workspace: workspacePrompt } : {}),
           ...(workspaceWarning ? { workspaceWarning } : {}),
         });
@@ -755,9 +754,7 @@ export class RouterManager {
   private promptModels(assistantId: string, place?: Place): PromptModel[] {
     const found = this.store.assistant(assistantId);
     if (!found) return [];
-    const group = place?.groupId ? this.store.group(place.groupId) : undefined;
-    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
-    const assistant = assistantInGroup(found, group, this.runtime.models, this.runtime.settings.settings.models, parent);
+    const assistant = assistantForPlace(this.store, found, place, this.runtime.models, this.runtime.settings.settings.models);
     const settings = this.runtime.settings.settings.models;
     const catalog = this.runtime.models;
     const def = defaultWorkRef(settings, assistant, catalog);
@@ -777,9 +774,8 @@ export class RouterManager {
   /** 换了对话模型或思考档：下一轮生效，不重建会话（上下文保留）。 */
   private async applyConversationModel(state: RouterState): Promise<void> {
     if (!state.session) return;
-    const group = state.place.groupId ? this.store.group(state.place.groupId) : undefined;
-    const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
-    const assistant = assistantInGroup(this.assistant(state.assistantId), group, this.runtime.models, this.runtime.settings.settings.models, parent);
+    await this.runtime.models.get();
+    const assistant = assistantForPlace(this.store, this.assistant(state.assistantId), state.place, this.runtime.models, this.runtime.settings.settings.models);
     const pick = conversationPick(this.runtime.settings.settings.models, assistant);
     const model = await this.runtime.pi.model(pick.ref);
     // 用拿到的模型本身算档：换服务商后名单缓存是空的，按缓存查会把思考档收成 off
@@ -1755,9 +1751,11 @@ export class RouterManager {
    * 现在能不能开对话会话：没有服务商 / 没有勾模型时返回一句人话，
    * 让 send 重出一条说明而不是报错崩掉。
    */
-  private async modelGap(assistantId: string): Promise<string | undefined> {
-    const assistant = this.store.assistant(assistantId);
-    if (!assistant) return NO_MODEL_NOTE;
+  private async modelGap(assistantId: string, place?: Place): Promise<string | undefined> {
+    const found = this.store.assistant(assistantId);
+    if (!found) return NO_MODEL_NOTE;
+    await this.runtime.models.get();
+    const assistant = assistantForPlace(this.store, found, place, this.runtime.models, this.runtime.settings.settings.models);
     let ref: string;
     try {
       ref = conversationPick(this.runtime.settings.settings.models, assistant).ref;
@@ -1765,7 +1763,6 @@ export class RouterManager {
       if (error instanceof NoModelError) return NO_MODEL_NOTE;
       throw error;
     }
-    await this.runtime.models.get();
     return this.runtime.models.find(ref) ? undefined : NO_MODEL_NOTE;
   }
 
@@ -1809,7 +1806,7 @@ export class RouterManager {
       this.store.saveApproval(expired);
       this.bus.emit({ type: "approval", approval: expired });
     }
-    const gap = await this.modelGap(assistantId);
+    const gap = await this.modelGap(assistantId, target);
     if (gap) return this.sendWithoutModel(assistantId, body, gap, target);
     const state = await this.ensure(assistantId, target);
     const data = {
@@ -2190,9 +2187,7 @@ export class RouterManager {
     if (!assistant) return;
     try {
       await this.runtime.models.get();
-      const group = place?.groupId ? this.store.group(place.groupId) : undefined;
-      const parent = group?.parentId ? this.store.group(group.parentId) : undefined;
-      const effective = assistantInGroup(assistant, group, this.runtime.models, this.runtime.settings.settings.models, parent);
+      const effective = assistantForPlace(this.store, assistant, place, this.runtime.models, this.runtime.settings.settings.models);
       const pick = followUpPick(this.runtime.settings.settings.models, effective, this.runtime.models);
       if (!pick) return;
       const model = await this.runtime.pi.model(pick.ref);

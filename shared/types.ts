@@ -741,6 +741,23 @@ export interface GroupProfile {
   memberModels: Record<string, Record<"conversation" | "work", GroupMemberModel>>;
 }
 
+/** 话题的配置视图：两种话题同形，群话题多 memberModels（成员只有任务模型可改，对话模型只读显示）和 replyMode。 */
+export interface TopicConfigView {
+  rules: EffectiveRule[];
+  hiddenRules: Rule[];
+  models: Record<
+    "conversation" | "work",
+    {
+      source: "topic" | "group" | "assistant" | "global";
+      pick: ModelPick;
+      inherited: { source: string; pick: ModelPick };
+    }
+  >;
+  memberModels?: GroupProfile["memberModels"];
+  replyMode?: { value: GroupReplyMode; source: "topic" | "group" };
+  cwd?: { path: string; source: "group" | "assistant" | "topic" };
+}
+
 /** 左栏里的一行群，或者群里的一个话题。 */
 export interface GroupSummary extends Group {
   last?: { at: Iso; speaker: string | "user"; text: string }; // 左栏预览「服务器：…」

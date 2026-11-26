@@ -28,6 +28,8 @@ export interface PromptSettings {
   credentialsEnabled?: boolean;
   /** 在哪个群里说话：提示词把「一对一」那段换成群里的规矩 */
   group?: Group;
+  /** 在哪个助手话题里说话：规则一节列出合成后的话题规则 */
+  topicId?: string;
   /** 绑定的外部工作目录信息（未绑定时不填，提示词零改动） */
   workspace?: { cwd: string; source: "topic" | "group" | "assistant"; ownDir: string };
   /** 绑定的外部工作目录运行时不存在或不可访问时的告警路径 */
@@ -137,9 +139,9 @@ const SCRIPT_TOOLS_LINE = "在 Hob 里运行的 node 脚本可以用全局对象
 export function buildSystemPrompt(store: Store, assistantId: string, settings: PromptSettings): string {
   const assistant = store.assistant(assistantId);
   if (!assistant) throw new Error(`助手不存在：${assistantId}`);
-  const rules = store.rules(assistantId);
-  const globalRules = store.globalRules();
   const group = settings.group;
+  const rules = !group && settings.topicId ? store.topicRules(assistantId, settings.topicId) : store.rules(assistantId);
+  const globalRules = store.globalRules();
   const routines = store.routines().filter((routine) => {
     if (!group) return routine.assistantId === assistantId && !routine.groupId;
     return store.groupMatches(group.id, routine.groupId);
@@ -292,8 +294,10 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
   const assistant = store.assistant(job.assistantId);
   const name = assistant?.name ?? job.assistantId;
   const globalRules = store.globalRules();
-  const groupRules = job.groupId && store.group(job.groupId) ? store.groupRules(job.groupId) : [];
-  const ownRules = store.rules(job.assistantId);
+  const hasGroup = Boolean(job.groupId && store.group(job.groupId));
+  const hasTopic = Boolean(!hasGroup && job.topicId && store.assistantTopic(job.assistantId, job.topicId));
+  const groupRules = hasGroup ? store.groupRules(job.groupId!) : [];
+  const ownRules = hasTopic ? store.topicRules(job.assistantId, job.topicId!) : store.rules(job.assistantId);
   const askFirst = [...globalRules, ...groupRules, ...ownRules].filter((rule) => rule.mode === "ask");
   // 指定了 cwd 的任务另有一个自己的目录：放临时文件和隔离着的副本，命令默认在指定的目录里跑
   const ownDir = job.cwd ? store.workDir(job.id, job.assistantId) : undefined;
@@ -320,7 +324,7 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
     if (cannot.length) lines.push(`不能做：${cannot.join("、")}。`);
   }
   lines.push(...aboutSection(settings.aboutYou));
-  const always = [...globalRules, ...groupRules].filter((rule) => rule.mode === "allow");
+  const always = [...globalRules, ...groupRules, ...(hasTopic ? ownRules : [])].filter((rule) => rule.mode === "allow");
   if (always.length) lines.push("", "## 用户定的规则", ...always.map((rule) => `- ${rule.text}`));
   if (askFirst.length) lines.push("", "## 这些事执行前先用 ask_user 确认", ...askFirst.map((rule) => `- ${rule.text}`));
   const memory = memoryPromptLines(settings.memory);

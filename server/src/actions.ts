@@ -592,9 +592,19 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
     const assistant = store.assistant(approval.assistantId);
     const ruleText = approval.ruleText?.trim() || option.label;
     const group = approval.groupId ? store.group(approval.groupId) : undefined;
+    const assistantTopic = !group && approval.topicId
+      ? store.assistantTopic(approval.assistantId, approval.topicId)
+      : undefined;
     if (group?.parentId) {
       const existing = store.groupRules(group.id).find((rule) => rule.text === ruleText);
       setTopicRule(store.groupTopicConfigHost(group.id), {
+        ...(existing ? { id: existing.id } : {}),
+        text: ruleText,
+        mode: "allow",
+      });
+    } else if (assistantTopic) {
+      const existing = store.topicRules(approval.assistantId, assistantTopic.id).find((rule) => rule.text === ruleText);
+      setTopicRule(store.assistantTopicConfigHost(approval.assistantId, assistantTopic.id), {
         ...(existing ? { id: existing.id } : {}),
         text: ruleText,
         mode: "allow",
@@ -614,7 +624,10 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
     await router.addItem(approval.assistantId, {
       kind: "note",
       icon: "rule",
-      text: t("已记入{owner}的规则 · {rule}", { owner: group ? (group.parentId ? t("这个话题") : "本群") : assistant?.name ?? approval.assistantId, rule: ruleText }),
+      text: t("已记入{owner}的规则 · {rule}", {
+        owner: group ? (group.parentId ? t("这个话题") : "本群") : assistantTopic ? t("这个话题") : (assistant?.name ?? approval.assistantId),
+        rule: ruleText,
+      }),
     }, placeOf(approval));
     bus.emit({ type: "profile", assistantId: approval.assistantId });
   }

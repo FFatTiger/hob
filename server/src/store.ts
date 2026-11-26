@@ -7,6 +7,7 @@ import {
   assistantJobsDir,
   assistantTopicFile,
   assistantTopicRouterPath,
+  assistantTopicRuleOverridesPath,
   assistantTopicsDir,
   assistantTopicStatePath,
   groupDir,
@@ -341,8 +342,7 @@ export class Store {
     return readJson<Rule[]>(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), []);
   }
 
-  groupRuleOverrides(id: string): RuleOverrides {
-    const path = join(groupDir(this.home, id), "rule-overrides.json");
+  private parseRuleOverrides(path: string): RuleOverrides {
     const raw = readJson<unknown>(path, null);
     if (raw === null) return emptyRuleOverrides();
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
@@ -360,6 +360,59 @@ export class Store {
           ? (obj.hidden as RuleOverrides["hidden"])
           : {},
     };
+  }
+
+  assistantTopicRuleOverrides(aid: string, tid: string): RuleOverrides {
+    if (!isValidTopicId(tid)) throw new Error("话题不存在");
+    return this.parseRuleOverrides(assistantTopicRuleOverridesPath(this.home, aid, tid));
+  }
+
+  saveAssistantTopicRuleOverrides(aid: string, tid: string, overrides: RuleOverrides): void {
+    const topic = this.assistantTopic(aid, tid);
+    if (!topic || topic.assistantId !== aid || topic.id !== tid) throw new Error("话题不存在");
+    writeJsonAtomic(assistantTopicRuleOverridesPath(this.home, aid, tid), overrides);
+  }
+
+  assistantTopicConfigHost(aid: string, tid: string): TopicConfigHost {
+    const topic = this.assistantTopic(aid, tid);
+    if (!topic || topic.assistantId !== aid || topic.id !== tid) throw new Error("话题不存在");
+    return {
+      parentRules: () => this.rules(aid),
+      readOverrides: () => {
+        const cur = this.assistantTopic(aid, tid);
+        if (!cur || cur.assistantId !== aid || cur.id !== tid) throw new Error("话题不存在");
+        return cur.overrides ?? {};
+      },
+      writeOverrides: (next) => {
+        const cur = this.assistantTopic(aid, tid);
+        if (!cur || cur.assistantId !== aid || cur.id !== tid) throw new Error("话题不存在");
+        const { overrides: _old, ...rest } = cur;
+        const cleanOverrides: TopicOverrides = {};
+        if (next.models && (next.models.conversation || next.models.work)) {
+          cleanOverrides.models = {
+            ...(next.models.conversation ? { conversation: next.models.conversation } : {}),
+            ...(next.models.work ? { work: next.models.work } : {}),
+          };
+        }
+        const updated: AssistantTopic = {
+          ...rest,
+          ...(cleanOverrides.models ? { overrides: cleanOverrides } : {}),
+        };
+        this.saveAssistantTopic(updated);
+      },
+      readRuleOverrides: () => this.assistantTopicRuleOverrides(aid, tid),
+      writeRuleOverrides: (next) => this.saveAssistantTopicRuleOverrides(aid, tid, next),
+    };
+  }
+
+  topicRules(aid: string, tid: string): EffectiveRule[] {
+    const topic = this.assistantTopic(aid, tid);
+    if (!topic || topic.assistantId !== aid || topic.id !== tid) throw new Error("话题不存在");
+    return effectiveRules(this.rules(aid), this.assistantTopicRuleOverrides(aid, tid));
+  }
+
+  groupRuleOverrides(id: string): RuleOverrides {
+    return this.parseRuleOverrides(join(groupDir(this.home, id), "rule-overrides.json"));
   }
 
   saveGroupRuleOverrides(id: string, overrides: RuleOverrides): void {

@@ -1464,6 +1464,117 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     }
   });
 
+  app.get("/api/assistants/:id/topics/:tid/config", async (c) => {
+    try {
+      return c.json(await runtime.assistantTopics.configView(c.req.param("id"), c.req.param("tid")));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.patch("/api/assistants/:id/topics/:tid/config", async (c) => {
+    const body = await c.req.json().catch(() => null);
+    try {
+      return c.json(await runtime.assistantTopics.updateConfig(c.req.param("id"), c.req.param("tid"), body));
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  const validateTopicRuleBody = (
+    body: unknown,
+    isCreate: boolean,
+  ): { text?: string; mode?: "ask" | "allow" } | { error: string } => {
+    if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "规则无效。" };
+    const raw = body as { text?: unknown; mode?: unknown };
+    if (!isCreate && raw.text === undefined && raw.mode === undefined) return { error: "规则无效。" };
+    let text: string | undefined;
+    if (isCreate || raw.text !== undefined) {
+      if (typeof raw.text !== "string" || !raw.text.trim() || raw.text.trim().length > 1000) {
+        return { error: "规则内容不能为空或超过 1000 字。" };
+      }
+      text = raw.text.trim();
+    }
+    let mode: "ask" | "allow" | undefined;
+    if (isCreate || raw.mode !== undefined) {
+      if (raw.mode !== "ask" && raw.mode !== "allow") return { error: "规则模式无效。" };
+      mode = raw.mode;
+    }
+    return { ...(text !== undefined ? { text } : {}), ...(mode !== undefined ? { mode } : {}) };
+  };
+
+  app.post("/api/assistants/:id/topics/:tid/rules", async (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null), true);
+      if ("error" in parsed) return c.json({ error: parsed.error }, 400);
+      if (store.topicRules(id, tid).some((item) => item.text === parsed.text)) {
+        return c.json({ error: "规则内容已存在。" }, 400);
+      }
+      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { text: parsed.text!, mode: parsed.mode! });
+      bus.emit({ type: "profile", assistantId: id });
+      return c.json({ ok: true, rule }, 201);
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.put("/api/assistants/:id/topics/:tid/rules/:rid", async (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    const rid = c.req.param("rid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null), false);
+      if ("error" in parsed) return c.json({ error: parsed.error }, 400);
+      const rules = store.topicRules(id, tid);
+      const existing = rules.find((item) => item.id === rid);
+      if (!existing) return c.json({ error: "规则不存在。" }, 404);
+      const nextText = parsed.text ?? existing.text;
+      if (rules.some((item) => item.id !== rid && item.text === nextText)) {
+        return c.json({ error: "规则内容已存在。" }, 400);
+      }
+      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { id: rid, ...parsed });
+      bus.emit({ type: "profile", assistantId: id });
+      return c.json({ ok: true, rule });
+    } catch (error) {
+      return topicErr(c, error);
+    }
+  });
+
+  app.delete("/api/assistants/:id/topics/:tid/rules/:rid", (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    const rid = c.req.param("rid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      deleteTopicRule(store.assistantTopicConfigHost(id, tid), rid);
+      bus.emit({ type: "profile", assistantId: id });
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof TopicError) return topicErr(c, error);
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 404);
+    }
+  });
+
+  app.post("/api/assistants/:id/topics/:tid/rules/:rid/reset", (c) => {
+    const id = c.req.param("id");
+    const tid = c.req.param("tid");
+    const rid = c.req.param("rid");
+    try {
+      runtime.assistantTopics.requireTopic(id, tid);
+      resetTopicRule(store.assistantTopicConfigHost(id, tid), rid);
+      bus.emit({ type: "profile", assistantId: id });
+      return c.json({ ok: true });
+    } catch (error) {
+      if (error instanceof TopicError) return topicErr(c, error);
+      const message = error instanceof Error ? error.message : String(error);
+      return c.json({ error: message }, message.includes("不存在") ? 404 : 400);
+    }
+  });
+
   // 归档助手：档案、对话、规则和定时进归档，助手从列表移除
   app.post("/api/assistants/:id/archive", async (c) => {
     const result = await archiveAssistant(runtime, c.req.param("id"));

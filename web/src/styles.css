@@ -6186,9 +6186,28 @@ button.screen,
   font-size: 15px;
   line-height: 1.7;
   overflow-wrap: anywhere;
+  container-type: inline-size;
 }
 .fp-md.markdown-body a { text-decoration-color: var(--text3); }
 .fp-md.markdown-body hr { height: 1px; }
+/* github-markdown-css 把 table 设成 display: block + max-width: 100%，会压住 .md-table 导致表格不铺开 */
+.fp-md.markdown-body .md-table table {
+  display: table;
+  width: max-content;
+  min-width: 100%;
+  max-width: none;
+  overflow: visible;
+}
+/* 展开或宽页预览有足够宽度时，取消 18em 列宽上限并按可用宽度铺满，不再挤成窄列 */
+@container (min-width: 720px) {
+  .fp-md.markdown-body .md-table table {
+    width: 100%;
+  }
+  .fp-md.markdown-body .md-table th,
+  .fp-md.markdown-body .md-table td {
+    max-width: none;
+  }
+}
 .fp-codebar {
   flex: none;
   display: flex;

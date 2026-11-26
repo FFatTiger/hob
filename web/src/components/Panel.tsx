@@ -10,7 +10,7 @@ import { useMenu } from "./use-menu.ts";
 import { skillUsage } from "../skill-usage.ts";
 import { skillOriginText } from "../skill-origin.ts";
 import { commandSummary } from "../../../shared/command.ts";
-import type { PluginView, ActivityLine, Assistant, CustomProp, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
+import type { PluginView, ActivityLine, Assistant, CustomProp, EffectiveRule, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { BrandIcon, brandForRef } from "../brand-icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
@@ -47,9 +47,11 @@ import {
   openJobs,
   openNewRoutine,
   openRoutine,
+  openSidebarPage,
   patchAssistant,
   patchGroup,
   patchGroupMemberModels,
+  resetGroupRule,
   setNotice,
   updateRule,
   runRoutine,
@@ -94,14 +96,15 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   const member = panel.kind === "member";
   const kind = member ? "now" : panel.kind;
   // 选中群时右栏的根页是群信息（推进了成员页时除外）
+  const memberOpen = s.panelStack.some((item) => item.kind === "member");
   const group = s.gsel && !member ? s.groups.find((g) => g.id === s.gsel) : undefined;
-  const groupScope = "groupId" in panel && (panel.kind === "routines" || panel.kind === "skills" || panel.kind === "rules" || panel.kind === "newRoutine") ? panel.groupId : undefined;
+  const groupScope = "groupId" in panel && (panel.kind === "routines" || panel.kind === "skills" || panel.kind === "rules" || panel.kind === "topicRules" || panel.kind === "topicModels" || panel.kind === "newRoutine") ? (panel.groupId ?? (!memberOpen ? s.gsel ?? undefined : undefined)) : undefined;
   const [rootScrolled, setRootScrolled] = useState(false);
   const selectedAssistant = s.profiles[panelAssistant(s.panelStack, s.sel)]?.assistant ?? s.assistants.find((a) => a.id === (panelAssistant(s.panelStack, s.sel)));
   const desktop = useDesktopScreens();
   const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop).running;
   useEffect(() => setRootScrolled(false), [s.sel, s.gsel]);
-  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" ? t("执行前确认") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
+  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" || kind === "topicRules" ? t("执行前确认") : kind === "topicModels" ? t("模型") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
     <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
       {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && !focus && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
@@ -119,7 +122,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
           <GroupSettings id={panel.id} />
         ) : kind === "assistant" ? (
           <AssistantSettings key={panelAssistant(s.panelStack, s.sel)} />
-        ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : group && !focus ? (
+        ) : kind === "routines" ? <RoutineList groupId={groupScope} /> : kind === "skills" ? <AssistantSkills aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} /> : kind === "knowledge" ? <AssistantKnowledge aid={panelAssistant(s.panelStack, s.sel)} /> : kind === "rules" ? <AssistantRules aid={groupScope ?? panelAssistant(s.panelStack, s.sel)} group={!!groupScope} /> : kind === "topicRules" ? <TopicRules topicId={groupScope ?? ""} /> : kind === "topicModels" ? <TopicModels topicId={groupScope ?? ""} /> : group && !focus ? (
           group.parentId ? <><GroupPanel mobile={mobile} g={s.groups.find((g) => g.id === group.parentId) ?? group} topic={group} /><TopicClose topic={group} /></> : <GroupPanel mobile={mobile} g={group} />
         ) : (
           <PanelNow mobile={mobile} focus={focus}>{(desktopRow) => <>{!focus && member && s.gsel ? <GroupMemberModels aid={panelAssistant(s.panelStack, s.sel)} groupId={s.gsel} /> : null}{!focus ? <PanelRootDetails desktopRow={desktopRow} /> : null}</>}</PanelNow>
@@ -130,26 +133,35 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
 }
 
 /**
- * 右栏：群信息——群头像和名字、群主和人数、状态、负责什么、成员（空闲 / 在办几件）、添加成员、结束这个群。
+ * 右栏：群信息——群头像和名字、群主和人数、状态、负责什么、成员（任务模型下拉 + 头像忙碌点）、添加成员、结束这个群（话题为关闭这个话题）。
  * 成员的「设为群主 / 移出群」在成员行右边的 ⋯ 里（手机上一直看得见，桌面上悬停才出现）。
  */
 function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummary; mobile: boolean }) {
   const s = useApp();
   const members = membersOf(g, s.assistants);
   const owner = members.find((m) => m.id === g.ownerId);
-  // 群的事连同各话题一起算：成员在哪个话题里做事，群信息里都看得到
-  const places = [g, ...topicsOf(s.groups, g.id)];
+  const target = topic ?? g;
+  const places = topic ? [topic] : [g, ...topicsOf(s.groups, g.id)];
   const ids = places.map((place) => place.id);
   const busy = new Set(places.flatMap((place) => place.busy));
   const jobs = Object.values(s.jobs);
   const doing = (id: string) => jobs.filter((job) => job.groupId && ids.includes(job.groupId) && job.assistantId === id && (job.status === "running" || job.status === "queued" || job.status === "waiting")).length;
   const [adding, setAdding] = useState(false);
   const [ending, setEnding] = useState(false);
+  const [view, setView] = useState<ModelsView | null>(null);
+  const [memberModelError, setMemberModelError] = useState("");
+  useEffect(() => { void loadModels().then(setView); }, []);
+  useEffect(() => { setMemberModelError(""); }, [target.id]);
   const menu = useMenu();
   const replyMenu = useMenu();
   const picked = menu.menu ? s.assistants.find((a) => a.id === menu.menu!.id) : undefined;
-  const target = topic ?? g;
+  const resolved = s.groupProfiles[target.id];
+  const settings = s.settings.settings.models;
+  const modelNameOf = (ref: string) => view?.models.find((model) => model.ref === ref)?.name ?? ref;
   const replyMode = target.replyMode ?? "owner";
+  const replyIsTopic = Boolean(topic && (resolved?.value?.replyMode ? resolved.value.replyMode.source === "topic" : topic.overrides?.replyMode !== undefined));
+  const replyLabel = replyMode === "all" ? t("全员回应") : t("群主回应");
+  const groupReplyLabel = (g.replyMode ?? "owner") === "all" ? t("全员回应") : t("群主回应");
 
   const change = async (patch: { ownerId?: string; members?: string[] }) => {
     const failure = await patchGroup(g.id, patch);
@@ -157,10 +169,21 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
     return !failure;
   };
 
-  const changeReplyMode = async (mode: "owner" | "all") => {
+  const changeReplyMode = async (mode: "owner" | "all" | null) => {
     const failure = await patchGroup(target.id, { replyMode: mode });
     if (failure) setNotice(t("保存失败：{error}", { error: failure }));
   };
+
+  const hasTopicModelOverrides = Boolean(
+    topic && (
+      resolved?.value?.models?.conversation.source === "topic" ||
+      resolved?.value?.models?.work.source === "topic" ||
+      Object.values(resolved?.value?.memberModels ?? {}).some((item) => item.work.source === "topicMember") ||
+      topic.overrides?.models?.conversation ||
+      topic.overrides?.models?.work ||
+      Object.keys(topic.overrides?.memberModels ?? {}).length > 0
+    ),
+  );
 
   return (
     <>
@@ -168,8 +191,8 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
         <div className="sidebar-identity">
           <GroupCluster g={g} assistants={s.assistants} size={44} />
           <span>
-            <strong>{g.name}</strong>
-            <small>{t("群主 · {name} · {n} 位成员", { name: owner?.name ?? g.ownerId, n: g.members.length })}</small>
+            <strong>{topic ? topic.name : g.name}</strong>
+            <small>{topic ? t("群「{group}」· 群主 · {name} · {n} 位成员", { group: g.name, name: owner?.name ?? g.ownerId, n: g.members.length }) : t("群主 · {name} · {n} 位成员", { name: owner?.name ?? g.ownerId, n: g.members.length })}</small>
           </span>
           <em className={busy.size ? "active" : ""}><span key={busy.size ? "busy" : "idle"}>{busy.size ? t("执行中") : t("空闲")}</span></em>
         </div>
@@ -188,9 +211,17 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
       <PanelNow mobile={mobile} focus={false} deskOnly>
         {(desktopRow) => (
           <PanelRootDetails
-            groupId={g.id}
+            groupId={target.id}
             part="info"
             desktopRow={desktopRow}
+            modelsRow={topic ? (
+              <button onClick={() => openSidebarPage("topicModels", target.id)}>
+                <Icon name="layers" size={15} />
+                <span>{t("模型")}</span>
+                <small>{hasTopicModelOverrides ? t("本话题") : t("跟随群")}</small>
+                <b>›</b>
+              </button>
+            ) : undefined}
             replyModeRow={(
               <button
                 type="button"
@@ -200,7 +231,7 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
               >
                 <Icon name="reply" size={15} />
                 <span>{t("没点名时")}</span>
-                <small>{replyMode === "all" ? t("全员回应") : t("群主回应")}</small>
+                <small>{topic ? (replyIsTopic ? t("本话题 · {mode}", { mode: replyLabel }) : t("跟随群 · {mode}", { mode: replyLabel })) : replyLabel}</small>
                 <b>›</b>
               </button>
             )}
@@ -208,20 +239,75 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
         )}
       </PanelNow>
 
-      <PlaceJobs ids={ids} />
+      <PlaceJobs ids={ids} where={!topic} />
 
       <div className="group-card gmembers">
-        <span className="gm-title">{t("成员")}</span>
+        {topic ? (
+          <div className="gm-head">
+            <span className="gm-title">{t("成员")}</span>
+            <small>{t("成员随群")}</small>
+          </div>
+        ) : <span className="gm-title">{t("成员")}</span>}
         {members.map((m) => {
           const count = doing(m.id);
+          const speaking = busy.has(m.id);
+          const statusText = count ? t("进行中 {n}", { n: count }) : speaking ? t("正在发言") : "";
+          const effective = resolved?.value?.memberModels[m.id]?.work;
+          const isOwnOverride = effective?.source === (topic ? "topicMember" : "member");
+          const inherited = effective?.inherited;
+          const follow = inherited ? followingModel(inherited.source, modelNameOf(inherited.pick.ref)) : undefined;
+          const shownName = effective ? modelNameOf(effective.pick.ref) : "";
+          const modelTitle = effective ? (isOwnOverride ? shownName : follow?.text ?? shownName) : undefined;
           return (
             <div className="gm-row" key={m.id}>
               {/* 点头像或名字：右栏进这个助手的信息页，返回回到群信息 */}
-              <button className="gm-open" title={t("{name}的设置", { name: m.name })} onClick={() => openMemberPanel(m.id)}>
-                <Avatar sprite={m.sprite} prop={m.prop} size={30} />
-                <span><strong>{m.name}</strong><small>{m.id === g.ownerId ? t("群主 · {duty}", { duty: m.duty }) : m.duty}</small></span>
+              <button
+                className="gm-open"
+                title={statusText ? `${t("{name}的设置", { name: m.name })} · ${statusText}` : t("{name}的设置", { name: m.name })}
+                onClick={() => openMemberPanel(m.id)}
+              >
+                <span className="gm-avatar">
+                  <Avatar sprite={m.sprite} prop={m.prop} size={30} />
+                  {count > 0 || speaking ? <i className="gm-dot" aria-hidden="true" /> : null}
+                </span>
+                <span className="gm-info">
+                  <strong>{m.name}</strong>
+                  <small>{m.id === g.ownerId ? t("群主 · {duty}", { duty: m.duty }) : m.duty}</small>
+                </span>
+                {statusText ? <span className="sr-only">{statusText}</span> : null}
               </button>
-              <em className={count ? "busy" : ""}>{count ? t("进行中 {n}", { n: count }) : busy.has(m.id) ? t("正在发言") : t("空闲")}</em>
+              <Select
+                className={`gm-model-pick${!resolved?.value || !isOwnOverride ? " following" : ""}`}
+                aria-label={t("{name}的任务模型", { name: m.name })}
+                title={modelTitle}
+                align="right"
+                minPopupWidth={220}
+                disabled={!resolved?.value}
+                value={isOwnOverride ? effective.pick.ref : ""}
+                displayIcon={resolved?.value && effective ? <BrandIcon size={16} brand={brandForRef(effective.pick.ref, view?.models, s.settings.settings.providers)} /> : undefined}
+                displayLabel={resolved?.error ? t("加载失败") : !resolved?.value ? t("正在加载…") : shownName}
+                onChange={(ref) => {
+                  const thinking = fitThinking(
+                    view?.models.find((model) => model.ref === ref),
+                    settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings.work.thinking,
+                  );
+                  void patchGroupMemberModels(target.id, m.id, { work: ref ? { ref, thinking } : null }).then((failure) => {
+                    setMemberModelError(failure ?? "");
+                    if (!failure) void loadGroupProfile(target.id);
+                  });
+                }}
+                options={[
+                  {
+                    value: "",
+                    label: follow?.option ?? t("跟随"),
+                    icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} />,
+                  },
+                  ...rosterOptions(settings.roster, isOwnOverride ? effective?.pick.ref : undefined, modelNameOf).map((option) => ({
+                    ...option,
+                    icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} />,
+                  })),
+                ]}
+              />
               {/* 群主没有操作菜单：占住同样的宽度，状态和别的行对齐 */}
               {m.id === g.ownerId ? <i className="gm-dots gm-dots-gap" aria-hidden="true"><Icon name="more" size={18} /></i> : (
                 <button className="gm-dots" aria-label={t("{name}的操作", { name: m.name })} onClick={(event) => menu.toggle(m.id, event.currentTarget)}><Icon name="more" size={18} /></button>
@@ -229,6 +315,7 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
             </div>
           );
         })}
+        {memberModelError ? <div className="badline gm-error">{t("保存失败：{error}", { error: memberModelError })}</div> : null}
         {adding ? (
           <div className="gm-add">
             <div className="gm-add-head">
@@ -251,19 +338,21 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
         )}
       </div>
 
-      <PanelRootDetails groupId={g.id} part="tabs" />
+      <PanelRootDetails groupId={target.id} part="tabs" />
 
-      {ending ? (
-        <div className="group-card sidebar-card-group mergeconfirm">
-          {t("结束「{name}」？群会归档，时间线与任务均保留，不会转交给其他助手。", { name: g.name })}
-          <div className="acts">
-            <button className="hob-btn hob-btn-primary" onClick={() => void archiveGroup(g.id)}>{t("确认结束")}</button>
-            <button className="hob-btn" onClick={() => setEnding(false)}>{t("取消")}</button>
+      {!topic ? (
+        ending ? (
+          <div className="group-card sidebar-card-group mergeconfirm">
+            {t("结束「{name}」？群会归档，时间线与任务均保留，不会转交给其他助手。", { name: g.name })}
+            <div className="acts">
+              <button className="hob-btn hob-btn-primary" onClick={() => void archiveGroup(g.id)}>{t("确认结束")}</button>
+              <button className="hob-btn" onClick={() => setEnding(false)}>{t("取消")}</button>
+            </div>
           </div>
-        </div>
-      ) : (
-        <button className="gm-end" onClick={() => setEnding(true)}>{t("结束这个群")}</button>
-      )}
+        ) : (
+          <button className="gm-end" onClick={() => setEnding(true)}>{t("结束这个群")}</button>
+        )
+      ) : null}
 
       {picked && menu.menu ? createPortal(
         <div className="amenu" ref={menu.box}>
@@ -275,25 +364,44 @@ function GroupPanel({ g, topic, mobile }: { g: GroupSummary; topic?: GroupSummar
 
       {replyMenu.menu ? createPortal(
         <div className="amenu select-popup" ref={replyMenu.box} role="menu" style={{ minWidth: 160 }}>
+          {topic ? (
+            <button
+              type="button"
+              role="menuitemradio"
+              aria-checked={!replyIsTopic}
+              aria-selected={!replyIsTopic}
+              onClick={() => {
+                replyMenu.close();
+                if (replyIsTopic) void changeReplyMode(null);
+              }}
+            >
+              <span>{t("跟随群（{mode}）", { mode: groupReplyLabel })}</span>
+              {!replyIsTopic ? <Icon name="check" size={15} /> : null}
+            </button>
+          ) : null}
           {([
             { mode: "owner" as const, label: t("群主回应") },
             { mode: "all" as const, label: t("全员回应") },
-          ]).map(({ mode, label }) => (
-            <button
-              key={mode}
-              type="button"
-              role="menuitemradio"
-              aria-checked={replyMode === mode}
-              aria-selected={replyMode === mode}
-              onClick={() => {
-                replyMenu.close();
-                if (replyMode !== mode) void changeReplyMode(mode);
-              }}
-            >
-              <span>{label}</span>
-              {replyMode === mode ? <Icon name="check" size={15} /> : null}
-            </button>
-          ))}
+          ]).map(({ mode, label }) => {
+            const checked = topic ? replyIsTopic && replyMode === mode : replyMode === mode;
+            return (
+              <button
+                key={mode}
+                type="button"
+                role="menuitemradio"
+                aria-checked={checked}
+                aria-selected={checked}
+                onClick={() => {
+                  replyMenu.close();
+                  if (!checked) void changeReplyMode(mode);
+                }}
+              >
+                <span>{label}</span>
+                {checked ? <Icon name="check" size={15} /> : null}
+              </button>
+            );
+          })}
+          {!topic ? <div className="amenu-note">{t("本群默认，没单独改过的话题都会用")}</div> : null}
         </div>,
         document.body,
       ) : null}
@@ -458,29 +566,45 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
   const s = useApp();
   const selected = s.groups.find((g) => g.id === groupId);
   const group = s.groups.find((g) => g.id === (selected?.parentId ?? groupId));
+  const target = selected ?? group;
+  const isTopic = Boolean(target?.parentId);
   const assistant = s.profiles[aid]?.assistant ?? s.assistants.find((a) => a.id === aid);
   const [view, setView] = useState<ModelsView | null>(null);
   const [error, setError] = useState("");
-  useEffect(() => { void loadModels().then(setView); if (group) void loadGroupProfile(group.id); }, [group?.id]);
-  if (!group || !assistant) return null;
-  const resolved = s.groupProfiles[group.id];
+  useEffect(() => { void loadModels().then(setView); if (target) void loadGroupProfile(target.id); }, [target?.id]);
+  if (!group || !target || !assistant) return null;
+  const resolved = s.groupProfiles[target.id];
   const settings = s.settings.settings.models;
   const name = (ref: string) => view?.models.find((model) => model.ref === ref)?.name ?? ref;
-  // 成员层已取消单设对话模型（统一在群/话题设置里改），只留任务模型下拉
+  // 成员层已取消单设对话模型（统一在群/话题设置里改），只读展示实际生效的对话模型与来源，只留任务模型下拉
+  const conv = resolved?.value?.memberModels[aid]?.conversation;
+  const convText = conv
+    ? conv.source === "topic" || conv.source === "topicMember"
+      ? t("本话题 · {model}", { model: name(conv.pick.ref) })
+      : followingModel(conv.source, name(conv.pick.ref)).text
+    : resolved?.error ? t("加载失败") : t("正在加载…");
   const effective = resolved?.value?.memberModels[aid]?.work;
   const inherited = effective?.inherited;
   const follow = inherited ? followingModel(inherited.source, name(inherited.pick.ref)) : undefined;
-  const pick = effective?.source === "member" ? effective.pick : undefined;
+  const pick = effective?.source === (isTopic ? "topicMember" : "member") ? effective.pick : undefined;
   const label = t("默认任务模型");
   return <div className="group-card sidebar-info group-member-models">
-    <div className="group-member-models-head"><span>{t("在「{name}」里", { name: group.name })}</span><small>{t("只在本群生效")}</small></div>
+    <div className="group-member-models-head"><span>{t("在「{name}」里", { name: target.name })}</span><small>{isTopic ? t("只在本话题生效") : t("只在本群生效")}</small></div>
+    <div className="group-member-model-row ro">
+      <span>{t("对话模型")}</span>
+      <span className="following">
+        {conv ? <BrandIcon size={20} brand={brandForRef(conv.pick.ref, view?.models, s.settings.settings.providers)} /> : null}
+        <span className="gm-model-text">{convText}</span>
+      </span>
+    </div>
     <label className="group-member-model-row">
-      <span>{label}</span><span className={pick ? "" : "following"}><BrandIcon size={20} brand={brandForRef(pick?.ref ?? inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} />{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span><Icon name="updown" size={14} />
+      <span>{label}</span><span className={pick ? "" : "following"}><BrandIcon size={20} brand={brandForRef(pick?.ref ?? inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /><span className="gm-model-text">{pick ? name(pick.ref) : follow ? follow.text : resolved?.error ? t("加载失败") : t("正在加载…")}</span></span><Icon name="updown" size={14} />
       <Select aria-label={label} value={pick?.ref ?? ""} onChange={(ref) => {
         const thinking = fitThinking(view?.models.find((model) => model.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings.work.thinking);
-        void patchGroupMemberModels(group.id, aid, { work: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(group.id); });
+        void patchGroupMemberModels(target.id, aid, { work: ref ? { ref, thinking } : null }).then((failure) => { setError(failure ?? ""); if (!failure) void loadGroupProfile(target.id); });
       }} options={[{ value: "", label: follow?.option ?? t("跟随"), icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> }, ...rosterOptions(settings.roster, pick?.ref, name).map((option) => ({ ...option, icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} /> }))]} />
     </label>
+    <div className="group-member-models-note">{t("成员只能单设任务模型，对话模型在群设置里改")}</div>
     {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
   </div>;
 }
@@ -499,8 +623,10 @@ function routineDetail(r: Routine, s: ReturnType<typeof useApp>) {
 
 function RoutineList({ groupId }: { groupId?: string }) {
   const s = useApp();
-  const routines = s.routines.filter((r) => groupId ? r.groupId === groupId || s.groups.some((g) => g.id === r.groupId && g.parentId === groupId) : r.assistantId === panelAssistant(s.panelStack, s.sel) && !r.groupId);
-  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <DetailRow key={r.id} leading={<Icon name={r.active ? "clock" : "pause"} size={18} />} title={r.name} detail={routineDetail(r, s)} onClick={() => openRoutine(r.id)} />)}</div> : <Empty>{groupId ? t("这个群还没有定时任务") : t("这个助手还没有定时任务")}</Empty>;
+  const target = groupId ? s.groups.find((g) => g.id === groupId) : undefined;
+  const isTopic = Boolean(target?.parentId);
+  const routines = s.routines.filter((r) => groupId ? (isTopic ? r.groupId === groupId : r.groupId === groupId || s.groups.some((g) => g.id === r.groupId && g.parentId === groupId)) : r.assistantId === panelAssistant(s.panelStack, s.sel) && !r.groupId);
+  return routines.length ? <div className="group-card sidebar-card-group card-rows">{routines.map((r) => <DetailRow key={r.id} leading={<Icon name={r.active ? "clock" : "pause"} size={18} />} title={r.name} detail={routineDetail(r, s)} onClick={() => openRoutine(r.id)} />)}</div> : <Empty>{isTopic ? t("这个话题还没有定时任务") : groupId ? t("这个群还没有定时任务") : t("这个助手还没有定时任务")}</Empty>;
 }
 
 function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }) {
@@ -508,7 +634,176 @@ function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }
   const rules = group ? s.groupProfiles[aid]?.value?.rules ?? [] : s.profiles[aid]?.rules ?? [];
   useEffect(() => { if (group) void loadGroupProfile(aid); }, [aid, group]);
   if (group && s.groupProfiles[aid]?.error) return <div className="badline">{t("加载失败：{error}", { error: s.groupProfiles[aid].error })} <button onClick={() => void loadGroupProfile(aid)}>{t("重试")}</button></div>;
-  return <><div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")}</div>{!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}<div className="group-card sidebar-card-group card-rows">{rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)}<RuleCreator aid={aid} /></div></>;
+  return <>
+    <div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")}{group ? ` ${t("本群默认，没单独改过的话题都会用。")}` : ""}</div>
+    {!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}
+    <div className="group-card sidebar-card-group card-rows">{rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)}<RuleCreator aid={aid} /></div>
+  </>;
+}
+
+function TopicRules({ topicId }: { topicId: string }) {
+  const s = useApp();
+  const resolved = s.groupProfiles[topicId];
+  useEffect(() => { if (topicId) void loadGroupProfile(topicId); }, [topicId]);
+  if (!topicId) return null;
+  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void loadGroupProfile(topicId)}>{t("重试")}</button></div>;
+  if (!resolved?.value) return <SidebarLoading />;
+  const rules = resolved.value.rules;
+  const hidden = resolved.value.hiddenRules ?? [];
+  return <>
+    <div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")} {t("只在本话题生效")}</div>
+    {!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}
+    <div className="group-card sidebar-card-group card-rows">
+      {rules.map((rule) => (
+        <RuleRow
+          key={rule.id}
+          aid={topicId}
+          rule={rule}
+          topic
+          onReset={rule.from === "parent" && rule.changed ? () => void resetGroupRule(topicId, rule.id) : undefined}
+        />
+      ))}
+      <RuleCreator aid={topicId} />
+    </div>
+    {hidden.length ? (
+      <>
+        <div className="lbl">{t("已在本话题停用")}</div>
+        <div className="group-card sidebar-card-group card-rows hidden-rules">
+          {hidden.map((rule) => (
+            <div className="rule-wrap" key={rule.id}>
+              <div className="rule">
+                <span className="rule-text muted">{rule.text}</span>
+                <span className="v">
+                  <button type="button" className="rule-reset" onClick={() => void resetGroupRule(topicId, rule.id)}>{t("恢复跟随")}</button>
+                </span>
+              </div>
+            </div>
+          ))}
+        </div>
+      </>
+    ) : null}
+  </>;
+}
+
+function TopicModels({ topicId }: { topicId: string }) {
+  const s = useApp();
+  const topic = s.groups.find((g) => g.id === topicId);
+  const parent = topic?.parentId ? s.groups.find((g) => g.id === topic.parentId) ?? topic : topic;
+  const [view, setView] = useState<ModelsView | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => { void loadModels().then(setView); if (topicId) void loadGroupProfile(topicId); }, [topicId]);
+  if (!topic || !parent) return <Empty>{t("这个话题已不存在")}</Empty>;
+  const resolved = s.groupProfiles[topicId];
+  if (resolved?.error) return <div className="badline">{t("加载失败：{error}", { error: resolved.error })} <button onClick={() => void loadGroupProfile(topicId)}>{t("重试")}</button></div>;
+  if (!resolved?.value) return <SidebarLoading />;
+  const profile = resolved.value;
+  const settings = s.settings.settings.models;
+  const nameOf = (ref: string) => view?.models.find((model) => model.ref === ref)?.name ?? ref;
+  const members = membersOf(parent, s.assistants);
+
+  const saveDefault = (key: "conversation" | "work", ref: string | null) => {
+    const inherited = profile.models?.[key]?.inherited;
+    const thinking = ref
+      ? fitThinking(view?.models.find((item) => item.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings[key].thinking)
+      : undefined;
+    void patchGroup(topicId, { models: { [key]: ref ? { ref, thinking: thinking! } : null } }).then((failure) => {
+      setError(failure ?? "");
+      if (!failure) void loadGroupProfile(topicId);
+    });
+  };
+
+  const saveMember = (aid: string, ref: string | null) => {
+    const inherited = profile.memberModels[aid]?.work?.inherited;
+    const thinking = ref
+      ? fitThinking(view?.models.find((item) => item.ref === ref), settings.roster.find((entry) => entry.ref === ref)?.thinking ?? inherited?.pick.thinking ?? settings.work.thinking)
+      : undefined;
+    void patchGroupMemberModels(topicId, aid, { work: ref ? { ref, thinking: thinking! } : null }).then((failure) => {
+      setError(failure ?? "");
+      if (!failure) void loadGroupProfile(topicId);
+    });
+  };
+
+  return <>
+    <div className="pgroup">
+      <div className="sech"><span>{t("话题默认")}</span></div>
+      <div className="group-card sidebar-card-group">
+        {([["conversation", t("对话模型")], ["work", t("默认任务模型")]] as const).map(([key, label]) => {
+          const effective = profile.models?.[key];
+          const isTopicSet = effective?.source === "topic";
+          const inherited = effective?.inherited;
+          const inheritedName = inherited ? nameOf(inherited.pick.ref) : "";
+          const followText = inherited
+            ? (inherited.source === "group" ? t("跟随群 · {model}", { model: inheritedName }) : t("跟随全局 · {model}", { model: inheritedName }))
+            : t("跟随群");
+          const followOption = inherited
+            ? (inherited.source === "group" ? t("跟随群（{name}）", { name: inheritedName }) : t("跟随全局（{name}）", { name: inheritedName }))
+            : t("跟随群");
+          const shownName = effective ? nameOf(effective.pick.ref) : "";
+          return (
+            <div key={key}>
+              <div className="lbl tm-lbl">
+                <span>{label}</span>
+                {isTopicSet ? <button type="button" className="rule-reset" onClick={() => saveDefault(key, null)}>{t("恢复跟随")}</button> : null}
+              </div>
+              <Select
+                className={isTopicSet ? undefined : "following"}
+                aria-label={label}
+                value={isTopicSet ? effective.pick.ref : ""}
+                displayLabel={isTopicSet ? t("本话题 · {model}", { model: shownName }) : followText}
+                displayIcon={effective ? <BrandIcon size={20} brand={brandForRef(effective.pick.ref, view?.models, s.settings.settings.providers)} /> : undefined}
+                onChange={(ref) => saveDefault(key, ref || null)}
+                options={[
+                  { value: "", label: followOption, icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> },
+                  ...rosterOptions(settings.roster, isTopicSet ? effective?.pick.ref : undefined, nameOf).map((option) => ({
+                    ...option,
+                    icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} />,
+                  })),
+                ]}
+              />
+            </div>
+          );
+        })}
+      </div>
+    </div>
+
+    <div className="pgroup">
+      <div className="sech"><span>{t("成员任务模型")}</span></div>
+      <div className="group-card sidebar-card-group">
+        {members.map((m) => {
+          const effective = profile.memberModels[m.id]?.work;
+          const isTopicMember = effective?.source === "topicMember";
+          const inherited = effective?.inherited;
+          const follow = inherited ? followingModel(inherited.source, nameOf(inherited.pick.ref)) : undefined;
+          const shownName = effective ? nameOf(effective.pick.ref) : "";
+          return (
+            <div key={m.id}>
+              <div className="lbl tm-lbl">
+                <span className="tm-member"><Avatar sprite={m.sprite} prop={m.prop} size={18} />{m.name}</span>
+                {isTopicMember ? <button type="button" className="rule-reset" onClick={() => saveMember(m.id, null)}>{t("恢复跟随")}</button> : null}
+              </div>
+              <Select
+                className={isTopicMember ? undefined : "following"}
+                aria-label={t("{name}的任务模型", { name: m.name })}
+                value={isTopicMember ? effective.pick.ref : ""}
+                displayLabel={isTopicMember ? t("本话题 · {model}", { model: shownName }) : follow?.text ?? shownName}
+                displayIcon={effective ? <BrandIcon size={20} brand={brandForRef(effective.pick.ref, view?.models, s.settings.settings.providers)} /> : undefined}
+                onChange={(ref) => saveMember(m.id, ref || null)}
+                options={[
+                  { value: "", label: follow?.option ?? t("跟随"), icon: <BrandIcon size={20} brand={brandForRef(inherited?.pick.ref ?? "", view?.models, s.settings.settings.providers)} /> },
+                  ...rosterOptions(settings.roster, isTopicMember ? effective?.pick.ref : undefined, nameOf).map((option) => ({
+                    ...option,
+                    icon: <BrandIcon size={20} brand={brandForRef(option.value, view?.models, s.settings.settings.providers)} />,
+                  })),
+                ]}
+              />
+            </div>
+          );
+        })}
+      </div>
+      <div className="note">{t("成员只能单设任务模型，对话模型在群设置里改")}</div>
+    </div>
+    {error ? <div className="badline">{t("保存失败：{error}", { error })}</div> : null}
+  </>;
 }
 
 function ScheduleRow({
@@ -596,7 +891,8 @@ function ScheduleRow({
 /** 新建定时任务：先在本地填写，名称和任务内容都有了才创建（建好后切到它的编辑页）。 */
 function NewRoutine({ groupId }: { groupId?: string }) {
   const s = useApp();
-  const group = s.groups.find((g) => g.id === groupId);
+  const selectedGroup = s.groups.find((g) => g.id === groupId);
+  const group = selectedGroup?.parentId ? s.groups.find((g) => g.id === selectedGroup.parentId) ?? selectedGroup : selectedGroup;
   const aid = groupId ? group?.ownerId ?? "" : panelAssistant(s.panelStack, s.sel);
   const [destination, setDestination] = useState(groupId ?? "");
   const [name, setName] = useState("");
@@ -1038,16 +1334,26 @@ function SpritePicker({ aid, sprite, prop, onDone }: { aid: string; sprite: stri
   );
 }
 
-function RuleRow({ aid, rule }: { aid: string; rule: Rule }) {
+function RuleRow({ aid, rule, topic = false, onReset }: { aid: string; rule: Rule | EffectiveRule; topic?: boolean; onReset?: () => void }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(rule.text);
   const [confirming, setConfirming] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useSaveMessage();
   const cancel = useRef(false);
+  const effective = "from" in rule ? rule : undefined;
+  const badge = topic && effective
+    ? effective.from === "topic"
+      ? t("本话题的")
+      : effective.changed
+        ? t("本话题改过")
+        : t("跟随群")
+    : undefined;
   const save = async (patch: { text?: string; mode?: "ask" | "allow" }) => {
     setBusy(true);
     const error = await updateRule(aid, { id: rule.id, ...patch });
+    setBusy(false);
+    if (!error) setEditing(false);
     setMessage(error ?? t("已保存"));
   };
   const commitText = () => {
@@ -1071,10 +1377,20 @@ function RuleRow({ aid, rule }: { aid: string; rule: Rule }) {
           <button className="rule-text" onClick={() => { cancel.current = false; setText(rule.text); setEditing(true); }} disabled={busy} title={t("编辑规则")}>{rule.text}</button>
         )}
         <span className="v">
+          {badge ? <span className={`rule-badge${effective?.from === "topic" ? " own" : effective?.changed ? " changed" : ""}`}>{badge}</span> : null}
+          {onReset ? <button type="button" className="rule-reset" disabled={busy} onClick={onReset}>{t("恢复跟随")}</button> : null}
           <button className={`rule-mode ${rule.mode}`} disabled={busy} onClick={() => void save({ mode: rule.mode === "ask" ? "allow" : "ask" })} title={t("切换确认方式")}>{rule.mode === "ask" ? t("需确认") : t("直接执行")}</button>
-          <button className="del" title={t("删除这条规则")} disabled={busy} onClick={() => setConfirming(true)}><Icon name="close" size={13} /></button>
+          <button className="del" title={topic && effective?.from === "parent" ? t("本话题不用这条") : t("删除这条规则")} disabled={busy} onClick={() => setConfirming(true)}><Icon name="close" size={13} /></button>
         </span>
       </div>
+      {confirming ? (
+        <div className="rule-confirm">
+          <span>{topic && effective?.from === "parent" ? t("本话题不用这条") : t("删除这条规则")}</span>
+          <span className="sp" />
+          <button type="button" className="hob-btn hob-btn-danger" disabled={busy} onClick={() => { setBusy(true); void deleteRule(aid, rule.id).finally(() => { setBusy(false); setConfirming(false); }); }}>{topic && effective?.from === "parent" ? t("停用") : t("删除")}</button>
+          <button type="button" className="hob-btn" disabled={busy} onClick={() => setConfirming(false)}>{t("取消")}</button>
+        </div>
+      ) : null}
       {message ? <SaveMessage message={message} /> : null}
     </div>
   );

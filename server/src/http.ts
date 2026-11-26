@@ -1205,10 +1205,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json({ error: `无效的状态：${status}` }, 400);
     }
     const limit = Number(c.req.query("limit") ?? 30);
+    const exact = c.req.query("exact") === "1" || c.req.query("exact") === "true";
     return c.json(
       jobs.page({
         ...(assistantId ? { assistantId } : {}),
         ...(c.req.query("groupId") ? { groupId: c.req.query("groupId")! } : {}),
+        ...(exact ? { exact: true } : {}),
         ...(status ? { status: status as JobStatus } : {}),
         ...(c.req.query("before") ? { before: c.req.query("before")! } : {}),
         ...(Number.isFinite(limit) ? { limit } : {}),
@@ -1759,7 +1761,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   app.get("/api/knowledge", async (c) => {
     const limit = Number(c.req.query("limit"));
-    return c.json(await runtime.knowledge.list({ origin: c.req.query("origin"), collection: c.req.query("collection"), kind: c.req.query("kind"), assistantId: c.req.query("assistantId"), groupId: c.req.query("groupId"), q: c.req.query("q"), before: c.req.query("before"), ...(Number.isFinite(limit) && limit > 0 ? { limit: Math.floor(limit) } : {}) }));
+    const exact = c.req.query("exact") === "1" || c.req.query("exact") === "true";
+    return c.json(await runtime.knowledge.list({ origin: c.req.query("origin"), collection: c.req.query("collection"), kind: c.req.query("kind"), assistantId: c.req.query("assistantId"), groupId: c.req.query("groupId"), ...(exact ? { exact: true } : {}), q: c.req.query("q"), before: c.req.query("before"), ...(Number.isFinite(limit) && limit > 0 ? { limit: Math.floor(limit) } : {}) }));
   });
 
   app.post("/api/knowledge/collections", async (c) => {

@@ -17,7 +17,7 @@ export type PanelPage =
   | { kind: "groupSettings"; id: string }
   /** 群信息里点了某个成员：右栏换成这个助手的信息页，群聊留在中间 */
   | { kind: "member"; id: string }
-  | { kind: "routines" | "skills" | "knowledge" | "rules"; groupId?: string }
+  | { kind: "routines" | "skills" | "knowledge" | "rules" | "topicRules" | "topicModels"; groupId?: string }
   | { kind: "jobs" }
   | { kind: "job"; id: string; round?: number; full?: boolean; instant?: boolean; jumpApprovalId?: string }
   | ({ kind: "file" } & FilePreviewState);

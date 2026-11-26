@@ -74,7 +74,7 @@ import type { AssistantSkill, SkillImportResult, SkillImportSource, SkillImportV
 import type { SearchSettings, SearchView } from "../../shared/search.ts";
 import type { PluginCatalogView, PluginLoginsView, PluginPatch, PluginToolLoginPollResult, PluginToolLoginStartResult, PluginToolLoginStatus, PluginView, PluginsView } from "../../shared/types.ts";
 
-export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; q?: string; before?: string; limit?: number };
+export type KnowledgeQuery = { origin?: KnowledgeOrigin; collection?: string; kind?: KnowledgeGroup; assistantId?: string; groupId?: string; exact?: boolean; q?: string; before?: string; limit?: number };
 
 export class ApiError extends Error {
   status: number;
@@ -251,7 +251,7 @@ export interface HobApi {
   replyJob(jobId: string, text: string): Promise<void>;
   stopJob(jobId: string): Promise<void>;
   transcript(jobId: string): Promise<JobTranscript>;
-  jobs(query?: { assistantId?: string; groupId?: string; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
+  jobs(query?: { assistantId?: string; groupId?: string; exact?: boolean; status?: JobStatus; before?: string; limit?: number }): Promise<JobsPage>;
   upload(file: File, target: { assistantId?: string; groupId?: string }): Promise<string>;
   groupProfile(groupId: string): Promise<GroupProfile>;
   groupSkills(groupId: string): Promise<AssistantSkill[]>;
@@ -259,6 +259,7 @@ export interface HobApi {
   rollbackGroupSkill(groupId: string, name: string): Promise<AssistantSkill>;
   deleteGroupSkill(groupId: string, name: string): Promise<{ ok: true }>;
   deleteGroupRule(groupId: string, ruleId: string): Promise<void>;
+  resetGroupRule(groupId: string, ruleId: string): Promise<void>;
   groups(): Promise<GroupSummary[]>;
   createGroup(body: { name: string; purpose: string; ownerId: string; members: string[]; replyMode?: import("../../shared/types.ts").GroupReplyMode; cwd?: string }): Promise<Group>;
   patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; replyMode?: import("../../shared/types.ts").GroupReplyMode | null; listOrder?: number; pinned?: boolean; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
@@ -314,7 +315,10 @@ const EVENT_TYPES: HobEvent["type"][] = [
 export const realApi: HobApi = {
   knowledge: (query = {}) => {
     const params = new URLSearchParams();
-    for (const [key, value] of Object.entries(query)) if (value !== undefined && value !== "") params.set(key, String(value));
+    for (const [key, value] of Object.entries(query)) {
+      if (value === undefined || value === "" || value === false) continue;
+      params.set(key, value === true ? "1" : String(value));
+    }
     return req<KnowledgePage>(`/api/knowledge?${params}`);
   },
   knowledgeEntry: (id, chunk) => req<KnowledgeEntryView>(`/api/knowledge/entries/${encodeURIComponent(id)}${chunk !== undefined ? `?chunk=${chunk}` : ""}`),
@@ -487,6 +491,7 @@ export const realApi: HobApi = {
     const params = new URLSearchParams();
     if (query.assistantId) params.set("assistantId", query.assistantId);
     if (query.groupId) params.set("groupId", query.groupId);
+    if (query.exact) params.set("exact", "1");
     if (query.status) params.set("status", query.status);
     if (query.before) params.set("before", query.before);
     if (query.limit) params.set("limit", String(query.limit));
@@ -507,6 +512,7 @@ export const realApi: HobApi = {
   rollbackGroupSkill: (id, name) => req<AssistantSkill>(`/api/groups/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}/rollback`, { method: "POST" }),
   deleteGroupSkill: (id, name) => req<{ ok: true }>(`/api/groups/${encodeURIComponent(id)}/skills/${encodeURIComponent(name)}`, { method: "DELETE" }),
   deleteGroupRule: (id, ruleId) => req<void>(`/api/groups/${encodeURIComponent(id)}/rules/${encodeURIComponent(ruleId)}`, { method: "DELETE" }),
+  resetGroupRule: (id, ruleId) => req<void>(`/api/groups/${encodeURIComponent(id)}/rules/${encodeURIComponent(ruleId)}/reset`, { method: "POST" }),
   groups: () => req<GroupSummary[]>("/api/groups"),
   createGroup: (body) => req<Group>("/api/groups", json(body)),
   patchGroup: (groupId, patch) => req<Group>(`/api/groups/${encodeURIComponent(groupId)}`, json(patch, "PATCH")),

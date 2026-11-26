@@ -263,11 +263,13 @@ export class Store {
     writeJsonAtomic(join(this.assistantDir(id), "rules.json"), rules);
   }
 
-  groupMatches(filter: string, groupId?: string): boolean {
+  groupMatches(filter: string, groupId?: string, exact = false): boolean {
     if (filter === "none") return !groupId;
     if (!groupId) return false;
     const target = this.group(filter), actual = this.group(groupId);
-    return !!target && !!actual && (target.parentId ?? target.id) === (actual.parentId ?? actual.id);
+    if (!target || !actual) return false;
+    if (exact) return target.id === actual.id;
+    return (target.parentId ?? target.id) === (actual.parentId ?? actual.id);
   }
 
   groupParentRules(id: string): Rule[] {

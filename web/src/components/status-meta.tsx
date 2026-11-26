@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import type { Delegation, GroupSummary, Job, JobStatus, SedimentStatus } from "../../../shared/types.ts";
+import type { Delegation, Job, JobStatus, SedimentStatus, TodoItem } from "../../../shared/types.ts";
 import { t } from "../../../shared/i18n.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { todoProgress } from "./Todos.tsx";
@@ -28,7 +28,7 @@ export const JOB_STATUS: Record<JobStatus, StatusMeta> = {
 };
 
 /** 左栏话题行的小标签：话题有没做完的待办时写 k/n，鼠标悬停写全。 */
-export function todoStamp(g: GroupSummary): { text: string; title: string } | null {
+export function todoStamp(g: { todos?: TodoItem[] }): { text: string; title: string } | null {
   const { done, total } = todoProgress(g.todos);
   if (!total || done >= total) return null;
   return { text: `${done}/${total}`, title: t("待办 {done}/{total}", { done, total }) };

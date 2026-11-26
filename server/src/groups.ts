@@ -108,6 +108,7 @@ export interface UpdateGroupInput {
   listOrder?: unknown;
   cwd?: unknown;
   replyMode?: unknown;
+  pinned?: unknown;
 }
 
 export class GroupManager {
@@ -319,10 +320,10 @@ export class GroupManager {
     return this.closeTopic(topic, text, text);
   }
 
-  /** 重新打开话题：清掉关闭说明。 */
+  /** 重新打开话题：清掉关闭说明与置顶。 */
   reopen(tid: string): Group {
     const topic = this.topic(tid);
-    const { closedAt: _closedAt, closeNote: _closeNote, ...rest } = topic;
+    const { closedAt: _closedAt, closeNote: _closeNote, pinnedAt: _pinnedAt, ...rest } = topic;
     this.store.saveGroup(rest);
     this.publish(tid);
     if (topic.parentId) this.publish(topic.parentId);
@@ -331,7 +332,8 @@ export class GroupManager {
 
   private closeTopic(topic: Group, note: unknown, conclusion: string, by: "user" | "assistant" = "user"): Group {
     const text = typeof note === "string" ? note.trim() : "";
-    const next: Group = { ...topic, closedAt: new Date().toISOString(), ...(text ? { closeNote: text } : {}) };
+    const { pinnedAt: _pinnedAt, ...base } = topic;
+    const next: Group = { ...base, closedAt: new Date().toISOString(), ...(text ? { closeNote: text } : {}) };
     // 上一句结论还在时，这次没给说明就把它清掉，免得卡片上留着旧话
     if (!text && next.closeNote) delete next.closeNote;
     this.store.saveGroup(next);
@@ -392,6 +394,7 @@ export class GroupManager {
     if (group.parentId) {
       return this.updateTopic(group, patch);
     }
+    if (patch.pinned !== undefined) throw new Error("置顶仅适用于话题。");
     const members = patch.members === undefined ? group.members : this.membersOf(patch.members, "群里至少要留一个成员");
     const ownerId = patch.ownerId === undefined ? group.ownerId : this.ownerOf(patch.ownerId, members);
     if (!members.includes(ownerId)) throw new Error("群主必须是成员之一");
@@ -469,18 +472,26 @@ export class GroupManager {
     return models;
   }
 
-  /** 话题只能改名和回应方式：成员、群主、负责什么跟着所属的群。 */
+  /** 话题只能改名、回应方式和置顶：成员、群主、负责什么跟着所属的群。 */
   private updateTopic(topic: Group, patch: UpdateGroupInput): Group {
     if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
     if (patch.members !== undefined || patch.ownerId !== undefined || patch.purpose !== undefined) {
       throw new Error("话题的成员、群主与职责随所属的群，请在群设置中修改。");
+    }
+    if (patch.pinned !== undefined && typeof patch.pinned !== "boolean") {
+      throw new Error("置顶状态无效");
+    }
+    if (patch.pinned === true && topic.closedAt) {
+      throw new Error("已关闭的话题不能置顶，请先重新打开。");
     }
     const replyMode = this.replyModeOf(patch.replyMode);
     const next: Group = {
       ...topic,
       ...(patch.name !== undefined ? { name: this.text(patch.name, "话题名", 40) } : {}),
       ...(replyMode !== undefined ? { replyMode } : {}),
+      ...(patch.pinned === true ? { pinnedAt: topic.pinnedAt ?? new Date().toISOString() } : {}),
     };
+    if (patch.pinned === false) delete next.pinnedAt;
     this.store.saveGroup(next);
     this.publish(topic.id);
     if (topic.parentId) this.publish(topic.parentId);

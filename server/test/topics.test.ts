@@ -254,6 +254,59 @@ describe("话题的接口", () => {
 
     } finally { hob.close(); }
   });
+
+  it("PATCH 置顶与取消置顶：持久化 pinnedAt、校验边界、关闭清除且重开不恢复", async () => {
+    const { hob, group } = setup();
+    try {
+      const { patch, post } = await loggedIn(hob);
+      const topic = hob.runtime.groups.createTopic(group.id, "相册备份出错", "user");
+
+      // 置顶话题：返回 pinnedAt 并落盘到 group.json
+      const pinnedRes = await patch(`/api/groups/${topic.id}`, { pinned: true });
+      expect(pinnedRes.status).toBe(200);
+      const pinned = (await pinnedRes.json()) as Group;
+      expect(pinned.pinnedAt).toBeTruthy();
+      const rawPinned = JSON.parse(readFileSync(join(hob.home, "groups", topic.id, "group.json"), "utf8")) as Record<string, unknown>;
+      expect(rawPinned.pinnedAt).toBe(pinned.pinnedAt);
+
+      // 重复置顶保留原 pinnedAt
+      const repinnedRes = await patch(`/api/groups/${topic.id}`, { pinned: true });
+      expect(repinnedRes.status).toBe(200);
+      expect(((await repinnedRes.json()) as Group).pinnedAt).toBe(pinned.pinnedAt);
+
+      // 取消置顶：清掉 pinnedAt
+      const unpinnedRes = await patch(`/api/groups/${topic.id}`, { pinned: false });
+      expect(unpinnedRes.status).toBe(200);
+      expect(((await unpinnedRes.json()) as Group).pinnedAt).toBeUndefined();
+      const rawUnpinned = JSON.parse(readFileSync(join(hob.home, "groups", topic.id, "group.json"), "utf8")) as Record<string, unknown>;
+      expect(rawUnpinned.pinnedAt).toBeUndefined();
+
+      // 非法参数与非话题群拒绝置顶
+      const badGroup = await patch(`/api/groups/${group.id}`, { pinned: true });
+      expect(badGroup.status).toBe(400);
+      expect(await badGroup.json()).toMatchObject({ error: "置顶仅适用于话题。" });
+
+      const badType = await patch(`/api/groups/${topic.id}`, { pinned: "yes" });
+      expect(badType.status).toBe(400);
+      expect(await badType.json()).toMatchObject({ error: "置顶状态无效" });
+
+      // 先置顶再关闭：置顶失效；关了以后再置顶拒绝；重新打开不自动恢复置顶
+      expect((await patch(`/api/groups/${topic.id}`, { pinned: true })).status).toBe(200);
+      const closedRes = await post(`/api/groups/${topic.id}/close`, { note: "已完成" });
+      expect(closedRes.status).toBe(200);
+      expect(((await closedRes.json()) as Group).pinnedAt).toBeUndefined();
+      expect(hob.runtime.store.group(topic.id)?.pinnedAt).toBeUndefined();
+
+      const pinClosed = await patch(`/api/groups/${topic.id}`, { pinned: true });
+      expect(pinClosed.status).toBe(400);
+      expect(await pinClosed.json()).toMatchObject({ error: "已关闭的话题不能置顶，请先重新打开。" });
+
+      const reopenedRes = await post(`/api/groups/${topic.id}/reopen`);
+      expect(reopenedRes.status).toBe(200);
+      expect(((await reopenedRes.json()) as Group).pinnedAt).toBeUndefined();
+      expect(hob.runtime.store.group(topic.id)?.pinnedAt).toBeUndefined();
+    } finally { hob.close(); }
+  });
   it("开新话题：综合里有话题卡，话题里有带 forwardedFrom 的用户消息，群主在话题里开了一轮", async () => {
     const { hob, group } = setup();
     try {

@@ -2940,6 +2940,13 @@ export function createMock(scene: SceneId = "s1"): HobApi {
           default: true,
           value: true,
         },
+        DEPLOY_KEY: {
+          type: "file",
+          title: L("部署密钥", "Deploy key"),
+          description: L("在 CodeForge 的项目设置里生成部署密钥，把下载的文件选上来。", "Generate a deploy key in CodeForge project settings and choose the downloaded file."),
+          sensitive: true,
+          configured: false,
+        },
       },
       missing: [],
       login: {

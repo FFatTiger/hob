@@ -54,6 +54,7 @@
 .plugin-section .field { display: block; width: 100%; box-sizing: border-box; margin-top: 6px; }
 .plugin-section input { width: 100%; color: var(--text); font: inherit; }
 .plugin-section a { color: var(--text); text-underline-offset: 3px; }
+.plugin-file { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 6px; }
 .plugin-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-top: 16px; }
 .plugin-actions button, .plugin-card button { cursor: pointer; font: inherit; }
 .plugin-actions button:disabled { cursor: not-allowed; opacity: .45; }

@@ -335,7 +335,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 插件可以在 `extensions["com.hob.plugins"].profiles` 声明多套配置，值是 `{ "title": "邮箱" }`；未声明的插件继续使用单份 `plugin.config`。声明后，`system/plugins.json` 使用 `profiles: [{ id, name, config }]`，敏感值放在 `plugin:<id>:profile:<profile id>:config:<key>`，profile id 由 Hob 生成并保持不变。`${hob.profiles}` 在启动插件时替换成 JSON 字符串 `[{ "name": "工作邮箱", "config": { "EMAIL_ADDRESS": "…" } }]`，只包含必填项完整的配置；这类插件不能使用 OAuth，也不能引用 `${user_config.X}`。
 
-插件声明 `userConfig`；MCP 配置中允许的位置用 `${user_config.KEY}` 引用，普通 `${VAR}` 自动推为必填敏感项。通用路径变量 `${hob.root}` 指 Hob 安装目录，`${hob.plugin_root}` 指已安装的插件目录，`${hob.plugin_data}` 指持久数据目录 `HOB_HOME/plugin-data/<id>`（按需创建）。必填项缺失时服务不连接。启动时将旧 `system/engine/mcp.json` 各服务迁移为自定义插件，完成后原文件改名为 `mcp.json.bak`；迁移失败保留原文件和原因。
+插件声明 `userConfig`（`type: "file"` 的配置项在网页里选文件上传，存的是文件的文本内容，最大 64 KB，不是服务器上的路径）；MCP 配置中允许的位置用 `${user_config.KEY}` 引用，普通 `${VAR}` 自动推为必填敏感项。通用路径变量 `${hob.root}` 指 Hob 安装目录，`${hob.plugin_root}` 指已安装的插件目录，`${hob.plugin_data}` 指持久数据目录 `HOB_HOME/plugin-data/<id>`（按需创建）。必填项缺失时服务不连接。启动时将旧 `system/engine/mcp.json` 各服务迁移为自定义插件，完成后原文件改名为 `mcp.json.bak`；迁移失败保留原文件和原因。
 
 「邮箱」插件从 Hob 安装目录的 `server/mcp/email.mjs` 启动自带的 Node MCP 服务；启动时将已安装邮箱插件的旧服务路径迁移到新位置。服务以 IMAP 和 SMTP 连接邮箱；保存的附件位于 `HOB_HOME/plugin-data/email/`。未填写服务器时依次查内置表、域名的 HTTPS 自动配置、Thunderbird 配置库、MX 对应的企业邮箱内置表，最后从 MX 主机逐段去掉前缀，在 Thunderbird 配置库里查剩余域名。识别结果按域名在服务进程内缓存；配置页的选填项收在「更多设置」里。
 

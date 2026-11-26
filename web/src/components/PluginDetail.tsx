@@ -1,4 +1,4 @@
-import { Children, useEffect, useState } from "react";
+import { Children, useEffect, useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginToolLoginStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
@@ -85,6 +85,26 @@ interface ToolDeviceFlowState {
   status: "waiting" | "failed" | "expired";
   error?: string;
   pollTick: number;
+}
+
+/** 文件类配置项：在网页里选一个文件，存它的文本内容（比如 GitHub 下载的私钥）。 */
+export function FileField({ configured, onChange }: { configured: boolean; onChange: (text: string) => void }) {
+  const input = useRef<HTMLInputElement>(null);
+  const [name, setName] = useState("");
+  const [error, setError] = useState("");
+  const pick = async (file: File | undefined) => {
+    if (!file) return;
+    if (file.size > 64 * 1024) { setError(t("文件太大了，最多 64 KB")); return; }
+    setError("");
+    setName(file.name);
+    onChange(await file.text());
+  };
+  return <div className="plugin-file">
+    <button type="button" className="hob-btn" onClick={() => input.current?.click()}>{configured || name ? t("重新选择文件") : t("选择文件")}</button>
+    <span>{name ? t("已选 {name}，保存后生效", { name }) : configured ? t("已上传") : t("还没选文件")}</span>
+    <input ref={input} type="file" hidden onChange={(e) => { void pick(e.target.files?.[0]); e.target.value = ""; }} />
+    {error ? <span className="badline" role="alert">{error}</span> : null}
+  </div>;
 }
 
 export function MoreSettings({ initialOpen, children }: { initialOpen: boolean; children: React.ReactNode }) {
@@ -313,7 +333,7 @@ export function PluginDetail({ id }: { id: string }) {
     const value = values[key] ?? (field.sensitive ? "" : field.value ?? "");
     const label = String(field.title ?? key);
     return <label className="lbl" key={key}>{label}{field.required ? " *" : ""}
-      {field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
+      {field.type === "file" ? <FileField configured={Boolean(field.configured || field.value)} onChange={text => setValues({ ...values, [key]: text })} /> : field.type === "boolean" ? <input type="checkbox" checked={Boolean(value)} onChange={e => setValues({ ...values, [key]: e.target.checked })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
       {typeof field.description === "string" && <Description text={field.description} />}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);

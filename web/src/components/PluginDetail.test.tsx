@@ -3,7 +3,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import type { PluginView } from '../../../shared/types.ts';
 vi.mock('../store.ts', () => ({ MOCK: false, useApp: () => ({ assistants: [] }) }));
 vi.mock('./Plugins.tsx', () => ({}));
-import { configGroups, MoreSettings, ToolPluginLoginRow } from './PluginDetail.tsx';
+import { configGroups, FileField, MoreSettings, ToolPluginLoginRow } from './PluginDetail.tsx';
 import { DeviceCodeLoginCard } from './PluginProviders.tsx';
 import { pluginOverallStatus } from './plugin-meta.ts';
 
@@ -21,6 +21,18 @@ describe('optional plugin settings', () => {
   });
   it('does not provide a more-settings section when all fields are required', () => {
     expect(configGroups({ token: { required: true } }, {}).optional).toHaveLength(0);
+  });
+});
+
+describe('file config field', () => {
+  it('offers a file picker instead of a path box, and says when a file is already saved', () => {
+    const empty = renderToStaticMarkup(<FileField configured={false} onChange={() => {}} />);
+    expect(empty).toContain('type="file"');
+    expect(empty).toContain('选择文件');
+    expect(empty).toContain('还没选文件');
+    const saved = renderToStaticMarkup(<FileField configured onChange={() => {}} />);
+    expect(saved).toContain('重新选择文件');
+    expect(saved).toContain('已上传');
   });
 });
 

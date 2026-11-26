@@ -1445,6 +1445,15 @@ export class RouterManager {
     return place?.groupId ? undefined : this.routers.get(sessionKey(assistantId, place))?.currentDelegationId;
   }
 
+  /** 转交从主对话挪进话题时清掉主对话的接管标记，避免主对话本轮结束提前回流结果。 */
+  clearCurrentDelegation(assistantId: string, place?: Place): void {
+    const state = this.routers.get(sessionKey(assistantId, place));
+    if (!state) return;
+    state.currentDelegationId = undefined;
+    state.delegationReply = undefined;
+    state.terminatingTools = undefined;
+  }
+
   currentRoutineId(assistantId: string, place?: Place): string | undefined {
     return this.routers.get(sessionKey(assistantId, place))?.turnRoutine?.id;
   }
@@ -1453,6 +1462,17 @@ export class RouterManager {
     const state = await this.ensure(assistantId, place);
     const from = { assistantId: sourceId, name: this.store.assistant(sourceId)?.name ?? sourceId, delegationId };
     const data = { text, from, ...(files.length ? { files } : {}) };
+    const id = state.manager!.appendCustomEntry(USER_TYPE, data);
+    const item: Item = { kind: "user", id, at: this.entryAt(state, id), ...data };
+    this.emitItem(assistantId, item, place);
+    return item;
+  }
+
+  /** 将主对话的交接说明作为用户条目放入目标助手话题（标记 forwardedFrom）。 */
+  async addTopicHandoff(assistantId: string, topicId: string, text: string, files: string[] = []): Promise<Item> {
+    const place: Place = { topicId };
+    const state = await this.ensure(assistantId, place);
+    const data = { text, forwardedFrom: { assistantId }, ...(files.length ? { files } : {}) };
     const id = state.manager!.appendCustomEntry(USER_TYPE, data);
     const item: Item = { kind: "user", id, at: this.entryAt(state, id), ...data };
     this.emitItem(assistantId, item, place);
@@ -2102,9 +2122,9 @@ export class RouterManager {
     }
   }
 
-  /** 单聊里用户和助手说过的可见消息；卡片、工具调用和系统事件已排除。 */
-  messageHistory(assistantId: string): Array<Extract<Item, { kind: "user" | "assistant" }>> {
-    return this.derived(assistantId).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
+  /** 单聊或话题里用户和助手说过的可见消息；卡片、工具调用和系统事件已排除。 */
+  messageHistory(assistantId: string, place?: Place): Array<Extract<Item, { kind: "user" | "assistant" }>> {
+    return this.derived(assistantId, place).result.items.filter((item): item is Extract<Item, { kind: "user" | "assistant" }> => item.kind === "user" || item.kind === "assistant");
   }
 
   /** 给单聊或话题里最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */
@@ -2284,9 +2304,20 @@ export class RouterManager {
 
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
   /** 把事件当作转交的一轮送给目标助手；这一轮没正常收尾就把转交记为受阻，不会一直挂着。 */
-  async relay(targetAssistantId: string, text: string, delegationId: string, details?: EventDetails, knowledgeQuery?: string): Promise<boolean> {
-    const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery);
-    if (!success || !this.store.delegation(delegationId)?.turnFinished) {
+  async relay(
+    targetAssistantId: string,
+    text: string,
+    delegationId: string,
+    details?: EventDetails,
+    knowledgeQuery?: string,
+    place?: Place,
+  ): Promise<boolean> {
+    const topicId = place?.topicId ?? this.store.delegation(delegationId)?.toTopicId;
+    const targetPlace = topicId ? { topicId } : undefined;
+    const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery, targetPlace);
+    const latest = this.store.delegation(delegationId);
+    const moved = success && (latest?.toTopicId || undefined) !== (targetPlace?.topicId || undefined);
+    if (!moved && (!success || !latest?.turnFinished)) {
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }
     return success;

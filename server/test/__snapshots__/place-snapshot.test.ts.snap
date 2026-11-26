@@ -950,6 +950,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],
@@ -1284,6 +1285,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],
@@ -1667,6 +1669,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],
@@ -2024,6 +2027,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],
@@ -2360,6 +2364,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],
@@ -2696,6 +2701,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       "name": "show_assistant",
       "params": [
         "assistantId",
+        "topic",
         "query",
         "page",
       ],

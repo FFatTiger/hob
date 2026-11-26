@@ -2,14 +2,14 @@ import { t } from "../../shared/i18n.ts";
 import { Type } from "typebox";
 import { propArtSchema } from "./prop-art-schema.ts";
 import { createReadToolDefinition, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, statSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, extname, join, relative, resolve, sep } from "node:path";
 import { readFile } from "node:fs/promises";
 import { IMAGE_TYPES } from "../../shared/media.ts";
 import { checkSensitivePath, lookupFile, isInPagesDir, OUTSIDE_HOB } from "./files.ts";
 import { resolveMovedPath } from "./layout.ts";
-import { assistantFilesDir, assistantWorkDir } from "./config.ts";
+import { assistantFilesDir, assistantTopicDir, assistantWorkDir } from "./config.ts";
 import {
   COLORS,
   COLOR_IDS,
@@ -22,12 +22,12 @@ import {
 } from "../../shared/sprites.ts";
 import type { ColorId } from "../../shared/sprites.ts";
 import { buildAdminTools } from "./admin-tools.ts";
-import type { Approval, ApprovalQuestion, ApprovalQuestionInput, CardRecord, CustomProp, Job, Place, Routine, RoutineCheck } from "../../shared/types.ts";
+import type { Approval, ApprovalQuestion, ApprovalQuestionInput, AssistantTopic, CardRecord, CustomProp, Job, Place, Routine, RoutineCheck } from "../../shared/types.ts";
 import { loginCard, prepareLogin } from "./login.ts";
 import { prepareFillNewPassword } from "./new-password.ts";
 import { cronToChinese, timePointText } from "./cron-text.ts";
 import { newId } from "./ids.ts";
-import { placeFields, placeOf, samePlace } from "./place.ts";
+import { isValidTopicId, placeFields, placeOf, samePlace } from "./place.ts";
 import { findKnowledgeTool, searchKnowledgeTool } from "./knowledge-tools.ts";
 import { generateImage, imageConfigured } from "./image.ts";
 import { assistantForPlace, defaultWorkRef, jobModel, noteOf, thinkingLevelsOf, usableRefs } from "./models.ts";
@@ -49,7 +49,7 @@ import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
 import { markdownToCard } from "./card-markdown.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant } from "./workspace.ts";
 import { deleteTopicRule, setTopicRule } from "./topic-config.ts";
 
 type Tool = ToolDefinition<any, any>;
@@ -1358,6 +1358,181 @@ export function buildRouterTools(
               .deliverEvent(topic.id, assistantId, event, "", { workDone: true, ...origin })
               .catch((error) => console.error("创建话题的事件没送到：", error));
             return endTurn(t("话题「{name}」（{id}）已创建，交接说明已转过去，接下来在话题里处理。", { name: topic.name, id: topic.id }));
+          } catch (error) {
+            return fail(error instanceof Error ? error.message : String(error));
+          }
+        },
+      });
+    }
+  }
+
+  const hasAssistantTopics = !groupId && !assistant().primary && Boolean(assistant().topics);
+  if (hasAssistantTopics) {
+    const assistantHasBoundCwd = Boolean(!assistant().primary && assistant().cwd);
+    const activeAssistantTopicList = (): string => {
+      const topics = store
+        .assistantTopics(assistantId)
+        .filter((topic) => !topic.closedAt)
+        .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      return topics.length ? topics.map((topic) => `${topic.name}（${topic.id}）`).join("、") : "还没有";
+    };
+    const resolveAssistantTopic = (rawTopic: unknown, missingMessage: string): AssistantTopic | { error: string } => {
+      const given = typeof rawTopic === "string" ? rawTopic.trim() : "";
+      const targetId = given || (isAssistantTopic ? place!.topicId! : "");
+      if (!targetId) return { error: `${missingMessage}进行中的话题：${activeAssistantTopicList()}` };
+      if (!isValidTopicId(targetId)) return { error: `「${targetId}」不是你的话题。进行中的话题：${activeAssistantTopicList()}` };
+      const target = store.assistantTopic(assistantId, targetId);
+      if (!target || target.assistantId !== assistantId || target.id !== targetId) {
+        return { error: `「${targetId}」不是你的话题。进行中的话题：${activeAssistantTopicList()}` };
+      }
+      return target;
+    };
+
+    tools.push(
+      {
+        name: "close_topic",
+        label: "关闭话题",
+        description: "关闭话题：这件事办完了，或者用户不做了。",
+        parameters: Type.Object({
+          topic: Type.Optional(Type.String({ description: "话题 id。在话题里关这个话题时不填。" })),
+          note: Type.String({ description: "这件事的结论，或者为什么不做了。会显示在话题上，主对话里的你也会收到。" }),
+        }),
+        execute: async (_id, params: any) => {
+          const resolved = resolveAssistantTopic(params.topic, "topic 不能为空：在主对话里关哪个话题就填哪个。");
+          if ("error" in resolved) return fail(resolved.error);
+          const closeNote = typeof params.note === "string" ? params.note.trim() : "";
+          if (!closeNote) return fail("note 不能为空：写清这件事的结论或为什么不做了后再调用一次。");
+          try {
+            const closed = await runtime.assistantTopics.close(assistantId, resolved.id, closeNote);
+            return isAssistantTopic && resolved.id === place!.topicId
+              ? endTurn(`话题「${closed.name}」已关闭。`)
+              : ok(`话题「${closed.name}」已关闭。`);
+          } catch (error) {
+            return fail(error instanceof Error ? error.message : String(error));
+          }
+        },
+      },
+      {
+        name: "rename_topic",
+        label: "修改话题名",
+        description: "修改话题名。",
+        parameters: Type.Object({
+          topic: Type.Optional(Type.String({ description: "话题 id。在话题里改这个话题时不填。" })),
+          title: Type.String({ description: "新名字，最多 40 字。" }),
+        }),
+        execute: async (_id, params: any) => {
+          const resolved = resolveAssistantTopic(params.topic, "topic 不能为空：在主对话里改哪个话题就填哪个。");
+          if ("error" in resolved) return fail(resolved.error);
+          try {
+            const renamed = runtime.assistantTopics.rename(assistantId, resolved.id, params.title);
+            return ok(`话题已改名为「${renamed.name}」。`);
+          } catch (error) {
+            return fail(error instanceof Error ? error.message : String(error));
+          }
+        },
+      },
+    );
+
+    if (!isAssistantTopic) {
+      tools.push({
+        name: "open_topic",
+        label: "创建话题",
+        description: "创建一个话题，把你的交接说明放进去，接下来在话题里处理。topic 填已有话题的 id，就转到那个话题（已关闭的会重新打开）。话题是一段独立的对话，主对话里说过什么话题里看不到，要用到的都写进 note。",
+        parameters: Type.Object({
+          title: Type.Optional(Type.String({ description: "新话题的名字，写这件事，如「下月搬家」。转到已有话题时不填。" })),
+          topic: Type.Optional(Type.String({ description: "已有话题的 id。创建新话题时不填。" })),
+          note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
+          files: Type.Optional(Type.Array(Type.String({ description: "要交给话题的文件路径" }))),
+          ...(assistantHasBoundCwd ? {} : {
+            cwd: Type.Optional(Type.String({ description: "仅创建新话题时可选，话题的工作目录（绝对路径，创建后不可修改）。" })),
+          }),
+        }),
+        execute: async (_id, params: any) => {
+          const liveAssistant = assistant();
+          if (liveAssistant.primary || !liveAssistant.topics) return fail("这个助手没有开启多话题。");
+          const title = typeof params.title === "string" ? params.title.trim() : "";
+          const topicId = typeof params.topic === "string" ? params.topic.trim() : "";
+          if (!title && !topicId) return fail("title 和 topic 要填一个：创建新话题填 title，转到已有话题填 topic。");
+          if (title && topicId) return fail("title 和 topic 只能填一个：创建新话题填 title，转到已有话题填 topic。");
+          if (title && [...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「下月搬家」。`);
+          const noteText = typeof params.note === "string" ? params.note.trim() : "";
+          if (!noteText) return fail("note 不能为空：写清交接说明后再调用一次。");
+
+          let normalizedCwd: string | undefined;
+          if (params.cwd !== undefined) {
+            try {
+              normalizedCwd = normalizeWorkspaceCwdInput(params.cwd);
+            } catch (error) {
+              return fail(error instanceof Error ? error.message : String(error));
+            }
+          }
+          if (topicId && normalizedCwd) return fail(CWD_IMMUTABLE);
+          if (liveAssistant.cwd && normalizedCwd) return fail(topicCwdLockedByAssistant(liveAssistant.cwd));
+
+          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
+          const origin = router.turnOrigin(assistantId, place);
+          const delegationId = router.currentDelegation(assistantId, place);
+          const delegation = delegationId ? store.delegation(delegationId) : undefined;
+          const delegationSuffix = delegation
+            ? `这件转交的事接下来在话题里处理，结果从话题回给「${nameOf(delegation.from)}」。`
+            : "";
+
+          try {
+            let targetTopic: AssistantTopic;
+            let createdNew = false;
+            if (topicId) {
+              const resolved = resolveAssistantTopic(topicId, "");
+              if ("error" in resolved) return fail(resolved.error);
+              targetTopic = resolved.closedAt ? runtime.assistantTopics.reopen(assistantId, resolved.id) : resolved;
+            } else {
+              const created = await runtime.assistantTopics.create(assistantId, {
+                title,
+                createdBy: "assistant",
+                ...(normalizedCwd ? { cwd: normalizedCwd } : {}),
+              });
+              targetTopic = created.topic;
+              createdNew = true;
+            }
+
+            try {
+              await router.addTopicHandoff(assistantId, targetTopic.id, noteText, files);
+            } catch (error) {
+              if (createdNew) {
+                router.forgetSession(assistantId, { topicId: targetTopic.id });
+                rmSync(assistantTopicDir(runtime.home, assistantId, targetTopic.id), { recursive: true, force: true });
+              }
+              throw error;
+            }
+
+            if (createdNew) {
+              await router.addItem(assistantId, { kind: "topic", topicId: targetTopic.id }, place);
+            } else {
+              await router.addItem(assistantId, { kind: "note", icon: "info", text: t("转到了话题「{name}」", { name: targetTopic.name }) }, place);
+            }
+
+            if (delegationId) {
+              runtime.delegations.moveToTopic(delegationId, targetTopic.id);
+              router.clearCurrentDelegation(assistantId, place);
+            }
+
+            const filesSuffix = files.length ? `（附件：${files.join("、")}）` : "";
+            const eventText = createdNew
+              ? `这个话题是你从主对话创建的。交接说明：${noteText}${filesSuffix}`
+              : `你从主对话把一件事转到了这个话题。交接说明：${noteText}${filesSuffix}`;
+            if (delegationId) {
+              void router
+                .relay(assistantId, eventText, delegationId, { workDone: true, ...origin }, undefined, { topicId: targetTopic.id })
+                .catch((error) => console.error("转到话题的转交事件没送到：", error));
+            } else {
+              void router
+                .event(assistantId, eventText, { workDone: true, ...origin }, { topicId: targetTopic.id })
+                .catch((error) => console.error("转到话题的事件没送到：", error));
+            }
+
+            const baseReply = createdNew
+              ? t("话题「{name}」（{id}）已创建，交接说明已转过去，接下来在话题里处理。", { name: targetTopic.name, id: targetTopic.id })
+              : `已转到话题「${targetTopic.name}」（${targetTopic.id}），接下来在话题里处理。`;
+            return endTurn(`${baseReply}${delegationSuffix}`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
           }

@@ -82,6 +82,17 @@ export class DelegationManager {
     this.update(id);
   }
 
+  /** 将进行中的转交挪到目标助手的指定话题：持久化 toTopicId 并立即推给发起方卡片。 */
+  moveToTopic(id: string, topicId: string): Delegation | undefined {
+    const record = this.runtime.store.internalDelegation(id);
+    if (!record || record.reportedAt || record.status === "interrupted" || record.turnFinished) return undefined;
+    const next: StoredDelegation = { ...record, toTopicId: topicId };
+    this.runtime.store.saveDelegation(next);
+    const pub = publicDelegation(next);
+    this.runtime.bus.emit({ type: "delegation", delegation: pub });
+    return pub;
+  }
+
   turnEnded(id: string, reply: string, failed = false): void {
     const record = this.runtime.store.internalDelegation(id);
     if (!record || record.turnFinished) return;

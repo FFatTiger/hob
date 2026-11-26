@@ -38,6 +38,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "提问有了回答，话题已重新打开": "A question was answered. The topic was reopened.",
   "「{name}」交回了转交的结果，话题已重新打开": "{name} returned the delegation result. The topic was reopened.",
   "群「{name}」的话题有了结论，话题已重新打开": "The topic in group “{name}” has a conclusion. The topic was reopened.",
+  "转到了话题「{name}」": "Forwarded to topic “{name}”",
   "话题「{name}」（{id}）已创建，交接说明已转过去，接下来在话题里处理。": "Topic “{name}” ({id}) was created. The handoff was sent there; continue in the topic.",
   "已{changes}": "{changes}",
   "{assistant} {changes}": "{assistant} {changes}",

@@ -19,6 +19,7 @@ import { createFromDraft, updateAssistant } from "./actions.ts";
 import { listAssistantSkills } from "./assistant-skills.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { newId } from "./ids.ts";
+import { isValidTopicId } from "./place.ts";
 import type { HobRuntime } from "./runtime.ts";
 import type { Store } from "./store.ts";
 import { clampDuty } from "./text.ts";
@@ -125,7 +126,50 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
     if (note.group) runtime.groups.appendItem(note.group.gid, assistantId, { kind: "note", icon: "info", text: note.group.text, ...target });
   };
 
-  /** 一个助手的完整资料；page 翻单聊里的用户和助手消息。 */
+  const visibleTopicsText = (target: Assistant): string => {
+    if (!target.topics) return "";
+    const all = store.assistantTopics(target.id);
+    const open = all.filter((topic) => !topic.closedAt).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const closed = all.filter((topic) => topic.closedAt).sort((a, b) => b.closedAt!.localeCompare(a.closedAt!)).slice(0, 5);
+    const shown = [...open, ...closed];
+    return shown.length
+      ? `可见话题：${shown.map((topic) => `${topic.name}（${topic.id}${topic.closedAt ? "，已关闭" : ""}）`).join("、")}`
+      : "这个助手还没有话题。";
+  };
+
+  /** 查看某个助手的指定话题详情与分页消息。 */
+  const assistantTopicView = (target: Assistant, topicId: string, requestedPage = 1): { text: string } | { error: string } => {
+    if (!target.topics) {
+      return { error: `「${target.name}」（${target.id}）不是多话题助手，没有话题；不填 topic 可查看它的单聊消息。` };
+    }
+    const topic = isValidTopicId(topicId) ? store.assistantTopic(target.id, topicId) : undefined;
+    if (!topic || topic.assistantId !== target.id || topic.id !== topicId) {
+      return { error: `「${target.name}」没有这个话题：${topicId}。${visibleTopicsText(target)}` };
+    }
+    const lines = [
+      `${target.name}（${target.id}） · 话题「${topic.name}」（${topic.id}）`,
+      `状态：${topic.closedAt ? `已关闭${topic.closeNote ? ` · 结论：${topic.closeNote}` : ""}` : "进行中"}`,
+      `工作目录：${!target.primary && target.cwd ? `跟随助手（${target.cwd}）` : (topic.cwd ?? "未设置（默认）")}`,
+    ];
+    const messages = router.messageHistory(target.id, { topicId: topic.id });
+    const pages = Math.max(1, Math.ceil(messages.length / PAGE_SIZE));
+    const page = Math.min(requestedPage, pages);
+    const start = Math.max(0, messages.length - page * PAGE_SIZE);
+    const end = messages.length - (page - 1) * PAGE_SIZE;
+    lines.push("消息：");
+    lines.push(
+      ...(messages.length
+        ? messages.slice(start, end).map((item) => {
+          const who = item.kind === "user" ? "用户" : target.name;
+          return `[${monthDayTimeText(timezone, new Date(item.at))}] ${who}：${cut(item.text)}`;
+        })
+        : ["还没有"]),
+    );
+    lines.push(pageHint(page, messages.length, pages, "条"));
+    return { text: lines.join("\n") };
+  };
+
+  /** 一个助手的完整资料；page 翻单聊/主对话里的用户和助手消息。 */
   const assistantProfile = async (target: Assistant, requestedPage = 1): Promise<string> => {
     const pick = (key: "conversation" | "work") => {
       const chosen = target.models?.[key];
@@ -160,12 +204,25 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
     } catch (error) {
       lines.push(`技能：读取失败（${error instanceof Error ? error.message : String(error)}）`);
     }
+    if (target.topics) {
+      const allTopics = store.assistantTopics(target.id);
+      const openTopics = allTopics.filter((topic) => !topic.closedAt).sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+      const closedTopics = allTopics.filter((topic) => topic.closedAt).sort((a, b) => b.closedAt!.localeCompare(a.closedAt!)).slice(0, 5);
+      lines.push(openTopics.length ? "进行中的话题：" : "进行中的话题：没有");
+      for (const topic of openTopics) lines.push(`- ${topic.name}（${topic.id}）`);
+      if (closedTopics.length) {
+        lines.push("最近关闭的话题：");
+        for (const topic of closedTopics) {
+          lines.push(`- ${topic.name}（${topic.id}）${topic.closeNote ? ` · 结论：${topic.closeNote}` : ""}`);
+        }
+      }
+    }
     const messages = router.messageHistory(target.id);
     const pages = Math.max(1, Math.ceil(messages.length / PAGE_SIZE));
     const page = Math.min(requestedPage, pages);
     const start = Math.max(0, messages.length - page * PAGE_SIZE);
     const end = messages.length - (page - 1) * PAGE_SIZE;
-    lines.push("单聊：");
+    lines.push(target.topics ? "主对话：" : "单聊：");
     lines.push(
       ...(messages.length
         ? messages.slice(start, end).map((item) => {
@@ -186,14 +243,21 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
         "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
       parameters: Type.Object({
         assistantId: Type.Optional(Type.String({ description: "可选，助手 id" })),
+        topic: Type.Optional(Type.String({ description: "可选，查看该助手哪个话题的消息（填话题 id）；不填看主对话或单聊" })),
         query: Type.Optional(Type.String({ description: "可选，按关键词找助手，匹配名字、id、职责和详细职责" })),
         page: Type.Optional(Type.Number({ description: "可选，第几页，默认 1" })),
       }),
       execute: async (_id, params: any) => {
         const id = String(params.assistantId ?? "").trim();
+        const topicId = String(params.topic ?? "").trim();
+        if (!id && topicId) return fail("查看话题消息时请同时填写 assistantId。");
         if (id) {
           const target = store.assistant(id);
           if (!target) return fail(`没有这个助手：${id}`);
+          if (topicId) {
+            const view = assistantTopicView(target, topicId, pageOf(params.page));
+            return "error" in view ? fail(view.error) : ok(view.text);
+          }
           return ok(await assistantProfile(target, pageOf(params.page)));
         }
         const query = String(params.query ?? "").trim();

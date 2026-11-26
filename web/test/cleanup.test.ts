@@ -195,7 +195,7 @@ describe("前端失败路径", () => {
     expect(await page.getByLabel("开关").isChecked()).toBe(true);
     expect(await page.getByLabel("选项").inputValue()).toBe("a");
     await page.getByLabel("名称").fill("example");
-    await page.getByLabel("文件路径").fill("/tmp/example-file");
+    await page.locator('input[type="file"]').setInputFiles({ name: "example-file", mimeType: "text/plain", buffer: Buffer.from("/tmp/example-file") });
     await page.getByLabel("目录路径").fill("/tmp/example-dir");
     await page.evaluate(() => { (window as any).open = (...args: unknown[]) => { (window as any).popupArgs = args; return { location: {}, closed: true, close() {} }; }; });
     await connect.click();

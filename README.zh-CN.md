@@ -58,7 +58,7 @@
 
 - **模型**：Anthropic、OpenAI、Google、DeepSeek、OpenRouter 等内置服务商只填 API Key；OpenAI 或 Anthropic 兼容接口也能用。npm 和源码安装还可以直接用本机 Claude Code 的订阅，也可以从插件市场装供应商插件复用已有订阅或账号。
 - **知识库**：整理和预览文件，绑定给助手，引用能跳回原文；配了向量模型可以混合检索，PDF 也能建索引。
-- **联网搜索**：SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama。
+- **联网搜索**：OpenAI Responses API、SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama。
 - **密码**：自带一个本机密码库，也能接 Bitwarden。网站要登录时，Hob 核对网址、你批准后直接把账号密码填进云桌面的登录页，密码不经过助手；没存过的网站在卡片上填一次就存下。
 - **记忆**：存在本地，或者接入 [Lore](https://github.com/FFatTiger/lore)。
 - **页面和图片**：助手可以把对比、调研做成网页在侧栏打开；配上 OpenAI 兼容的图像接口就能画图和改图。

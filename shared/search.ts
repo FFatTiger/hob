@@ -1,4 +1,4 @@
-export const SEARCH_PROVIDERS = ["searxng", "exa", "tavily", "brave", "serper", "jina", "firecrawl", "perplexity", "youcom", "ollama", "openai"] as const;
+export const SEARCH_PROVIDERS = ["searxng", "exa", "tavily", "brave", "serper", "jina", "firecrawl", "perplexity", "youcom", "ollama", "openai", "deepseek"] as const;
 export type SearchProviderName = typeof SEARCH_PROVIDERS[number];
 export const DEFAULT_OPENAI_SEARCH_BASE_URL = "https://api.openai.com/v1";
 export const DEFAULT_OPENAI_SEARCH_MODEL = "gpt-4.1-mini";

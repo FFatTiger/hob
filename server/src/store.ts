@@ -281,8 +281,12 @@ export class Store {
     const out: AssistantTopic[] = [];
     for (const entry of readdirSync(root, { withFileTypes: true })) {
       if (!entry.isDirectory()) continue;
-      const topic = this.assistantTopic(aid, entry.name);
-      if (topic) out.push(topic);
+      try {
+        const topic = this.assistantTopic(aid, entry.name);
+        if (topic) out.push(topic);
+      } catch (error) {
+        console.error(`跳过损坏的话题目录 ${aid}/${entry.name}：`, error);
+      }
     }
     return out.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }

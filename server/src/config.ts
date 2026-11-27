@@ -2,6 +2,7 @@ import { randomBytes } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import { isValidTopicId } from "./place.ts";
 import { hashPassword, isPasswordHash } from "./password.ts";
 import type { ThinkingLevel } from "../../shared/types.ts";
 
@@ -107,6 +108,7 @@ export function assistantTopicsDir(home: string, id: string): string {
 
 /** 一个助手话题的目录：topic.json、router.jsonl、state.json、todos.json、rule-overrides.json。 */
 export function assistantTopicDir(home: string, id: string, tid: string): string {
+  if (!isValidTopicId(tid)) throw new Error(`话题 id 无效：${tid}`);
   return join(assistantTopicsDir(home, id), tid);
 }
 

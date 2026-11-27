@@ -946,7 +946,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",
@@ -1281,7 +1281,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",
@@ -1665,7 +1665,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",
@@ -2023,7 +2023,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",
@@ -2360,7 +2360,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",
@@ -2697,7 +2697,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+      "description": "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       "name": "show_assistant",
       "params": [
         "assistantId",

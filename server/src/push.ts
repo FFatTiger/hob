@@ -406,12 +406,20 @@ export function pushTarget(assistantId: string, place?: Place): string {
   return `assistant:${assistantId}`;
 }
 
+function pushConversationTitle(store: Store, assistantId: string, assistantName: string, place?: Place): string {
+  if (place?.groupId) return store.group(place.groupId)?.name ?? assistantName;
+  if (place?.topicId) {
+    const topic = store.assistantTopic(assistantId, place.topicId);
+    if (topic) return `${assistantName} · ${topic.name}`;
+  }
+  return assistantName;
+}
+
 /** 一轮结束后推送；是否需要推送由 Router 按本轮面向用户状态与分派任务/已推标记判断。 */
 export function pushAssistantTurnEnd(deps: NotifyDeps, turn: AssistantTurnEnd): void {
   const assistant = deps.store.assistant(turn.assistantId);
   if (!assistant?.notify) return;
-  const group = turn.place?.groupId ? deps.store.group(turn.place.groupId) : undefined;
-  const title = group?.name ?? assistant.name;
+  const title = pushConversationTitle(deps.store, turn.assistantId, assistant.name, turn.place);
   const body = turn.error
     ? t("执行失败：{reason}", { reason: plainText(turn.error) })
     : turn.text?.trim()
@@ -433,8 +441,9 @@ export interface InteractiveCardPush {
 export function pushInteractiveCard(deps: NotifyDeps, card: InteractiveCardPush): void {
   const assistant = deps.store.assistant(card.assistantId);
   if (!assistant?.notify) return;
-  const group = card.place?.groupId ? deps.store.group(card.place.groupId) : undefined;
-  const title = card.title?.trim() ? plainText(card.title) : (group?.name ?? assistant.name);
+  const title = card.title?.trim()
+    ? plainText(card.title)
+    : pushConversationTitle(deps.store, card.assistantId, assistant.name, card.place);
   void deps.push
     .send(
       { title, body: t("{assistant} · 等待你的操作", { assistant: assistant.name }), url: openUrl(card.assistantId, card.place) },

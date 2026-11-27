@@ -240,7 +240,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
       name: "show_assistant",
       label: "查看助手",
       description:
-        "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
+        "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。传 topic 可以看这个助手某个话题里的消息。",
       parameters: Type.Object({
         assistantId: Type.Optional(Type.String({ description: "可选，助手 id；传 topic 查自己话题时可不填" })),
         topic: Type.Optional(Type.String({ description: "可选，查看哪个话题的消息（填话题 id）；不填 assistantId 默认查当前助手自己的话题，不填 topic 时看主对话或单聊" })),
@@ -250,6 +250,9 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
       execute: async (_id, params: any) => {
         const id = String(params.assistantId ?? "").trim();
         const topicId = String(params.topic ?? "").trim();
+        if (!id && topicId && primary) {
+          return fail("主助手没有话题；查别的助手的话题，要填 assistantId。");
+        }
         const targetId = id || (topicId ? assistantId : "");
         if (targetId) {
           const target = store.assistant(targetId);

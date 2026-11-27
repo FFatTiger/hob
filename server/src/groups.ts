@@ -465,13 +465,28 @@ export class GroupManager {
       if (!destination || (destination.parentId ?? destination.id) !== gid || routine.assistantId === ownerId) continue;
       this.runtime.routines.transfer(routine, ownerId);
     }
-    const topicIds = this.topicsOf(gid).map((topic) => topic.id);
+    const removed = group.members.filter((id) => !members.includes(id));
+    const topics = this.topicsOf(gid);
+    const topicIds = topics.map((topic) => topic.id);
+    if (removed.length) {
+      for (const topic of topics) {
+        const memberModels = topic.overrides?.memberModels;
+        if (!memberModels) continue;
+        const clear: Record<string, null> = {};
+        for (const id of removed) {
+          if (id in memberModels) clear[id] = null;
+        }
+        if (Object.keys(clear).length) {
+          patchOverrides(this.store.groupTopicConfigHost(topic.id), { memberModels: clear });
+        }
+      }
+    }
     // 被移出的成员在各话题里的会话也跟着放掉
-    for (const id of group.members) if (!members.includes(id)) this.forgetMemberSessions([gid, ...topicIds], id);
+    for (const id of removed) this.forgetMemberSessions([gid, ...topicIds], id);
     // 换了群主：两边重开会话，群主工具和提示词才跟着换
     if (ownerId !== group.ownerId) for (const id of [group.ownerId, ownerId]) this.forgetMemberSessions([gid, ...topicIds], id);
     this.publish(gid);
-    for (const topic of this.topicsOf(gid)) this.publish(topic.id);
+    for (const topic of topics) this.publish(topic.id);
     return next;
   }
 

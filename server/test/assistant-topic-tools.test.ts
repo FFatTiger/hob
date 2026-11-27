@@ -464,10 +464,10 @@ describe("show_assistant：多话题资料与按话题分页查看", () => {
       const mainTopicEmptyAidPage2 = textOf(await mainShow.execute("s6", { assistantId: "", topic: openTopic.id, page: 2 }));
       expect(mainTopicEmptyAidPage2).toBe(page2);
 
-      // 4. 报错情况：非多话题助手不填 assistantId 只填 topic；显式传非多话题目标；话题不存在/不属于该助手
+      // 4. 报错情况：主助手不填 assistantId 只填 topic 提示填 assistantId；非多话题普通助手不填 assistantId 报不是多话题；显式传非多话题目标；话题不存在/不属于该助手
       const nonMultiSelf = await hobShow.execute("e1", { topic: openTopic.id });
       expect(nonMultiSelf.isError).toBe(true);
-      expect(textOf(nonMultiSelf)).toContain("不是多话题助手");
+      expect(textOf(nonMultiSelf)).toContain("查别的助手的话题，要填 assistantId");
 
       const singleShow = findTool(hob, "single", "show_assistant")!;
       const singleOmittedAid = await singleShow.execute("e1b", { topic: openTopic.id });

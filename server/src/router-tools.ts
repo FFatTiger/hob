@@ -861,24 +861,35 @@ export function buildRouterTools(
         const targetGroupId = targetGroupOf(params.scope);
         const rules = targetGroupId ? store.groupParentRules(targetGroupId) : store.rules(target.id);
         const existing = rules.find((rule) => rule.text === text);
+        const topicOverrideNote = (ruleId: string): string => {
+          if (!isGroupTopic && !isAssistantTopic) return "";
+          const overrides = topicConfigHost().readRuleOverrides();
+          if (Object.prototype.hasOwnProperty.call(overrides.hidden, ruleId)) return "这个话题停用了这一条，这里不受影响。";
+          if (Object.prototype.hasOwnProperty.call(overrides.changed, ruleId)) return "这个话题对这一条单独改过，这里不受影响。";
+          return "";
+        };
         // 答 always 审批时规则已经写好了（Actions 那行提示也已经出过），这里没改动就不重复出：
         // 模型看到答案之后常会把同一句再记一遍，重复的提示行对用户没有信息量。
-        if (existing?.mode === mode) return ok("这条规则已经记着了，没有改动。");
+        if (existing?.mode === mode) return ok(`这条规则已经记着了，没有改动。${topicOverrideNote(existing.id)}`);
+        let ruleId: string;
         if (existing) {
           existing.mode = mode;
           existing.changedAt = new Date().toISOString();
+          ruleId = existing.id;
         } else {
-          rules.push({ id: newId("r-"), text, mode, changedAt: new Date().toISOString() });
+          ruleId = newId("r-");
+          rules.push({ id: ruleId, text, mode, changedAt: new Date().toISOString() });
         }
         if (targetGroupId) store.saveGroupRules(targetGroupId, rules);
         else store.saveRules(target.id, rules);
         await note("rule", t("已记入{owner}的规则 · {rule}", { owner: targetGroupId ? t("本群") : nameOf(target.id), rule: text }));
         profileChanged(target.id);
+        const suffix = topicOverrideNote(ruleId);
         return ok(
           isGroupTopic
-            ? "已加到本群的规则，没有单独改过这一条的话题都会用。"
+            ? `已加到本群的规则，没有单独改过这一条的话题都会用。${suffix}`
             : isAssistantTopic
-              ? "已加到你的规则，没有单独改过这一条的话题都会用。"
+              ? `已加到你的规则，没有单独改过这一条的话题都会用。${suffix}`
               : "已记录规则。",
         );
       },
@@ -1361,10 +1372,10 @@ export function buildRouterTools(
               if (!groupHasBoundCwd && params.cwd !== undefined) return fail(CWD_IMMUTABLE);
               const target = store.group(topicId);
               if (!target || target.parentId !== gid) return fail(`「${topicId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
-              // 已关闭的话题先重新打开，接着在里面处理
-              const topic = target.closedAt ? runtime.groups.reopen(topicId) : target;
+              // 交接写入成功后再重新打开已关闭的话题，避免写失败留下已重开的半成品
               runtime.groups.appendItem(topicId, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
-              runtime.groups.note(gid, assistantId, `转到了话题「${topic.name}」`, "info", undefined, topicId);
+              runtime.groups.note(gid, assistantId, `转到了话题「${target.name}」`, "info", undefined, topicId);
+              const topic = target.closedAt ? runtime.groups.reopen(topicId) : target;
               void runtime.groups
                 .deliverEvent(topicId, assistantId, event, "", { workDone: true, ...origin })
                 .catch((error) => console.error("转到话题的事件没送到：", error));
@@ -1526,10 +1537,12 @@ export function buildRouterTools(
           try {
             let targetTopic: AssistantTopic;
             let createdNew = false;
+            let shouldReopen = false;
             if (topicId) {
               const resolved = resolveAssistantTopic(topicId, "");
               if ("error" in resolved) return fail(resolved.error);
-              targetTopic = resolved.closedAt ? runtime.assistantTopics.reopen(assistantId, resolved.id) : resolved;
+              targetTopic = resolved;
+              shouldReopen = Boolean(resolved.closedAt);
             } else {
               const created = await runtime.assistantTopics.create(assistantId, {
                 title,
@@ -1560,6 +1573,8 @@ export function buildRouterTools(
 
             if (createdNew) {
               runtime.assistantTopics.publish(assistantId, targetTopic.id);
+            } else if (shouldReopen) {
+              targetTopic = runtime.assistantTopics.reopen(assistantId, targetTopic.id);
             }
 
             const movedDelegation = delegationId ? runtime.delegations.moveToTopic(delegationId, targetTopic.id) : undefined;

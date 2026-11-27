@@ -1347,7 +1347,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   });
 
   const topicErr = (c: { json: (data: unknown, status?: any) => any }, error: unknown) => {
-    const status = error instanceof TopicError ? error.status : 400;
+    const status = error instanceof TopicError ? error.status : 500;
     return c.json({ error: error instanceof Error ? error.message : String(error) }, status);
   };
 

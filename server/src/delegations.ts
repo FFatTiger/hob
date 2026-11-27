@@ -193,11 +193,13 @@ export class DelegationManager {
       const name = this.runtime.store.assistant(record.to)?.name ?? record.to;
       const fromPlace = record.fromTopicId ? { topicId: record.fromTopicId } : undefined;
       void (async () => {
-        await this.runtime.router.reopenForEvent(
-          record.from,
-          fromPlace,
-          t("「{name}」交回了转交的结果，话题已重新打开", { name }),
-        );
+        if (record.fromTopicId) {
+          await this.runtime.router.reopenForEvent(
+            record.from,
+            fromPlace,
+            t("「{name}」交回了转交的结果，话题已重新打开", { name }),
+          );
+        }
         await this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`, { urgent: true }, fromPlace);
       })().catch(() => undefined);
     }

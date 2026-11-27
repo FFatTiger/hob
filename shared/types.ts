@@ -695,6 +695,7 @@ export interface TopicHandover {
   at: Iso;
   fromTopicId?: string; // 从助手话题交给群时记下来，结论回这个话题
   result?: string; // 关话题时送回给主助手的那句话
+  resultFiles?: string[]; // 话题关闭时已交付的文件，和结论一起补送
   deliveredAt?: Iso; // 送到主助手的对话的时间；没有就是还没送到
 }
 

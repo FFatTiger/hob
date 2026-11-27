@@ -16,7 +16,7 @@ import { newId } from "./ids.ts";
 import { reactionsList } from "./store.ts";
 import { patchOverrides } from "./topic-config.ts";
 import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
-import { clearTodos, readTodos } from "./todos.ts";
+import { clearTodos, readTodos, todosBusy } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
 import { cardHistoryLine } from "./cards.ts";
@@ -36,11 +36,14 @@ export const TOPIC_CLOSED = "这个话题已关闭，重新打开后才能发消
 export const CLOSED_TOPIC_REASON = "你关闭了这个话题";
 /** 群主在话题里收到的交接说明。 */
 export function handoverEvent(from: string): string {
-  return `这个话题是 ${from} 交给这个群的，上面是 ${from} 写的交接说明。完成后用 close_topic 写结论，结论会转给 ${from}，由它告诉用户。`;
+  return `这个话题是 ${from} 交给这个群的，上面是 ${from} 写的交接说明。有成品文件要交回时，先用 send_file 发到本话题。完成后用 close_topic 写结论，结论和已交付的文件会转给 ${from}，由它告诉用户。`;
 }
 
 /** 系统写的条目（停下、重启）的发言人。 */
 const SYSTEM = "system";
+
+/** 成员在交给群的话题里结束这一轮发言后，发给群主的事实事件（不代替群主做决定）。 */
+const reviewHandover = () => "群成员已结束这一轮发言。";
 
 /** 结论后面附的任务记录里，任务状态怎么写。 */
 const JOB_STATE: Record<JobStatus, string> = { queued: "排队中", running: "进行中", waiting: "等你回复", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" };
@@ -64,6 +67,10 @@ export interface DeliverEventOptions {
 
 /** 一条用户消息引出的一串助手回合，turns 是已经开了几个（按 @ 接力计，不含全员依次轮到的回合）。 */
 interface Wave {
+  /** 委派话题的成员结束这一轮后要通知群主。停止代数避免恢复被用户停下的接力。 */
+  handoverReviewEpoch?: number;
+  /** 用户明确点名非群主成员或全员回应波次：成员说完不自动再叫醒群主。 */
+  skipHandoverOwnerNotify?: boolean;
   turns: number;
   stopped: boolean;
   pending: number;
@@ -113,6 +120,11 @@ export type RequestItem = Extract<GroupItem, { kind: "user" | "note" }>;
 
 function isRequestItem(item: GroupItem | undefined): item is RequestItem {
   return item?.kind === "user" || (item?.kind === "note" && item.icon === "routine");
+}
+
+function sentFiles(item: GroupItem): string[] {
+  if (item.kind === "file" && item.path) return [item.path];
+  return item.kind === "image" && item.status === "done" && item.path ? [item.path] : [];
 }
 
 /** 来由的文字：用户消息取原文；定时记录取到点时交给群主的全文，老数据没有 request 就取记录那一行。 */
@@ -361,7 +373,7 @@ export class GroupManager {
     if (existing.closedAt) this.reopen(tid, { resumeRoutines: false });
     const live = this.group(tid);
     const prev = live.handover ?? { by, at: new Date().toISOString() };
-    const { result: _result, deliveredAt: _deliveredAt, fromTopicId: _fromTopicId, ...restHandover } = prev;
+    const { result: _result, resultFiles: _resultFiles, deliveredAt: _deliveredAt, fromTopicId: _fromTopicId, ...restHandover } = prev;
     const nowIso = new Date().toISOString();
     const at = nowIso === prev.at ? new Date(Date.now() + 1).toISOString() : nowIso;
     this.store.saveGroup({
@@ -424,35 +436,31 @@ export class GroupManager {
     const next: Group = { ...base, closedAt: new Date().toISOString(), ...(text ? { closeNote: text } : {}) };
     // 上一句结论还在时，这次没给说明就把它清掉，免得卡片上留着旧话
     if (!text && next.closeNote) delete next.closeNote;
+    // 把结论和当时已经交付的文件一起存下来，补送时仍用这一次关闭的内容。
+    if (topic.handover && !topic.handover.result) {
+      const host = topic.parentId ? this.store.group(topic.parentId) : undefined;
+      const groupName = host?.name ?? topic.parentId ?? "";
+      const jobs = this.store.jobs().filter((job) => job.groupId === topic.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const rows = jobs.map((job) => `${job.assistantName ?? job.assistantId}「${job.title}」${JOB_STATE[job.status]}`);
+      const result = conclusion
+        ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}`
+        : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。`;
+      const files = [...new Set([...this.store.groupItems(topic.id).flatMap(sentFiles), ...jobs.filter((job) => job.status === "done").flatMap((job) => job.files ?? [])])];
+      next.handover = {
+        ...topic.handover,
+        result: rows.length ? `${result}\n话题里的任务：${rows.join("；")}` : result,
+        ...(files.length ? { resultFiles: files } : {}),
+      };
+    }
     this.store.saveGroup(next);
     this.runtime.routines.pauseForTopic(topic.id);
     // 关了这个话题就没人再管它的待办了：没做完的直接清掉，不再写进时间线
     const left = readTodos(groupTodosPath(this.runtime.home, topic.id));
     if (left.length) clearTodos(groupTodosPath(this.runtime.home, topic.id));
-    // 主助手交来的话题：先记下要送回去的那句，再送；重新打开再关不再送
-    if (topic.handover && !topic.handover.result) {
-      const host = topic.parentId ? this.store.group(topic.parentId) : undefined;
-      const groupName = host?.name ?? topic.parentId ?? "";
-      const result = conclusion
-        ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}${this.topicJobsLine(topic.id)}`
-        : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。${this.topicJobsLine(topic.id)}`;
-      this.store.saveGroup({ ...this.group(topic.id), handover: { ...topic.handover, result } });
-      this.deliverHandover(topic.id);
-    }
+    if (next.handover?.result && !next.handover.deliveredAt) this.deliverHandover(topic.id);
     this.publish(topic.id);
     if (topic.parentId) this.publish(topic.parentId);
     return this.group(topic.id);
-  }
-
-  /**
-   * 这个话题里开过的任务，一行一条，附在交回的结论后面：主助手说得清谁做了什么，不看也能对上。
-   * 同一张任务卡续做几轮只算一条。
-   */
-  private topicJobsLine(tid: string): string {
-    const jobs = this.store.jobs().filter((job) => job.groupId === tid).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    if (!jobs.length) return "";
-    const rows = jobs.map((job) => `${job.assistantName ?? job.assistantId}「${job.title}」${JOB_STATE[job.status]}`);
-    return `\n话题里的任务：${rows.join("；")}`;
   }
 
   /** 把话题的结论送进主助手的对话；送到了记下 deliveredAt。会话条目是去重依据。 */
@@ -463,12 +471,12 @@ export class GroupManager {
     if (!handover || !result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
     const targetPlace = handover.fromTopicId ? { topicId: handover.fromTopicId } : undefined;
-    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace, handover.at).then((received) => {
+    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace, handover.at, handover.resultFiles).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
       if (!current?.handover || current.handover.deliveredAt || current.handover.result !== result) return;
       this.store.saveGroup({ ...current, handover: { ...current.handover, deliveredAt: new Date().toISOString() } });
-      this.runtime.delegations.topicEnded(tid, result);
+      this.runtime.delegations.topicEnded(tid, result, { files: handover.resultFiles });
     }).catch((error) => console.error("话题的结论没送到：", error)).finally(() => this.delivering.delete(tid));
   }
 
@@ -759,6 +767,7 @@ export class GroupManager {
     this.bus.emit({ type: "group-item", groupId: gid, item });
     this.publish(gid);
     const epoch = this.epochs.get(gid) ?? 0;
+    const skipHandoverOwnerNotify = allReply || (explicit.length > 0 && !explicit.includes(group.ownerId));
     const wave: Wave = {
       turns: 0,
       stopped: false,
@@ -766,6 +775,7 @@ export class GroupManager {
       epoch,
       userInitiated: true,
       bypassBusy: true,
+      ...(skipHandoverOwnerNotify ? { skipHandoverOwnerNotify: true } : {}),
       ...(allReply
         ? { allReply: { triggerId: item.id, epoch, participated: new Set<string>() } }
         : {}),
@@ -872,6 +882,14 @@ export class GroupManager {
         }
       }
     }
+    if (!wave.stopped && wave.handoverReviewEpoch === (this.epochs.get(gid) ?? 0)) {
+      delete wave.handoverReviewEpoch;
+      const group = this.store.group(gid);
+      if (group) {
+        void this.schedule(gid, group.ownerId, wave, "", reviewHandover);
+        return;
+      }
+    }
     if (!wave.handedToWrapUp && (this.epochs.get(gid) ?? 0) === wave.epoch) {
       this.flushWavePush(gid, wave);
     }
@@ -960,6 +978,7 @@ export class GroupManager {
   private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false, eventFiles?: string[]): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
+    if (event === reviewHandover && (group.ownerId !== assistantId || group.closedAt || !group.handover || group.handover.result || todosBusy(this.runtime, assistantId, { groupId: gid }))) return;
     // 用户按了停止：这一轮不再开始
     if ((this.epochs.get(gid) ?? 0) !== epoch) return;
     wave.allReply?.participated.add(assistantId);
@@ -985,7 +1004,9 @@ export class GroupManager {
     }
     // 排到的这一轮已经没有新东西给它（前面那一轮已经带上了）：不跑，不调模型
     const input = this.windowFor(group, assistantId, event === undefined ? triggerId : "");
-    if (event === undefined && !input) return;
+    if ((event === undefined || event === reviewHandover) && !input) return;
+    const reviewing = group.handover && !group.closedAt && !group.handover.result;
+    if (reviewing && assistantId === group.ownerId) delete wave.handoverReviewEpoch;
     if (!allReplyTurn) wave.turns += 1;
     const handoverPendingAtStart = this.isHandoverPending(group);
     // 排队期间用户若亲自发了消息（非助手转发的交接说明），本轮即带上了用户发言，视为用户主动触发
@@ -1012,6 +1033,7 @@ export class GroupManager {
         { userInitiated: wave.userInitiated, bypassBusy: wave.bypassBusy },
       );
       text = turn.text;
+      if (reviewing && !wave.skipHandoverOwnerNotify && assistantId !== group.ownerId && !outcome?.error && (!turn.silent || turn.lastId)) wave.handoverReviewEpoch = epoch;
     } catch (error) {
       // 中途出错：已经写好的那几段照常留着（和单聊一致），再写失败原因
       const message = error instanceof Error ? error.message : String(error);
@@ -1099,11 +1121,7 @@ export class GroupManager {
   }
 
   private inputFiles(input: TurnInput): string[] {
-    return [...new Set(input.items.flatMap((item) => {
-      if (item.kind === "user") return item.files ?? [];
-      if (item.kind === "file") return [item.path];
-      return item.kind === "image" && item.status === "done" && item.path ? [item.path] : [];
-    }))];
+    return [...new Set(input.items.flatMap((item) => item.kind === "user" ? item.files ?? [] : sentFiles(item)))];
   }
 
   /** 给到哪一条了：下一轮从这里往后算（只调了工具没说话的回合也记得住）。 */

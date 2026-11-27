@@ -14,7 +14,7 @@ export class DelegationManager {
     runtime.bus.subscribe((event) => {
       if (this.recovering) return;
       if (event.type === "job" && event.job.delegationId) this.update(event.job.delegationId);
-      if (event.type === "group_removed") this.topicEnded(event.id, "群话题已归档，未收到结论。", true);
+      if (event.type === "group_removed") this.topicEnded(event.id, "群话题已归档，未收到结论。", { failed: true });
       if (event.type === "approval") {
         for (const delegation of runtime.store.delegations()) {
           if (delegation.approvalIds?.includes(event.approval.id) || (event.approval.jobId && delegation.jobIds.includes(event.approval.jobId))) this.update(delegation.id);
@@ -112,11 +112,15 @@ export class DelegationManager {
     return record && this.resume(record.id) ? record.id : undefined;
   }
 
-  topicEnded(topicId: string, result: string, failed = false): void {
+  topicEnded(topicId: string, result: string, options: { files?: string[]; failed?: boolean } = {}): void {
     const record = this.forTopic(topicId);
     if (!record) return;
     const reply = [record.reply, result].filter(Boolean).join("\n");
-    this.runtime.store.saveDelegation({ ...record, topics: { ...record.topics, [topicId]: failed ? "failed" : "done" }, reply });
+    this.runtime.store.saveDelegation({
+      ...record, reply,
+      topics: { ...record.topics, [topicId]: options.failed ? "failed" : "done" },
+      ...(options.files?.length ? { resultFiles: [...new Set([...(record.resultFiles ?? []), ...options.files])] } : {}),
+    });
     this.update(record.id);
   }
 
@@ -238,8 +242,8 @@ export class DelegationManager {
         this.runtime.store.saveDelegation({ ...record, turnFinished: true });
         for (const [id] of pendingTopics) {
           const handover = this.runtime.store.group(id)?.handover;
-          if (!handover) this.topicEnded(id, "群话题已归档，未收到结论。", true);
-          else if (handover.deliveredAt && handover.result) this.topicEnded(id, handover.result);
+          if (!handover) this.topicEnded(id, "群话题已归档，未收到结论。", { failed: true });
+          else if (handover.deliveredAt && handover.result) this.topicEnded(id, handover.result, { files: handover.resultFiles });
         }
         continue;
       }

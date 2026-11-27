@@ -1655,7 +1655,7 @@ export class RouterManager {
   }
 
   /** 将交给群的话题的结论送回发起助手的会话（主对话或话题）；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string, place?: Place, handoverAt?: string): Promise<boolean> {
+  async handoverResult(assistantId: string, topicId: string, text: string, place?: Place, handoverAt?: string, files?: string[]): Promise<boolean> {
     const target = placeOf(place);
     const state = await this.ensure(assistantId, target);
     const received = () => state.manager!.getEntries().some((entry) => {
@@ -1675,10 +1675,10 @@ export class RouterManager {
         t("群「{name}」的话题有了结论，话题已重新打开", { name }),
       );
     }
-    const success = await this.pushEvent(
+    await this.pushEvent(
       assistantId,
       text,
-      { handoverTopicId: topicId, ...(handoverAt ? { handoverAt } : {}), workDone: true },
+      { handoverTopicId: topicId, ...(handoverAt ? { handoverAt } : {}), workDone: true, ...(files?.length ? { files } : {}) },
       undefined,
       target,
     );
@@ -1691,7 +1691,8 @@ export class RouterManager {
         this.runtime.delegations.turnEnded(resumedId, "目标助手处理失败或转交被中断", true);
       }
     }
-    return success && received();
+    // 接手助手当轮报错时，已写入会话的结论仍然送达了。
+    return received();
   }
 
   /** 当前会话/话题里是否还有未收口的后台任务、未结转交或未关闭的交群话题。 */

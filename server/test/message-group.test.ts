@@ -1,8 +1,11 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Assistant, Group, GroupItem } from "../../shared/types.ts";
+import { answerApproval } from "../src/actions.ts";
 import { buildSystemPrompt } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
+import { createRuntime, type HobRuntime } from "../src/runtime.ts";
 import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 const ISO = "2026-11-08T02:00:00.000Z";
@@ -100,6 +103,326 @@ async function seedChat(hob: TestHob, lines: string[]): Promise<void> {
 }
 
 describe("message_group", () => {
+  it("非主助手交给群，群主看到实际交接人，结论回到该助手", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([text("我来核账"), text("收到结论")]);
+      const handoff = buildRouterTools(hob.runtime, "write").find((tool) => tool.name === "message_group")!;
+      await handoff.execute("handoff", { groupId: group.id, title: "核账", note: "核对两张票据" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
+      const instructions = inputBody(hob, topic.id, "ops").split("[hob-event]")[1];
+      expect(instructions).toContain("写作");
+      expect(instructions).not.toContain("Hob");
+      expect(() => hob.runtime.groups.closeByOwner(topic.id, "")).toThrow(/写作/);
+      hob.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob, "write")).toEqual([expect.stringContaining("合计 128 元")]);
+      expect(await events(hob, "hob")).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("助手接到委派再交给群，等群给出结论后才向最初的发起者汇报一次", async () => {
+    const { hob, group } = setup();
+    let restarted: HobRuntime | undefined;
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "请核对两张票据" }),
+        text("已开始核账"),
+        text("核对完成，合计 128 元"),
+        text("收到，合计 128 元"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "请协调小组核对票据");
+      await waitFor(() => hob.runtime.groups.topicsOf(group.id).length === 1);
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "已开始核账"));
+      await hob.runtime.router.waitIdle("write");
+      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe("running");
+      expect(await events(hob, "hob")).toEqual([]);
+      hob.runtime.router.disposeAll();
+      restarted = createRuntime({ home: hob.home, config: hob.runtime.config, pi: hob.runtime.pi });
+      const after = { ...hob, runtime: restarted };
+      after.runtime.delegations.recover();
+      after.runtime.groups.recoverHandovers();
+      expect(after.runtime.store.delegation(delegation.id)?.status).toBe("running");
+      after.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+      await waitFor(() => Boolean(after.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(after.runtime.store.delegation(delegation.id)?.status).toBe("done");
+      expect(await events(after, "hob")).toEqual([expect.stringContaining("合计 128 元")]);
+      after.runtime.groups.reopen(topic.id);
+      after.runtime.groups.closeByOwner(topic.id, "第二次关闭");
+      after.runtime.groups.recoverHandovers();
+      after.runtime.delegations.recover();
+      expect(await events(after, "hob")).toHaveLength(1);
+    } finally {
+      restarted?.router.disposeAll();
+      restarted?.jobs.disposeAll();
+      restarted?.desktopEvents.stop();
+      restarted?.desktopControl.dispose();
+      hob.close();
+    }
+  });
+
+  it.each(["投递前", "接手助手收到后"])("群话题的产出沿委派链交回，%s重启仍只交付一次", async (checkpoint) => {
+    const { hob, group } = setup();
+    let restarted: HobRuntime | undefined;
+    try {
+      const report = join(hob.home, "核账.csv");
+      const image = join(hob.home, "图表.png");
+      const ledger = join(hob.home, "账本.csv");
+      const other = join(hob.home, "其他.csv");
+      writeFileSync(report, "金额\n128\n");
+      writeFileSync(ledger, "总计\n128\n");
+      writeFileSync(other, "其他\n");
+      writeFileSync(image, readFileSync(new URL("../../web/public/icons/favicon-32.png", import.meta.url)));
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "整理交付文件", files: [other] }),
+        call("send_file", { path: report }), text("已交付核账表"), text("群里已复核"),
+        call("send_file", { path: report }), text("核账表见附件"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "请小组整理交付文件");
+      await waitFor(() => hob.runtime.groups.topicsOf(group.id).some((topic) => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "已交付核账表")));
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      const sibling = hob.runtime.groups.createTopic(group.id, "其他事", "user");
+      hob.runtime.groups.appendItem(sibling.id, "ops", { kind: "file", path: other, name: "其他.csv" });
+      const drawing = hob.runtime.groups.appendItem(topic.id, "ops", { kind: "image", status: "pending", prompt: "图表", startedAt: ISO });
+      hob.runtime.groups.updateImageItem(topic.id, drawing.id, { status: "done", path: image });
+      hob.runtime.store.saveJob({ id: "t-ledger", assistantId: "ops", groupId: topic.id, title: "账本", instruction: "核对", status: "done", createdAt: ISO, activity: [], stats: { reads: 0, commands: 0, edits: 0 }, files: [report, ledger] });
+      for (const status of ["failed", "stopped"] as const) {
+        hob.runtime.store.saveJob({ id: `t-${status}`, assistantId: "ops", groupId: topic.id, title: "未交付的草稿", instruction: "核对", status, createdAt: ISO, activity: [], stats: { reads: 0, commands: 0, edits: 0 }, files: [other] });
+      }
+      if (checkpoint === "投递前") vi.spyOn(hob.runtime.router, "handoverResult").mockResolvedValue(false);
+      else vi.spyOn(hob.runtime.delegations, "topicEnded").mockImplementation(() => {});
+
+      hob.runtime.groups.closeByOwner(topic.id, "本次核账完成");
+      if (checkpoint === "接手助手收到后") await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      hob.runtime.groups.appendItem(topic.id, "ops", { kind: "file", path: other, name: "关闭后的文件" });
+      hob.runtime.router.disposeAll();
+      restarted = createRuntime({ home: hob.home, config: hob.runtime.config, pi: hob.runtime.pi });
+      const after = { ...hob, runtime: restarted };
+      restarted.delegations.recover();
+      restarted.groups.recoverHandovers();
+      await waitFor(() => Boolean(after.runtime.store.delegation(delegation.id)?.reportedAt));
+      for (const assistant of ["write", "hob"]) {
+        const results = (await events(after, assistant)).filter((line) => line.includes("本次核账完成"));
+        expect(results).toHaveLength(1);
+        expect(results[0].split("\n附件：")[1]).toBe([report, image, ledger].join("、"));
+      }
+      expect(restarted.router.items("hob").items.filter((item) => item.kind === "file")).toMatchObject([{ path: report }]);
+      expect(readFileSync(report, "utf8")).toContain("128");
+    } finally {
+      restarted?.router.disposeAll();
+      restarted?.jobs.disposeAll();
+      restarted?.desktopEvents.stop();
+      restarted?.desktopControl.dispose();
+      hob.close();
+    }
+  });
+
+  it.each(["点名", "@"])("群主请成员复核后，即使成员没有再次 @ 群主，结论也回到发起者（%s）", async (method) => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        method === "点名" ? call("call_members", { members: ["write"], note: "请复核" }) : text("@写作 请复核"),
+        text("已复核，合计 128 元"),
+        call("close_topic", { note: "复核完成，合计 128 元" }),
+        text("复核完成，合计 128 元"),
+      ]);
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请复核后交回" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob)).toEqual([expect.stringContaining("复核完成，合计 128 元")]);
+      expect(hob.faux.state.callCount).toBe(4);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题点名时明确不交回群主，成员发完就停", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([call("call_members", { members: ["write"], return_to_owner: false }), text("等用户决定")]);
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "备选方案", note: "先让成员发表意见" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "等用户决定"));
+      await hob.runtime.router.waitIdle("write", 10_000, topic.id);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(2);
+    } finally { hob.close(); }
+  });
+
+  it("复核成员还在等用户答复时先等待，回答后群主再收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        text("@写作 请确认月份"), call("ask_user", { title: "记入哪一月？", options: [{ label: "本月" }, { label: "下月" }] }),
+        text("已确认记入本月"), call("close_topic", { note: "已记入本月" }), text("已记入本月"),
+      ]);
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请确认月份后交回" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.runtime.store.approvals().some((a) => a.groupId === topic.id && a.status === "pending"));
+      await hob.runtime.router.waitIdle("write", 10_000, topic.id);
+      const question = hob.runtime.store.approvals().find((a) => a.groupId === topic.id && a.assistantId === "write")!;
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(2);
+      await answerApproval(hob.runtime, question.id, { key: "A" });
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob)).toEqual([expect.stringContaining("已记入本月")]);
+      expect(hob.faux.state.callCount).toBe(5);
+    } finally { hob.close(); }
+  });
+
+  it("复核成员仅回复 NO_REPLY 时不误触发群主收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([text("@写作 请复核"), text("NO_REPLY")]);
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请复核后交回" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.faux.state.callCount >= 2);
+      await hob.runtime.router.waitIdle("write", 10_000, topic.id);
+      await hob.runtime.router.waitIdle("ops", 10_000, topic.id);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(2);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题成员复核中被暂停再回复「继续」，仍保留自动交回群主收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      let releaseSecond!: () => void;
+      const secondStarted = new Promise<void>((resolve) => {
+        hob.faux.setResponses([
+          call("call_members", { members: ["write", "hob"], note: "请依次复核" }),
+          text("写作已复核，合计 128 元"),
+          async () => {
+            resolve();
+            await new Promise<void>((done) => { releaseSecond = done; });
+            return text("已中止");
+          },
+          call("close_topic", { note: "复核完成，合计 128 元" }),
+          text("收到"),
+        ]);
+      });
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请复核后交回" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await secondStarted;
+      const pausePromise = hob.runtime.groups.send(topic.id, { text: "先停一下" });
+      releaseSecond();
+      await pausePromise;
+      await hob.runtime.groups.send(topic.id, { text: "继续" });
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob)).toEqual([expect.stringContaining("复核完成，合计 128 元")]);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题明确不交回群主时，暂停再回复「继续」也不会误唤醒群主", async () => {
+    const { hob, group } = setup();
+    try {
+      let releaseFirst!: () => void;
+      const firstStarted = new Promise<void>((resolve) => {
+        hob.faux.setResponses([
+          call("call_members", { members: ["write", "hob"], return_to_owner: false }),
+          async () => {
+            resolve();
+            await new Promise<void>((done) => { releaseFirst = done; });
+            return text("已中止");
+          },
+          text("Hob 发表完意见就停"),
+        ]);
+      });
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "备选方案", note: "先讨论" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await firstStarted;
+      const pausePromise = hob.runtime.groups.send(topic.id, { text: "先停一下" });
+      releaseFirst();
+      await pausePromise;
+      await hob.runtime.groups.send(topic.id, { text: "继续" });
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "Hob 发表完意见就停"));
+      await hob.runtime.router.waitIdle("hob", 10_000, topic.id);
+      await hob.runtime.router.waitIdle("ops", 10_000, topic.id);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(3);
+    } finally { hob.close(); }
+  });
+
+  it("群交回送达后接手助手本轮模型失败，仍标记已送达并收敛原委派", async () => {
+    const hob = makeHob({}, { memory: "off", retry: { maxRetries: 0, baseDelayMs: 1 } });
+    try {
+      addAssistant(hob, "ops", "服务器", "机器");
+      addAssistant(hob, "write", "写作", "周报");
+      const group = hob.runtime.groups.create({
+        name: "家里机器",
+        purpose: "机器上的事",
+        ownerId: "ops",
+        members: ["hob", "ops", "write"],
+      });
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "核对票据" }),
+        call("close_topic", { note: "合计 128 元" }),
+        () => { throw new Error("上游模型超时"); },
+        text("已知晓接手助手异常"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "去群里核对后汇报");
+      await waitFor(() => {
+        const current = hob.runtime.store.delegation(delegation.id);
+        return Boolean(current?.reportedAt && current.status !== "running");
+      });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      expect(hob.runtime.store.group(topic.id)?.handover?.deliveredAt).toBeTruthy();
+      expect(hob.runtime.store.delegation(delegation.id)?.status).not.toBe("running");
+      const lines = await events(hob, "hob");
+      expect(lines).toEqual([expect.stringContaining("上游模型超时")]);
+      expect(lines[0]).toContain("合计 128 元");
+    } finally { hob.close(); }
+  });
+
+  it("群交回后接手助手还要确认，原委派等用户答完才收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "核对票据" }),
+        call("close_topic", { note: "合计 128 元" }),
+        call("ask_user", { title: "合计 128 元，记入本月吗？", options: [{ label: "本月" }, { label: "下月" }] }),
+        text("已记入本月"),
+        text("本月入账 128 元"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "核对后问我记入哪个月");
+      await waitFor(() => hob.runtime.store.delegation(delegation.id)?.status === "waiting");
+      const [approvalId] = hob.runtime.store.delegation(delegation.id)!.approvalIds!;
+      expect(hob.runtime.store.approval(approvalId)?.assistantId).toBe("write");
+      expect(await events(hob, "hob")).toEqual([]);
+      await answerApproval(hob.runtime, approvalId, { key: "A" });
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      const lines = await events(hob, "hob");
+      expect(lines).toEqual([expect.stringContaining("已记入本月")]);
+      expect(lines[0]).toContain("合计 128 元");
+    } finally { hob.close(); }
+  });
+
+  it.each(["archive", "takeover"])("群仍在处理时归档或由用户接手，发起人只收到一次结果（%s）", async (action) => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "核对票据" }),
+        text("已接单"), text("收到"), text("收到"), text("收到"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "请协调核账");
+      await waitFor(() => hob.runtime.groups.topicsOf(group.id).length === 1);
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
+      await hob.runtime.router.waitIdle("write");
+      if (action === "archive") {
+        await hob.runtime.groups.archive(group.id);
+      } else {
+        await hob.runtime.router.send("write", { text: "我来跟进这件事" });
+        await hob.runtime.router.waitIdle("write");
+        hob.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+        await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      }
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe(action === "archive" ? "stuck" : "takenOver");
+      expect(await events(hob, "hob")).toEqual([expect.stringContaining(action === "archive" ? "归档" : "用户接手")]);
+    } finally { hob.close(); }
+  });
+
   it("非主助手交接时，综合提示使用交接方的名字", () => {
     const { hob, group } = setup();
     try {
@@ -135,7 +458,7 @@ describe("message_group", () => {
       await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
       const body = inputBody(hob, topic.id, "ops");
       expect(body).toContain("备份目录在 /vol/photo");
-      expect(body).toContain("[hob-event] 这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。完成后用 close_topic 写结论，结论会转给 Hob，由它告诉用户。");
+      expect(body).toContain("[hob-event] 这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。有成品文件要交回时，先用 send_file 发到本话题。完成后用 close_topic 写结论，结论和已交付的文件会转给 Hob，由它告诉用户。");
 
       // 主助手的对话里有话题卡；群的综合里有那一行
       expect(hob.runtime.router.items("hob").items.find((item) => item.kind === "topic" && item.topicId === topic.id)).toBeTruthy();

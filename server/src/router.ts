@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { newId } from "./ids.ts";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
-import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
+import { resizeImage, SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
 import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
 import { assistantTodosPath, assistantWorkDir, engineDir } from "./config.ts";
@@ -73,6 +73,7 @@ export interface EventDetails {
   cont?: true;
   returnedDelegationId?: string;
   delegationId?: string;
+  files?: string[];
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
   /** 任务事件按真正投递时的任务状态改写；同一任务排队时只留最新一条 */
@@ -91,13 +92,26 @@ interface PendingEvent {
 
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
 
+/** 自定义消息不会经过普通用户输入的图片缩放。无法内联的文件仍以路径交给接手助手。 */
+async function eventContent(text: string, files: string[] | undefined, model: AgentSession["model"]) {
+  if (!files?.length) return text;
+  const prompt = `${text}\n附件：${files.join("、")}`;
+  if (!model?.input.includes("image")) return prompt;
+  const images = [];
+  for (const file of imageContents(files)) {
+    const image = await resizeImage(Buffer.from(file.data, "base64"), file.mimeType, model.inputLimits?.images?.resize).catch(() => null);
+    if (image) images.push({ type: "image" as const, data: image.data, mimeType: image.mimeType });
+  }
+  return images.length ? [{ type: "text" as const, text: prompt }, ...images] : prompt;
+}
+
 /**
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
  */
 const GROUP_TOOL_NAMES = new Set([
   "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "react", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "login", "fill_new_password",
-  "open_topic", "close_topic",
+  "open_topic", "close_topic", "call_members",
 ]);
 
 /**
@@ -745,11 +759,13 @@ export class RouterManager {
       this.flushEventTurn(state, assistantId);
       if (!state.groupId) state.eventTurn = { held: [] };
       const details = event.message.details as EventDetails | undefined;
-      state.turnDelegation ||= Boolean(details?.delegationId);
+      // 群可能在目标助手还忙时就交回结论。等消息实际入会话才重新打开原委派。
+      const delegationId = details?.handoverTopicId ? this.runtime.delegations.resumeForTopic(details.handoverTopicId) : details?.delegationId;
+      state.turnDelegation ||= Boolean(delegationId);
       state.turnWorkDone ||= Boolean(details?.workDone);
       state.turnRoutine = details?.routineTrigger;
-      if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
-        state.currentDelegationId = details.delegationId;
+      if (delegationId && delegationId !== state.currentDelegationId) {
+        state.currentDelegationId = delegationId;
         state.delegationReply = [];
         state.terminatingTools = new Set();
       }
@@ -1374,9 +1390,11 @@ export class RouterManager {
       this.publishBusy(state);
       await this.waitForCompaction(state);
       const knowledge = knowledgeQuery === undefined ? "" : await this.automaticKnowledge(state, knowledgeQuery);
-      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`, display: false, details };
       await this.refreshTools(state);
       await this.applyConversationModel(state);
+      const prompt = `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`;
+      const content = await eventContent(prompt, details?.files, session.model);
+      const message = { customType: EVENT_TYPE, content, display: false, details };
       if (session.isStreaming) {
         // 上面几步等待的空当里用户的话先开了一轮：排在它后面，不插进那一轮中间
         await session.sendCustomMessage(message, { deliverAs: "followUp" });
@@ -1400,21 +1418,22 @@ export class RouterManager {
       this.touch(state);
     }
   }
-  async delegationResult(assistantId: string, id: string, text: string): Promise<boolean> {
+  async delegationResult(assistantId: string, id: string, text: string, files?: string[]): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true, ...(files?.length ? { files } : {}) });
     return success && received();
   }
 
   /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string): Promise<boolean> {
+  async handoverResult(assistantId: string, topicId: string, text: string, files?: string[]): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
-    return success && received();
+    await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true, ...(files?.length ? { files } : {}) });
+    // 接手助手当轮报错时，已写入会话的结论仍然送达了。
+    return received();
   }
 
   /** 这一轮的状态由调用方在真正收尾时判断；任务、转交和提问仍在时不发完成通知 */
@@ -1597,9 +1616,10 @@ export class RouterManager {
     await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
-  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = false): Promise<void> {
+  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = false, isCurrent?: () => boolean): Promise<void> {
     const state = await this.ensure(assistantId, groupId);
-    await this.deliver(state, text, { received, files, workDone });
+    if (isCurrent && !isCurrent()) return;
+    await this.deliver(state, text, { received, files, workDone, isCurrent });
   }
 
   /**
@@ -1634,7 +1654,7 @@ export class RouterManager {
   private async deliver(
     state: RouterState,
     text: string,
-    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
+    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean; isCurrent?: () => boolean } = {},
   ): Promise<void> {
     this.clearSuggestions(state.assistantId, state.groupId);
     const previousDelivery = state.pendingDelivery;
@@ -1659,6 +1679,7 @@ export class RouterManager {
       await this.waitForCompaction(state);
       await this.applyConversationModel(state);
       await this.refreshTools(state);
+      if (options.isCurrent?.() === false) return;
       // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
       const images = options.files?.length && state.session!.model?.input.includes("image") ? imageContents(options.files) : [];
       unsubscribeReceived = this.onUserReceived(state, promptText, options.received);

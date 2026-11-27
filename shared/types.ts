@@ -663,6 +663,7 @@ export interface TopicHandover {
   by: string; // 交给群的主助手
   at: Iso;
   result?: string; // 关话题时送回给主助手的那句话
+  resultFiles?: string[]; // 话题关闭时已交付的文件，和结论一起补送
   deliveredAt?: Iso; // 送到主助手的对话的时间；没有就是还没送到
 }
 
@@ -695,6 +696,7 @@ export interface GroupSummary extends Group {
   todos?: TodoItem[]; // 这个会话（综合、话题）的待办，按做的先后
   suggestions?: string[]; // 最近一轮生成的推荐提问，进程内保存
   activity?: Record<string, RouterActivity>; // 正在说话的成员现在在做什么：页面刚打开时用，之后跟 group-activity 事件
+  queue?: { pending: string[]; paused?: boolean };
 }
 
 /**
@@ -773,6 +775,7 @@ export interface Delegation {
   from: string;
   to: string;
   text: string;
+  files?: string[];
   createdAt: Iso;
   status: "running" | "waiting" | "done" | "stuck" | "interrupted" | "returned" | "takenOver";
   jobIds: string[];

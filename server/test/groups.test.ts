@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Assistant, Group, GroupItem } from "../../shared/types.ts";
 import { archiveAssistant } from "../src/actions.ts";
@@ -7,8 +7,9 @@ import { createApp } from "../src/http.ts";
 import { GroupManager, MAX_WAVE_TURNS, RELAY_NOTE, RESTART_NOTE } from "../src/groups.ts";
 import { buildSystemPrompt, GROUP_OWNER_LINE, groupPromptLine } from "../src/prompt.ts";
 import { lookupFile } from "../src/files.ts";
+import { buildRouterTools } from "../src/router-tools.ts";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { makeHob, text, waitFor, type TestHob } from "./helpers.ts";
+import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 /** 会话文件里的用户消息正文（群会话的输入就是它）。 */
 function userTexts(file: string): string[] {
@@ -95,6 +96,33 @@ describe("群", () => {
       const session = await hob.runtime.router.ensure("hob", group.id);
       const user = session.session!.messages.find((message) => message.role === "user");
       expect(user?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: expect.stringMatching(/^image\//) })]));
+    } finally { hob.close(); }
+  });
+
+  it("成员发文件后点名同事复核，对方能读到交付路径和已生成的图片", async () => {
+    const hob = makeHob({}, { memory: "off", models: [{ id: "vision", input: ["text", "image"] }] });
+    try {
+      addAssistant(hob, "review", "复核", "核对文件");
+      const group = hob.runtime.groups.create({ name: "核账", purpose: "交叉核对", ownerId: "hob", members: ["hob", "review"] });
+      const invoice = join(hob.runtime.store.assistantDir("hob"), "files", "明细.csv");
+      const chart = join(hob.home, "小计.png");
+      mkdirSync(dirname(invoice), { recursive: true });
+      writeFileSync(invoice, "金额\n128\n");
+      writeFileSync(chart, readFileSync(new URL("../../web/public/icons/favicon-32.png", import.meta.url)));
+      hob.runtime.groups.appendItem(group.id, "hob", { kind: "image", prompt: "画小计", status: "done", path: chart });
+      hob.runtime.groups.appendItem(group.id, "hob", { kind: "image", prompt: "画全图", status: "failed", error: "生成超时" });
+      let received: unknown;
+      hob.faux.setResponses([call("send_file", { path: invoice }), text("@复核 请按明细和小计图核对"), (context) => {
+        received = context.messages.findLast((message) => message.role === "user")?.content;
+        return text("已核对");
+      }]);
+      await hob.runtime.groups.send(group.id, { text: "把明细发给同事复核" });
+      await settled(hob, group.id, 2);
+      const content = JSON.stringify(received);
+      expect(content).toContain(invoice);
+      expect(content).toContain(chart);
+      expect(content).toContain("生成超时");
+      expect(received).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/png" })]));
     } finally { hob.close(); }
   });
   it("会话启动预检成功但消息未接收时不推进游标", async () => {
@@ -238,15 +266,256 @@ describe("群", () => {
     }
   });
 
-  it("同时 @ 两个：两个都跑，互不等待", async () => {
+  it("同时 @ 两个：第一个说完了第二个才开始，并能看到第一位的回复", async () => {
     const { hob, group } = setup();
     try {
-      hob.faux.setResponses([text("我先说"), text("我也说")]);
+      let secondInput = "";
+      let firstFinished = false;
+      const off = hob.runtime.bus.subscribe((event) => {
+        if (event.type === "group-item" && event.item.kind === "assistant" && event.item.text === "我先说") firstFinished = true;
+      });
+      let firstFinishedAtSecondStart = false;
+      hob.faux.setResponses([text("我先说"), (ctx) => {
+        firstFinishedAtSecondStart = firstFinished;
+        secondInput = JSON.stringify(ctx.messages);
+        return text("我也说");
+      }]);
       await hob.runtime.groups.send(group.id, { text: "@服务器 @写作 搭档 一起看" });
       await settled(hob, group.id, 2);
+      off();
       const items = assistantItems(hob, group.id);
-      expect(items.map((item) => item.speaker).sort()).toEqual(["ops", "write"]);
-      expect(items.map((item) => item.text).sort()).toEqual(["我也说", "我先说"]);
+      expect(items.map((item) => item.speaker)).toEqual(["ops", "write"]);
+      expect(items.map((item) => item.text)).toEqual(["我先说", "我也说"]);
+      expect(firstFinishedAtSecondStart).toBe(true);
+      expect(secondInput).toContain("服务器：我先说");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("按三次点名的顺序发言，每一位都能读到之前的回复", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([text("写作先说"), text("群主再说"), text("服务器最后说")]);
+      await hob.runtime.groups.send(group.id, { text: "@写作 搭档 @Hob @服务器 @写作 搭档 核对一下" });
+      await settled(hob, group.id, 3);
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["write", "hob", "ops"]);
+      expect(userTexts(memberFile(hob, group.id, "hob")).at(-1)).toContain("写作 搭档：写作先说");
+      expect(userTexts(memberFile(hob, group.id, "ops")).at(-1)).toContain("写作 搭档：写作先说\nHob：群主再说");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("回复里新点名的成员先接力，已在等的成员按原顺序只跑一次", async () => {
+    const { hob, group } = setup();
+    try {
+      addAssistant(hob, "review", "评审", "评审");
+      addAssistant(hob, "qa", "测试", "验证");
+      hob.runtime.groups.update(group.id, { members: [...group.members, "review", "qa"] });
+      hob.faux.setResponses([text("请 @评审 @测试 @写作 搭档 都看看"), text("评审意见"), text("测试意见"), text("写作意见"), text("群主意见")]);
+      await hob.runtime.groups.send(group.id, { text: "@服务器 @写作 搭档 @Hob 核对一下" });
+      await settled(hob, group.id, 5);
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["ops", "review", "qa", "write", "hob"]);
+      expect(userTexts(memberFile(hob, group.id, "write")).at(-1)).toContain("评审：评审意见\n测试：测试意见");
+      expect(hob.faux.state.callCount).toBe(5);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("群主只调用 call_members 也能点名，去重后按顺序流式回复并交回群主", async () => {
+    const { hob, group } = setup();
+    try {
+      const streaming: string[] = [];
+      const off = hob.runtime.bus.subscribe((event) => {
+        if (event.type === "group-item" && event.item.kind === "assistant" && event.item.streaming) streaming.push(event.item.speaker);
+      });
+      hob.faux.setResponses([
+        () => {
+          // 第一位已经读过现有时间线，群主这一轮也只调工具，仍要按交代开一轮。
+          const store = hob.runtime.store;
+          const last = hob.runtime.groups.timeline(group.id).at(-1)!;
+          store.saveGroupState(group.id, { seen: { ...store.groupState(group.id).seen, write: last.id } });
+          return fauxAssistantMessage([fauxToolCall("call_members", { members: ["write", "ops", "write"], note: "先列最关键的风险", return_to_owner: true })], { stopReason: "toolUse" });
+        },
+        text("文案容易被误读"), text("磁盘空间不足"), text("群主汇总"),
+      ]);
+      await hob.runtime.groups.send(group.id, { text: "请安排风险评审" });
+      await settled(hob, group.id, 3);
+      off();
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["write", "ops", "hob"]);
+      expect(streaming).toEqual(["write", "ops", "hob"]);
+      expect(userTexts(memberFile(hob, group.id, "write")).at(-1)).toContain("第 1/2 位）。交代：先列最关键的风险");
+      const ops = userTexts(memberFile(hob, group.id, "ops")).at(-1);
+      expect(ops).toContain("第 2/2 位）。交代：先列最关键的风险");
+      expect(ops).toContain("写作 搭档：文案容易被误读");
+      const owner = userTexts(memberFile(hob, group.id, "hob")).at(-1);
+      expect(owner).toContain("写作 搭档：文案容易被误读\n服务器：磁盘空间不足");
+      expect(owner).toContain("请结合他们的回复进行总结收口");
+      expect(hob.faux.state.callCount).toBe(4);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("call_members 优先于原本排队和正文重复点名，没填 note 也会给到交代", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        fauxAssistantMessage([fauxText("请 @服务器 @写作 搭档 回复"), fauxToolCall("call_members", { members: ["write", "ops"] })], { stopReason: "toolUse" }),
+        text("写作的回复"), text("服务器的回复"),
+      ]);
+      await hob.runtime.groups.send(group.id, { text: "@Hob @服务器 核对一下" });
+      await settled(hob, group.id, 3);
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["hob", "write", "ops"]);
+      expect(userTexts(memberFile(hob, group.id, "ops")).at(-1)).toContain("请结合上方群聊内容发言");
+      expect(hob.faux.state.callCount).toBe(3);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("call_members 只给群和话题的群主，非法成员会返回当前名单", async () => {
+    const { hob, group } = setup();
+    try {
+      const toolFor = (id: string, gid?: string) => buildRouterTools(hob.runtime, id, gid).find((tool) => tool.name === "call_members");
+      const tool = toolFor("hob", group.id)!;
+      expect(toolFor("ops", group.id)).toBeUndefined();
+      expect(toolFor("hob")).toBeUndefined();
+      const topic = hob.runtime.groups.createTopic(group.id, "测试话题", "hob");
+      expect(toolFor("hob", topic.id)).toBeDefined();
+      for (const members of [[], ["hob"], ["not-in-group", "ops"]]) {
+        const result = await tool.execute("test", { members });
+        expect(result).toMatchObject({ isError: true });
+        expect(JSON.stringify(result.content)).toContain("服务器（ops）");
+        expect(JSON.stringify(result.content)).toContain("写作 搭档（write）");
+      }
+      hob.runtime.groups.update(group.id, { ownerId: "ops" });
+      const result = await tool.execute("test", { members: ["write"] });
+      expect(JSON.stringify(result.content)).toContain("只有群主能按序点名成员");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it.each(["mentions", "all"])("暂停会中断正在说的成员，继续从下一位开始（%s）", async (mode) => {
+    const { hob, group } = setup(35);
+    try {
+      const groups = hob.runtime.groups;
+      if (mode === "all") groups.update(group.id, { replyMode: "all" });
+      hob.faux.setResponses([text("第一位的回复很长，应该在这段话全部说完之前中断发言"), text("下一位"), text("最后一位")]);
+      const streaming = new Promise<void>((resolve) => {
+        const off = hob.runtime.bus.subscribe((event) => {
+          if (event.type === "group-delta" && event.groupId === group.id) { off(); resolve(); }
+        });
+      });
+      await groups.send(group.id, { text: mode === "all" ? "大家怎么看" : "@Hob @服务器 @写作 搭档 大家怎么看" });
+      await streaming;
+      const abort = vi.spyOn(hob.runtime.router, "stop");
+      const paused = await groups.send(group.id, { text: "先暂停一下！" });
+      expect(paused.kind).toBe("user");
+      expect(abort).toHaveBeenCalledWith("hob", group.id);
+      expect(hob.faux.state.callCount).toBe(1);
+      expect(groups.summary(group.id).busy).toEqual([]);
+      expect(groups.timeline(group.id)).toContainEqual(expect.objectContaining({ kind: "note", speaker: "system", text: "已暂停，回复「继续」从下一位接着走" }));
+      expect(assistantItems(hob, group.id).some((item) => item.text.includes("中断发言"))).toBe(false);
+
+      await groups.send(group.id, { text: "继续吧" });
+      await waitFor(() => assistantItems(hob, group.id).some((item) => item.text === "最后一位"));
+      expect(assistantItems(hob, group.id).filter((item) => item.speaker !== "hob").map(({ speaker, text }) => [speaker, text])).toEqual([["ops", "下一位"], ["write", "最后一位"]]);
+      expect(hob.faux.state.callCount).toBe(3);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("两条群消息各有成员在发言时，重复暂停仍保留两边未轮到的成员", async () => {
+    const { hob, group } = setup();
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    try {
+      const groups = hob.runtime.groups;
+      addAssistant(hob, "review", "评审", "评审");
+      groups.update(group.id, { members: [...group.members, "review"] });
+      const speaking = async () => { await gate; return text("当前发言"); };
+      hob.faux.setResponses([speaking, speaking, text("接着说"), text("接着说")]);
+      await groups.send(group.id, { text: "@服务器 @写作 搭档 第一件事" });
+      await waitFor(() => hob.faux.state.callCount === 1);
+      await groups.send(group.id, { text: "@Hob @评审 第二件事" });
+      await waitFor(() => hob.faux.state.callCount === 2);
+      expect(groups.summary(group.id).queue?.pending).toEqual(["write", "review"]);
+
+      const stopping = groups.send(group.id, { text: "暂停" });
+      release();
+      await stopping;
+      await groups.send(group.id, { text: "暂停" });
+      expect(groups.summary(group.id).queue).toEqual({ pending: ["write", "review"], paused: true });
+      await groups.send(group.id, { text: "继续" });
+      await waitFor(() => assistantItems(hob, group.id).filter((item) => item.text === "接着说").length === 2);
+      const speakers = assistantItems(hob, group.id).filter((item) => item.text === "接着说").map((item) => item.speaker);
+      expect(speakers.sort()).toEqual(["review", "write"]);
+      expect(hob.faux.state.callCount).toBe(4);
+    } finally { release(); hob.close(); }
+  });
+
+  it("summary.queue 反映串行接力与暂停状态，支持 resumeQueue、discardQueue 和 POST /api/groups/:id/queue", async () => {
+    const { hob, group } = setup(35);
+    try {
+      const groups = hob.runtime.groups;
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const headers = { "content-type": "application/json", cookie: login.headers.get("set-cookie")!.split(";")[0]! };
+      const postQueue = (id: string, body: unknown) => app.request(`/api/groups/${id}/queue`, { method: "POST", headers, body: JSON.stringify(body) });
+
+      expect((await postQueue("g-missing", { action: "resume" })).status).toBe(404);
+      expect((await postQueue(group.id, { action: "invalid" })).status).toBe(400);
+      expect((await postQueue(group.id, null)).status).toBe(400);
+      expect(await (await postQueue(group.id, { action: "resume" })).json()).toEqual({ ok: true, applied: false });
+      expect(await (await postQueue(group.id, { action: "discard" })).json()).toEqual({ ok: true, applied: false });
+
+      hob.faux.setResponses([text("第一位的回复很长，用来确保流式进行中可以观察排队并暂停"), text("第二位回复"), text("第三位回复")]);
+      const streaming = new Promise<void>((resolve) => {
+        const off = hob.runtime.bus.subscribe((event) => {
+          if (event.type === "group-delta" && event.groupId === group.id) { off(); resolve(); }
+        });
+      });
+      await groups.send(group.id, { text: "@Hob @服务器 @写作 搭档 依次说说" });
+      await streaming;
+      expect(groups.summary(group.id).queue).toEqual({ pending: ["ops", "write"] });
+
+      await groups.send(group.id, { text: "暂停" });
+      expect(groups.summary(group.id).queue).toEqual({ pending: ["ops", "write"], paused: true });
+
+      const resumed = await postQueue(group.id, { action: "resume" });
+      expect(resumed.status).toBe(200);
+      expect(await resumed.json()).toEqual({ ok: true, applied: true });
+      await waitFor(() => assistantItems(hob, group.id).some((item) => item.text === "第三位回复"));
+      await waitFor(() => groups.summary(group.id).busy.length === 0);
+      expect(groups.summary(group.id).queue).toBeUndefined();
+
+      // 再次暂停并用 discard 放弃排队
+      hob.faux.setResponses([text("另一段很长的流式输出，确保暂停前还没说完"), text("不会被说出来")]);
+      const streaming2 = new Promise<void>((resolve) => {
+        const off = hob.runtime.bus.subscribe((event) => {
+          if (event.type === "group-delta" && event.groupId === group.id) { off(); resolve(); }
+        });
+      });
+      await groups.send(group.id, { text: "@Hob @服务器 再来一轮" });
+      await streaming2;
+      await groups.send(group.id, { text: "暂停" });
+      expect(groups.summary(group.id).queue).toEqual({ pending: ["ops"], paused: true });
+
+      const discarded = await postQueue(group.id, { action: "discard" });
+      expect(discarded.status).toBe(200);
+      expect(await discarded.json()).toEqual({ ok: true, applied: true });
+      expect(groups.summary(group.id).queue).toBeUndefined();
+
+      // 已关闭话题不允许 resumeQueue
+      const topic = groups.createTopic(group.id, "已关话题", "user");
+      groups.closeByUser(topic.id, "结束");
+      const closedRes = await postQueue(topic.id, { action: "resume" });
+      expect(closedRes.status).toBe(400);
     } finally {
       hob.close();
     }
@@ -296,6 +565,26 @@ describe("群", () => {
       expect(inputs).toHaveLength(2);
       expect(inputs[0]).toContain("用户：@服务器 第一句");
       expect(inputs[1]!.slice(inputs[1]!.indexOf("\n\n") + 2)).toBe("用户：@服务器 第二句");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("正在发言的成员接收了新的多点名消息，新提到的接力成员先跑", async () => {
+    const { hob, group } = setup(30);
+    try {
+      hob.faux.setResponses([text("我先慢慢记录这个问题"), text("先请 @Hob 看一下"), text("群主补充"), text("写作接上")]);
+      const streaming = new Promise<void>((resolve) => {
+        const off = hob.runtime.bus.subscribe((event) => {
+          if (event.type === "group-delta" && event.groupId === group.id) { off(); resolve(); }
+        });
+      });
+      await hob.runtime.groups.send(group.id, { text: "@服务器 帮我看看" });
+      await streaming;
+      await hob.runtime.groups.send(group.id, { text: "@服务器 @写作 搭档 一起核对" });
+      await settled(hob, group.id, 4);
+      expect(assistantItems(hob, group.id).map((item) => item.speaker)).toEqual(["ops", "ops", "hob", "write"]);
+      expect(userTexts(memberFile(hob, group.id, "write")).at(-1)).toContain("Hob：群主补充");
     } finally {
       hob.close();
     }
@@ -468,6 +757,24 @@ describe("群", () => {
     } finally {
       hob.close();
     }
+  });
+
+  it.each(["mention", "quote", "owner", "all"])("群消息只结束本次收件人的问题卡（%s）", async (mode) => {
+    const { hob, group } = setup();
+    try {
+      if (mode === "all") hob.runtime.groups.update(group.id, { replyMode: "all" });
+      const quote = hob.runtime.groups.appendItem(group.id, "ops", { kind: "assistant", text: "我来核对" });
+      const base = { title: "是否继续", options: [], status: "pending" as const, source: "router" as const, groupId: group.id, createdAt: new Date().toISOString() };
+      for (const id of group.members) hob.runtime.store.saveApproval({ ...base, id: `q-${id}`, assistantId: id });
+      hob.faux.setResponses(group.members.map(() => text("收到")));
+      await hob.runtime.groups.send(group.id, {
+        text: mode === "mention" ? "@服务器 查一下进展" : "查一下进展",
+        ...(mode === "quote" ? { quote: { itemId: quote.id, text: "我来核对" } } : {}),
+      });
+      await settled(hob, group.id, mode === "all" ? 4 : 2);
+      const recipients = mode === "all" ? group.members : [mode === "owner" ? "hob" : "ops"];
+      for (const id of group.members) expect(hob.runtime.store.approval(`q-${id}`)?.status).toBe(recipients.includes(id) ? "expired" : "pending");
+    } finally { hob.close(); }
   });
 
   it("群会话和单聊互不影响：群里说话不让单聊的提问过期，单聊里也看不到群消息", async () => {

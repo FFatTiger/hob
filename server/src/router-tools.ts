@@ -39,7 +39,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { assistantSkillsDir, groupSkillsDir, listSkills } from "./assistant-skills.ts";
 import { bundledPlaywrightSkillDir, generalSkillsDir, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
 import { jobView, reviewedSkillsText } from "./job-view.ts";
-import { HANDOVER_EVENT } from "./groups.ts";
+import { handoverEvent } from "./groups.ts";
 import { sessionOrigin } from "./origin.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
@@ -922,6 +922,7 @@ export function buildRouterTools(
       parameters: Type.Object({ path: Type.String({ description: "文件路径；相对路径以你的工作目录为准" }) }),
       execute: async (_id, params: any) => {
         const requested = resolve(cwd, String(params.path));
+        const delegationId = router.currentDelegation(assistantId, groupId);
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
         let path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
@@ -949,6 +950,7 @@ export function buildRouterTools(
           if (title !== undefined && summary !== undefined) { name = unescape(title); meta = unescape(summary); }
         }
         await router.addItem(assistantId, { kind: "file", path, name, ...(meta ? { meta } : {}) }, groupId);
+        if (delegationId) runtime.delegations.addFile(delegationId, path);
         return ok("已发送。");
       },
     },
@@ -1020,6 +1022,7 @@ export function buildRouterTools(
       }),
       execute: async (_id, params: any, signal) => {
         const config = runtime.settings.settings.image;
+        const delegationId = router.currentDelegation(assistantId, groupId);
         const prompt = String(params.prompt ?? "");
         const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
         const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() }, groupId);
@@ -1030,6 +1033,7 @@ export function buildRouterTools(
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
           });
           await router.updateImage(assistantId, item.id, { status: "done", path }, groupId);
+          if (delegationId) runtime.delegations.addFile(delegationId, path);
           return ok(`图片已经显示在对话里。路径：${path}，之后修改图片可以作为参考图。`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1119,6 +1123,8 @@ export function buildRouterTools(
               files,
               ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
             });
+            const delegationId = router.currentDelegation(assistantId, groupId);
+            if (delegationId) runtime.delegations.addTopic(delegationId, topic.id);
             const cancel = () => {
               const current = store.group(topic.id);
               if (current && !current.closedAt && !runtime.groups.summary(topic.id).busy?.length) {
@@ -1133,7 +1139,7 @@ export function buildRouterTools(
             } finally {
               signal?.removeEventListener("abort", cancel);
             }
-            void runtime.groups.deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id).catch((error) => console.error("交给群的事件没送到：", error));
+            void runtime.groups.deliverEvent(topic.id, topic.ownerId, handoverEvent(nameOf(assistantId)), item.id).catch((error) => console.error("交给群的事件没送到：", error));
             return endTurn(`已交给群「${group.name}」：创建了话题「${topic.name}」（${topic.id}），群主「${nameOf(topic.ownerId)}」接手。有了结论会回到这里。`);
           } catch (error) {
             return fail(error instanceof Error ? error.message : String(error));
@@ -1184,12 +1190,38 @@ export function buildRouterTools(
   if (ownerGroup && ownerGroup.ownerId === assistantId) {
     const gid = ownerGroup.id;
     /** 每次都现查：群主在中途换了，旧会话里的调用也要挡住。 */
-    const notOwner = (): string | null => {
+    const notOwner = (message = "只有群主能创建话题和关闭话题。"): string | null => {
       const group = store.group(gid);
       if (!group) return "这个群和话题只在群里用。";
-      if (group.ownerId !== assistantId) return "只有群主能创建话题和关闭话题。";
+      if (group.ownerId !== assistantId) return message;
       return null;
     };
+    tools.push({
+      name: "call_members",
+      label: t("按序点名成员"),
+      description: "让指定的群成员按顺序逐一发言。可用 note 给他们统一交代；设 return_to_owner: true，所有成员说完后自动交回给你总结收口。",
+      parameters: Type.Object({
+        members: Type.Array(Type.String(), { description: "按发言顺序排列的成员助手 ID 列表" }),
+        note: Type.Optional(Type.String({ description: "可选，给这批成员的统一交代或要求" })),
+        return_to_owner: Type.Optional(Type.Boolean({ description: "全部成员说完后是否自动交回群主。助手委派来的话题默认交回，其余情况默认不交回。" })),
+      }),
+      execute: async (_id, params: { members?: unknown; note?: string; return_to_owner?: boolean }) => {
+        const problem = notOwner("只有群主能按序点名成员。");
+        if (problem) return fail(problem);
+        const available = store.group(gid)!.members.filter((id) => store.assistant(id));
+        const given: unknown[] = Array.isArray(params.members) ? params.members : [];
+        const members = [...new Set(given.filter((id): id is string => typeof id === "string" && available.includes(id)))];
+        if (!members.some((id) => id !== assistantId) || given.some((id) => typeof id !== "string" || !available.includes(id))) {
+          return fail(`members 要填有效的群成员助手 ID，至少点名一位其他成员。可用成员：${available.map((id) => `${nameOf(id)}（${id}）`).join("、")}。`);
+        }
+        try {
+          const returnToOwner = runtime.groups.enqueueMembers(gid, assistantId, members, { note: params.note?.trim(), returnToOwner: params.return_to_owner });
+          return endTurn(`已安排按顺序发言：${members.map(nameOf).join(" → ")}${returnToOwner ? "，完成后将自动交回你收口" : ""}。`);
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : String(error));
+        }
+      },
+    });
     /** 这个群进行中的话题，报错时列出来。 */
     const topicList = (): string => {
       const topics = runtime.groups.activeTopics(ownerGroup.parentId ?? gid);

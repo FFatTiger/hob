@@ -1541,6 +1541,23 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     return c.json({ ok: true });
   });
 
+  app.post("/api/groups/:id/queue", async (c) => {
+    const id = c.req.param("id");
+    if (!store.group(id)) return c.json({ error: "群不存在" }, 404);
+    const body = await c.req.json<{ action?: unknown } | null>().catch(() => null);
+    if (body?.action !== "resume" && body?.action !== "discard") {
+      return c.json({ error: "action 必须是 resume 或 discard" }, 400);
+    }
+    try {
+      const applied = body.action === "resume"
+        ? await runtime.groups.resumeQueue(id)
+        : await runtime.groups.discardQueue(id);
+      return c.json({ ok: true, applied });
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
+  });
+
   app.delete("/api/assistants/:id/rules/:rid", (c) => {
     const id = c.req.param("id");
     const rules = store.rules(id).filter((rule) => rule.id !== c.req.param("rid"));
@@ -1554,7 +1571,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (!record) return c.json({ error: "委派不存在" }, 404);
     if (record.status !== "interrupted") return c.json({ error: "只有已中断的委派可以重新转交" }, 400);
     try {
-      return c.json({ delegation: await runtime.delegations.start(record.from, record.to, record.text) });
+      return c.json({ delegation: await runtime.delegations.retry(record) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }

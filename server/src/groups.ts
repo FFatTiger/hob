@@ -14,9 +14,10 @@ import type {
 import { newId } from "./ids.ts";
 import { reactionsList } from "./store.ts";
 import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
-import { clearTodos, readTodos } from "./todos.ts";
+import { clearTodos, readTodos, todosBusy } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
+import { detectGroupControl } from "./group-control.ts";
 import { cardHistoryLine } from "./cards.ts";
 import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem } from "./router.ts";
@@ -31,33 +32,51 @@ export const RESTART_NOTE = "服务已重启，本轮已中断。";
 export const TOPIC_CLOSED = "这个话题已关闭，重新打开后才能发消息";
 /** 用户关闭话题时没写说明就记这句；助手关闭时由调用方给出说明。 */
 export const CLOSED_TOPIC_REASON = "你关闭了这个话题";
-/** 主助手交来的话题关的时候要写结论：结论会转给主助手。 */
-export const HANDOVER_NOTE_REQUIRED = "note 不能为空：这个话题是 Hob 交给这个群的，结论会转给 Hob，由它告诉用户；不做了的写明原因。";
-/** 群主在话题里收到的那条：这件事是主助手交来的。 */
-export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。完成后用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
+/** 群主在话题里收到的交接说明。 */
+export function handoverEvent(from: string): string {
+  return `这个话题是 ${from} 交给这个群的，上面是 ${from} 写的交接说明。有成品文件要交回时，先用 send_file 发到本话题。完成后用 close_topic 写结论，结论和已交付的文件会转给 ${from}，由它告诉用户。`;
+}
 
 /** 系统写的条目（停下、重启）的发言人。 */
 const SYSTEM = "system";
 
+const reviewHandover = () => "群成员已结束这一轮发言。请根据他们的回复继续处理。如果已经完成，先用 send_file 交付需要的文件，再用 close_topic 把结论交回发起助手。";
+
 /** 结论后面附的任务记录里，任务状态怎么写。 */
 const JOB_STATE: Record<JobStatus, string> = { queued: "排队中", running: "进行中", waiting: "等你回复", done: "已完成", stuck: "受阻", failed: "失败", stopped: "已停止" };
 
+interface WaveEntry {
+  assistantId: string;
+  triggerId: string;
+  event?: EventText;
+  workDone?: boolean;
+  allReplyTurn?: boolean;
+  instruction?: string;
+}
+
 /** 一条用户消息引出的一串助手回合，turns 是已经开了几个（按 @ 接力计，不含全员依次轮到的回合）。 */
 interface Wave {
+  /** 委派话题里，成员发言后群主还要交付。明确不回群主的点名只作用于这一轮接力。 */
+  handoverReview?: "needed" | "declined";
   turns: number;
   stopped: boolean;
   pending: number;
+  queue: WaveEntry[];
+  scheduled?: WaveEntry;
   finalSpeaker?: string;
   /** 全员回应：用户没点名时，群主这一串跑完后，把还没轮到过的成员按成员顺序依次排上。 */
   allReply?: {
     triggerId: string;
-    epoch: number;
     participated: Set<string>;
   };
 }
 
+type QueuedTurns = Pick<Wave, "queue" | "turns" | "allReply" | "handoverReview">;
+
 /** 一个成员正在说的这一轮：正文（@ 检测用）、当前这条消息的条目、最后一条说成的条目、叫到它的条目。 */
 interface RunningTurn {
+  wave: Wave;
+  calledMembers?: Set<string>;
   itemId?: string;
   lastId?: string;
   text: string;
@@ -83,6 +102,11 @@ export type RequestItem = Extract<GroupItem, { kind: "user" | "note" }>;
 
 function isRequestItem(item: GroupItem | undefined): item is RequestItem {
   return item?.kind === "user" || (item?.kind === "note" && item.icon === "routine");
+}
+
+function sentFiles(item: GroupItem): string[] {
+  if (item.kind === "file" && item.path) return [item.path];
+  return item.kind === "image" && item.status === "done" && item.path ? [item.path] : [];
 }
 
 /** 来由的文字：用户消息取原文；定时记录取到点时交给群主的全文，老数据没有 request 就取记录那一行。 */
@@ -117,8 +141,10 @@ export class GroupManager {
   private turns = new Map<string, RunningTurn>();
   /** gid → 已经用到第几号条目 */
   private counters = new Map<string, number>();
-  /** gid → 停止代数：按了停止以后，排队里的回合和回复里的 @ 都不再继续 */
-  private epochs = new Map<string, number>();
+  /** 同一群里的不同消息和任务事件可以各自开始接力。 */
+  private activeWaves = new Map<string, Set<Wave>>();
+  private pausedWaves = new Map<string, QueuedTurns[]>();
+  private pausing = new Map<string, Promise<void>>();
   /** 正在往主助手的对话送结论的话题 */
   private delivering = new Set<string>();
 
@@ -148,6 +174,7 @@ export class GroupManager {
     const group = typeof groupOrId === "string" ? this.group(groupOrId) : groupOrId;
     const items = this.timeline(group.id);
     const activity = this.runtime.router.groupActivity(group.id);
+    const queue = this.queueOf(group.id, group);
     let last: GroupSummary["last"];
     for (const item of items) {
       if (item.kind === "assistant" || item.kind === "user" || item.kind === "note") last = { at: item.at, speaker: item.speaker, text: item.text };
@@ -160,7 +187,30 @@ export class GroupManager {
       todos: readTodos(groupTodosPath(this.runtime.home, group.id)),
       ...(this.runtime.router.suggestionsFor(group.ownerId, group.id)?.length ? { suggestions: this.runtime.router.suggestionsFor(group.ownerId, group.id) } : {}),
       ...(Object.keys(activity).length ? { activity } : {}),
+      ...(queue ? { queue } : {}),
     };
+  }
+
+  private remainingTurns(wave: Wave): QueuedTurns {
+    return {
+      queue: wave.scheduled ? [wave.scheduled, ...wave.queue] : [...wave.queue],
+      turns: wave.turns, allReply: wave.allReply, handoverReview: wave.handoverReview,
+    };
+  }
+
+  private queueOf(gid: string, group: Group): GroupSummary["queue"] {
+    const paused = this.pausedWaves.get(gid);
+    const active = this.activeWaves.get(gid);
+    if (!paused && !active?.size) return;
+    const waiting = new Set<string>();
+    const plans = [...(paused ?? []), ...Array.from(active ?? []).filter((wave) => !wave.stopped).map((wave) => this.remainingTurns(wave))];
+    for (const { queue, allReply } of plans) {
+      for (const { assistantId } of queue) if (group.members.includes(assistantId)) waiting.add(assistantId);
+      if (group.replyMode === "all" && allReply) {
+        for (const id of group.members) if (!allReply.participated.has(id)) waiting.add(id);
+      }
+    }
+    if (paused || waiting.size) return { pending: [...waiting], ...(paused ? { paused: true } : {}) };
   }
 
   /** 这个群下面的话题（新的在前）。 */
@@ -315,7 +365,10 @@ export class GroupManager {
   closeByOwner(tid: string, note: unknown): Group {
     const topic = this.topic(tid);
     const text = typeof note === "string" ? note.trim() : "";
-    if (topic.handover && !text) throw new Error(HANDOVER_NOTE_REQUIRED);
+    if (topic.handover && !text) {
+      const from = this.nameOf(topic.handover.by);
+      throw new Error(`note 不能为空：这个话题是 ${from} 交给这个群的，结论会转给 ${from}，由它告诉用户；不做了的写明原因。`);
+    }
     return this.closeTopic(topic, text, text);
   }
 
@@ -334,47 +387,45 @@ export class GroupManager {
     const next: Group = { ...topic, closedAt: new Date().toISOString(), ...(text ? { closeNote: text } : {}) };
     // 上一句结论还在时，这次没给说明就把它清掉，免得卡片上留着旧话
     if (!text && next.closeNote) delete next.closeNote;
+    // 把结论和当时已经交付的文件一起存下来，补送时仍用这一次关闭的内容。
+    if (topic.handover && !topic.handover.result) {
+      const host = topic.parentId ? this.store.group(topic.parentId) : undefined;
+      const groupName = host?.name ?? topic.parentId ?? "";
+      const jobs = this.store.jobs().filter((job) => job.groupId === topic.id).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+      const rows = jobs.map((job) => `${job.assistantName ?? job.assistantId}「${job.title}」${JOB_STATE[job.status]}`);
+      const result = conclusion
+        ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}`
+        : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。`;
+      const files = [...new Set([...this.store.groupItems(topic.id).flatMap(sentFiles), ...jobs.filter((job) => job.status === "done").flatMap((job) => job.files ?? [])])];
+      next.handover = {
+        ...topic.handover,
+        result: rows.length ? `${result}\n话题里的任务：${rows.join("；")}` : result,
+        ...(files.length ? { resultFiles: files } : {}),
+      };
+    }
     this.store.saveGroup(next);
     // 关了这个话题就没人再管它的待办了：没做完的直接清掉，不再写进时间线
     const left = readTodos(groupTodosPath(this.runtime.home, topic.id));
     if (left.length) clearTodos(groupTodosPath(this.runtime.home, topic.id));
-    // 主助手交来的话题：先记下要送回去的那句，再送；重新打开再关不再送
-    if (topic.handover && !topic.handover.result) {
-      const host = topic.parentId ? this.store.group(topic.parentId) : undefined;
-      const groupName = host?.name ?? topic.parentId ?? "";
-      const result = conclusion
-        ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}${this.topicJobsLine(topic.id)}`
-        : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。${this.topicJobsLine(topic.id)}`;
-      this.store.saveGroup({ ...this.group(topic.id), handover: { ...topic.handover, result } });
-      this.deliverHandover(topic.id);
-    }
+    if (next.handover?.result && !next.handover.deliveredAt) this.deliverHandover(topic.id);
     this.publish(topic.id);
     if (topic.parentId) this.publish(topic.parentId);
     return this.group(topic.id);
-  }
-
-  /**
-   * 这个话题里开过的任务，一行一条，附在交回的结论后面：主助手说得清谁做了什么，不看也能对上。
-   * 同一张任务卡续做几轮只算一条。
-   */
-  private topicJobsLine(tid: string): string {
-    const jobs = this.store.jobs().filter((job) => job.groupId === tid).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    if (!jobs.length) return "";
-    const rows = jobs.map((job) => `${job.assistantName ?? job.assistantId}「${job.title}」${JOB_STATE[job.status]}`);
-    return `\n话题里的任务：${rows.join("；")}`;
   }
 
   /** 把话题的结论送进主助手的对话；送到了记下 deliveredAt。会话条目是去重依据。 */
   private deliverHandover(tid: string): void {
     const topic = this.store.group(tid);
     const handover = topic?.handover;
-    if (!topic || !handover?.result || handover.deliveredAt || this.delivering.has(tid)) return;
+    const result = handover?.result;
+    if (!handover || !result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
-    void this.runtime.router.handoverResult(handover.by, tid, handover.result).then((received) => {
+    void this.runtime.router.handoverResult(handover.by, tid, result, handover.resultFiles).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
-      if (!current?.handover || current.handover.deliveredAt || current.handover.result !== handover.result) return;
+      if (!current?.handover || current.handover.deliveredAt || current.handover.result !== result) return;
       this.store.saveGroup({ ...current, handover: { ...current.handover, deliveredAt: new Date().toISOString() } });
+      this.runtime.delegations.topicEnded(tid, result, { files: handover.resultFiles });
     }).catch((error) => console.error("话题的结论没送到：", error)).finally(() => this.delivering.delete(tid));
   }
 
@@ -508,7 +559,6 @@ export class GroupManager {
     this.runtime.routines.reload();
     for (const id of [gid, ...topics.map((topic) => topic.id)]) {
       this.counters.delete(id);
-      this.epochs.delete(id);
     }
     this.bus.emit({ type: "group_removed", id: gid });
     for (const topic of topics) this.bus.emit({ type: "group_removed", id: topic.id });
@@ -575,15 +625,12 @@ export class GroupManager {
 
   /** 用户在群里说话：写一条 user 条目，算出轮到谁，给每个人开一轮。话题关了就不收，等重新打开。 */
   async send(gid: string, body: SendMessageBody): Promise<GroupItem> {
+    while (this.pausing.has(gid)) await this.pausing.get(gid);
     const group = this.group(gid);
     if (group.closedAt) throw new Error(TOPIC_CLOSED);
-    // 和单聊一样：用户在这里又发了话，成员在这里出的、还没答的问题卡就过期了（显示「已结束」），这句话算什么由成员自己判断
-    for (const approval of this.store.approvals()) {
-      if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending") continue;
-      const expired = { ...approval, status: "expired" as const };
-      this.store.saveApproval(expired);
-      this.bus.emit({ type: "approval", approval: expired });
-    }
+    const control = !body.quote && !body.files?.length ? detectGroupControl(body.text) : null;
+    const active = this.activeWaves.get(gid);
+    const paused = this.pausedWaves.get(gid);
     this.runtime.router.clearSuggestions(group.ownerId, gid);
     const item = this.append(gid, {
       kind: "user",
@@ -594,26 +641,84 @@ export class GroupManager {
     });
     this.bus.emit({ type: "group-item", groupId: gid, item });
     this.publish(gid);
+
+    if (control === "pause" && (active?.size || paused)) {
+      if (!active?.size) return item;
+      const remaining = [...active].filter((wave) => !wave.stopped).map((wave) => this.remainingTurns(wave));
+      this.pausedWaves.set(gid, [...(paused ?? []), ...remaining]);
+      const stopping = this.stop(gid, group, true);
+      this.pausing.set(gid, stopping);
+      try {
+        await stopping;
+        if (this.pausedWaves.has(gid)) this.note(gid, SYSTEM, t("已暂停，回复「继续」从下一位接着走"), "info");
+      } finally {
+        this.pausing.delete(gid);
+      }
+      return item;
+    }
+    if (control === "resume" && paused) {
+      if (!await this.resumeQueue(gid)) this.note(gid, SYSTEM, t("没有等待发言的成员"), "info");
+      return item;
+    }
+    this.pausedWaves.delete(gid);
+
     const explicit = this.explicitTargetsOf(group, body.text, body.quote);
     const targets = explicit.length ? explicit : [group.ownerId];
-    const wave: Wave = {
-      turns: 0,
-      stopped: false,
-      pending: 0,
-      ...(!explicit.length && group.replyMode === "all"
-        ? { allReply: { triggerId: item.id, epoch: this.epochs.get(gid) ?? 0, participated: new Set<string>() } }
-        : {}),
-    };
-    for (const id of targets) void this.callTurn(gid, group, id, wave, item.id);
+    const allReply = !explicit.length && group.replyMode === "all";
+    const recipients = allReply ? group.members : targets;
+    // 被用户重新叫到的成员可以按新消息继续处理；其他成员仍在等自己问题卡的答复。
+    for (const approval of this.store.approvals()) {
+      if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending" || !recipients.includes(approval.assistantId)) continue;
+      const expired = { ...approval, status: "expired" as const };
+      this.store.saveApproval(expired);
+      this.bus.emit({ type: "approval", approval: expired });
+    }
+    const wave = this.newWave(gid, targets.map((assistantId) => ({ assistantId, triggerId: item.id })));
+    if (allReply) wave.allReply = { triggerId: item.id, participated: new Set() };
+    this.advanceWave(gid, wave, group);
     return item;
   }
 
   /** 停掉这个群里所有成员正在进行的回合（不停任务）；排队里的回合也不再生效。 */
-  async stop(gid: string, group?: Group): Promise<void> {
+  async stop(gid: string, group?: Group, keepPaused = false): Promise<void> {
     const target = group ?? this.group(gid);
     this.runtime.router.clearSuggestions(target.ownerId, gid);
-    this.epochs.set(gid, (this.epochs.get(gid) ?? 0) + 1);
-    await Promise.all(target.members.map((id) => this.runtime.router.stop(id, gid)));
+    this.activeWaves.delete(gid);
+    if (!keepPaused) this.pausedWaves.delete(gid);
+    const members = new Set(target.members);
+    const turns = [...this.turns].filter(([key]) => key.startsWith(`${gid}@`));
+    const queues = [...this.queues].filter(([key]) => key.startsWith(`${gid}@`));
+    for (const [key] of turns) members.add(key.slice(gid.length + 1));
+    await Promise.all([...members].map((id) => this.runtime.router.stop(id, gid)));
+    for (const [key, turn] of turns) if (this.turns.get(key) === turn) this.turns.delete(key);
+    for (const [key, queue] of queues) if (this.queues.get(key) === queue) this.queues.delete(key);
+    this.publish(gid);
+  }
+
+  async resumeQueue(gid: string): Promise<boolean> {
+    while (this.pausing.has(gid)) await this.pausing.get(gid);
+    const group = this.group(gid);
+    if (group.closedAt) throw new Error(TOPIC_CLOSED);
+    const paused = this.pausedWaves.get(gid);
+    if (!paused) return false;
+    this.pausedWaves.delete(gid);
+    let resumed = false;
+    for (const plan of paused) {
+      const remaining = plan.queue.filter(({ assistantId }) => group.members.includes(assistantId));
+      if (!remaining.length && !this.nextAllReplyMember(group, plan) && plan.handoverReview !== "needed") continue;
+      this.advanceWave(gid, this.newWave(gid, remaining, plan));
+      resumed = true;
+    }
+    this.publish(gid);
+    return resumed;
+  }
+
+  async discardQueue(gid: string): Promise<boolean> {
+    while (this.pausing.has(gid)) await this.pausing.get(gid);
+    this.group(gid);
+    const had = this.pausedWaves.delete(gid);
+    if (had) this.publish(gid);
+    return had;
   }
 
   /** 用户的消息明确点名了谁：@ 了谁、引用谁的消息就是谁。 */
@@ -649,17 +754,41 @@ export class GroupManager {
     return out;
   }
 
+  private newWave(gid: string, queue: WaveEntry[], resumed?: QueuedTurns): Wave {
+    const wave: Wave = { turns: 0, ...resumed, queue, stopped: false, pending: 0 };
+    const active = this.activeWaves.get(gid) ?? new Set<Wave>();
+    active.add(wave);
+    this.activeWaves.set(gid, active);
+    return wave;
+  }
+
+  private currentWave(gid: string, wave: Wave): boolean {
+    return this.activeWaves.get(gid)?.has(wave) ?? false;
+  }
+
+  private forgetWave(gid: string, wave: Wave): void {
+    const active = this.activeWaves.get(gid);
+    if (active?.delete(wave) && !active.size) this.activeWaves.delete(gid);
+  }
+
+  private nextAllReplyMember(group: Group | undefined, { allReply }: QueuedTurns): string | undefined {
+    if (group?.replyMode === "all" && allReply) return group.members.find((id) => !allReply.participated.has(id));
+  }
+
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
-    const key = `${gid}@${assistantId}`;
-    const epoch = this.epochs.get(gid) ?? 0;
+  private schedule(gid: string, wave: Wave, entry: WaveEntry): Promise<void> {
+    const key = `${gid}@${entry.assistantId}`;
+    wave.scheduled = entry;
     wave.pending += 1;
     const previous = this.queues.get(key) ?? Promise.resolve();
     const next = previous
-      .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event, workDone, allReplyTurn))
+      .then(() => {
+        delete wave.scheduled;
+        return this.runTurn(gid, wave, entry);
+      })
       .catch(() => undefined)
       .finally(() => {
-        wave.pending = Math.max(0, wave.pending - 1);
+        wave.pending -= 1;
         this.advanceWave(gid, wave);
       });
     this.queues.set(key, next);
@@ -674,53 +803,79 @@ export class GroupManager {
    * 全员回应的波次还有没轮到的成员，就按成员列表顺序排上下一个（前一个跑完才轮到下一个）；
    * 全部跑完后再生成推荐提问。
    */
-  private advanceWave(gid: string, wave: Wave): void {
-    if (wave.pending > 0 || wave.stopped) return;
-    if (wave.allReply && (this.epochs.get(gid) ?? 0) === wave.allReply.epoch) {
-      const group = this.store.group(gid);
-      if (group && group.replyMode === "all") {
-        const nextMember = group.members.find((id) => !wave.allReply!.participated.has(id));
-        if (nextMember) {
-          void this.schedule(gid, nextMember, wave, wave.allReply.triggerId, undefined, false, true);
-          return;
+  private advanceWave(gid: string, wave: Wave, steerGroup?: Group): void {
+    if (wave.pending > 0 || !this.currentWave(gid, wave)) return;
+    if (!wave.stopped) {
+      let entry = wave.queue.shift();
+      if (!entry) {
+        const group = this.store.group(gid);
+        const nextMember = this.nextAllReplyMember(group, wave);
+        if (nextMember && wave.allReply) entry = { assistantId: nextMember, triggerId: wave.allReply.triggerId, allReplyTurn: true };
+        else if (group && wave.handoverReview === "needed") {
+          delete wave.handoverReview;
+          entry = { assistantId: group.ownerId, triggerId: "", event: reviewHandover };
         }
       }
+      if (entry) {
+        if (steerGroup) void this.callTurn(gid, steerGroup, wave, entry);
+        else void this.schedule(gid, wave, entry);
+        this.publish(gid);
+        return;
+      }
+      if (wave.finalSpeaker) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, gid);
     }
-    if (wave.finalSpeaker && !wave.stopped) void this.runtime.router.generateSuggestionsFor(wave.finalSpeaker, gid);
+    this.forgetWave(gid, wave);
+    this.publish(gid);
   }
 
   /**
    * 用户叫到一个成员：它正在这个群里说一轮，就把新条目用 steer 插进那一轮，不另排一轮；
    * 会话刚好跑完（没在流式）就照原来的路子排队。
    */
-  private async callTurn(gid: string, group: Group, assistantId: string, wave: Wave, triggerId: string): Promise<void> {
-    const input = this.turns.has(`${gid}@${assistantId}`) ? this.windowFor(group, assistantId, triggerId) : undefined;
-    if (input) {
+  private async callTurn(gid: string, group: Group, wave: Wave, entry: WaveEntry): Promise<void> {
+    const { assistantId, triggerId } = entry;
+    const key = `${gid}@${assistantId}`;
+    const runningTurn = this.turns.get(key);
+    const input = runningTurn ? this.windowFor(group, assistantId, triggerId) : undefined;
+    if (runningTurn && input) {
+      wave.scheduled = entry;
       const text = this.inputText(assistantId, group, input);
       // 会话刚好收掉（不在流式、或者 abort 了）：照原来的路子排队，话不会丢
       const received = () => {
+        if (!this.currentWave(gid, runningTurn.wave)) return;
+        delete wave.scheduled;
         this.markSeen(gid, assistantId, input.seenTo);
         // 插进的是事件那一轮：从用户这条起是回用户的话，前面攒着的先收尾，之后照常边写边推（和单聊一致）
-        const turn = this.turns.get(`${gid}@${assistantId}`);
-        if (turn?.event) {
-          this.settleEventTurn(gid, assistantId, turn);
-          delete turn.event;
+        if (this.turns.get(key) === runningTurn && runningTurn.event) {
+          this.settleEventTurn(gid, assistantId, runningTurn);
+          delete runningTurn.event;
         }
       };
-      if (await this.runtime.router.steerMember(gid, assistantId, text, this.inputFiles(input), received).catch(() => false)) {
-        if (wave.allReply) {
-          wave.allReply.participated.add(assistantId);
-          const running = this.queues.get(`${gid}@${assistantId}`) ?? Promise.resolve();
-          wave.pending += 1;
-          void running.finally(() => {
-            wave.pending = Math.max(0, wave.pending - 1);
-            this.advanceWave(gid, wave);
-          });
+      const running = this.queues.get(key);
+      wave.pending += 1;
+      const steered = await this.runtime.router.steerMember(gid, assistantId, text, this.inputFiles(input), received).catch(() => false);
+      wave.pending -= 1;
+      if (steered) {
+        delete wave.scheduled;
+        if (!this.currentWave(gid, wave)) return;
+        const active = runningTurn.wave;
+        // 新消息插进同一轮，后面的点名也跟进原队列；这轮回复里点名的新成员仍能先接力。
+        if (this.turns.get(key) === runningTurn && !active.stopped) {
+          active.queue.push(...wave.queue);
+          active.allReply ??= wave.allReply;
+          active.allReply?.participated.add(assistantId);
+          this.forgetWave(gid, wave);
+          this.publish(gid);
+          return;
         }
-        return;
+        wave.allReply?.participated.add(assistantId);
+        wave.pending += 1;
+        await running;
+        wave.pending -= 1;
+        return this.advanceWave(gid, wave);
       }
     }
-    await this.schedule(gid, assistantId, wave, triggerId);
+    if (this.currentWave(gid, wave)) await this.schedule(gid, wave, entry);
   }
 
   /**
@@ -731,7 +886,8 @@ export class GroupManager {
   async deliverEvent(gid: string, assistantId: string, text: EventText, triggerId = "", workDone = false): Promise<void> {
     const group = this.group(gid);
     if (!group.members.includes(assistantId)) return;
-    await this.schedule(gid, assistantId, { turns: 0, stopped: false, pending: 0 }, triggerId, text, workDone);
+    const wave = this.newWave(gid, []);
+    await this.schedule(gid, wave, { assistantId, triggerId, event: text, workDone });
   }
 
   /**
@@ -753,11 +909,38 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = false, allReplyTurn = false): Promise<void> {
+  enqueueMembers(gid: string, ownerId: string, members: string[], options: { note?: string; returnToOwner?: boolean }): boolean {
+    const turn = this.turns.get(`${gid}@${ownerId}`);
+    if (!turn || !this.currentWave(gid, turn.wave) || turn.wave.stopped) throw new Error("当前没有可安排接力的群主回合。");
+    const triggerId = turn.lastId ?? turn.triggerId ?? "";
+    const entries = members.map((assistantId, index) => ({
+      assistantId,
+      triggerId,
+      instruction: `群主点名你按顺序发言（第 ${index + 1}/${members.length} 位）。${options.note ? `交代：${options.note}` : "请结合上方群聊内容发言。"}`,
+    }));
+    const topic = this.group(gid);
+    const handedOver = Boolean(topic.handover && !topic.handover.result && !topic.closedAt);
+    const returnToOwner = options.returnToOwner ?? handedOver;
+    if (handedOver) {
+      turn.wave.handoverReview = returnToOwner ? undefined : "declined";
+    } else if (returnToOwner && entries.at(-1)?.assistantId !== ownerId) {
+      entries.push({ assistantId: ownerId, triggerId, instruction: "你安排的成员已依次发言完毕，请结合他们的回复进行总结收口。" });
+    }
+    const called = turn.calledMembers ??= new Set<string>();
+    for (const entry of entries) called.add(entry.assistantId);
+    const batch = new Set(entries.map((entry) => entry.assistantId));
+    turn.wave.queue = [...entries, ...turn.wave.queue.filter((entry) => !batch.has(entry.assistantId))];
+    this.publish(gid);
+    return returnToOwner;
+  }
+
+  private async runTurn(gid: string, wave: Wave, entry: WaveEntry): Promise<void> {
+    const { assistantId, triggerId, event, instruction, workDone = false, allReplyTurn = false } = entry;
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
+    if (event === reviewHandover && (group.ownerId !== assistantId || group.closedAt || group.handover?.result || todosBusy(this.runtime, assistantId, gid))) return;
     // 用户按了停止：这一轮不再开始
-    if ((this.epochs.get(gid) ?? 0) !== epoch) return;
+    if (!this.currentWave(gid, wave)) return;
     wave.allReply?.participated.add(assistantId);
     // 一条用户消息引出的 @ 接力回合太多：停下，不再按 @ 叫人；全员依次轮到的回合每人最多一次，不受此上限截断
     if (!allReplyTurn && wave.turns >= MAX_WAVE_TURNS) {
@@ -765,40 +948,61 @@ export class GroupManager {
         wave.stopped = true;
         this.note(gid, SYSTEM, RELAY_NOTE, "info");
         // 群主在群里收尾：只给它这一轮，它再 @ 人也不接着转，免得停了又起
-        void this.schedule(gid, group.ownerId, { turns: MAX_WAVE_TURNS - 1, stopped: true, pending: 0 }, "", `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`)
-          .catch(() => undefined);
+        const wrapUp = this.newWave(gid, []);
+        wrapUp.stopped = true;
+        void this.schedule(gid, wrapUp, {
+          assistantId: group.ownerId, triggerId: "",
+          event: `${RELAY_NOTE}：一条消息引出的助手回复已经超过 ${MAX_WAVE_TURNS} 轮，后面的 @ 不再转给下一个成员。需要的话，把结论整理一下再发一条。`,
+        });
       }
       return;
     }
     // 排到的这一轮已经没有新东西给它（前面那一轮已经带上了）：不跑，不调模型
     const input = this.windowFor(group, assistantId, event === undefined ? triggerId : "");
-    if (event === undefined && !input) return;
+    if (event === undefined && !instruction && !input) return;
+    const trackHandoverReview = Boolean(group.handover && !group.closedAt && !group.handover.result && wave.handoverReview !== "declined");
+    if (trackHandoverReview && assistantId === group.ownerId) {
+      wave.handoverReview = undefined;
+    }
     if (!allReplyTurn) wave.turns += 1;
     const key = `${gid}@${assistantId}`;
-    const turn: RunningTurn = { text: "", ...(event !== undefined ? { event: true as const, held: [] } : {}), ...(triggerId ? { triggerId } : {}) };
+    const turn: RunningTurn = { wave, text: "", ...(event !== undefined ? { event: true as const, held: [] } : {}), ...(triggerId ? { triggerId } : {}) };
     this.turns.set(key, turn);
-    let text = "";
+    this.publish(gid);
+    const isCurrent = () => this.currentWave(gid, wave);
+    let failed = false;
     try {
       const prompt = this.inputText(assistantId, group, input ?? { items: [] }, event);
-      await this.runtime.router.deliverMember(gid, assistantId, prompt, () => this.markSeen(gid, assistantId, input?.seenTo), input ? this.inputFiles(input) : [], event === undefined || workDone);
-      if (turn.event) this.settleEventTurn(gid, assistantId, turn);
-      text = turn.text;
+      await this.runtime.router.deliverMember(gid, assistantId, instruction ? `${prompt}\n\n${instruction}` : prompt, () => {
+        if (isCurrent()) this.markSeen(gid, assistantId, input?.seenTo);
+      }, input ? this.inputFiles(input) : [], event === undefined || workDone, isCurrent);
+      if (turn.event && isCurrent()) this.settleEventTurn(gid, assistantId, turn);
     } catch (error) {
+      failed = true;
+      if (!isCurrent()) return;
       // 中途出错：没说到 NO_REPLY，已经写好的那几段照常出（和单聊一致），再写失败原因
       if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       const message = error instanceof Error ? error.message : String(error);
       this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
     } finally {
-      this.turns.delete(key);
+      if (this.turns.get(key) === turn) this.turns.delete(key);
+    }
+    if (!isCurrent()) return;
+    if (trackHandoverReview && assistantId !== group.ownerId && !failed && (!turn.silent || Boolean(turn.lastId))) {
+      wave.handoverReview = "needed";
     }
     // 这一轮收到了用户的消息、回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
     const userItem = input?.items.findLast((item) => item.kind === "user");
     if (userItem && turn.silent && !turn.lastId && !this.store.groupState(gid).reactions?.[userItem.id]?.[assistantId]) this.react(gid, assistantId, "👀", userItem.id);
-    if ((this.epochs.get(gid) ?? 0) !== epoch) return;
     // 回复里 @ 了别的成员：接着轮到他们（用这一轮最后一条的 id 当触发条目）
     if (!turn.lastId) return;
     wave.finalSpeaker = assistantId;
-    for (const id of this.mentions(text, group, assistantId)) this.schedule(gid, id, wave, turn.lastId);
+    if (wave.stopped) return;
+    const waiting = new Set(wave.queue.map(({ assistantId }) => assistantId));
+    const relay = this.mentions(turn.text, group, assistantId)
+      .filter((id) => !waiting.has(id) && !turn.calledMembers?.has(id))
+      .map((assistantId) => ({ assistantId, triggerId: turn.lastId! }));
+    wave.queue.unshift(...relay);
   }
 
   /**
@@ -830,7 +1034,7 @@ export class GroupManager {
   }
 
   private inputFiles(input: TurnInput): string[] {
-    return input.items.flatMap((item) => item.kind === "user" ? item.files ?? [] : []);
+    return [...new Set(input.items.flatMap((item) => item.kind === "user" ? item.files ?? [] : sentFiles(item)))];
   }
 
   /** 给到哪一条了：下一轮从这里往后算（只调了工具没说话的回合也记得住）。 */
@@ -862,9 +1066,11 @@ export class GroupManager {
         return `${who}：询问了用户${approval ? `「${approval.title}」` : "一个问题"}`;
       }
       case "file":
-        return `${who}：发送了文件「${item.name}」`;
+        return `${who}：发送了文件「${item.name}」（${item.path}）`;
       case "image":
-        return `${who}：生成了一张图片`;
+        if (item.status === "pending") return `${who}：正在生成图片`;
+        if (item.status === "failed") return `${who}：生成图片失败${item.error ? `（${item.error}）` : ""}`;
+        return `${who}：生成了一张图片${item.path ? `（${item.path}）` : ""}`;
       case "draft":
         return `${who}：提议创建一个助手`;
       case "delegation":

@@ -13,6 +13,7 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "edit": labelText = withValue(t("正在修改"), basename(value("path"))); break;
     case "write": labelText = withValue(t("正在写入"), basename(value("path"))); break;
     case "start_job": labelText = withValue(t("分派任务"), value("title")); break;
+    case "call_members": labelText = t("按序点名成员"); break;
     case "check_job": labelText = t("查看任务"); break;
     case "save_skill": labelText = t("改技能"); break;
     case "reply_job": labelText = t("补充任务要求"); break;

@@ -425,8 +425,14 @@ export class JobManager {
     const speaker = job.startedBy ?? job.assistantId;
     const place = placeOf(job);
     const kind = noteKind ?? details?.job?.kind ?? "result";
-    await this.runtime.router.reopenForEvent(speaker, place, jobReopenNote(job.title, kind));
-    if (place.topicId || place.groupId) return this.runtime.router.event(speaker, text, details, place);
+    if (place.topicId) {
+      await this.runtime.router.reopenForEvent(speaker, place, jobReopenNote(job.title, kind));
+      return this.runtime.router.event(speaker, text, details, place);
+    }
+    if (place.groupId) {
+      this.runtime.groups.reopenForResult(place.groupId, jobReopenNote(job.title, kind));
+      return this.runtime.router.event(speaker, text, details, place);
+    }
     return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
 

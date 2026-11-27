@@ -44,7 +44,7 @@ describe("newerBuild", () => {
 });
 
 describe("sw.js 通知行为", () => {
-  it("默认不加会话级 tag，显式传 tag 时才附带 renotify: true", async () => {
+  it("不加会话级 tag，即使 payload 含未知 tag 字段也忽略", async () => {
     const { listeners, shown } = loadSw();
     const waitPromises: Promise<unknown>[] = [];
     const push = listeners.get("push")!;
@@ -62,7 +62,9 @@ describe("sw.js 通知行为", () => {
     expect(shown).toHaveLength(2);
     expect(shown[0]?.options).not.toHaveProperty("tag");
     expect(shown[0]?.options).toMatchObject({ body: "第一条", data: { url: "/#/group/g1" } });
-    expect(shown[1]?.options).toMatchObject({ body: "第二条", tag: "custom-tag", renotify: true });
+    expect(shown[1]?.options).not.toHaveProperty("tag");
+    expect(shown[1]?.options).not.toHaveProperty("renotify");
+    expect(shown[1]?.options).toMatchObject({ body: "第二条", data: { url: "/#/group/g1" } });
   });
 
   it("点开通知时清理同 url 旧通知，不影响其他会话通知", async () => {

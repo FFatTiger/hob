@@ -2326,7 +2326,8 @@ export class RouterManager {
 
   /** 审批答案或卡片操作回到 Router（router 来源的审批，答案作为事件进入上下文；群/话题里提的问题回对应会话）。 */
   async answerEvent(assistantId: string, text: string, place?: Place): Promise<void> {
-    await this.reopenForEvent(assistantId, place, t("提问有了回答，话题已重新打开"));
+    if (place?.topicId) await this.reopenForEvent(assistantId, place, t("提问有了回答，话题已重新打开"));
+    else if (place?.groupId) this.runtime.groups.reopenForResult(place.groupId, t("提问有了回答，话题已重新打开"));
     await this.event(assistantId, text, { userInitiated: true }, place);
   }
 }

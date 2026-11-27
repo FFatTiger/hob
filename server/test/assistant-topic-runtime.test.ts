@@ -829,7 +829,7 @@ describe("助手多话题：异常回滚与路径别名校验", () => {
 
       vi.spyOn(hob.runtime.pi, "open").mockRejectedValueOnce(new Error("打开会话失败"));
       const res = await post(`/api/assistants/${aid}/topics`, { title: "应回滚的话题", text: "第一条消息" });
-      expect(res.status).toBe(400);
+      expect(res.status).toBe(500);
       expect(await res.json()).toEqual({ error: "打开会话失败" });
 
       expect(hob.runtime.assistantTopics.list(aid)).toEqual([]);

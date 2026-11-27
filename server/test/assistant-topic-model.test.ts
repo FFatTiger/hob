@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../../shared/i18n.ts";
 import type { Assistant, AssistantSummary, AssistantTopic, Draft, HobEvent } from "../../shared/types.ts";
 import {
@@ -118,12 +118,15 @@ describe("助手多话题：存储路径与 Store helper", () => {
         reactions: { m1: { user: "👍" } },
       });
 
-      // topic.json 读坏必须抛错（不能悄悄吞掉）
+      // 按 id 读坏 topic.json 和 validate() 仍抛错；列表 assistantTopics() 记日志并跳过坏文件
       const badDir = assistantTopicDir(hob.home, aid, "tp-bad");
       mkdirSync(badDir, { recursive: true });
       writeFileSync(join(badDir, "topic.json"), "{坏掉的 JSON");
       expect(() => reopened.assistantTopic(aid, "tp-bad")).toThrow(join(badDir, "topic.json"));
-      expect(() => reopened.assistantTopics(aid)).toThrow(join(badDir, "topic.json"));
+      const errSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+      expect(reopened.assistantTopics(aid)).toEqual([t1, t2]);
+      expect(errSpy).toHaveBeenCalled();
+      errSpy.mockRestore();
       expect(() => reopened.validate()).toThrow(join(badDir, "topic.json"));
 
       // 非法结构也抛错

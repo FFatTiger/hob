@@ -104,12 +104,24 @@ describe("issue 269 step 3 component fixes", () => {
   });
 
   it("报告 4：ComposerPlus 在群话题与助手话题读写话题覆盖层，选跟随发 null", async () => {
+    const mkModel = (id: string, name: string): ModelInfo => ({
+      ref: `p/${id}`,
+      provider: "p",
+      id,
+      name,
+      reasoning: false,
+      thinkingLevels: ["off"],
+      input: ["text"],
+      contextWindow: 128000,
+      maxTokens: 4096,
+      cost: { input: 0, output: 0 },
+    });
     const models: ModelInfo[] = [
-      { ref: "p/m-group", provider: "p", id: "m-group", name: "GroupModel", reasoning: false },
-      { ref: "p/m-topic", provider: "p", id: "m-topic", name: "TopicModel", reasoning: false },
-      { ref: "p/m-next", provider: "p", id: "m-next", name: "NextModel", reasoning: false },
-      { ref: "p/m-asst", provider: "p", id: "m-asst", name: "AsstModel", reasoning: false },
-      { ref: "p/m-global", provider: "p", id: "m-global", name: "GlobalModel", reasoning: false },
+      mkModel("m-group", "GroupModel"),
+      mkModel("m-topic", "TopicModel"),
+      mkModel("m-next", "NextModel"),
+      mkModel("m-asst", "AsstModel"),
+      mkModel("m-global", "GlobalModel"),
     ];
     const settings: ModelSettings = {
       conversation: { ref: "p/m-global", thinking: "off" },
@@ -120,7 +132,7 @@ describe("issue 269 step 3 component fixes", () => {
     const ops = {
       patchGroup: vi.fn(async () => null),
       patchAssistantTopicConfig: vi.fn(async () => null),
-      patchAssistant: vi.fn(async () => undefined),
+      patchAssistant: vi.fn(async () => null),
       loadGroupProfile: vi.fn(async () => undefined),
       setNotice: vi.fn(),
     };

@@ -348,9 +348,24 @@ export function buildRouterTools(
     const levels = modelSettings.thinkingChoice === "fixed"
       ? jobModel({ settings: modelSettings, assistant: modelAssistant, catalog: runtime.models, requested: { model: ref } }).model.thinking
       : thinkingLevelsOf(runtime.models.find(ref)).join("、");
-    return `${ref}${ref === defaultModel ? "（默认）" : ""}${note ? ` · ${note}` : ""} · 思考档 ${levels}`;
+    return `${ref}${!groupId && ref === defaultModel ? "（默认）" : ""}${note ? ` · ${note}` : ""} · 思考档 ${levels}`;
   });
   const modelText = modelList.length ? modelList.join("\n") : "（现在没有可用的模型）";
+  // 群里不填模型时用的是接活那位成员在这里的任务模型，各人不同：逐个写清
+  const memberModelText = groupId
+    ? (store.group(groupId)?.members ?? []).flatMap((id) => {
+      const member = store.assistant(id);
+      if (!member) return [];
+      let pick: string;
+      try {
+        const { model } = jobModel({ settings: modelSettings, assistant: assistantForPlace(store, member, place, runtime.models, modelSettings), catalog: runtime.models });
+        pick = `${model.ref} · 思考档 ${model.thinking}`;
+      } catch (error) {
+        pick = error instanceof Error ? error.message : String(error);
+      }
+      return [`${member.name}（${id}${id === assistantId ? "，你自己" : ""}）：${pick}`];
+    }).join("\n")
+    : "";
 
   const checkFile = (path: string) => {
     try {
@@ -544,7 +559,11 @@ export function buildRouterTools(
         ...(groupId ? { assistantId: Type.Optional(Type.String({ description: "谁来做：群里一位成员的 id，任务以它的身份运行，用它的技能和记忆。不填就是你自己。" })) } : {}),
         after: Type.Optional(Type.Array(Type.String(), { description: "可选。要等这些任务完成才开始，填任务 id。前置任务未完成（受阻、失败、已停止），这个任务就不开始，会告诉你。" })),
         expect_minutes: Type.Optional(Type.Number({ description: "可选，预计多少分钟能交结果。超过了会通知你；不填按 10 分钟。" })),
-        model: Type.Optional(Type.String({ description: `可选，不填用默认。智能、成本、速度 0–100，越高越智能、越贵、越快：\n${modelText}` })),
+        model: Type.Optional(Type.String({
+          description: groupId
+            ? `可选。不填就用接活成员在这里的任务模型：\n${memberModelText}\n能填的模型，智能、成本、速度 0–100，越高越智能、越贵、越快：\n${modelText}`
+            : `可选，不填用默认。智能、成本、速度 0–100，越高越智能、越贵、越快：\n${modelText}`,
+        })),
         ...(modelSettings.thinkingChoice === "fixed" ? {} : {
           thinking: Type.Optional(Type.String({ description: "可选：思考档以可分派模型列表里每个模型标的为准。不填用模型的默认思考档。" })),
         }),
@@ -576,7 +595,8 @@ export function buildRouterTools(
             ...(router.currentRoutineId(assistantId, place) ? { routineId: router.currentRoutineId(assistantId, place) } : {}),
           }, signal);
           if (job.status === "failed") return fail(`任务启动失败：${job.statusReason ?? "原因不明"}`);
-          if (assignee.id !== assistantId) return ok(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。结果会回到这里。`);
+          const usedModel = job.model ? `用的模型：${job.model}${job.thinking ? ` · 思考档 ${job.thinking}` : ""}（${params.model ? "你指定的" : `${nameOf(assignee.id)}在这里的任务模型`}）。` : "";
+          if (assignee.id !== assistantId) return ok(`已派给「${nameOf(assignee.id)}」：${job.title}（${job.id}）。${usedModel}结果会回到这里。`);
           if (job.after?.length) {
             const titles = job.after.map((id) => `「${store.job(id)?.title ?? id}」`).join("、");
             return ok(`任务「${job.title}」（${job.id}）已排上，等${titles}做完就开始。`);

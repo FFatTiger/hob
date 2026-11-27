@@ -60,13 +60,25 @@ function userTexts(file: string): string[] {
 }
 
 describe("群里派任务可以指定成员", () => {
+  it("模型说明逐个写清每位成员不填时用的任务模型，不只标派活的人自己那个", async () => {
+    const { hob, topic } = setup();
+    try {
+      await hob.runtime.models.get();
+      const start = buildRouterTools(hob.runtime, "hob", { groupId: topic.id }).find((item) => item.name === "start_job")!;
+      const description = (start.parameters as any).properties.model.description as string;
+      expect(description).toContain("运维（ops）：hob-faux/faux-2");
+      expect(description).toMatch(/（hob，你自己）：hob-faux\/faux-1/);
+      expect(description).not.toContain("（默认）");
+    } finally { hob.close(); }
+  });
+
   it("填成员：任务按它的身份和模型跑，卡片算它的，结果回到话题、不进它的单聊", async () => {
     const { hob, topic } = setup();
     try {
       hob.faux.setResponses([call("report", { outcome: "done", result: "清掉了 3 GB" }), text("好了，交结果了。"), text("运维清掉了 3 GB。")]);
       const result = await runTool(hob, "hob", topic.id, "start_job", { title: "查磁盘", assistantId: "ops" });
       const job = hob.runtime.store.jobs().find((item) => item.title === "查磁盘")!;
-      expect(result.content[0].text).toBe(`已派给「运维」：查磁盘（${job.id}）。结果会回到这里。`);
+      expect(result.content[0].text).toBe(`已派给「运维」：查磁盘（${job.id}）。用的模型：hob-faux/faux-2 · 思考档 off（运维在这里的任务模型）。结果会回到这里。`);
 
       expect(job).toMatchObject({ assistantId: "ops", assistantName: "运维", startedBy: "hob", groupId: topic.id });
       // 用它的默认任务模型，不是派活的人那一套

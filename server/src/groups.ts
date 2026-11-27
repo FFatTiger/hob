@@ -1055,9 +1055,9 @@ export class GroupManager {
     } finally {
       this.turns.delete(key);
     }
-    // 这一轮收到了用户的消息、回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
+    // 这一轮收到了用户的消息、回了 NO_REPLY、自己也没点表情也没有发展示卡片：替它挂 👀，用户看得出消息到了
     const userItem = input?.items.findLast((item) => item.kind === "user");
-    if (userItem && turn.silent && !turn.lastId && !this.store.groupState(gid).reactions?.[userItem.id]?.[assistantId]) this.react(gid, assistantId, "👀", userItem.id);
+    if (userItem && turn.silent && !turn.lastId && !outcome?.text && !this.store.groupState(gid).reactions?.[userItem.id]?.[assistantId]) this.react(gid, assistantId, "👀", userItem.id);
     if ((this.epochs.get(gid) ?? 0) !== epoch) return;
     if (outcome) {
       if (outcome.userInitiated) {

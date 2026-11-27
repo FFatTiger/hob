@@ -54,10 +54,10 @@ describe("send_card", () => {
         memory: "off",
       });
       expect(prompt).toContain(
-        "标题、嵌套的列表、成片的加粗和代码格式是文档的写法，放进气泡里读起来像在翻报告。内容本身有结构时，用 send_card 发成卡片。卡片就是为此做的：聊天气泡显示不好文档式的 Markdown，卡片有自己的标题、分栏、表格和折叠，在这里代替它。一份总结或汇报、几个选项的对比、一组数据、一份计划或清单，这些内容本来就分成几项、几节、几列，放进卡片比写成一段话或一份 Markdown 都好读。发了卡片，气泡里照常说结论和要用户做的事。几句话能说清的，直接回复。",
+        "标题、嵌套的列表、成片的加粗和代码格式是文档的写法，放进气泡里读起来像在翻报告。内容本身有结构时，用 send_card 发成卡片。卡片就是为此做的：聊天气泡显示不好文档式的 Markdown，卡片有自己的标题、分栏、表格和折叠，在这里代替它。一份总结或汇报、几个选项的对比、一组数据、一份计划或清单，这些内容本来就分成几项、几节、几列，放进卡片比写成一段话或一份 Markdown 都好读。发了卡片，卡片本身就是这次的回复，里面的内容用户已经看到；如果外面再总结结论、复述要点，或者写一句「已发在上面卡片里」，用户要多读一遍，两处有出入时也不知道信哪边。卡片之外只写卡片里没有、又需要现在告诉用户的话（比如顺带回答的另一个问题、或需要用户拍板/接下来要办的事）；没有这样的话就不写，直接结束这一轮。几句话能说清的，直接回复。",
       );
       expect(prompt).toContain(
-        "内容有了形状时用 send_card 发卡片：有几项能并排比较的数字或条目，有用户先不用看、需要时再展开的细节，或者是一份要用户扫一眼就抓住重点的汇报、对比、总览。卡片把这些摆成标题、并排的关键数字和折起来的段落，比一长段文字好读。对话、解释、一两句话就说完的结果，直接回复。",
+        "内容有了形状时用 send_card 发卡片：有几项能并排比较的数字或条目，有用户先不用看、需要时再展开的细节，或者是一份要用户扫一眼就抓住重点的汇报、对比、总览。卡片把这些摆成标题、并排的关键数字和折起来的段落，比一长段文字好读。卡片发出去就是这次的回复，外面只写卡片里没有、又需要告诉用户的话，没有就直接结束这一轮。对话、解释、一两句话就说完的结果，直接回复。",
       );
     } finally { hob.close(); }
   });
@@ -66,7 +66,7 @@ describe("send_card", () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const shown = await tool(hob).execute("call", { markdown: displayMarkdown }) as { content: { text: string }[]; terminate?: boolean };
-      expect(shown).toMatchObject({ content: [{ text: "卡片已显示给用户。" }] });
+      expect(shown).toMatchObject({ content: [{ text: "卡片已显示给用户，里面的内容用户已经看到。" }] });
       expect(shown.terminate).toBeUndefined();
       const sent = await tool(hob).execute("call-2", { markdown: interactiveMarkdown }) as { content: { text: string }[]; terminate?: boolean };
       expect(sent).toMatchObject({ content: [{ text: "卡片已显示给用户，用户操作完结果会回到对话。" }], terminate: true });
@@ -83,7 +83,7 @@ describe("send_card", () => {
       }) as { content: { text: string }[]; terminate?: boolean; isError?: boolean };
       expect(displayWarn.isError).toBeUndefined();
       expect(displayWarn.terminate).toBeUndefined();
-      expect(displayWarn.content[0]!.text).toContain("卡片已显示给用户。注意：");
+      expect(displayWarn.content[0]!.text).toContain("卡片已显示给用户，里面的内容用户已经看到。注意：");
       expect(displayWarn.content[0]!.text).toContain("分栏没有用 ::: 闭合");
       expect(displayWarn.content[0]!.text).toContain("分栏里有空栏");
 

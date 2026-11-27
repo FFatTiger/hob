@@ -506,6 +506,36 @@ describe("推送触发全路径回归", () => {
         expect.objectContaining({ title: "Hob", body: "本周数据概览", url: "/?a=hob" }),
         "assistant:hob",
       ]);
+
+      // 4. send_card 发纯展示卡片且模型随后回 NO_REPLY -> 不挂 👀、不隐藏推送，仍用卡片标题推送
+      hob.faux.setResponses([
+        call("send_card", { markdown: "# 四家供应商比价\n\n华盛包装综合最划算" }),
+        text("NO_REPLY"),
+      ]);
+      const sent = await hob.runtime.router.send("hob", { text: "给我发比价卡片" });
+      await hob.runtime.router.waitIdle("hob");
+      expect(push).toHaveBeenCalledTimes(4);
+      expect(push.mock.calls[3]).toEqual([
+        expect.objectContaining({ title: "Hob", body: "四家供应商比价", url: "/?a=hob" }),
+        "assistant:hob",
+      ]);
+      const userItem = hob.runtime.router.items("hob").items.find((item) => item.id === sent.id);
+      expect(userItem?.kind === "user" ? userItem.reactions : undefined).toBeUndefined();
+
+      // 5. 群聊 send_card 发纯展示卡片且模型随后回 NO_REPLY -> 不挂 👀、群波次照常推送卡片标题
+      const grp = hob.runtime.groups.create({ name: "比价群", purpose: "比价", ownerId: "hob", members: ["hob"] });
+      hob.faux.setResponses([
+        call("send_card", { markdown: "# 采购对账结果\n\n28 笔已核对" }),
+        text("NO_REPLY"),
+      ]);
+      const groupSent = await hob.runtime.groups.send(grp.id, { text: "把对账结果发一下" });
+      await waitFor(() => hob.runtime.groups.summary(grp.id).busy.length === 0 && push.mock.calls.length === 5);
+      expect(push.mock.calls[4]).toEqual([
+        expect.objectContaining({ title: "比价群", body: "采购对账结果", url: `/#/group/${grp.id}` }),
+        `group:${grp.id}`,
+      ]);
+      const groupUser = hob.runtime.groups.items(grp.id).items.find((item) => item.id === (groupSent as { id: string }).id);
+      expect(groupUser?.kind === "user" ? groupUser.reactions : undefined).toBeUndefined();
     } finally {
       hob.close();
     }

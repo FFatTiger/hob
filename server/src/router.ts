@@ -1981,13 +1981,13 @@ export class RouterManager {
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.place);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.place);
-    // 收到了用户的消息、这一轮回了 NO_REPLY、自己也没点表情：替它挂 👀，用户看得出消息到了
-    if (!state.place.groupId && state.turnSilent && state.turnUserItem && !this.stateOf(state.assistantId, state.place).reactions?.[state.turnUserItem]?.[state.assistantId]) {
+    // 收到了用户的消息、这一轮回了 NO_REPLY、自己也没点表情也没有发展示卡片：替它挂 👀，用户看得出消息到了
+    if (!state.place.groupId && state.turnSilent && !state.turnCardTitle && state.turnUserItem && !this.stateOf(state.assistantId, state.place).reactions?.[state.turnUserItem]?.[state.assistantId]) {
       this.react(state.assistantId, "👀", state.turnUserItem, state.place);
     }
     const bodyText = state.turnLastText || state.turnCardTitle;
     const reactedOnly = Boolean(state.turnReacted && !bodyText);
-    const silent = Boolean(state.turnSilent || reactedOnly);
+    const silent = Boolean((state.turnSilent && !state.turnCardTitle) || reactedOnly);
     const outcome: TurnOutcome = {
       ...(bodyText && !silent ? { text: bodyText } : {}),
       ...(error ? { error } : {}),

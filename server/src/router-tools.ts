@@ -697,7 +697,7 @@ export function buildRouterTools(
         await router.addCard(assistantId, record, place);
         const shown = result.value.interactive
           ? "卡片已显示给用户，用户操作完结果会回到对话。"
-          : "卡片已显示给用户。";
+          : "卡片已显示给用户，里面的内容用户已经看到。";
         const reply = warnings.length ? `${shown}注意：${warnings.join("；")}。` : shown;
         return result.value.interactive ? endTurn(reply) : ok(reply);
       },

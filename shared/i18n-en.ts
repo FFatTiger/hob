@@ -5,6 +5,9 @@ export type TranslationEntry = string | PluralTranslation;
 
 /** Shared English translations. Feature-specific additions live in the regional catalogs. */
 export const EN: Record<string, TranslationEntry> = {
+  "已暂停，回复「继续」从下一位接着走": "Paused. Reply “continue” to resume with the next member.",
+  "没有等待发言的成员": "No members are waiting to speak.",
+  "按序点名成员": "Call members in order",
   "请输入密码": "Enter your password",
   "密码": "Password",
   "正在登录…": "Signing in…",

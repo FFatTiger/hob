@@ -219,18 +219,33 @@ describe("message_group", () => {
     }
   });
 
-  it("成员复核后没有再次 @ 群主，群主仍接着交付结论", async () => {
+  it.each(["点名", "@"])("群主请成员复核后，即使成员没有再次 @ 群主，结论也回到发起者（%s）", async (method) => {
     const { hob, group } = setup();
     try {
       hob.faux.setResponses([
-        text("@写作 请复核"), text("已复核，合计 128 元"),
-        call("close_topic", { note: "复核完成，合计 128 元" }), text("复核完成，合计 128 元"),
+        method === "点名" ? call("call_members", { members: ["write"], note: "请复核" }) : text("@写作 请复核"),
+        text("已复核，合计 128 元"),
+        call("close_topic", { note: "复核完成，合计 128 元" }),
+        text("复核完成，合计 128 元"),
       ]);
       await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请复核后交回" });
       const [topic] = hob.runtime.groups.topicsOf(group.id);
       await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
       expect(await events(hob)).toEqual([expect.stringContaining("复核完成，合计 128 元")]);
       expect(hob.faux.state.callCount).toBe(4);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题点名时明确不交回群主，成员发完就停", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([call("call_members", { members: ["write"], return_to_owner: false }), text("等用户决定")]);
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "备选方案", note: "先让成员发表意见" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "等用户决定"));
+      await hob.runtime.router.waitIdle("write", 10_000, topic.id);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(2);
     } finally { hob.close(); }
   });
 
@@ -266,6 +281,65 @@ describe("message_group", () => {
       await hob.runtime.router.waitIdle("ops", 10_000, topic.id);
       expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
       expect(hob.faux.state.callCount).toBe(2);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题成员复核中被暂停再回复「继续」，仍保留自动交回群主收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      let releaseSecond!: () => void;
+      const secondStarted = new Promise<void>((resolve) => {
+        hob.faux.setResponses([
+          call("call_members", { members: ["write", "hob"], note: "请依次复核" }),
+          text("写作已复核，合计 128 元"),
+          async () => {
+            resolve();
+            await new Promise<void>((done) => { releaseSecond = done; });
+            return text("已中止");
+          },
+          call("close_topic", { note: "复核完成，合计 128 元" }),
+          text("收到"),
+        ]);
+      });
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "核账", note: "请复核后交回" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await secondStarted;
+      const pausePromise = hob.runtime.groups.send(topic.id, { text: "先停一下" });
+      releaseSecond();
+      await pausePromise;
+      await hob.runtime.groups.send(topic.id, { text: "继续" });
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob)).toEqual([expect.stringContaining("复核完成，合计 128 元")]);
+    } finally { hob.close(); }
+  });
+
+  it("委派话题明确不交回群主时，暂停再回复「继续」也不会误唤醒群主", async () => {
+    const { hob, group } = setup();
+    try {
+      let releaseFirst!: () => void;
+      const firstStarted = new Promise<void>((resolve) => {
+        hob.faux.setResponses([
+          call("call_members", { members: ["write", "hob"], return_to_owner: false }),
+          async () => {
+            resolve();
+            await new Promise<void>((done) => { releaseFirst = done; });
+            return text("已中止");
+          },
+          text("Hob 发表完意见就停"),
+        ]);
+      });
+      await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "备选方案", note: "先讨论" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await firstStarted;
+      const pausePromise = hob.runtime.groups.send(topic.id, { text: "先停一下" });
+      releaseFirst();
+      await pausePromise;
+      await hob.runtime.groups.send(topic.id, { text: "继续" });
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "Hob 发表完意见就停"));
+      await hob.runtime.router.waitIdle("hob", 10_000, topic.id);
+      await hob.runtime.router.waitIdle("ops", 10_000, topic.id);
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      expect(hob.faux.state.callCount).toBe(3);
     } finally { hob.close(); }
   });
 

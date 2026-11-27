@@ -1190,12 +1190,38 @@ export function buildRouterTools(
   if (ownerGroup && ownerGroup.ownerId === assistantId) {
     const gid = ownerGroup.id;
     /** 每次都现查：群主在中途换了，旧会话里的调用也要挡住。 */
-    const notOwner = (): string | null => {
+    const notOwner = (message = "只有群主能创建话题和关闭话题。"): string | null => {
       const group = store.group(gid);
       if (!group) return "这个群和话题只在群里用。";
-      if (group.ownerId !== assistantId) return "只有群主能创建话题和关闭话题。";
+      if (group.ownerId !== assistantId) return message;
       return null;
     };
+    tools.push({
+      name: "call_members",
+      label: t("按序点名成员"),
+      description: "让指定的群成员按顺序逐一发言。可用 note 给他们统一交代；设 return_to_owner: true，所有成员说完后自动交回给你总结收口。",
+      parameters: Type.Object({
+        members: Type.Array(Type.String(), { description: "按发言顺序排列的成员助手 ID 列表" }),
+        note: Type.Optional(Type.String({ description: "可选，给这批成员的统一交代或要求" })),
+        return_to_owner: Type.Optional(Type.Boolean({ description: "全部成员说完后是否自动交回群主。助手委派来的话题默认交回，其余情况默认不交回。" })),
+      }),
+      execute: async (_id, params: { members?: unknown; note?: string; return_to_owner?: boolean }) => {
+        const problem = notOwner("只有群主能按序点名成员。");
+        if (problem) return fail(problem);
+        const available = store.group(gid)!.members.filter((id) => store.assistant(id));
+        const given: unknown[] = Array.isArray(params.members) ? params.members : [];
+        const members = [...new Set(given.filter((id): id is string => typeof id === "string" && available.includes(id)))];
+        if (!members.some((id) => id !== assistantId) || given.some((id) => typeof id !== "string" || !available.includes(id))) {
+          return fail(`members 要填有效的群成员助手 ID，至少点名一位其他成员。可用成员：${available.map((id) => `${nameOf(id)}（${id}）`).join("、")}。`);
+        }
+        try {
+          const returnToOwner = runtime.groups.enqueueMembers(gid, assistantId, members, { note: params.note?.trim(), returnToOwner: params.return_to_owner });
+          return endTurn(`已安排按顺序发言：${members.map(nameOf).join(" → ")}${returnToOwner ? "，完成后将自动交回你收口" : ""}。`);
+        } catch (error) {
+          return fail(error instanceof Error ? error.message : String(error));
+        }
+      },
+    });
     /** 这个群进行中的话题，报错时列出来。 */
     const topicList = (): string => {
       const topics = runtime.groups.activeTopics(ownerGroup.parentId ?? gid);

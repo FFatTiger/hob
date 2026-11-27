@@ -111,7 +111,7 @@ async function eventContent(text: string, files: string[] | undefined, model: Ag
 const GROUP_TOOL_NAMES = new Set([
   "read", "bash", "edit", "write", "search_history", "search_plugins", "check_job", "start_job", "reply_job", "stop_job", "ask_user", "send_card", "send_file", "react", "save_skill", "review_job", "set_rule", "remove_rule", "create_routine", "update_routine", "delete_routine", "delete_skill", "update_todos",
   "find_knowledge", "search_knowledge", "web_search", "web_fetch", "generate_image", "login", "fill_new_password",
-  "open_topic", "close_topic",
+  "open_topic", "close_topic", "call_members",
 ]);
 
 /**
@@ -1616,9 +1616,10 @@ export class RouterManager {
     await state.session!.sendCustomMessage({ customType: CONTEXT_TYPE, content: `${nowBlock(this.runtime, assistantId, gid)}\n\n[hob-event] ${text}`, display: false }, { triggerTurn: false });
   }
 
-  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = false): Promise<void> {
+  async deliverMember(groupId: string, assistantId: string, text: string, received?: () => void, files: string[] = [], workDone = false, isCurrent?: () => boolean): Promise<void> {
     const state = await this.ensure(assistantId, groupId);
-    await this.deliver(state, text, { received, files, workDone });
+    if (isCurrent && !isCurrent()) return;
+    await this.deliver(state, text, { received, files, workDone, isCurrent });
   }
 
   /**
@@ -1653,7 +1654,7 @@ export class RouterManager {
   private async deliver(
     state: RouterState,
     text: string,
-    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean } = {},
+    options: { files?: string[]; knowledgeQuery?: string; received?: () => void; workDone?: boolean; isCurrent?: () => boolean } = {},
   ): Promise<void> {
     this.clearSuggestions(state.assistantId, state.groupId);
     const previousDelivery = state.pendingDelivery;
@@ -1678,6 +1679,7 @@ export class RouterManager {
       await this.waitForCompaction(state);
       await this.applyConversationModel(state);
       await this.refreshTools(state);
+      if (options.isCurrent?.() === false) return;
       // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
       const images = options.files?.length && state.session!.model?.input.includes("image") ? imageContents(options.files) : [];
       unsubscribeReceived = this.onUserReceived(state, promptText, options.received);

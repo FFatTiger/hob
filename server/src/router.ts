@@ -1427,12 +1427,13 @@ export class RouterManager {
   }
 
   /** 将主助手交来的话题的结论送进它的对话；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string): Promise<boolean> {
+  async handoverResult(assistantId: string, topicId: string, text: string, files?: string[]): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true });
-    return success && received();
+    await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true, ...(files?.length ? { files } : {}) });
+    // 接手助手当轮报错时，已写入会话的结论仍然送达了。
+    return received();
   }
 
   /** 这一轮的状态由调用方在真正收尾时判断；任务、转交和提问仍在时不发完成通知 */

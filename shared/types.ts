@@ -663,6 +663,7 @@ export interface TopicHandover {
   by: string; // 交给群的主助手
   at: Iso;
   result?: string; // 关话题时送回给主助手的那句话
+  resultFiles?: string[]; // 话题关闭时已交付的文件，和结论一起补送
   deliveredAt?: Iso; // 送到主助手的对话的时间；没有就是还没送到
 }
 

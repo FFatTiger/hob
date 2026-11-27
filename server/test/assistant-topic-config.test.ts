@@ -486,7 +486,7 @@ describe("助手话题模型逐键叠加、会话释放与不固化", () => {
 });
 
 describe("工具写分层、提问卡 always 与提示词接入", () => {
-  it("set_rule / remove_rule 在助手话题有 scope: assistant，主对话与单聊无 scope；always 按会话写分层", async () => {
+  it("set_rule / remove_rule 在助手话题必填 scope（topic | assistant），主对话与单聊无 scope；always 按会话写分层", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const single = addAssistant(hob, "single", { topics: undefined });
@@ -502,21 +502,33 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
         expect((list.find((t) => t.name === "set_rule")!.parameters as any).properties.scope).toBeUndefined();
         expect((list.find((t) => t.name === "remove_rule")!.parameters as any).properties.scope).toBeUndefined();
       }
-      expect((topicTools.find((t) => t.name === "set_rule")!.parameters as any).properties.scope.const).toBe("assistant");
-      expect((topicTools.find((t) => t.name === "remove_rule")!.parameters as any).properties.scope.const).toBe("assistant");
+      for (const toolName of ["set_rule", "remove_rule"] as const) {
+        const params = topicTools.find((t) => t.name === toolName)!.parameters as any;
+        expect(params.required).toContain("scope");
+        expect(params.properties.scope.anyOf.map((v: any) => v.const)).toEqual(["topic", "assistant"]);
+      }
       expect((topicTools.find((t) => t.name === "set_rule")!.parameters as any).properties.scope.description).toBe(
-        "可选。用户说这条规则不只是这件事、而是你以后都要这样时填，写到上级；不填只写这个话题。",
+        "必填：topic 表示只在这个话题生效；assistant 表示写到你自己的规则里，仅当用户明确要求你以后都这样时选。",
       );
 
       const topicSet = topicTools.find((t) => t.name === "set_rule")!;
       const topicRemove = topicTools.find((t) => t.name === "remove_rule")!;
 
-      // 非法 scope 被拒绝
-      const badScope = await topicSet.execute("0", { text: "x", mode: "ask", scope: "group" }, undefined, undefined, undefined as never);
-      expect(badScope.isError).toBe(true);
+      // 缺省或非法 scope 均被拒绝
+      for (const invalid of [undefined, "", "group"]) {
+        const badSet = await topicSet.execute("0a", { text: "x", mode: "ask", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        expect(badSet.isError).toBe(true);
+        expect((badSet.content[0] as { text: string }).text).toContain("topic");
+        expect((badSet.content[0] as { text: string }).text).toContain("assistant");
 
-      // 无 scope 写话题层
-      const rTopic = await topicSet.execute("1", { text: "只在这个话题直接修", mode: "allow" }, undefined, undefined, undefined as never);
+        const badRm = await topicRemove.execute("0b", { ruleId: "r-any", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        expect(badRm.isError).toBe(true);
+        expect((badRm.content[0] as { text: string }).text).toContain("topic");
+        expect((badRm.content[0] as { text: string }).text).toContain("assistant");
+      }
+
+      // scope: "topic" 写话题层
+      const rTopic = await topicSet.execute("1", { text: "只在这个话题直接修", mode: "allow", scope: "topic" }, undefined, undefined, undefined as never);
       expect((rTopic.content[0] as { text: string }).text).toBe("已加到这个话题的规则，只在这个话题生效。");
       expect(hob.runtime.store.rules(multi.id)).toEqual([]);
       expect(hob.runtime.store.topicRules(multi.id, topic.id)).toMatchObject([
@@ -535,8 +547,8 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       expect(hob.runtime.store.rules(multi.id)).toMatchObject([{ text: "发版前先问", mode: "ask" }]);
       const parentRuleId = hob.runtime.store.rules(multi.id)[0]!.id;
 
-      // 无 scope 删除上级规则 → 只隐藏在话题层，助手层还在
-      const dTopic = await topicRemove.execute("3", { ruleId: parentRuleId }, undefined, undefined, undefined as never);
+      // scope: "topic" 删除上级规则 → 只隐藏在话题层，助手层还在
+      const dTopic = await topicRemove.execute("3", { ruleId: parentRuleId, scope: "topic" }, undefined, undefined, undefined as never);
       expect((dTopic.content[0] as { text: string }).text).toBe("已从这个话题的规则里删除，只在这个话题生效。");
       expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.id === parentRuleId)).toBe(false);
       expect(hob.runtime.store.rules(multi.id).some((r) => r.id === parentRuleId)).toBe(true);

@@ -242,18 +242,18 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
       description:
         "查看一个助手的资料、定时任务、规则，以及它和用户单聊的消息（只读；page 翻页，第 1 页是最近的 20 条）。",
       parameters: Type.Object({
-        assistantId: Type.Optional(Type.String({ description: "可选，助手 id" })),
-        topic: Type.Optional(Type.String({ description: "可选，查看该助手哪个话题的消息（填话题 id）；不填看主对话或单聊" })),
+        assistantId: Type.Optional(Type.String({ description: "可选，助手 id；传 topic 查自己话题时可不填" })),
+        topic: Type.Optional(Type.String({ description: "可选，查看哪个话题的消息（填话题 id）；不填 assistantId 默认查当前助手自己的话题，不填 topic 时看主对话或单聊" })),
         query: Type.Optional(Type.String({ description: "可选，按关键词找助手，匹配名字、id、职责和详细职责" })),
         page: Type.Optional(Type.Number({ description: "可选，第几页，默认 1" })),
       }),
       execute: async (_id, params: any) => {
         const id = String(params.assistantId ?? "").trim();
         const topicId = String(params.topic ?? "").trim();
-        if (!id && topicId) return fail("查看话题消息时请同时填写 assistantId。");
-        if (id) {
-          const target = store.assistant(id);
-          if (!target) return fail(`没有这个助手：${id}`);
+        const targetId = id || (topicId ? assistantId : "");
+        if (targetId) {
+          const target = store.assistant(targetId);
+          if (!target) return fail(`没有这个助手：${targetId}`);
           if (topicId) {
             const view = assistantTopicView(target, topicId, pageOf(params.page));
             return "error" in view ? fail(view.error) : ok(view.text);

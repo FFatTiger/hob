@@ -451,24 +451,48 @@ describe("show_assistant：多话题资料与按话题分页查看", () => {
       expect(page2).not.toContain("话题提问 11");
       expect(page2).toContain("共 24 条");
 
-      // 3. 话题内的助手用 show_assistant 不填 topic 回看主对话
+      // 3. 话题内的助手用 show_assistant 不填 topic 回看主对话；不填 assistantId 只填 topic 默认查自己（含翻页）
       const selfShow = findTool(hob, "multi", "show_assistant", { topicId: openTopic.id })!;
       const backToMain = textOf(await selfShow.execute("s4", { assistantId: "multi" }));
       expect(backToMain).toContain("主对话问题");
       expect(backToMain).toContain("主对话收到");
 
-      // 4. 报错情况：未填 assistantId 只填 topic；目标不是多话题；话题不存在/不属于该助手
-      const missingAid = await hobShow.execute("e1", { topic: openTopic.id });
-      expect(missingAid.isError).toBe(true);
+      const selfTopicOmittedAid = textOf(await selfShow.execute("s5", { topic: openTopic.id }));
+      expect(selfTopicOmittedAid).toBe(page1);
+
+      const mainShow = findTool(hob, "multi", "show_assistant")!;
+      const mainTopicEmptyAidPage2 = textOf(await mainShow.execute("s6", { assistantId: "", topic: openTopic.id, page: 2 }));
+      expect(mainTopicEmptyAidPage2).toBe(page2);
+
+      // 4. 报错情况：非多话题助手不填 assistantId 只填 topic；显式传非多话题目标；话题不存在/不属于该助手
+      const nonMultiSelf = await hobShow.execute("e1", { topic: openTopic.id });
+      expect(nonMultiSelf.isError).toBe(true);
+      expect(textOf(nonMultiSelf)).toContain("不是多话题助手");
+
+      const singleShow = findTool(hob, "single", "show_assistant")!;
+      const singleOmittedAid = await singleShow.execute("e1b", { topic: openTopic.id });
+      expect(singleOmittedAid.isError).toBe(true);
+      expect(textOf(singleOmittedAid)).toContain("不是多话题助手");
 
       const nonMulti = await hobShow.execute("e2", { assistantId: "single", topic: openTopic.id });
       expect(nonMulti.isError).toBe(true);
       expect(textOf(nonMulti)).toContain("不是多话题助手");
 
+      const missingSelfTopic = await mainShow.execute("e3a", { topic: "tp-notfound" });
+      expect(missingSelfTopic.isError).toBe(true);
+      expect(textOf(missingSelfTopic)).toContain("没有这个话题");
+      expect(textOf(missingSelfTopic)).toContain(openTopic.id);
+
       const missingTopic = await hobShow.execute("e3", { assistantId: "multi", topic: "tp-notfound" });
       expect(missingTopic.isError).toBe(true);
       expect(textOf(missingTopic)).toContain("没有这个话题");
       expect(textOf(missingTopic)).toContain(openTopic.id);
+
+      // 5. 原有列助手与查别人话题行为不变
+      const listedSelf = textOf(await mainShow.execute("s7", {}));
+      expect(listedSelf).toContain("管家（multi）");
+      const hobReadOther = textOf(await hobShow.execute("s8", { assistantId: "multi", topic: openTopic.id }));
+      expect(hobReadOther).toBe(page1);
     } finally {
       hob.close();
     }

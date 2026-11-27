@@ -383,20 +383,18 @@ export function buildRouterTools(
   })();
   const topicScope = isGroupTopic ? ("group" as const) : isAssistantTopic ? ("assistant" as const) : undefined;
   const scopeSchema = topicScope
-    ? Type.Optional(
-        Type.Literal(topicScope, {
-          description:
-            topicScope === "group"
-              ? "可选。用户说这条规则不只是这件事、而是整个群以后都要这样时填，写到上级；不填只写这个话题。"
-              : "可选。用户说这条规则不只是这件事、而是你以后都要这样时填，写到上级；不填只写这个话题。",
-        }),
-      )
+    ? Type.Union([Type.Literal("topic"), Type.Literal(topicScope)], {
+        description:
+          topicScope === "group"
+            ? "必填：topic 表示只在这个话题生效；group 表示写到整个群，仅当用户明确要求整个群以后都这样时选。"
+            : "必填：topic 表示只在这个话题生效；assistant 表示写到你自己的规则里，仅当用户明确要求你以后都这样时选。",
+      })
     : undefined;
   const badScope = (scope: unknown) =>
-    topicScope && scope !== undefined && scope !== topicScope
+    topicScope && scope !== "topic" && scope !== topicScope
       ? topicScope === "group"
-        ? "scope 只能填 group（写到本群规则）或不填（只写这个话题）。"
-        : "scope 只能填 assistant（写到你的规则）或不填（只写这个话题）。"
+        ? "在话题里调用请填 scope：topic（只在这个话题生效）或 group（写到整个群，仅当用户明确要求整个群以后都这样时选）。"
+        : "在话题里调用请填 scope：topic（只在这个话题生效）或 assistant（写到你的规则里，仅当用户明确要求你以后都这样时选）。"
       : undefined;
   const targetGroupOf = (scope: unknown) => (isGroupTopic && scope === "group" ? currentGroup!.parentId! : groupId);
   const topicConfigHost = () =>
@@ -813,7 +811,7 @@ export function buildRouterTools(
     {
       name: "set_rule",
       label: "记录规则",
-      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里默认只在这个话题生效；填 scope 为 group 才写到整个群。" : "在群里记的，只在这个群生效。") : isAssistantTopic ? "在话题里默认只在这个话题生效；填 scope 为 assistant 才写到你的规则里。" : ""}`,
+      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里要填 scope：topic 只在这个话题生效，group 写到整个群。" : "在群里记的，只在这个群生效。") : isAssistantTopic ? "在话题里要填 scope：topic 只在这个话题生效，assistant 写到你的规则里。" : ""}`,
       parameters: Type.Object({
         text: Type.String({ description: "规则内容，如「发布公众号」" }),
         mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
@@ -828,7 +826,7 @@ export function buildRouterTools(
         const text = String(params.text).trim();
         if (!text) return fail("规则内容为空。");
         const mode = params.mode === "allow" ? "allow" : "ask";
-        if (topicScope && params.scope !== topicScope) {
+        if (topicScope && params.scope === "topic") {
           const existing = topicCurrentRules().find((rule) => rule.text === text);
           if (existing?.mode === mode) return ok("这条规则已经记着了，没有改动。");
           setTopicRule(topicConfigHost(), {
@@ -868,7 +866,7 @@ export function buildRouterTools(
     {
       name: "remove_rule",
       label: "删除规则",
-      description: "删除一条规则。",
+      description: `删除一条规则。${isGroupTopic ? "在话题里要填 scope：topic 只在这个话题停用，group 从整个群的规则里删除。" : isAssistantTopic ? "在话题里要填 scope：topic 只在这个话题停用，assistant 从你的规则里删除。" : ""}`,
       parameters: Type.Object({
         ruleId: Type.String({ description: "规则 id" }),
         ...(scopeSchema ? { scope: scopeSchema } : {}),
@@ -879,7 +877,7 @@ export function buildRouterTools(
         if ("error" in target) return fail(target.error);
         const scopeErr = badScope(params.scope);
         if (scopeErr) return fail(scopeErr);
-        if (topicScope && params.scope !== topicScope) {
+        if (topicScope && params.scope === "topic") {
           try {
             deleteTopicRule(topicConfigHost(), String(params.ruleId));
           } catch {

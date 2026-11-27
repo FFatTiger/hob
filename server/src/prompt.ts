@@ -84,7 +84,7 @@ export function topicPromptLine(hostName: string, topicName: string): string {
 }
 
 /** 群话题里规则写哪一层的说明：接在 topicPromptLine 后面。 */
-export const GROUP_TOPIC_RULE_LINE = "在这个话题里定的规则默认只管这个话题。用户说的要求明显是整个群以后都要这样，用 set_rule 时 scope 填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时写在这个话题里。";
+export const GROUP_TOPIC_RULE_LINE = "在这个话题里定的规则通常只管这个话题，用 set_rule 时 scope 填 topic。用户明确要求整个群以后都要这样，scope 才填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时填 topic。";
 
 /** 群主在综合里什么时候开话题：只给群主的综合会话，接在群主那段后面。 */
 export const TOPIC_OPEN_LINE = "一件事要来回商量几轮，或者要几个人接力执行一阵子，用 open_topic 为它创建一个话题，到话题里接着处理：这件事的讨论、提问和进展都放在一处，不和别的事、闲聊搅在一起，以后也翻得到。几句话能答完、分派一个任务就能完成的，在综合里直接处理。用户在综合里说的事属于已有的话题，转到那个话题去处理，那里有这件事前面的经过。";
@@ -110,7 +110,7 @@ export function assistantTopicPromptLine(topicName: string): string {
   return [
     `这里是你的话题「${topicName}」，只谈这一件事。主对话和别的话题里说了什么，这里看不到，这件事需要的来龙去脉都记在这个话题里；用户提到别处说过的事，用 search_history 或 show_assistant 查。`,
     "这件事办完、用户也认可了结果，或者用户说不做了，用 close_topic 写上结论，关闭话题：结论会显示在话题上，主对话里的你也会收到。刚交付结果、用户还没回应时先不关，用户可能还有后续；关闭的话题用户随时能重新打开。",
-    "在这里定的规则默认只管这个话题。用户说的要求明显不只针对这件事，比如「你以后都这样」，用 set_rule 时 scope 填 assistant，写到你自己的规则里，别的话题和主对话也会照着做；拿不准时写在这个话题里，用户想推广可以再说。",
+    "在这里定的规则通常只管这个话题，用 set_rule 时 scope 填 topic。用户明确要求不只针对这件事，比如「你以后都这样」，scope 才填 assistant，写到你自己的规则里，别的话题和主对话也会照着做；拿不准时填 topic，用户想推广可以再说。",
   ].join("\n\n");
 }
 

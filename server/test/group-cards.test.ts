@@ -82,13 +82,15 @@ describe("群任务权限", () => {
 });
 
 describe("群规则", () => {
-  it("话题记的规则默认只管本话题，带 scope: group 才写到群规则", async () => {
+  it("话题记的规则带 scope: topic 只管本话题，带 scope: group 才写到群规则", async () => {
     const { hob, group } = setup();
     try {
       const first = hob.runtime.groups.createTopic(group.id, "第一件事", "user");
       const second = hob.runtime.groups.createTopic(group.id, "第二件事", "user");
       const tool = buildRouterTools(hob.runtime, "ops", { groupId: first.id }).find((item) => item.name === "set_rule")!;
-      await tool.execute("rule", { text: "只在这个话题确认", mode: "ask" });
+      const missingScope = await tool.execute("missing-scope", { text: "只在这个话题确认", mode: "ask" });
+      expect(missingScope.isError).toBe(true);
+      await tool.execute("rule", { text: "只在这个话题确认", mode: "ask", scope: "topic" });
       expect(hob.runtime.store.rules("ops")).toEqual([]);
       expect(hob.runtime.store.groupRules(first.id)).toMatchObject([{ text: "只在这个话题确认", mode: "ask", from: "topic" }]);
       expect(hob.runtime.store.groupRules(second.id)).toEqual([]);

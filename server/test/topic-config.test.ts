@@ -477,14 +477,30 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
         expect((list.find((t) => t.name === "set_rule")!.parameters as any).properties.scope).toBeUndefined();
         expect((list.find((t) => t.name === "remove_rule")!.parameters as any).properties.scope).toBeUndefined();
       }
-      // 话题里有 scope: "group"
-      expect((topicTools.find((t) => t.name === "set_rule")!.parameters as any).properties.scope.const).toBe("group");
-      expect((topicTools.find((t) => t.name === "remove_rule")!.parameters as any).properties.scope.const).toBe("group");
+      // 话题里有必填 scope: "topic" | "group"
+      for (const toolName of ["set_rule", "remove_rule"] as const) {
+        const params = topicTools.find((t) => t.name === toolName)!.parameters as any;
+        expect(params.required).toContain("scope");
+        expect(params.properties.scope.anyOf.map((v: any) => v.const)).toEqual(["topic", "group"]);
+      }
 
       const topicSet = topicTools.find((t) => t.name === "set_rule")!;
       const topicRemove = topicTools.find((t) => t.name === "remove_rule")!;
 
-      const resTopic = await topicSet.execute("1", { text: "临时直接改", mode: "allow" }, undefined, undefined, undefined as never);
+      // 缺省或非法 scope 均拒绝并提示两个可选值
+      for (const invalid of [undefined, "", "assistant"]) {
+        const badSet = await topicSet.execute("0a", { text: "x", mode: "ask", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        expect(badSet.isError).toBe(true);
+        expect((badSet.content[0] as { text: string }).text).toContain("topic");
+        expect((badSet.content[0] as { text: string }).text).toContain("group");
+
+        const badRm = await topicRemove.execute("0b", { ruleId: "r-any", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        expect(badRm.isError).toBe(true);
+        expect((badRm.content[0] as { text: string }).text).toContain("topic");
+        expect((badRm.content[0] as { text: string }).text).toContain("group");
+      }
+
+      const resTopic = await topicSet.execute("1", { text: "临时直接改", mode: "allow", scope: "topic" }, undefined, undefined, undefined as never);
       expect((resTopic.content[0] as { text: string }).text).toBe("已加到这个话题的规则，只在这个话题生效。");
       expect(hob.runtime.store.groupParentRules(group.id)).toEqual([]);
 
@@ -492,19 +508,27 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
       expect((resGroup.content[0] as { text: string }).text).toBe("已加到本群的规则，没有单独改过这一条的话题都会用。");
       const parentRuleId = hob.runtime.store.groupParentRules(group.id)[0]!.id;
 
-      // 在话题里不带 scope 删除上级规则 → 停用，只影响本话题，群里还在
-      await topicRemove.execute("3", { ruleId: parentRuleId }, undefined, undefined, undefined as never);
+      // 在话题里带 scope: "topic" 删除上级规则 → 停用，只影响本话题，群里还在
+      await topicRemove.execute("3", { ruleId: parentRuleId, scope: "topic" }, undefined, undefined, undefined as never);
       expect(hob.runtime.store.groupRules(topic.id).some((r) => r.id === parentRuleId)).toBe(false);
       expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.id === parentRuleId)).toBe(true);
+
+      // 在话题里带 scope: "group" 删除上级规则 → 从本群规则删除
+      const resGroup2 = await topicSet.execute("4", { text: "仅群级测试规则", mode: "ask", scope: "group" }, undefined, undefined, undefined as never);
+      expect((resGroup2.content[0] as { text: string }).text).toBe("已加到本群的规则，没有单独改过这一条的话题都会用。");
+      const toDeleteGroupRuleId = hob.runtime.store.groupParentRules(group.id).find((r) => r.text === "仅群级测试规则")!.id;
+      const rmGroup = await topicRemove.execute("5", { ruleId: toDeleteGroupRuleId, scope: "group" }, undefined, undefined, undefined as never);
+      expect((rmGroup.content[0] as { text: string }).text).toBe("已从本群的规则里删除。");
+      expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.id === toDeleteGroupRuleId)).toBe(false);
 
       // 提示词：群话题逐字包含第十节文字；综合、单聊、主助手不含话题规则段
       const opts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const topicPrompt = buildSystemPrompt(hob.runtime.store, "hob", { ...opts, group: hob.runtime.store.group(topic.id)! });
       expect(topicPrompt).toContain(
-        "在这个话题里定的规则默认只管这个话题。用户说的要求明显是整个群以后都要这样，用 set_rule 时 scope 填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时写在这个话题里。",
+        "在这个话题里定的规则通常只管这个话题，用 set_rule 时 scope 填 topic。用户明确要求整个群以后都要这样，scope 才填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时填 topic。",
       );
       expect(GROUP_TOPIC_RULE_LINE).toBe(
-        "在这个话题里定的规则默认只管这个话题。用户说的要求明显是整个群以后都要这样，用 set_rule 时 scope 填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时写在这个话题里。",
+        "在这个话题里定的规则通常只管这个话题，用 set_rule 时 scope 填 topic。用户明确要求整个群以后都要这样，scope 才填 group，写到本群的规则里，综合和别的话题也会照着做；拿不准时填 topic。",
       );
 
       for (const prompt of [

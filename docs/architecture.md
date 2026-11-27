@@ -201,10 +201,10 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 | `review_job(jobId, note?)` | 让已结束的原任务在自己的会话里回顾，任务用 `save_skill` 保存需要的技能；进度和结果显示在原任务上 |
 | `reply_job(jobId, text)` / `stop_job(jobId)` | 给在跑的任务补话 / 停掉 |
 | `ask_user(title, detail?, options[]?, questions[])` | 出选择题卡片（不阻塞）；`options` 最多 3 个，可标 `always`；一张卡问几个问题用 `questions`（每个问题 2 到 3 个选项，可标推荐哪个），用户答完答案一起回来 |
-| `set_rule(text, mode, scope?)` / `remove_rule(ruleId, scope?)` | 改要先问你；在群话题和助手话题里默认写入话题规则覆盖层（只对本话题生效），传 `scope: "group"` 或 `"assistant"` 才写回上级；综合、主对话和单聊没有 `scope`。主助手单聊多一个可选 `assistantId`，改那个助手的 |
+| `set_rule(text, mode, scope?)` / `remove_rule(ruleId, scope?)` | 改要先问你；在群话题和助手话题里 `scope` 为必填二选一（`"topic"` 写或停用本话题规则覆盖层，`"group"` 或 `"assistant"` 写回或删自上级，仅当用户明确要求整个群或助手以后都这样时选）；综合、主对话和单聊没有 `scope`。主助手单聊多一个可选 `assistantId`，改那个助手的 |
 | `create_routine` / `update_routine` / `delete_routine` | 改定时；在群话题或助手话题里创建的归该话题（记 `groupId` 或 `topicId`），修改/删除和列表返回写明所在会话。主助手单聊多一个可选 `assistantId` |
 | `create_assistant(...)` | 所有助手都能用：存草稿、落助手卡，然后立刻按草稿建好（卡片直接是「已创建」）；建失败把原因返回，草稿留着让用户在卡上点。可选 `cwd`、`topics`（是否建成多话题助手）；助手管什么、不管什么写在 `dutyLong`（sprite 可填 custom + prop_art 自画一件道具） |
-| `show_assistant(assistantId?, topic?, query?, page?)` | 所有助手都能用：不填 id 列出全部助手（含收起的、按左栏顺序）；填 `assistantId` 看完整资料（多话题助手另列进行中的全部话题与最近关闭的 5 个话题）以及单聊/主对话消息；同时填 `topic` 查看该助手指定话题的状态、工作目录与分页消息（只读；第 1 页是最近 20 条） |
+| `show_assistant(assistantId?, topic?, query?, page?)` | 所有助手都能用：不填 id 且不填 `topic` 列出全部助手（含收起的、按左栏顺序）；填 `assistantId` 看完整资料（多话题助手另列进行中的全部话题与最近关闭的 5 个话题）以及单聊/主对话消息；填 `topic` 查看指定话题的状态、工作目录与分页消息（只读；第 1 页是最近 20 条，省略 `assistantId` 时默认查当前助手自己的话题） |
 | `update_assistant(...)` | 主助手可改别的助手资料（名字、职责、详细职责、模型、知识库、置顶、收起、通知），不改能力；普通助手只有不带 assistantId 的自我修改工具，只能改自己的名字、职责和详细职责；和 `PATCH /api/assistants/:id` 共用 `updateAssistant()`。换头像不在这里，用 `set_avatar` |
 | `show_group(groupId?, query?, page?)` | 所有助手都能用：不填 id 列出全部群（群主、成员、进行中的话题数），填了看群或话题的详情和消息，带 query 在消息里找。每页 20 条 |
 | `create_group(name, purpose, members, ownerId)` | 所有助手都能用：创建群 |
@@ -252,7 +252,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
   - 关了的话题不能再发消息，能重新打开；关闭时暂停名下定时任务（见下文「定时」），关闭说明在话题卡上。群归档时话题一起搬进 `archive/groups/<gid>-<时间>/topics/`。话题不用归档，用关闭。
   - **话题配置覆盖层（`server/src/topic-config.ts`，群话题和助手话题共用）**：
     - 技能、长期记忆、补充提示词、群成员与群主（或助手的身份、能力开关与知识库绑定）由上级共用；规则、模型偏好、群话题的回应方式（`replyMode`）和定时任务归话题自己，以「上级默认值 + 话题覆盖层」叠加生效。上级修改时，未覆盖的话题自动跟随，覆盖过的不受影响。
-    - **规则层（`rule-overrides.json` + `effectiveRules`）**：`RuleOverrides` 记 `own`（本话题新增）、`changed`（覆盖上级某条规则的文字或 `mode`）和 `hidden`（本话题停用的上级规则）。合成顺序为未停用的上级规则（应用 `changed`）在前、`own` 在后；上级已删除规则在 `changed`/`hidden` 中的孤儿记录读取时忽略、写入时清理。支持单条恢复跟随（`resetTopicRule` 移除 `changed`/`hidden`）。话题内调 `set_rule` / `remove_rule` 默认写话题层，传 `scope: "group"` 或 `"assistant"` 才写回上级；提问卡（`ask_user`）带 `always` 的选项写进提卡的那一层（话题内写话题层，综合写群层，单聊/主对话写助手层）。系统提示词和任务提示词均使用当前会话合成后的规则。
+    - **规则层（`rule-overrides.json` + `effectiveRules`）**：`RuleOverrides` 记 `own`（本话题新增）、`changed`（覆盖上级某条规则的文字或 `mode`）和 `hidden`（本话题停用的上级规则）。合成顺序为未停用的上级规则（应用 `changed`）在前、`own` 在后；上级已删除规则在 `changed`/`hidden` 中的孤儿记录读取时忽略、写入时清理。支持单条恢复跟随（`resetTopicRule` 移除 `changed`/`hidden`）。话题内调 `set_rule` / `remove_rule` 须传 `scope`（`"topic"` 写或停用话题层，`"group"` 或 `"assistant"` 写回或删自上级）；提问卡（`ask_user`）带 `always` 的选项写进提卡的那一层（话题内写话题层，综合写群层，单聊/主对话写助手层）。系统提示词和任务提示词均使用当前会话合成后的规则。
     - **模型层（`overrides.models` / `overrides.memberModels` + `server/src/models.ts`）**：成员层不再单设对话模型（`PATCH /api/groups/:id/members/:assistantId/models` 拒绝 `conversation`，`Store.saveGroup` 写入时自动清理老数据残留的 `memberModels[*].conversation`）。生效优先级：
       - 群/群话题对话模型（四层）：话题对话模型（`overrides.models.conversation`）→ 群对话模型（`group.models.conversation`）→ 助手对话模型 → 全局对话模型（不经成员层）；
       - 群/群话题成员任务模型（六层）：话题内该成员任务模型（`overrides.memberModels[aid].work`，`topicMember`）→ 群内该成员任务模型（`group.memberModels[aid].work`，`member`）→ 话题默认任务模型（`overrides.models.work`，`topic`）→ 群默认任务模型（`group.models.work`，`group`）→ 助手任务模型 → 全局任务模型；

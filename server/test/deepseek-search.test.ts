@@ -1,4 +1,6 @@
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer, type Server } from "node:http";
+import type { AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -7,6 +9,7 @@ import {
   DEEPSEEK_SEARCH_BASE_URL,
   clipDeepSeekQuery,
   createDeepSeekSearchProvider,
+  isPrivateOrLocalHost,
   parseDeepSeekSearchResults,
 } from "../src/deepseek-search.ts";
 import { createApp } from "../src/http.ts";
@@ -227,6 +230,181 @@ describe("DeepSeek 联网搜索与网页抓取", () => {
       );
     } finally {
       hob.close();
+    }
+  });
+
+  it("校验 URL 协议、超长 URL、内网地址，且 raw=true 不绕过协议与凭据校验", async () => {
+    const fetchSpy = vi.spyOn(globalThis, "fetch");
+    const provider = createDeepSeekSearchProvider("sk-guard-key");
+
+    // 非法 URL、非 HTTP(S) 协议和带凭据 URL 在 raw=false / raw=true 下均被拒绝
+    for (const raw of [false, true]) {
+      await expect(provider.fetch("not-a-url", raw)).rejects.toThrow("网址无效");
+      await expect(provider.fetch("file:///etc/passwd", raw)).rejects.toThrow("仅支持 http 和 https");
+      await expect(provider.fetch("ftp://example.test/file", raw)).rejects.toThrow("仅支持 http 和 https");
+      await expect(provider.fetch("https://user:pass@example.test/private", raw)).rejects.toThrow("不支持包含用户名或密码");
+    }
+
+    // 超长 URL (> 8192) 在走 DeepSeek 云端抓取前拒绝
+    const longUrl = `https://example.test/${"a".repeat(8200)}`;
+    await expect(provider.fetch(longUrl)).rejects.toThrow("8192");
+
+    // 内网、本机与链路本地地址在走 DeepSeek 云端抓取前拒绝
+    const privateUrls = [
+      "http://localhost:3000/secret",
+      "http://sub.localhost/api",
+      "http://localhost./api",
+      "http://127.0.0.1:8080/admin",
+      "http://10.0.0.5/internal",
+      "http://172.16.1.2/status",
+      "http://192.168.1.10/config",
+      "http://169.254.169.254/latest/meta-data/",
+      "http://100.64.0.1/panel",
+      "http://0.0.0.0:8000/",
+      "http://[::1]:30148/",
+      "http://[::ffff:127.0.0.1]/",
+      "http://[fe80::1]/",
+      "http://[fd12:3456::1]/",
+      "http://printer.local/",
+      "http://service.internal/",
+    ];
+    for (const u of privateUrls) {
+      await expect(provider.fetch(u), u).rejects.toThrow("不支持内网或本机地址");
+    }
+    expect(isPrivateOrLocalHost("example.com")).toBe(false);
+    expect(isPrivateOrLocalHost("8.8.8.8")).toBe(false);
+    expect(isPrivateOrLocalHost("2606:4700:4700::1111")).toBe(false);
+    expect(fetchSpy).not.toHaveBeenCalled();
+  });
+
+  it("直接调用 DeepSeekSearchProvider 时同样脱敏密钥并截断超长错误详情", async () => {
+    const hugeDetail = `leak sk-direct-secret ${"x".repeat(400)}`;
+    vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(
+      new Response(JSON.stringify({ error: { message: hugeDetail } }), { status: 401 }),
+    );
+    const provider = createDeepSeekSearchProvider("sk-direct-secret");
+    await expect(provider.search("test")).rejects.toSatisfy((error: unknown) => {
+      const msg = error instanceof Error ? error.message : String(error);
+      return !msg.includes("sk-direct-secret") && msg.includes("[已隐藏]") && msg.length < 300;
+    });
+  });
+
+  it("raw=true 经 WebSearch 仍受 40000 字符截断；空搜索结果返回 0 条；支持优先级回退与合并", async () => {
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === "https://example.test/huge") {
+        return new Response("h".repeat(45_000), { headers: { "content-type": "text/html" } });
+      }
+      if (url === `${DEEPSEEK_SEARCH_BASE_URL}/v1/tools/search`) {
+        return new Response(JSON.stringify({ results: [] }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      if (url === "https://api.tavily.com/search") {
+        return new Response(JSON.stringify({
+          results: [{ title: "Tavily", url: "https://example.test/shared", content: "短摘要" }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 404 });
+    });
+
+    const home = tempHome();
+    writeSecret(home, "search:deepseek", "sk-ds");
+    writeSecret(home, "search:tavily", "tvly-key");
+    const ws = new WebSearch(home, () => [
+      { name: "deepseek", enabled: true },
+      { name: "tavily", enabled: true },
+    ]);
+
+    const raw = await ws.fetch("https://example.test/huge", true);
+    expect(raw.text).toHaveLength(40_000);
+    expect(raw.truncated).toBe(true);
+
+    const empty = await ws.search("no-match", "fast");
+    expect(empty.providers).toEqual(["deepseek"]);
+    expect(empty.results).toEqual([]);
+
+    // deepseek 失败时 fast 自动回退到 tavily
+    vi.spyOn(globalThis, "fetch").mockImplementation(async (input) => {
+      const url = String(input);
+      if (url === `${DEEPSEEK_SEARCH_BASE_URL}/v1/tools/search`) {
+        return new Response(JSON.stringify({ error: { message: "rate limit" } }), { status: 429 });
+      }
+      if (url === "https://api.tavily.com/search") {
+        return new Response(JSON.stringify({
+          results: [{ title: "Tavily Fallback", url: "https://example.test/fallback", content: "fallback snippet" }],
+        }), { status: 200, headers: { "content-type": "application/json" } });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    const fallback = await ws.search("fallback query", "fast");
+    expect(fallback.providers).toEqual(["tavily"]);
+    expect(fallback.errors).toHaveLength(1);
+    expect(fallback.errors[0]?.provider).toBe("deepseek");
+    expect(fallback.results[0]?.url).toBe("https://example.test/fallback");
+  });
+
+  it("对接 127.0.0.1 本地假服务器完成真实 HTTP 搜索与抓取往返", async () => {
+    const received: Array<{ path: string; auth?: string; body: Record<string, unknown> }> = [];
+    const server: Server = createServer(async (req, res) => {
+      const chunks: Buffer[] = [];
+      for await (const chunk of req) chunks.push(chunk as Buffer);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8") || "{}") as Record<string, unknown>;
+      received.push({ path: req.url ?? "", auth: req.headers.authorization, body });
+
+      if (req.headers.authorization !== "Bearer sk-local-fake") {
+        res.writeHead(401, { "content-type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "bad token" } }));
+        return;
+      }
+      if (req.url === "/v1/tools/search") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          results: [{
+            title: "假服务器结果",
+            url: "https://example.test/doc",
+            snippet: "短摘要",
+            summary: "假服务器返回的长摘要内容",
+          }],
+        }));
+        return;
+      }
+      if (req.url === "/v1/tools/fetch") {
+        res.writeHead(200, { "content-type": "application/json" });
+        res.end(JSON.stringify({
+          title: "文档正文",
+          content: "# 标题\n\n正文段落",
+        }));
+        return;
+      }
+      res.writeHead(404);
+      res.end();
+    });
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    try {
+      const { port } = server.address() as AddressInfo;
+      const provider = createDeepSeekSearchProvider("sk-local-fake", `http://127.0.0.1:${port}`);
+
+      const search = await provider.search("本地假服务测试", 3);
+      expect(search.results).toEqual([{
+        title: "假服务器结果",
+        url: "https://example.test/doc",
+        snippet: "假服务器返回的长摘要内容",
+      }]);
+
+      const page = await provider.fetch("https://example.test/doc");
+      expect(page).toEqual({
+        title: "文档正文",
+        text: "# 标题\n\n正文段落",
+        contentType: "text/markdown",
+        contentLength: "# 标题\n\n正文段落".length,
+      });
+
+      expect(received).toEqual([
+        { path: "/v1/tools/search", auth: "Bearer sk-local-fake", body: { query: "本地假服务测试", count: 3, need_content: false } },
+        { path: "/v1/tools/fetch", auth: "Bearer sk-local-fake", body: { url: "https://example.test/doc" } },
+      ]);
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
     }
   });
 });

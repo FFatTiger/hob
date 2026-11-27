@@ -41,6 +41,7 @@ describe("联网搜索", () => {
     try {
       const service = new WebSearch(home, () => []);
       await expect(service.fetch("file:///etc/passwd")).rejects.toThrow("仅支持");
+      await expect(service.fetch("https://user:pass@example.test/private")).rejects.toThrow("不支持包含用户名或密码");
       const result = await service.fetch("https://example.test");
       expect(result.text).toHaveLength(40000);
       expect(result.truncated).toBe(true);

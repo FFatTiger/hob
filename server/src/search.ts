@@ -75,6 +75,8 @@ export class WebSearch {
     let parsed: URL;
     try { parsed = new URL(url); } catch { throw new Error("网址无效。"); }
     if (parsed.protocol !== "http:" && parsed.protocol !== "https:") throw new Error("仅支持 http 和 https 网址。");
+    if (!parsed.hostname) throw new Error("网址无效。");
+    if (parsed.username || parsed.password) throw new Error("网页抓取不支持包含用户名或密码的网址。");
     const keys = this.keys();
     const signal = AbortSignal.timeout(15_000);
     try {

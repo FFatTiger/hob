@@ -511,7 +511,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `general`：`theme`（system / light / dark）、`timezone`（默认系统时区）、`proxy`（HTTP/HTTPS 代理地址，空表示关闭）、`noProxy`（逗号分隔的 NO_PROXY 地址，默认 `localhost,127.0.0.1,::1`）、`aboutYou`（称呼、语言、其他说明）。
   - `models`：`roster`（能用哪些模型 + 每句定位 + 默认思考档）、`conversation` / `work` 两个角色、`thinking`（每个模型的自定义思考档，键是 `"服务商/模型"`；没存就用默认规则，见“思考档”）。
   - `providers`：`ProviderSettings[]`，只有 `kind: "builtin"`（引擎自带服务商，只填 Key）和 `kind: "custom"`（兼容接口：`id` slug、`name`、`api`、`baseUrl`、`models[]`，每个模型可带 `extra` 原样透传给引擎）。Key 在 `secrets.json` 的 `provider:<id>`，接口只给 `keyConfigured`。写入走 `PUT /api/providers/:id`。
-  - `search`：联网搜索服务商顺序、开关和服务地址，密钥手动填写并存入 `secrets.json` 的 `search:<name>`。搜索与抓取工具对 Router 和 Worker 可用。
+  - `search`：联网搜索服务商顺序、开关和服务地址（支持 SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama、OpenAI、DeepSeek；其中 DeepSeek、Exa、Tavily、Jina、Firecrawl 兼作 `web_fetch` 原生网页抓取，其余或 `raw=true` 走通用 HTML 抓取），密钥手动填写并存入 `secrets.json` 的 `search:<name>`（OpenAI 可复用已配置的模型服务商）。搜索与抓取工具对 Router 和 Worker 可用。
   - `image`：`{ source: "off" }` / `{ source: "openai", baseUrl, model, size? }`，写入走 `PUT /api/image`。
   - `work`：`maxJobs`（1–8）、`jobStallMinutes`、`routerStallMinutes`。
 - 全局网络代理：设置 → 通用里的 `general.proxy` 只接受 `http://` 或 `https://`，可带用户名和密码；`general.noProxy` 使用标准 `NO_PROXY` 的逗号分隔主机列表。Hob 进程通过 undici 的全局 dispatcher 代理模型调用、插件远程连接、OAuth、联网搜索、网页抓取、图像生成、向量服务、市场索引、版本检查和价格表请求，命中 `noProxy` 的地址直连；清空代理后恢复默认 dispatcher。设置修改后立即切换，插件服务会按现有重载流程重启。

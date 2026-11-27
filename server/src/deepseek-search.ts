@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import { fetchViaGenericHtml } from "@juicesharp/rpiv-web-tools/providers/fetch-helpers.ts";
 import type { FetchResponse } from "@juicesharp/rpiv-web-tools/providers/types.ts";
 
@@ -64,21 +65,58 @@ export function parseDeepSeekSearchResults(data: unknown, maxResults: number): D
   return [...items.values()].slice(0, limit);
 }
 
+function isPrivateIpv4(ip: string): boolean {
+  const parts = ip.split(".").map(Number);
+  if (parts.length !== 4 || parts.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return false;
+  const [a, b] = parts;
+  return a === 0
+    || a === 10
+    || a === 127
+    || (a === 100 && b >= 64 && b <= 127)
+    || (a === 169 && b === 254)
+    || (a === 172 && b >= 16 && b <= 31)
+    || (a === 192 && b === 168)
+    || (a === 198 && (b === 18 || b === 19))
+    || a >= 224;
+}
+
+export function isPrivateOrLocalHost(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, "").replace(/\.+$/, "").toLowerCase();
+  if (!host) return true;
+  if (host === "localhost" || host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal")) return true;
+  const ipVersion = isIP(host);
+  if (ipVersion === 4) return isPrivateIpv4(host);
+  if (ipVersion === 6) {
+    if (host === "::" || host === "::1" || /^(0+:){7}0*[01]$/.test(host)) return true;
+    const mappedHex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host);
+    if (mappedHex) {
+      const hi = parseInt(mappedHex[1], 16);
+      const lo = parseInt(mappedHex[2], 16);
+      return isPrivateIpv4(`${hi >> 8}.${hi & 0xff}.${lo >> 8}.${lo & 0xff}`);
+    }
+    const mappedDotted = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(host);
+    if (mappedDotted) return isPrivateIpv4(mappedDotted[1]);
+    return host.startsWith("fc") || host.startsWith("fd") || /^fe[89ab]/.test(host) || host.startsWith("ff");
+  }
+  return false;
+}
+
 function extractApiErrorDetail(rawText: string): string {
   const trimmed = rawText.trim();
   if (!trimmed) return "";
   try {
     const parsed = JSON.parse(trimmed) as { error?: { message?: unknown }; message?: unknown };
     const message = parsed?.error?.message ?? parsed?.message;
-    if (typeof message === "string" && message.trim()) return message.trim();
+    if (typeof message === "string" && message.trim()) return message.trim().slice(0, 240);
   } catch {
     // 非 JSON 响应直接截断原文
   }
   return trimmed.slice(0, 240);
 }
 
-function formatDeepSeekHttpError(status: number, rawText: string, action: "search" | "fetch"): Error {
-  const detail = extractApiErrorDetail(rawText);
+function formatDeepSeekHttpError(status: number, rawText: string, action: "search" | "fetch", apiKey = ""): Error {
+  let detail = extractApiErrorDetail(rawText);
+  if (detail && apiKey) detail = detail.split(apiKey).join("[已隐藏]");
   const suffix = detail ? `（${detail}）` : "";
   const actionLabel = action === "search" ? "联网搜索" : "网页抓取";
   if (status === 401) {
@@ -114,13 +152,16 @@ export class DeepSeekSearchProvider {
   readonly name = "deepseek";
   readonly label = "DeepSeek";
   readonly envVar = "";
+  private readonly baseUrl: string;
 
-  constructor(private readonly apiKey: string) {}
+  constructor(private readonly apiKey: string, baseUrl = DEEPSEEK_SEARCH_BASE_URL) {
+    this.baseUrl = baseUrl.replace(/\/+$/, "");
+  }
 
   async search(query: string, maxResults = 8, signal?: AbortSignal): Promise<DeepSeekSearchResponse> {
     const count = Number.isFinite(maxResults) ? Math.max(1, Math.min(50, Math.floor(maxResults))) : 8;
     const clippedQuery = clipDeepSeekQuery(query);
-    const response = await fetch(`${DEEPSEEK_SEARCH_BASE_URL}/v1/tools/search`, {
+    const response = await fetch(`${this.baseUrl}/v1/tools/search`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -136,7 +177,7 @@ export class DeepSeekSearchProvider {
 
     const rawText = await response.text().catch(() => "");
     if (!response.ok) {
-      throw formatDeepSeekHttpError(response.status, rawText, "search");
+      throw formatDeepSeekHttpError(response.status, rawText, "search", this.apiKey);
     }
 
     let data: unknown;
@@ -153,17 +194,31 @@ export class DeepSeekSearchProvider {
   }
 
   async fetch(url: string, raw = false, signal?: AbortSignal): Promise<FetchResponse> {
+    let parsed: URL;
+    try {
+      parsed = new URL(url);
+    } catch {
+      throw new Error("网址无效。");
+    }
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      throw new Error("仅支持 http 和 https 网址。");
+    }
+    if (!parsed.hostname) {
+      throw new Error("网址无效。");
+    }
+    if (parsed.username || parsed.password) {
+      throw new Error("网页抓取不支持包含用户名或密码的网址。");
+    }
     if (raw) {
       return await fetchViaGenericHtml(url, true, signal);
     }
     if (url.length > MAX_FETCH_URL_CHARS) {
       throw new Error("网址长度超过 8192 字符，无法使用 DeepSeek 网页抓取。");
     }
-    const parsed = new URL(url);
-    if (parsed.username || parsed.password) {
-      throw new Error("DeepSeek 网页抓取不支持包含用户名或密码的网址。");
+    if (isPrivateOrLocalHost(parsed.hostname)) {
+      throw new Error("DeepSeek 网页抓取不支持内网或本机地址。");
     }
-    const response = await fetch(`${DEEPSEEK_SEARCH_BASE_URL}/v1/tools/fetch`, {
+    const response = await fetch(`${this.baseUrl}/v1/tools/fetch`, {
       method: "POST",
       headers: {
         "Content-Type": "application/json",
@@ -175,7 +230,7 @@ export class DeepSeekSearchProvider {
 
     const rawText = await response.text().catch(() => "");
     if (!response.ok) {
-      throw formatDeepSeekHttpError(response.status, rawText, "fetch");
+      throw formatDeepSeekHttpError(response.status, rawText, "fetch", this.apiKey);
     }
 
     let data: unknown;
@@ -200,10 +255,13 @@ export class DeepSeekSearchProvider {
   }
 }
 
-export function createDeepSeekSearchProvider(apiKey: string | undefined): DeepSeekSearchProvider {
+export function createDeepSeekSearchProvider(
+  apiKey: string | undefined,
+  baseUrl = DEEPSEEK_SEARCH_BASE_URL,
+): DeepSeekSearchProvider {
   const key = apiKey?.trim() ?? "";
   if (!key) {
     throw new Error("未配置 DeepSeek 联网搜索 API Key。");
   }
-  return new DeepSeekSearchProvider(key);
+  return new DeepSeekSearchProvider(key, baseUrl);
 }

@@ -972,8 +972,8 @@ cp now.txt "$seen"`,
         const n = idx + 1;
         const minsOffset = (62 - n) * 60;
         const when = minsAgo(minsOffset);
-        if (n === 1) {
-          return asst("i-bk-old-1", when, "第 1 期读书笔记：系统设计里的背压与队列控制，重点整理了令牌桶和有界队列的取舍。");
+        if (n === 8) {
+          return asst("i-bk-old-1", when, "第 8 期读书笔记：系统设计里的背压与队列控制，重点整理了令牌桶和有界队列的取舍。");
         }
         return idx % 2 === 0
           ? { kind: "user", id: `i-bk-u-${n}`, at: when, text: `整理第 ${n} 篇读书摘录。` }

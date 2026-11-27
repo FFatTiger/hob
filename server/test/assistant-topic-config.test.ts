@@ -587,7 +587,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "q-topic", { key: "A" });
-      expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.text === "直接执行：以后直接清缓存" && r.from === "topic")).toBe(true);
+      expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.text === "以后直接清缓存，直接做，不用先问我。" && r.from === "topic")).toBe(true);
       expect(hob.runtime.store.rules(multi.id).some((r) => r.text.includes("以后直接清缓存"))).toBe(false);
 
       hob.runtime.store.saveApproval({
@@ -603,7 +603,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       });
       await answerApproval(hob.runtime, "q-topic-override", { key: "A" });
       expect(hob.runtime.store.topicRules(multi.id, topic.id).find((r) => r.id === parentRuleId)).toMatchObject({
-        text: "直接执行：发版",
+        text: "发版，直接做，不用先问我。",
         from: "parent",
         changed: true,
       });
@@ -619,7 +619,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "q-main", { key: "A" });
-      expect(hob.runtime.store.rules(multi.id).some((r) => r.text === "直接执行：以后主对话直接查日志")).toBe(true);
+      expect(hob.runtime.store.rules(multi.id).some((r) => r.text === "以后主对话直接查日志，直接做，不用先问我。")).toBe(true);
     } finally {
       hob.close();
     }

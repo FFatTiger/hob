@@ -551,7 +551,7 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "a-1", { key: "A" });
-      expect(hob.runtime.store.groupRules(topic.id).some((r) => r.text === "直接执行：以后直接修" && r.from === "topic")).toBe(true);
+      expect(hob.runtime.store.groupRules(topic.id).some((r) => r.text === "以后直接修，直接做，不用先问我。" && r.from === "topic")).toBe(true);
       expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.text.includes("以后直接修"))).toBe(false);
 
       hob.runtime.store.saveJob({

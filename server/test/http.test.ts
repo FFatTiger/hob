@@ -79,7 +79,7 @@ describe("全局规则", () => {
     try {
       const { store, bus } = hob.runtime;
       expect(store.globalRules()).toHaveLength(7);
-      expect(store.globalRules().slice(0, 4).every((rule) => rule.text.startsWith("执行前确认："))).toBe(true);
+      expect(store.globalRules().slice(0, 4).every((rule) => rule.text.endsWith("之前，先问我。"))).toBe(true);
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
       expect((await app.request("/api/rules")).status).toBe(401);
       const events: string[] = [];

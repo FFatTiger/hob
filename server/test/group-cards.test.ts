@@ -125,13 +125,13 @@ describe("群规则", () => {
       const topic = hob.runtime.groups.createTopic(group.id, "话题", "user");
       hob.runtime.store.saveApproval({ id: "a-topic-rule", assistantId: "ops", groupId: topic.id, title: "发布？", options: [{ key: "A", label: "以后直接发布", always: true }], status: "pending", source: "router", createdAt: new Date().toISOString() });
       await answerApproval(hob.runtime, "a-topic-rule", { key: "A" });
-      expect(hob.runtime.store.groupRules(topic.id)).toMatchObject([{ text: "直接执行：以后直接发布", from: "topic" }]);
+      expect(hob.runtime.store.groupRules(topic.id)).toMatchObject([{ text: "以后直接发布，直接做，不用先问我。", from: "topic" }]);
       expect(hob.runtime.store.groupParentRules(group.id)).toEqual([]);
       expect(hob.runtime.store.rules("ops")).toEqual([]);
 
       hob.runtime.store.saveApproval({ id: "a-group-rule", assistantId: "ops", groupId: group.id, title: "部署？", options: [{ key: "A", label: "以后直接部署", always: true }], status: "pending", source: "router", createdAt: new Date().toISOString() });
       await answerApproval(hob.runtime, "a-group-rule", { key: "A" });
-      expect(hob.runtime.store.groupParentRules(group.id)).toMatchObject([{ text: "直接执行：以后直接部署" }]);
+      expect(hob.runtime.store.groupParentRules(group.id)).toMatchObject([{ text: "以后直接部署，直接做，不用先问我。" }]);
     } finally { hob.close(); }
   });
 });

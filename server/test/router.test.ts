@@ -10,6 +10,7 @@ import { applyDelta, mergeItems } from "../../web/src/merge.ts";
 import { call, makeHob, memoryDir, text, waitFor } from "./helpers.ts";
 import { fauxAssistantMessage, fauxText } from "@earendil-works/pi-ai";
 import { briefModelError } from "../src/text.ts";
+import { setLocale } from "../../shared/i18n.ts";
 import { join } from "node:path";
 
 /** 模型这一轮收到的系统提示词：pi 把它存成 system 消息的 sections，改了的话再加一条只带 diff 的 system 消息。 */
@@ -300,7 +301,7 @@ describe("Router", () => {
     }
   });
 
-  it("ask_user 出审批卡，选 always 选项写「直接执行：…」规则并替换已有同类规则", async () => {
+  it("ask_user 出审批卡，选 always 选项写自然句规则并替换已有同类规则", async () => {
     const hob = makeHob();
     try {
       hob.runtime.store.saveRules("hob", [
@@ -330,10 +331,10 @@ describe("Router", () => {
       expect(result.status).toBe(200);
       await hob.runtime.router.waitIdle("hob");
 
-      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-old", text: "直接执行：发公众号" }]);
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-old", text: "发公众号，直接做，不用先问我。" }]);
       expect(hob.runtime.store.rules("hob")).toHaveLength(1);
       const items = hob.runtime.router.items("hob").items;
-      expect(items.some((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 直接执行：发公众号")).toBe(true);
+      expect(items.some((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 发公众号，直接做，不用先问我。")).toBe(true);
       expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "answered", chosen: "C" });
 
       // 已有文字和 remember 相同的规则时，选 always 也原地替换不新加
@@ -356,8 +357,72 @@ describe("Router", () => {
       hob.faux.setResponses([text("已清理。")]);
       expect((await answerApproval(hob.runtime, "q-plain", { key: "B" })).status).toBe(200);
       await hob.runtime.router.waitIdle("hob");
-      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-plain", text: "直接执行：清理构建缓存" }]);
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-plain", text: "清理构建缓存，直接做，不用先问我。" }]);
       expect(hob.runtime.store.rules("hob")).toHaveLength(1);
+
+      // 已有新写法「X之前，先问我。」和「X，直接做，不用先问我。」时也会原地替换不重复加
+      hob.runtime.store.saveRules("hob", [
+        { id: "r-new-ask", text: "重启服务之前，先问我。", changedAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      hob.runtime.store.saveApproval({
+        id: "q-new-ask",
+        assistantId: "hob",
+        title: "重启吗？",
+        options: [{ key: "A", label: "重启" }, { key: "B", label: "以后「重启服务」直接执行", always: true }],
+        ruleText: "重启服务",
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      hob.faux.setResponses([text("已重启。")]);
+      expect((await answerApproval(hob.runtime, "q-new-ask", { key: "B" })).status).toBe(200);
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-new-ask", text: "重启服务，直接做，不用先问我。" }]);
+      expect(hob.runtime.store.rules("hob")).toHaveLength(1);
+
+      // 已有同一条新写法「X，直接做，不用先问我。」时不重复加
+      hob.runtime.store.saveApproval({
+        id: "q-new-allow-dup",
+        assistantId: "hob",
+        title: "再次重启吗？",
+        options: [{ key: "A", label: "重启" }, { key: "B", label: "以后「重启服务」直接执行", always: true }],
+        ruleText: "重启服务",
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      hob.faux.setResponses([text("好。")]);
+      expect((await answerApproval(hob.runtime, "q-new-allow-dup", { key: "B" })).status).toBe(200);
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-new-ask", text: "重启服务，直接做，不用先问我。" }]);
+      expect(hob.runtime.store.rules("hob")).toHaveLength(1);
+
+      // 英文环境下写入英文自然句并能替换英文「Ask me before X.」
+      setLocale("en");
+      try {
+        hob.runtime.store.saveRules("hob", [
+          { id: "r-en", text: "Ask me before deleting temp files.", changedAt: "2026-01-01T00:00:00.000Z" },
+        ]);
+        hob.runtime.store.saveApproval({
+          id: "q-en",
+          assistantId: "hob",
+          title: "Delete temp files?",
+          options: [{ key: "A", label: "Delete" }, { key: "B", label: "Always allow", always: true }],
+          ruleText: "deleting temp files",
+          status: "pending",
+          source: "router",
+          createdAt: new Date().toISOString(),
+        });
+        hob.faux.setResponses([text("Done.")]);
+        expect((await answerApproval(hob.runtime, "q-en", { key: "B" })).status).toBe(200);
+        await hob.runtime.router.waitIdle("hob");
+        expect(hob.runtime.store.rules("hob")).toMatchObject([
+          { id: "r-en", text: "Go ahead with deleting temp files without asking me first." },
+        ]);
+        expect(hob.runtime.store.rules("hob")).toHaveLength(1);
+      } finally {
+        setLocale("zh-CN");
+      }
 
       // 再答一次 409
       const again = await answerApproval(hob.runtime, approval.id, { key: "A" });
@@ -429,7 +494,7 @@ describe("Router", () => {
 
       // 答 always 时规则已经写好了；Router 收到答案事件后按模型的实际做法又调了一次 set_rule
       hob.faux.setResponses([
-        call("set_rule", { text: "直接执行：升级 hapi 后重启 hapi-hub / hapi-runner" }),
+        call("set_rule", { text: "升级 hapi 后重启 hapi-hub / hapi-runner，直接做，不用先问我。" }),
         text("好，以后两个都重启。"),
       ]);
       expect((await answerApproval(hob.runtime, approval.id, { key: "C" })).status).toBe(200);
@@ -437,10 +502,10 @@ describe("Router", () => {
 
       const notes = hob.runtime
         .router.items("hob")
-        .items.filter((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 直接执行：升级 hapi 后重启 hapi-hub / hapi-runner");
+        .items.filter((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 升级 hapi 后重启 hapi-hub / hapi-runner，直接做，不用先问我。");
       expect(notes).toHaveLength(1);
       expect(hob.runtime.store.rules("hob")).toMatchObject([
-        { text: "直接执行：升级 hapi 后重启 hapi-hub / hapi-runner" },
+        { text: "升级 hapi 后重启 hapi-hub / hapi-runner，直接做，不用先问我。" },
       ]);
     } finally {
       hob.close();
@@ -457,7 +522,7 @@ describe("Router", () => {
           dutyLong: "每周写周报，写公众号文章。",
           sprite: "page",
           routines: [{ name: "周报", instruction: "写本周周报", schedule: "0 17 * * 5" }],
-          askFirst: ["发公众号"],
+          askFirst: ["发公众号", "删除数据前先确认。"],
         }),
         text("建好了。"),
       ]);
@@ -475,6 +540,10 @@ describe("Router", () => {
       expect(draft).not.toHaveProperty("carry");
       expect(hob.runtime.store.assistant(draft.createdAssistantId!)?.splitFrom).not.toHaveProperty("conversations");
       expect(hob.runtime.store.assistant(draft.createdAssistantId!)).toMatchObject({ name: "写作", dutyLong: "每周写周报，写公众号文章。" });
+      expect(hob.runtime.store.rules(draft.createdAssistantId!).map((r) => r.text)).toEqual([
+        "发公众号之前，先问我。",
+        "删除数据前先确认。",
+      ]);
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "draft" && item.draftId === draft.id)).toBe(true);
       // 不结束这一轮：建好之后模型还能接着说话
       expect(hob.runtime.router.items("hob").items.some((item) => item.kind === "assistant" && item.text === "建好了。")).toBe(true);

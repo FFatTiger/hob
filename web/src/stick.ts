@@ -21,6 +21,22 @@ export function maxTop(box: ScrollBox): number {
   return Math.max(0, box.height - box.view);
 }
 
+/** 计算把目标元素居中放在容器可见区域时的滚动位置。 */
+export function centerScrollTop(
+  box: ScrollBox,
+  containerRect: { top: number; height: number },
+  targetRect: { top: number; height: number },
+  headInset = 0,
+  footInset = 0,
+): number {
+  const visibleTop = containerRect.top + headInset;
+  const visibleBottom = containerRect.top + containerRect.height - footInset;
+  const viewCenter = visibleBottom > visibleTop ? (visibleTop + visibleBottom) / 2 : containerRect.top + containerRect.height / 2;
+  const targetCenter = targetRect.top + targetRect.height / 2;
+  const next = box.top + (targetCenter - viewCenter);
+  return Math.max(0, Math.min(maxTop(box), next));
+}
+
 /** 内容高度变了以后预期的位置：贴底时就是新的底部；没贴底时最多被浏览器往上收（内容变矮）。 */
 export function expectAfterResize(stuck: boolean, expect: number, box: ScrollBox): number {
   const max = maxTop(box);

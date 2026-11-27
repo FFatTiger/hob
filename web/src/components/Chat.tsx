@@ -1,6 +1,6 @@
 // 中间一栏：头部 + 消息区 + 输入框。
 import { currentLocale, t } from "../../../shared/i18n.ts";
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { AssistantSummary, AssistantTopicSummary, GroupItem, GroupSummary, Item, RouterActivity, TodoItem } from "../../../shared/types.ts";
 import { isImagePath } from "../../../shared/media.ts";
@@ -13,6 +13,7 @@ import { Avatar } from "../sprites.tsx";
 import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
   assistantSessionKey,
+  clearScrollTarget,
   expandPanel,
   toggleSideCollapsed,
   focusComposer,
@@ -43,10 +44,11 @@ import {
   openFilePreview,
   photoUrl,
   useApp,
+  type ScrollTarget,
 } from "../store.ts";
-import { useLeave } from "../motion.ts";
+import { flashItem, useLeave } from "../motion.ts";
 import { isStreamingTail } from "../merge.ts";
-import { afterScroll, expectAfterResize } from "../stick.ts";
+import { afterScroll, centerScrollTop, expectAfterResize, STICK_GAP } from "../stick.ts";
 import { GroupItemList, ItemList } from "./Items.tsx";
 import { GroupCluster, membersOf } from "./Groups.tsx";
 import { ClosedTopic, TopicClose } from "./Topics.tsx";
@@ -96,6 +98,7 @@ function useStickToBottom(
   len: number,
   firstId: string | undefined,
   mineLast: boolean,
+  jumping: boolean,
 ) {
   const [stuck, setStuck] = useState(true);
   const pinned = useRef(true);
@@ -132,6 +135,12 @@ function useStickToBottom(
     if (!el) return;
     const last = seen.current;
     seen.current = { key: resetKey, len, firstId };
+    if (jumping) {
+      pinned.current = false;
+      setStuck(false);
+      expect.current = el.scrollTop;
+      return;
+    }
     if (last.key !== resetKey || len < last.len) {
       pinned.current = true;
       setStuck(true);
@@ -142,7 +151,7 @@ function useStickToBottom(
       setStuck(true);
       el.scrollTo({ top: el.scrollHeight, behavior: "smooth" });
     }
-  }, [ref, expect, resetKey, len, firstId, mineLast]);
+  }, [ref, expect, resetKey, len, firstId, mineLast, jumping]);
 
   const toBottom = () => {
     const el = ref.current;
@@ -152,7 +161,71 @@ function useStickToBottom(
     el.scrollTo({ top: el.scrollHeight, behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "instant" : "smooth" });
   };
 
-  return { atBottom: stuck, toBottom };
+  const jumpTo = useCallback((top: number, atEnd: boolean) => {
+    const el = ref.current;
+    if (!el) return;
+    pinned.current = atEnd;
+    setStuck(atEnd);
+    el.scrollTop = top;
+    expect.current = el.scrollTop;
+  }, [ref, expect]);
+
+  return { atBottom: stuck, toBottom, jumpTo };
+}
+
+function findScrollRow(container: HTMLElement, target: ScrollTarget): HTMLElement | undefined {
+  if (target.domId) return Array.from(container.querySelectorAll<HTMLElement>("[id]")).find((node) => node.id === target.domId);
+  if (target.itemId) return Array.from(container.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === target.itemId);
+  return undefined;
+}
+
+/** 定位到跳过来的目标消息：居中滚进可见区域并闪一下，和贴底滚动共用同一份状态避免互相覆盖。 */
+function useJumpToTarget(
+  ref: React.RefObject<HTMLDivElement | null>,
+  targetKey: string | null,
+  target: ScrollTarget | null,
+  len: number,
+  jumpTo: (top: number, atEnd: boolean) => void,
+) {
+  useLayoutEffect(() => {
+    if (!target || !target.ready || !targetKey || target.key !== targetKey) return;
+    let raf = 0;
+    let cancelled = false;
+    const deadline = performance.now() + 1500;
+    const locate = () => {
+      if (cancelled) return;
+      const el = ref.current;
+      const row = el ? findScrollRow(el, target) : undefined;
+      if (el && row) {
+        const bubble = row.querySelector<HTMLElement>(".hov.msg > .u, .hov.msg > .b, .hov.msg > .tablecard, .jobcard, .q, .igen, .filecard, .imgcard, .media-audio, .media-video") ?? row;
+        const style = typeof getComputedStyle === "function" ? getComputedStyle(el) : null;
+        const headInset = style ? parseFloat(style.paddingTop) || 0 : 0;
+        const footInset = style ? parseFloat(style.paddingBottom) || 0 : 0;
+        const nextTop = centerScrollTop(
+          { top: el.scrollTop, height: el.scrollHeight, view: el.clientHeight },
+          el.getBoundingClientRect(),
+          bubble.getBoundingClientRect(),
+          headInset,
+          footInset,
+        );
+        const atEnd = el.scrollHeight - nextTop - el.clientHeight < STICK_GAP;
+        jumpTo(nextTop, atEnd);
+        flashItem(row, false);
+        clearScrollTarget(target.nonce);
+        return;
+      }
+      if (performance.now() < deadline) raf = requestAnimationFrame(locate);
+      else {
+        clearScrollTarget(target.nonce);
+        setNotice(t("未能定位到这条消息"));
+      }
+    };
+    locate();
+    return () => {
+      cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [ref, targetKey, target, len, jumpTo]);
 }
 
 /**
@@ -543,13 +616,16 @@ export function Chat() {
   const parent = g?.parentId ? groupById(s, g.parentId) : undefined;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionKey = a && !isNewTopic ? assistantSessionKey(a.id, topic?.id ?? s.tsel) : null;
+  const targetKey = g ? `group:${g.id}` : sessionKey;
+  const jumping = Boolean(targetKey && s.scrollTarget?.key === targetKey);
   const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : isNewTopic ? `${a?.id ?? ""}@new` : chatKey(sessionKey, sessionKey ? s.itemGen[sessionKey] : 0);
   const scrollId = g ? g.id : s.sel;
   const think = useLeave(thinking, 180);
 
   const expect = useRef(0);
   const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g), topic?.id);
-  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
+  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)), jumping);
+  useJumpToTarget(scrollRef, targetKey, s.scrollTarget, items.length, stick.jumpTo);
 
   return (
     <main className="chat">
@@ -806,12 +882,15 @@ export function ChatPage() {
   const think = useLeave(thinking, 180);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sessionKey = a && !isNewTopic ? assistantSessionKey(a.id, topic?.id ?? s.tsel) : null;
+  const targetKey = g ? `group:${g.id}` : sessionKey;
+  const jumping = Boolean(targetKey && s.scrollTarget?.key === targetKey);
   const key = g ? `group:${g.id}|${s.groupGen[g.id] ?? 0}` : isNewTopic ? `${a?.id ?? ""}@new` : chatKey(sessionKey, sessionKey ? s.itemGen[sessionKey] : 0);
   const scrollId = g ? g.id : s.sel;
 
   const expect = useRef(0);
   const onScroll = useOlderMessages(scrollRef, scrollId, key, items[0]?.id, expect, Boolean(g), topic?.id);
-  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)));
+  const stick = useStickToBottom(scrollRef, expect, key, items.length, items[0]?.id, isMine(items.at(-1)), jumping);
+  useJumpToTarget(scrollRef, targetKey, s.scrollTarget, items.length, stick.jumpTo);
 
   return (
     <>

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { afterScroll, expectAfterResize } from "../src/stick.ts";
+import { afterScroll, centerScrollTop, expectAfterResize } from "../src/stick.ts";
 
 // 视口 800 高、内容 1000 高：滚到底时 top 是 200。
 const atBottom = { top: 200, height: 1000, view: 800 };
@@ -33,5 +33,27 @@ describe("贴底滚动的判断", () => {
   it("内容比视口还矮时贴底就是顶部", () => {
     expect(expectAfterResize(true, 0, { top: 0, height: 600, view: 800 })).toBe(0);
     expect(afterScroll(true, 0, { top: 0, height: 600, view: 800 }).stuck).toBe(true);
+  });
+
+  it("跳到指定消息时按可见区域中线计算居中的滚动位置并夹在合法范围内", () => {
+    // 视口 800 高，上下浮动栏各占 100（可见区 100..700，中线 400）；目标中心在 600 → 往下挪 200
+    expect(centerScrollTop(
+      { top: 100, height: 2400, view: 800 },
+      { top: 0, height: 800 },
+      { top: 580, height: 40 },
+      100,
+      100,
+    )).toBe(300);
+    // 目标在最顶上时夹到 0；在最底时夹到 maxTop
+    expect(centerScrollTop(
+      { top: 200, height: 2400, view: 800 },
+      { top: 0, height: 800 },
+      { top: -150, height: 40 },
+    )).toBe(0);
+    expect(centerScrollTop(
+      { top: 1400, height: 2400, view: 800 },
+      { top: 0, height: 800 },
+      { top: 1200, height: 40 },
+    )).toBe(1600);
   });
 });

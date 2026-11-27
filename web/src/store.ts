@@ -142,6 +142,14 @@ interface ComposerDraft {
 
 const EMPTY_COMPOSER: ComposerDraft = { text: "", quote: null, attachments: [] };
 
+export interface ScrollTarget {
+  key: string;
+  itemId?: string;
+  domId?: string;
+  ready: boolean;
+  nonce: number;
+}
+
 export interface State {
   stars: StarredMessage[];
   starsError: string | null;
@@ -218,6 +226,7 @@ export interface State {
   updateReady: boolean; // 新版本装好了，等用户点「刷新」
   loggingIn: boolean;
   desktopLogin: { approvalId: string; assistantId: string } | null;
+  scrollTarget: ScrollTarget | null;
 }
 
 const params = new URLSearchParams(location.search);
@@ -395,6 +404,7 @@ function initial(): State {
     updateReady: false,
     loggingIn: false,
     desktopLogin: null,
+    scrollTarget: null,
   };
   if (MOCK) {
     state.sel = ui.gsel ? null : ui.sel;
@@ -1215,7 +1225,7 @@ export async function logout() {
   } catch {
     /* 后端没有退出接口时也要能把界面退回登录页 */
   }
-  set({ phase: "login", assistants: [], assistantTopics: [], items: {}, profiles: {}, assistantTopicConfigs: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, composerDrafts: new Map() });
+  set({ phase: "login", assistants: [], assistantTopics: [], items: {}, profiles: {}, assistantTopicConfigs: {}, assistantSkills: {}, jobs: {}, routines: [], approvals: {}, drafts: {}, cards: {}, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, composerDrafts: new Map(), scrollTarget: null });
 }
 
 let groupRetry: ReturnType<typeof setTimeout> | undefined;
@@ -1935,6 +1945,7 @@ export async function selectGroup(id: string, nav = true, keepStack = false, for
     newTopicError: null,
     sideHome: false,
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
+    ...(s.scrollTarget && s.scrollTarget.key !== `group:${id}` ? { scrollTarget: null } : {}),
     ...(s.gsel !== id && !keepStack ? { worklog: null } : {}),
     ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
   }));
@@ -1972,7 +1983,7 @@ export async function openNoteGroup(id: string) {
 /** 回首页：对话、右栏的页、弹层、设置和知识库一次全收起（左栏二级页的返回、设置和知识库的返回、左栏的首页键都走这里）。 */
 export function goHome() {
   for (const page of state.panelStack) if (page.kind === "file" && page.liveId) closedLivePages.add(page.liveId);
-  set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, search: false, viewer: null, mobile: "list" });
+  set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, search: false, viewer: null, mobile: "list", scrollTarget: null });
 }
 
 export async function select(id: string, nav = true, keepStack = false, forceChat = false) {
@@ -1990,6 +2001,7 @@ export async function select(id: string, nav = true, keepStack = false, forceCha
     newTopicError: null,
     sideHome: !multiTopic,
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
+    ...(s.scrollTarget && s.scrollTarget.key !== id ? { scrollTarget: null } : {}),
     ...(previous !== id && !keepStack ? { worklog: null } : {}),
     ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
   }));
@@ -2018,6 +2030,7 @@ export async function openAssistantTopic(aid: string, tid: string, nav = true, k
     newTopicError: null,
     sideHome: false,
     panelStack: selectPanelStack(s.panelStack, previous, nextKey, keepStack),
+    ...(s.scrollTarget && s.scrollTarget.key !== nextKey ? { scrollTarget: null } : {}),
     ...(previous !== nextKey && !keepStack ? { worklog: null } : {}),
     ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
   }));
@@ -2047,6 +2060,7 @@ export function openNewAssistantTopic(aid: string) {
     mobile: "chat" as const,
     sheet: false,
     search: false,
+    scrollTarget: null,
   }));
   void loadProfile(aid);
 }
@@ -2625,6 +2639,71 @@ async function findGroupItem(groupId: string, matches: (item: GroupItem) => bool
   return (state.groupItems[groupId] ?? []).some(matches);
 }
 
+let scrollNonce = 0;
+
+export function clearScrollTarget(nonce?: number) {
+  set((s) => (!s.scrollTarget || (nonce !== undefined && s.scrollTarget.nonce !== nonce) ? {} : { scrollTarget: null }));
+}
+
+type JumpTargetConversation =
+  | { kind: "group"; groupId: string; matches: (item: GroupItem) => boolean }
+  | { kind: "assistant"; assistantId: string; topicId?: string | null; matches: (item: Item) => boolean };
+
+/** 跳到任意对话（单聊、助手话题、群、群话题）里的指定条目：先置未贴底定位标记再打开并按需加载分页，由 Chat 居中并高亮。 */
+async function jumpToConversationTarget(options: {
+  conversation: JumpTargetConversation;
+  itemId?: string;
+  domId?: string;
+  notFound: string;
+  errorPrefix: (message: string) => string;
+  clearPanels?: boolean;
+}) {
+  const { conversation, itemId, domId, notFound, errorPrefix, clearPanels = true } = options;
+  const key = conversation.kind === "group"
+    ? `group:${conversation.groupId}`
+    : assistantSessionKey(conversation.assistantId, conversation.topicId);
+  const nonce = ++scrollNonce;
+  const sameConv = conversation.kind === "group"
+    ? state.gsel === conversation.groupId
+    : state.sel === conversation.assistantId && (state.tsel ?? null) === (conversation.topicId ?? null) && !state.newTopic;
+  const loaded = conversation.kind === "group"
+    ? state.groupItems[conversation.groupId] !== undefined
+    : state.items[key] !== undefined;
+
+  set((s) => ({
+    scrollTarget: { key, ...(itemId ? { itemId } : {}), ...(domId ? { domId } : {}), ready: false, nonce },
+    page: "main",
+    ...(clearPanels ? { panelStack: [] } : {}),
+    ...(sameConv && loaded ? { mobile: "chat" as MobilePage, ...(clearPanels ? { sheet: false } : {}), search: false } : {}),
+    ...(sameConv && loaded && s.gsel && s.groups.find((g) => g.id === s.gsel)?.unread ? {} : {}),
+  }));
+
+  try {
+    if (!sameConv || !loaded) {
+      if (conversation.kind === "group") await selectGroup(conversation.groupId, true, !clearPanels, true);
+      else if (conversation.topicId) await openAssistantTopic(conversation.assistantId, conversation.topicId, true, !clearPanels);
+      else await select(conversation.assistantId, true, !clearPanels, true);
+    }
+    if (scrollNonce !== nonce) return;
+
+    const found = conversation.kind === "group"
+      ? await findGroupItem(conversation.groupId, conversation.matches)
+      : await findConversationItem(conversation.assistantId, conversation.matches, conversation.topicId);
+    if (scrollNonce !== nonce) return;
+    if (!found) {
+      clearScrollTarget(nonce);
+      set({ notice: notFound });
+      return;
+    }
+    set({ scrollTarget: { key, ...(itemId ? { itemId } : {}), ...(domId ? { domId } : {}), ready: true, nonce } });
+  } catch (error) {
+    if (scrollNonce === nonce) {
+      clearScrollTarget(nonce);
+      set({ notice: errorPrefix(errText(error)) });
+    }
+  }
+}
+
 export async function jumpToApproval(approvalId: string) {
   const approval = state.approvals[approvalId];
   if (!approval) return;
@@ -2632,33 +2711,15 @@ export async function jumpToApproval(approvalId: string) {
     await jumpToJob(approval.jobId);
     return;
   }
-  try {
-    if (approval.groupId) {
-      await selectGroup(approval.groupId, true, false, true);
-      if (!await findGroupItem(approval.groupId, (item) => item.kind === "question" && item.approvalId === approvalId)) {
-        set({ notice: t("未找到对应的问题") });
-        return;
-      }
-    } else if (approval.topicId) {
-      await openAssistantTopic(approval.assistantId, approval.topicId, true);
-      if (!await findConversationItem(approval.assistantId, (item) => item.kind === "question" && item.approvalId === approvalId, approval.topicId)) {
-        set({ notice: t("未找到对应的问题") });
-        return;
-      }
-    } else {
-      await select(approval.assistantId, true, false, true);
-      if (!await findConversationItem(approval.assistantId, (item) => item.kind === "question" && item.approvalId === approvalId)) {
-        set({ notice: t("未找到对应的问题") });
-        return;
-      }
-    }
-    requestAnimationFrame(() => requestAnimationFrame(() => {
-      const row = document.getElementById(`approval-${approvalId}`);
-      if (row) flashItem(row);
-    }));
-  } catch (e) {
-    set({ notice: t("无法定位问题：{error}", { error: errText(e) }) });
-  }
+  const conversation: JumpTargetConversation = approval.groupId
+    ? { kind: "group", groupId: approval.groupId, matches: (item) => item.kind === "question" && item.approvalId === approvalId }
+    : { kind: "assistant", assistantId: approval.assistantId, topicId: approval.topicId, matches: (item) => item.kind === "question" && item.approvalId === approvalId };
+  await jumpToConversationTarget({
+    conversation,
+    domId: `approval-${approvalId}`,
+    notFound: t("未找到对应的问题"),
+    errorPrefix: (error) => t("无法定位问题：{error}", { error }),
+  });
 }
 
 export function openAssistant(id: string) {
@@ -2700,17 +2761,13 @@ async function findConversationItem(assistantId: string, matches: (item: Item) =
 }
 
 async function jumpToLink(assistantId: string, id: string, kind: "forward" | "delegation" | "handback", topicId?: string) {
-  const key = assistantSessionKey(assistantId, topicId);
-  if (topicId) {
-    if (state.sel !== assistantId || state.tsel !== topicId || !state.items[key]) await openAssistantTopic(assistantId, topicId, true);
-  } else if (state.sel !== assistantId || state.tsel !== null || !state.items[assistantId]) {
-    await select(assistantId, true, false, true);
-  }
   const matches = (item: Item) => kind === "forward" ? item.kind === "user" && item.from?.delegationId === id : kind === "handback" ? item.kind === "note" && item.handbackId === id : item.kind === "delegation" && item.delegationId === id;
-  try {
-    if (!await findConversationItem(assistantId, matches, topicId)) { set({ notice: t("未找到对应的转交消息") }); return; }
-    requestAnimationFrame(() => requestAnimationFrame(() => document.getElementById(`${kind}-${id}`)?.scrollIntoView({ block: "center", behavior: "smooth" })));
-  } catch (e) { set({ notice: t("无法定位转交消息：{error}", { error: errText(e) }) }); }
+  await jumpToConversationTarget({
+    conversation: { kind: "assistant", assistantId, topicId, matches },
+    domId: `${kind}-${id}`,
+    notFound: t("未找到对应的转交消息"),
+    errorPrefix: (error) => t("无法定位转交消息：{error}", { error }),
+  });
 }
 
 export async function replyJob(jobId: string, text: string): Promise<boolean> {
@@ -3388,7 +3445,7 @@ export async function toggleStar(conversation: ConversationRef, itemId: string) 
 
 export function searchHistory(query: string) { return api.searchHistory(query); }
 
-export function openStars() { set({ page: "stars", panelStack: [], sheet: false }); void loadStars(); }
+export function openStars() { set({ page: "stars", panelStack: [], sheet: false, scrollTarget: null }); void loadStars(); }
 
 export async function jumpToHistory(conversation: ConversationRef, itemId: string) {
   const topic = conversation.kind === "topic"
@@ -3402,65 +3459,55 @@ export async function jumpToHistory(conversation: ConversationRef, itemId: strin
     set({ notice: t("原消息已不在") });
     return;
   }
-  set({ page: "main", panelStack: [] });
-  try {
-    if (conversation.kind === "group") await selectGroup(conversation.id, true, false, true);
-    else if (conversation.kind === "topic") await openAssistantTopic(topic!.assistantId, topic!.id, true);
-    else await select(conversation.id);
-    const found = conversation.kind === "group"
-      ? await findGroupItem(conversation.id, (item) => item.id === itemId)
-      : conversation.kind === "topic"
-        ? await findConversationItem(topic!.assistantId, (item) => item.id === itemId, topic!.id)
-        : await findConversationItem(conversation.id, (item) => item.id === itemId);
-    if (!found) { set({ notice: t("原消息已不在") }); return; }
-    const deadline = performance.now() + 1500;
-    const locate = () => {
-      const stillHere = state.page === "main" && (
-        conversation.kind === "group"
-          ? state.gsel === conversation.id
-          : conversation.kind === "topic"
-            ? state.sel === topic!.assistantId && state.tsel === topic!.id
-            : state.sel === conversation.id && !state.tsel
-      );
-      if (!stillHere) return;
-      const row = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
-      if (row) flashItem(row); else if (performance.now() < deadline) requestAnimationFrame(locate); else set({ notice: t("未能定位到这条消息") });
-    };
-    requestAnimationFrame(locate);
-  } catch (error) { set({ notice: t("无法定位对话消息：{error}", { error: errText(error) }) }); }
+  const target: JumpTargetConversation = conversation.kind === "group"
+    ? { kind: "group", groupId: conversation.id, matches: (item) => item.id === itemId }
+    : conversation.kind === "topic"
+      ? { kind: "assistant", assistantId: topic!.assistantId, topicId: topic!.id, matches: (item) => item.id === itemId }
+      : { kind: "assistant", assistantId: conversation.id, matches: (item) => item.id === itemId };
+  await jumpToConversationTarget({
+    conversation: target,
+    itemId,
+    notFound: t("原消息已不在"),
+    errorPrefix: (error) => t("无法定位对话消息：{error}", { error }),
+  });
+}
+
+export async function jumpToCurrentItem(itemId: string) {
+  const conversation: JumpTargetConversation | null = state.gsel
+    ? { kind: "group", groupId: state.gsel, matches: (item) => item.id === itemId }
+    : state.sel
+      ? { kind: "assistant", assistantId: state.sel, topicId: state.tsel, matches: (item) => item.id === itemId }
+      : null;
+  if (!conversation) return;
+  await jumpToConversationTarget({
+    conversation,
+    itemId,
+    notFound: t("未找到对应的对话消息"),
+    errorPrefix: (error) => t("无法定位对话消息：{error}", { error }),
+    clearPanels: false,
+  });
 }
 
 export function openPlugins(pluginId: string | null = null, pluginPage: PluginPage = "installed") {
-  set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, search: false });
+  set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, search: false, scrollTarget: null });
 }
 export function closePlugins() { goHome(); }
 export function openKnowledge() {
-  set({ page: "knowledge", panelStack: [], sheet: false });
+  set({ page: "knowledge", panelStack: [], sheet: false, scrollTarget: null });
   void loadKnowledge();
 }
 export function closeKnowledge() { goHome(); }
 export async function jumpToItem(assistantId: string, itemId: string) {
-  set({ page: "main", panelStack: [] });
-  await select(assistantId);
-  try {
-    if (!await findConversationItem(assistantId, (item) => item.id === itemId)) { set({ notice: t("未找到对应的对话消息") }); return; }
-    const deadline = performance.now() + 1500;
-    const locate = () => {
-      if (state.page !== "main" || state.sel !== assistantId) return;
-      const el = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
-      if (!el) {
-        if (performance.now() < deadline) requestAnimationFrame(locate);
-        else set({ notice: t("未能定位到这条消息") });
-        return;
-      }
-      flashItem(el);
-    };
-    requestAnimationFrame(locate);
-  } catch (e) { set({ notice: t("无法定位对话消息：{error}", { error: errText(e) }) }); }
+  await jumpToConversationTarget({
+    conversation: { kind: "assistant", assistantId, matches: (item) => item.id === itemId },
+    itemId,
+    notFound: t("未找到对应的对话消息"),
+    errorPrefix: (error) => t("无法定位对话消息：{error}", { error }),
+  });
 }
 
 export function openSettings() {
-  set({ page: "settings", section: null, sub: null, sheet: false, search: false, panelStack: [] });
+  set({ page: "settings", section: null, sub: null, sheet: false, search: false, panelStack: [], scrollTarget: null });
 }
 
 export function closeSettings() {

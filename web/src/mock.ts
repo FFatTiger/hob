@@ -967,7 +967,20 @@ cp now.txt "$seen"`,
       "哪一类支出较多？",
       "餐饮和打车，比上月增加 800。",
     ),
-    book: small("i-bk", "本周读书笔记已整理完成，共三条。", "发给我看看。", "已放入文件中。"),
+    book: [
+      ...Array.from({ length: 60 }, (_, idx): Item => {
+        const n = idx + 1;
+        const minsOffset = (62 - n) * 60;
+        const when = minsAgo(minsOffset);
+        if (n === 1) {
+          return asst("i-bk-old-1", when, "第 1 期读书笔记：系统设计里的背压与队列控制，重点整理了令牌桶和有界队列的取舍。");
+        }
+        return idx % 2 === 0
+          ? { kind: "user", id: `i-bk-u-${n}`, at: when, text: `整理第 ${n} 篇读书摘录。` }
+          : asst(`i-bk-a-${n}`, when, `第 ${n} 篇摘录已归档，记录了核心论点和延伸阅读清单。`);
+      }),
+      ...small("i-bk", "本周读书笔记已整理完成，共三条。", "发给我看看。", "已放入文件中。"),
+    ],
     leaf: small("i-lf", "本周三次训练已记录。", "下周增加到四次。", "好的，下周安排四次。"),
   };
 
@@ -3757,12 +3770,36 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     deleteStar: async ({ conversation, itemId }) => { stars = stars.filter((star) => star.conversation.kind !== conversation.kind || star.conversation.id !== conversation.id || star.itemId !== itemId); emit({ type: "stars" }); return { ok: true }; },
     searchHistory: async (query) => {
-      const words = query.toLowerCase().trim().split(/\s+/);
-      const rows = [...Object.entries(db.items).flatMap(([id, items]) => items.map((item) => ({ ref: { kind: "assistant" as const, id }, item }))), ...Object.entries(db.groupItems).flatMap(([id, items]) => items.map((item) => ({ ref: { kind: "group" as const, id }, item })))];
-      const results = rows.flatMap(({ ref, item }) => {
+      const words = query.toLowerCase().trim().split(/\s+/).filter(Boolean);
+      const snippetOf = (text: string) => {
+        const lower = text.toLowerCase();
+        const pos = words.length ? Math.min(...words.map((w) => lower.indexOf(w)).filter((i) => i >= 0)) : 0;
+        const start = Math.max(0, pos - 40);
+        const end = Math.min(text.length, pos + 80);
+        return `${start ? "…" : ""}${text.slice(start, end).replace(/\s+/g, " ")}${end < text.length ? "…" : ""}`;
+      };
+      const rows: { ref: import("../../shared/types.ts").ConversationRef; ownerId: string; item: Item | GroupItem }[] = [
+        ...Object.entries(db.items).flatMap(([key, items]) => {
+          const at = key.indexOf("@");
+          const ref: import("../../shared/types.ts").ConversationRef = at !== -1
+            ? { kind: "topic", id: key.slice(at + 1) }
+            : { kind: "assistant", id: key };
+          const ownerId = at !== -1 ? key.slice(0, at) : key;
+          return items.map((item) => ({ ref, ownerId, item }));
+        }),
+        ...Object.entries(db.groupItems).flatMap(([id, items]) => items.map((item) => ({ ref: { kind: "group" as const, id }, ownerId: id, item }))),
+      ];
+      const results = rows.flatMap(({ ref, ownerId, item }) => {
         if ((item.kind !== "user" && item.kind !== "assistant") || !words.every((word) => item.text.toLowerCase().includes(word))) return [];
-        const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : ref.id;
-        return [{ conversation: ref, conversationName: (ref.kind === "assistant" ? db.assistants.find((a) => a.id === ref.id)?.name : db.groups.find((g) => g.id === ref.id)?.name) ?? ref.id, itemId: item.id, speaker, speakerName: speaker === "user" ? "用户" : db.assistants.find((a) => a.id === speaker)?.name ?? speaker, at: item.at, snippet: item.text.slice(0, 150), starred: stars.some((star) => star.conversation.kind === ref.kind && star.conversation.id === ref.id && star.itemId === item.id) }];
+        const speaker = "speaker" in item ? String(item.speaker) : item.kind === "user" ? "user" : ownerId;
+        const topic = ref.kind === "topic" ? db.assistantTopics.find((t) => t.id === ref.id) : undefined;
+        const assistantName = db.assistants.find((a) => a.id === ownerId)?.name ?? ownerId;
+        const conversationName = ref.kind === "topic"
+          ? (topic ? `${assistantName} · ${topic.name}` : ref.id)
+          : ref.kind === "assistant"
+            ? assistantName
+            : db.groups.find((g) => g.id === ref.id)?.name ?? ref.id;
+        return [{ conversation: ref, conversationName, itemId: item.id, speaker, speakerName: speaker === "user" ? "用户" : db.assistants.find((a) => a.id === speaker)?.name ?? speaker, at: item.at, snippet: snippetOf(item.text), starred: stars.some((star) => star.conversation.kind === ref.kind && star.conversation.id === ref.id && star.itemId === item.id) }];
       }).sort((a, b) => b.at.localeCompare(a.at));
       return { results: results.slice(0, 50), total: results.length };
     },
@@ -4312,15 +4349,21 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       };
       return clone({ ...memory, revision: db.settings.revision });
     },
-    items: async (assistantId) => ({
-      items: clone(db.items[assistantId] ?? []),
-      approvals: clone(Object.values(db.approvals)),
-      jobs: clone(Object.values(db.jobs)),
-      drafts: clone(Object.values(db.drafts)),
-      delegations: clone(Object.values(db.delegations)),
-      cards: clone(Object.values(db.cards)),
-      hasMore: false,
-    }),
+    items: async (assistantId, before, limit = 50) => {
+      const all = db.items[assistantId] ?? [];
+      const found = before ? all.findIndex((item) => item.id === before) : all.length;
+      const end = found === -1 ? all.length : found;
+      const start = Math.max(0, end - limit);
+      return {
+        items: clone(all.slice(start, end)),
+        approvals: clone(Object.values(db.approvals)),
+        jobs: clone(Object.values(db.jobs)),
+        drafts: clone(Object.values(db.drafts)),
+        delegations: clone(Object.values(db.delegations)),
+        cards: clone(Object.values(db.cards)),
+        hasMore: start > 0,
+      };
+    },
     profile: async (assistantId) => {
       const a = assistant(assistantId);
       if (!a) throw new Error(`没有这个助手：${assistantId}`);
@@ -4454,15 +4497,21 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       emit({ type: "assistant_topic", topic: clone(topic) });
       return clone(topic);
     },
-    assistantTopicItems: async (assistantId, topicId) => ({
-      items: clone(db.items[`${assistantId}@${topicId}`] ?? []),
-      approvals: clone(Object.values(db.approvals).filter((a) => a.assistantId === assistantId && a.topicId === topicId)),
-      jobs: clone(Object.values(db.jobs).filter((j) => j.assistantId === assistantId && j.topicId === topicId)),
-      drafts: [],
-      delegations: [],
-      cards: [],
-      hasMore: false,
-    }),
+    assistantTopicItems: async (assistantId, topicId, before, limit = 50) => {
+      const all = db.items[`${assistantId}@${topicId}`] ?? [];
+      const found = before ? all.findIndex((item) => item.id === before) : all.length;
+      const end = found === -1 ? all.length : found;
+      const start = Math.max(0, end - limit);
+      return {
+        items: clone(all.slice(start, end)),
+        approvals: clone(Object.values(db.approvals).filter((a) => a.assistantId === assistantId && a.topicId === topicId)),
+        jobs: clone(Object.values(db.jobs).filter((j) => j.assistantId === assistantId && j.topicId === topicId)),
+        drafts: [],
+        delegations: [],
+        cards: [],
+        hasMore: start > 0,
+      };
+    },
     sendAssistantTopicMessage: async (assistantId, topicId, body) => {
       const topic = db.assistantTopics.find((t) => t.id === topicId && t.assistantId === assistantId);
       if (!topic) throw new ApiError(404, "话题不存在");
@@ -4976,13 +5025,19 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       // 群归档，话题跟着归档：每个话题各发一个 group_removed
       for (const id of topics) emit({ type: "group_removed", id });
     },
-    groupItems: async (groupId): Promise<GroupItemsPage> => ({
-      items: clone(db.groupItems[groupId] ?? []),
-      approvals: clone(Object.values(db.approvals).filter((a) => a.groupId === groupId)),
-      jobs: clone(Object.values(db.jobs).filter((j) => j.groupId === groupId)),
-      cards: clone(Object.values(db.cards).filter((card) => card.groupId === groupId)),
-      hasMore: false,
-    }),
+    groupItems: async (groupId, before, limit = 50): Promise<GroupItemsPage> => {
+      const all = db.groupItems[groupId] ?? [];
+      const found = before ? all.findIndex((item) => item.id === before) : all.length;
+      const end = found === -1 ? all.length : found;
+      const start = Math.max(0, end - limit);
+      return {
+        items: clone(all.slice(start, end)),
+        approvals: clone(Object.values(db.approvals).filter((a) => a.groupId === groupId)),
+        jobs: clone(Object.values(db.jobs).filter((j) => j.groupId === groupId)),
+        cards: clone(Object.values(db.cards).filter((card) => card.groupId === groupId)),
+        hasMore: start > 0,
+      };
+    },
     sendGroupMessage: async (groupId, body) => {
       const group = db.groups.find((g) => g.id === groupId);
       if (!group) throw new ApiError(404, "群不存在。");

@@ -2064,6 +2064,11 @@ svg.i {
   0%, 100% { box-shadow: 0 0 0 0 transparent; }
   25% { background-color: color-mix(in srgb, var(--accent) 25%, var(--bubble)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); }
 }
+.u.quote-flash { animation: quote-flash-user 1s ease-out; }
+@keyframes quote-flash-user {
+  0%, 100% { box-shadow: 0 0 0 0 transparent; }
+  25% { background-color: color-mix(in srgb, var(--accent) 30%, var(--user)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); }
+}
 .message-row { position: relative; width: 100%; display: flex; justify-content: flex-start; }
 .message-row.right { justify-content: flex-end; }
 .message-row .quote { display: block; cursor: pointer; }

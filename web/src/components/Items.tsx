@@ -30,6 +30,7 @@ import {
   photoUrl,
   retryPending,
   focusComposer,
+  jumpToCurrentItem,
   jumpToDelegation,
   jumpToHandback,
   openAssistantTopic,
@@ -74,11 +75,11 @@ const NOTE_ICON: Record<NoteIcon, IconName> = {
   info: "info",
 };
 
-function NoteWithDetail({ icon, text, detail, fresh, onOpenTarget }: { icon: NoteIcon; text: string; detail: string; fresh: boolean; onOpenTarget?: () => void }) {
+function NoteWithDetail({ icon, text, detail, fresh, itemId, onOpenTarget }: { icon: NoteIcon; text: string; detail: string; fresh: boolean; itemId?: string; onOpenTarget?: () => void }) {
   const long = detail.split("\n").length > 2 || detail.length > 180;
   const [open, setOpen] = useState(false);
   return (
-    <div className={`sys sys-why${fresh ? " enter-fade" : ""}`}>
+    <div className={`sys sys-why${fresh ? " enter-fade" : ""}`} data-item-id={itemId}>
       {icon !== "split" ? <Icon name={NOTE_ICON[icon]} size={14} /> : null}
       {long ? (
         <Disclosure className="sys-why-disclosure" label={text} open={open} onToggle={() => setOpen(value => !value)}>
@@ -241,6 +242,10 @@ function MessagePopup({ popup, close, selectText, closing }: { popup: Popup; clo
 }
 
 function jumpToQuote(event: React.MouseEvent<HTMLElement>, itemId: string) {
+  if (typeof jumpToCurrentItem === "function") {
+    void jumpToCurrentItem(itemId);
+    return;
+  }
   const list = event.currentTarget.closest(".col");
   const target = [...(list?.querySelectorAll<HTMLElement>(".message-row[data-item-id]") ?? [])].find((row) => row.dataset.itemId === itemId);
   if (target) flashItem(target.classList.contains("message-card-gesture") ? target.querySelector<HTMLElement>(".jobcard, .q, .igen, .filecard, .imgcard, .media-audio, .media-video") ?? target : target);
@@ -444,7 +449,7 @@ function DraftCard({ draft }: { draft: Draft }) {
   );
 }
 
-function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: boolean }) {
+function DelegationCard({ delegation, fresh, itemId }: { delegation: Delegation; fresh: boolean; itemId?: string }) {
   const s = useApp();
   const previousStatus = useRef(delegation.status);
   const changed = previousStatus.current !== delegation.status;
@@ -453,7 +458,7 @@ function DelegationCard({ delegation, fresh }: { delegation: Delegation; fresh: 
   const name = target?.name ?? delegation.to;
   const approvals = Object.values(s.approvals).filter((approval) => approval.status === "pending" && (delegation.approvalIds ?? []).includes(approval.id) && approval.source !== "job");
   return (
-    <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`}>
+    <div className={`hov${fresh ? " enter" : ""}`} id={`delegation-${delegation.id}`} data-item-id={itemId}>
       {/* 整张卡点进接手的助手（和任务卡一样整张可点、悬停整张变底色）；里面的任务行、提问、按钮各管各的 */}
       <div
         className="b jobcard delegation-card"
@@ -939,7 +944,7 @@ function ItemView({
   if (item.kind === "note") {
     // 定时任务到执行时间：只写一行。老记录里带着检查到的原始内容，那是给群主的材料，不显示
     if (item.icon === "routine" && isRoutineDueNote(item.text, item.routineId)) {
-      return <div className={`sys routine-note${fresh ? " enter-fade" : ""}`}><Icon name="clock" size={14} /><span>{item.text.replace(/，检查到：[\s\S]*$/u, "")}</span></div>;
+      return <div className={`sys routine-note${fresh ? " enter-fade" : ""}`} data-item-id={item.id}><Icon name="clock" size={14} /><span>{item.text.replace(/，检查到：[\s\S]*$/u, "")}</span></div>;
     }
     const openTarget = !item.handbackId && !(item.icon === "skill" && item.path)
       ? item.targetGroupId
@@ -949,9 +954,9 @@ function ItemView({
           : undefined
       : undefined;
     // 长原因或长汇报用统一展开行；一两行能看完的原文直接显示
-    if (item.detail) return <NoteWithDetail icon={item.icon} text={item.text} detail={item.detail} fresh={fresh} onOpenTarget={openTarget} />;
+    if (item.detail) return <NoteWithDetail icon={item.icon} text={item.text} detail={item.detail} fresh={fresh} itemId={item.id} onOpenTarget={openTarget} />;
     return (
-      <div className={`sys${fresh ? " enter-fade" : ""}`} id={item.handbackId ? `handback-${item.handbackId}` : undefined}>
+      <div className={`sys${fresh ? " enter-fade" : ""}`} id={item.handbackId ? `handback-${item.handbackId}` : undefined} data-item-id={item.id}>
         {openTarget ? <button className="sys-group" onClick={openTarget}>{item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}{item.text}</button> : <>
           {item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}
           {item.handbackId ? <button onClick={() => void jumpToHandback("hob", item.handbackId!, true)}>{item.text}</button> : item.icon === "skill" && item.path ? <button onClick={() => openFilePreview(item.path!)}>{item.text}</button> : item.icon === "memory" ? <span className="sys-memory" title={item.text}>{item.text.replace(/[:：,，;；、]+\s*$/u, "")}</span> : item.text}
@@ -976,7 +981,7 @@ function ItemView({
   if (item.kind === "draft") {
     const draft = s.drafts[item.draftId];
     return draft ? (
-      <div className={`b wide${enter}`}>
+      <div className={`b wide${enter}`} data-item-id={item.id}>
         <DraftCard draft={draft} />
       </div>
     ) : null;
@@ -984,7 +989,7 @@ function ItemView({
 
   if (item.kind === "delegation") {
     const delegation = s.delegations[item.delegationId];
-    return delegation ? <DelegationCard delegation={delegation} fresh={fresh} /> : null;
+    return delegation ? <DelegationCard delegation={delegation} fresh={fresh} itemId={item.id} /> : null;
   }
 
   if (item.kind === "card") {

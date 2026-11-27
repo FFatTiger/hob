@@ -374,11 +374,12 @@ describe("推送触发全路径回归", () => {
         call("message_group", { groupId: group.id, title: "端口排查", note: "排查 8080 端口占用" }),
         text("@运维 先帮我查下 8080 进程。"),
         text("查到了，是测试脚本占用了 8080，先汇报给群主。"),
+        text("收到，准备整理结论。"),
       ]);
       await hob.runtime.router.send("hob", { text: "让运维组查下 8080" });
       await waitFor(() => hob.runtime.groups.activeTopics(group.id).length === 1);
       const handoverTopic = hob.runtime.groups.activeTopics(group.id)[0]!;
-      await waitFor(() => hob.faux.state.callCount >= 3 && hob.runtime.groups.summary(handoverTopic.id).busy.length === 0);
+      await waitFor(() => hob.faux.state.callCount >= 4 && hob.runtime.groups.summary(handoverTopic.id).busy.length === 0);
       expect(push).not.toHaveBeenCalled();
 
       // 2. 例外 1：委托话题内群成员发出 ask_user 确认卡 -> 照常推送

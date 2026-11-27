@@ -1,5 +1,6 @@
 import { currentLocale, t } from "../../../shared/i18n.ts";
-import type { PluginProviderSpec, PluginServiceStatus, PluginView } from "../../../shared/types.ts";
+import { newerPluginVersion } from "../../../shared/plugin-version.ts";
+import type { PluginCatalogView, PluginProviderSpec, PluginServiceStatus, PluginUpdate, PluginView } from "../../../shared/types.ts";
 import type { IconName } from "../icons.tsx";
 
 export function hobExtension(manifest: Record<string, unknown>): Record<string, unknown> {
@@ -203,6 +204,17 @@ export function pluginOverallStatus(item: PluginView): PluginBadgeStatus | null 
   };
   // 闲置停掉是内部省内存的事，和连着一样显示
   return { tone: status === "idle" ? "connected" : status, label: labels[status], rank: ranks[status] };
+}
+
+export function pluginUpdateVersion(
+  item: PluginView,
+  catalog: PluginCatalogView | null | undefined,
+  pluginUpdates: PluginUpdate[] | undefined,
+): string | null {
+  if (item.plugin.source === "builtin" || item.plugin.source === "custom") return null;
+  const catalogEntry = catalog?.plugins.find((p) => p.id === item.plugin.id && p.source === item.plugin.source && !p.error);
+  const candidate = catalogEntry?.version ?? pluginUpdates?.find((u) => u.id === item.plugin.id && u.source === item.plugin.source)?.latest;
+  return candidate && newerPluginVersion(candidate, item.plugin.version) ? candidate : null;
 }
 
 export function formatContextWindow(tokens: number): string {

@@ -1,17 +1,17 @@
 import { useEffect, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { newerPluginVersion } from "../../../shared/plugin-version.ts";
-import type { PluginCatalogView, PluginServiceStatus, PluginsView } from "../../../shared/types.ts";
+import type { PluginCatalogView, PluginServiceStatus, PluginUpdate, PluginsView } from "../../../shared/types.ts";
 import { BrandIcon } from "../brand-icons.tsx";
 import type { Brand } from "../brand-recognition.ts";
-import { SetNavHead } from "./SettingsParts.tsx";
+import { SetNavHead, UpdateDot } from "./SettingsParts.tsx";
 import { Icon, type IconName } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { addCustomPlugin, addPluginSource, clearPluginInstallProgress, deletePluginSource, refreshPluginSources, closePlugins, installPlugin, updatePlugin, loadPluginCatalog, loadPlugins, openPlugins, useApp, MOCK, type PluginPage } from "../store.ts";
 import { DialogShell } from "./DialogShell.tsx";
 import { PluginDetail } from "./PluginDetail.tsx";
 import { PluginInstallView, PluginPreInstallDetail, type CatalogPluginItem } from "./PluginMarketViews.tsx";
-import { hasProviderContribution, hobExtension, isUnofficialPlugin, pluginOverallStatus, pluginPublisher, pluginSummaryText, type PluginBadgeStatus } from "./plugin-meta.ts";
+import { hasProviderContribution, hobExtension, isUnofficialPlugin, pluginOverallStatus, pluginPublisher, pluginSummaryText, pluginUpdateVersion, type PluginBadgeStatus } from "./plugin-meta.ts";
 import "./plugins.css";
 
 export function pluginName(manifest: Record<string, unknown>, id: string) {
@@ -54,7 +54,7 @@ export function PluginIcon({ name: _name, id, manifest, source }: { name: string
   return <div className="plugin-icon">{src && !failed ? <img alt="" src={src} onError={() => setFailed(true)} /> : <Icon name={id === "vault" ? "key" : "plugin"} size={22} />}</div>;
 }
 
-function PluginNav({ narrow, page, pluginId, view, onSelectMarket }: { narrow: boolean; page: PluginPage; pluginId: string | null; view: PluginsView | null; onSelectMarket?: () => void }) {
+export function PluginNav({ narrow, page, pluginId, view, catalog, pluginUpdates, onSelectMarket }: { narrow: boolean; page: PluginPage; pluginId: string | null; view: PluginsView | null; catalog?: PluginCatalogView | null; pluginUpdates?: PluginUpdate[]; onSelectMarket?: () => void }) {
   const choose = (next: PluginPage) => { onSelectMarket?.(); openPlugins(null, next); };
   if (narrow) return <nav className="home-filters plugin-categories" aria-label={t("插件分类")}>
     <button className={`home-filter${page === "installed" ? " on" : ""}`} onClick={() => choose("installed")}>{t("已安装")}</button>
@@ -68,9 +68,11 @@ function PluginNav({ narrow, page, pluginId, view, onSelectMarket }: { narrow: b
     {sortInstalled(view?.plugins ?? []).map((item) => {
       const name = pluginName(item.manifest, item.plugin.id);
       const badge = pluginOverallStatus(item);
+      const updateVersion = pluginUpdateVersion(item, catalog, pluginUpdates);
       return <button className={`navrow plugin-navrow${pluginId === item.plugin.id ? " sel" : ""}`} key={item.plugin.id} onClick={() => { onSelectMarket?.(); openPlugins(item.plugin.id); }}>
         <PluginIcon name={name} id={item.plugin.id} manifest={item.manifest} />
         <span className="plugin-nav-text"><span className="plugin-nav-name">{name}</span>{badge ? <PluginBadge badge={badge} /> : null}</span>
+        {updateVersion ? <UpdateDot version={updateVersion} /> : null}
       </button>;
     })}
     <button className={`navrow plugin-new${!pluginId && page === "new" ? " sel" : ""}`} onClick={() => choose("new")}>＋ {t("添加自定义 MCP")}</button>
@@ -106,11 +108,12 @@ function CustomPluginForm({ run }: { run: (action: () => Promise<unknown>) => vo
   </form>;
 }
 
-function PluginRow({
+export function PluginRow({
   id,
   manifest,
   badge,
   installed = false,
+  updateVersion,
   onOpen,
   action,
   source,
@@ -121,6 +124,7 @@ function PluginRow({
   manifest: Record<string, unknown>;
   badge?: PluginBadgeStatus | null;
   installed?: boolean;
+  updateVersion?: string | null;
   onOpen?: () => void;
   action?: { label: string; onClick: () => void };
   source?: string;
@@ -147,6 +151,7 @@ function PluginRow({
       </div>
       <span className="plugin-row-end">
         {action ? <button className="hob-btn plugin-install" onClick={(event) => { event.stopPropagation(); action.onClick(); }}>{action.label}</button> : badge ? <PluginBadge badge={badge} /> : installed ? <span className="plugin-state">{t("已安装")}</span> : null}
+        {updateVersion ? <UpdateDot version={updateVersion} /> : null}
         {clickable && !action ? <Icon name="chev" size={15} className="plugin-row-chevron" /> : null}
       </span>
     </div>
@@ -242,7 +247,8 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   const run = (action: () => Promise<unknown>) => {
     void (async () => { try { setError(""); await action(); await refresh(); } catch (errorValue) { setError(errorValue instanceof Error ? errorValue.message : String(errorValue)); } })();
   };
-  useEffect(() => { void refresh().catch((errorValue) => setError(errorValue instanceof Error ? errorValue.message : String(errorValue))); }, [s.pluginProviderTick]);
+  const pluginUpdatesKey = (s.pluginUpdates ?? []).map((u) => `${u.source}:${u.id}:${u.latest}`).join(",");
+  useEffect(() => { void refresh().catch((errorValue) => setError(errorValue instanceof Error ? errorValue.message : String(errorValue))); }, [s.pluginProviderTick, pluginUpdatesKey]);
   useEffect(() => {
     if (!catalog?.plugins.length || installing) return;
     const entries = Object.values(s.pluginInstall);
@@ -335,7 +341,7 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   </> : <>
     {!narrow && <PluginHeading title={t("插件")} description={t("连接常用工具，让助手在工作中使用。")} />}
     {error && <div className="badline" role="alert">{error}</div>}{view?.migrationErrors.map((message) => <div className="badline" key={message}>{message}</div>)}
-    <div className="plugin-list plugin-installed-list">{installed.map((item) => <PluginRow key={item.plugin.id} id={item.plugin.id} manifest={item.manifest} badge={pluginOverallStatus(item)} installed onOpen={() => openPlugins(item.plugin.id)} />)}</div>
+    <div className="plugin-list plugin-installed-list">{installed.map((item) => <PluginRow key={item.plugin.id} id={item.plugin.id} manifest={item.manifest} badge={pluginOverallStatus(item)} installed updateVersion={pluginUpdateVersion(item, catalog, s.pluginUpdates)} onOpen={() => openPlugins(item.plugin.id)} />)}</div>
     <div className="plugin-note">{t("需要处理的排在前面。停用的插件显示「已停用」。")}</div>
     {available.length ? <section className="plugin-market-more">
       <div className="plugin-section-head"><span>{t("市场里还有")}</span><button className="plugin-link" onClick={() => openPlugins(null, "market")}>{t("去市场")} <Icon name="chev" size={14} /></button></div>
@@ -345,7 +351,7 @@ export function Plugins({ narrow, leaving }: { narrow: boolean; leaving: boolean
   const inSubView = Boolean(s.pluginId || marketDetail || installing);
   return <main className={`setpage plugins${narrow ? " narrow" : ""}${leaving ? " leaving" : ""}`}>
     {narrow ? <div className="sethead"><button className="hob-icon-btn" title={inSubView ? t("返回插件") : t("返回 Hob")} aria-label={inSubView ? t("返回插件") : t("返回 Hob")} onClick={() => installing ? (clearPluginInstallProgress(installing.item.id), setInstalling(null)) : marketDetail ? setMarketDetail(null) : s.pluginId ? openPlugins() : closePlugins()}><Icon name="left" size={17} /></button><span className="t">{t("插件")}</span>{!inSubView && (s.pluginPage === "market" ? plus : s.pluginPage === "installed" ? <button className="hob-icon-btn" title={t("添加自定义 MCP")} aria-label={t("添加自定义 MCP")} onClick={() => openPlugins(null, "new")}><Icon name="plus" size={18} /></button> : null)}</div> : null}
-    {(!narrow || !inSubView) ? <PluginNav narrow={narrow} page={s.pluginPage} pluginId={s.pluginId} view={view} onSelectMarket={() => { setMarketDetail(null); if (installing) { clearPluginInstallProgress(installing.item.id); setInstalling(null); } }} /> : null}
+    {(!narrow || !inSubView) ? <PluginNav narrow={narrow} page={s.pluginPage} pluginId={s.pluginId} view={view} catalog={catalog} pluginUpdates={s.pluginUpdates} onSelectMarket={() => { setMarketDetail(null); if (installing) { clearPluginInstallProgress(installing.item.id); setInstalling(null); } }} /> : null}
     <section className="setmain plugin-main">{s.pluginId ? <PluginDetail id={s.pluginId} /> : installing ? <PluginInstallView item={installing.item} progress={s.pluginInstall[installing.item.id]} host={view?.providerHost} done={installing.done} error={installing.error} onBack={() => { clearPluginInstallProgress(installing.item.id); setInstalling(null); }} onOpenPlugin={() => { const id = installing.item.id; clearPluginInstallProgress(id); setInstalling(null); openPlugins(id); }} onRetry={() => void startInstall(installing.item)} /> : marketDetail ? <PluginPreInstallDetail item={marketDetail} sourceLabel={sourceName({ id: marketDetail.source ?? "", name: marketDetail.sourceName ?? "" })} error={error} busy={installBusy} onBack={() => setMarketDetail(null)} onInstall={() => void startInstall(marketDetail)} /> : <div className="plugin-content">{landing}</div>}</section>
     {sourceDialog && <SourceDialog sources={sources} refresh={refresh} onClose={() => setSourceDialog(false)} />}
   </main>;

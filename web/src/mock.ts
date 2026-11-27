@@ -67,11 +67,12 @@ import agyCliIcon from "./mock-plugins/agy-cli.svg?url";
 import emailManifest from "./mock-plugins/email.json";
 import { defaultSearch } from "../../shared/search.ts";
 import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry } from "../../shared/knowledge.ts";
-import type { PluginLoginView, PluginView } from "../../shared/types.ts";
+import type { PluginLoginView, PluginUpdate, PluginView } from "../../shared/types.ts";
 import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
+import { newerPluginVersion } from "../../shared/plugin-version.ts";
 import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.20.0" };
@@ -2579,13 +2580,24 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const pluginViews: PluginView[] = [];
   const pluginSources: import("../../shared/types.ts").PluginSourceView[] = [{ id: "official", name: "Hob 官方", url: "https://github.com/FFatTiger/hob-plugins" }];
   const pluginCatalog: import("../../shared/types.ts").PluginCatalogView["plugins"] = [
-    { id: "github", version: "1.0.0", manifest: { name: "GitHub", description: "查看和管理代码仓库、议题与拉取请求。", mockIcon: githubIcon, extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } } }, installed: false },
+    { id: "github", version: "1.2.0", manifest: { name: "GitHub", description: "查看和管理代码仓库、议题与拉取请求。", mockIcon: githubIcon, extensions: { "com.hob.plugins": { publisher: "GitHub", categories: ["development"] } } }, installed: false },
     { id: "gmail", version: "1.0.0", manifest: { name: "Gmail", description: "查找邮件、创建草稿并管理邮件。", mockIcon: gmailIcon, extensions: { "com.hob.plugins": { publisher: "Google", categories: ["communication"] } } }, installed: false },
     { id: "email", version: "1.0.0", manifest: { ...emailManifest, mockIcon: emailIcon }, installed: false },
     { id: "vault", version: "1.0.0", source: "builtin", sourceName: "Hob 自带", manifest: { name: "密码库", description: "Saves the usernames and passwords for your websites on this machine, encrypted. Assistants can see which logins you have and ask you to save new ones on a card, but never the passwords: when a site needs a login, Hob fills it into the page itself after you approve. The key is stored next to the vault in Hob's data folder, so anyone who can read that folder can read the vault.", extensions: { "com.hob.plugins": { publisher: "Hob", categories: ["productivity"] } } }, installed: false },
     { id: "calendar", version: "1.0.0", manifest: { name: "日历", description: "查看和安排日程。", extensions: { "com.hob.plugins": { categories: ["productivity"] } } }, installed: false },
   ];
   const mockPluginModelOriginals = new Map<string, import("../../shared/types.ts").PluginProviderModelView>();
+  const mockPluginUpdates = (): PluginUpdate[] => {
+    const out: PluginUpdate[] = [];
+    for (const view of pluginViews) {
+      if (view.plugin.source === "builtin" || view.plugin.source === "custom") continue;
+      const entry = pluginCatalog.find((item) => item.id === view.plugin.id && (item.source ?? "official") === view.plugin.source && !item.error);
+      if (entry && newerPluginVersion(entry.version, view.plugin.version)) {
+        out.push({ id: view.plugin.id, source: view.plugin.source, current: view.plugin.version, latest: entry.version });
+      }
+    }
+    return out;
+  };
   const mockPlugin = (id: string): PluginView => {
     const found = pluginViews.find(p => p.plugin.id === id);
     if (!found) throw new Error(`插件 ${id} 未安装`);
@@ -3724,6 +3736,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       approvals: clone(Object.values(db.approvals).filter((a) => a.status === "pending")),
       settings: clone(db.settings),
       update: clone(mockUpdate),
+      pluginUpdates: mockPluginUpdates(),
     }),
     settings: async () => clone(db.settings),
     rules: async () => ({ rules: clone(globalRules) }),
@@ -3905,15 +3918,21 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     refreshPluginSources: async () => ({ ok: true }),
     addPluginSource: async url => { const source = { id: `source-${pluginSources.length}`, url, name: url }; pluginSources.push(source); return clone(source); },
     deletePluginSource: async id => { const index = pluginSources.findIndex(source => source.id === id); if (index >= 0) pluginSources.splice(index, 1); return { ok: true as const }; },
-    installPlugin: async id => { const p = makePlugin(id, "official"); pluginViews.push(p); return clone(p); },
-    updatePlugin: async id => clone(mockPlugin(id)),
+    installPlugin: async id => { const p = makePlugin(id, "official"); pluginViews.push(p); emit({ type: "plugin-updates", updates: mockPluginUpdates() }); return clone(p); },
+    updatePlugin: async id => {
+      const p = mockPlugin(id);
+      const entry = pluginCatalog.find((item) => item.id === id && (item.source ?? "official") === p.plugin.source);
+      if (entry && newerPluginVersion(entry.version, p.plugin.version)) p.plugin.version = entry.version;
+      emit({ type: "plugin-updates", updates: mockPluginUpdates() });
+      return clone(p);
+    },
     patchPlugin: async (id, patch) => { const p = mockPlugin(id); if (patch.enabled !== undefined) p.plugin.enabled = patch.enabled; if (patch.assistants !== undefined) p.plugin.assistants = patch.assistants ?? undefined; if (patch.tools) { p.plugin.tools = patch.tools; for (const service of p.services) for (const tool of service.tools) tool.enabled = p.plugin.tools[tool.name]?.enabled !== false; } return clone(p); },
     savePluginConfig: async (id, values) => { const p = mockPlugin(id); for (const [key, value] of Object.entries(values)) { const field = p.config[key]; if (!field) throw new Error(`未声明的配置项 ${key}`); if (field.sensitive) field.configured = value !== null && value !== ""; else { field.value = value; if (value === null) delete p.plugin.config[key]; else p.plugin.config[key] = value; } } p.missing = Object.entries(p.config).filter(([, field]) => field.required && !(field.sensitive ? field.configured : field.value !== undefined && field.value !== null && field.value !== "")).map(([key]) => key); for (const service of p.services) { service.status = p.missing.length ? "pending_config" : service.oauth?.declared && !service.oauth.loggedIn ? "needs_login" : "connected"; service.missing = p.missing; } return clone(p); },
     addPluginProfile: async (id, name) => { const p = mockPlugin(id); if (!name.trim()) throw new Error("名称不能为空"); if ((p.profiles ?? []).some(profile => profile.name === name.trim())) throw new Error(`已经有叫「${name.trim()}」的配置了`); const profile = { id: `email-profile-${Date.now()}`, name: name.trim(), config: Object.fromEntries(Object.entries(p.config).map(([key, field]) => [key, { ...field, ...(field.sensitive ? { configured: false } : {}) }])), missing: Object.entries(p.config).filter(([, field]) => field.required).map(([key]) => key) }; (p.profiles ??= []).push(profile); return clone(p); },
     updatePluginProfile: async (id, profileId, name) => { const p = mockPlugin(id); const profile = p.profiles?.find(item => item.id === profileId); if (!profile) throw new Error("配置不存在"); if (!name.trim()) throw new Error("名称不能为空"); if ((p.profiles ?? []).some(item => item.id !== profileId && item.name === name.trim())) throw new Error(`已经有叫「${name.trim()}」的配置了`); profile.name = name.trim(); return clone(p); },
     deletePluginProfile: async (id, profileId) => { const p = mockPlugin(id); p.profiles = (p.profiles ?? []).filter(profile => profile.id !== profileId); return clone(p); },
     savePluginProfileConfig: async (id, profileId, values) => { const p = mockPlugin(id); const profile = p.profiles?.find(item => item.id === profileId); if (!profile) throw new Error("配置不存在"); for (const [key, value] of Object.entries(values)) { const field = mockProfileFields(p, profile)[key]; if (!field) throw new Error(`未声明的配置项 ${key}`); if (field.sensitive) field.configured = value !== null && value !== ""; else field.value = value; } profile.missing = Object.entries(profile.config).filter(([, field]) => field.required && !(field.sensitive ? field.configured : field.value !== undefined && field.value !== null && field.value !== "")).map(([key]) => key); return clone(p); },
-    deletePlugin: async id => { const index = pluginViews.findIndex(p => p.plugin.id === id); if (index >= 0) pluginViews.splice(index, 1); return { ok: true }; },
+    deletePlugin: async id => { const index = pluginViews.findIndex(p => p.plugin.id === id); if (index >= 0) pluginViews.splice(index, 1); emit({ type: "plugin-updates", updates: mockPluginUpdates() }); return { ok: true }; },
     addCustomPlugin: async id => { const p = makePlugin(id, "custom"); pluginViews.push(p); return clone(p); },
     startPluginOAuth: async (id, name) => { const service = mockPlugin(id).services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = true; service.status = "connected"; } return { authorized: true, callbackUrl: `${globalThis.location?.origin ?? "http://localhost"}/api/plugins/oauth/callback` }; },
     disconnectPluginOAuth: async (id, name) => { const p = mockPlugin(id); const service = p.services.find(s => s.name === name); if (service?.oauth) { service.oauth.loggedIn = false; service.status = "needs_login"; } return clone(p); },

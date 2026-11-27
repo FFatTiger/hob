@@ -12,9 +12,12 @@
 .plugin-navrow { gap: 10px; min-height: 52px; }
 .plugin-navrow .plugin-icon { width: 36px; height: 36px; border-radius: 10px; }
 .plugin-navrow .plugin-icon img { width: 22px; height: 22px; }
-.plugin-nav-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
+.plugin-nav-text { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; text-align: left; }
 .plugin-nav-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 14px; }
 .plugin-nav-text .plugin-state { font-size: 12px; }
+.plugin-update-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 20px; padding: 11px 16px; border-radius: 14px; background: var(--field); }
+.plugin-update-label { color: var(--accent); font-size: 14px; font-weight: 500; }
+.plugin-update-row + .plugin-connection { margin-top: 10px; }
 .plugin-market-nav { gap: 10px; }
 .plugin-categories { display: none; }
 .plugin-main { min-width: 0; }

@@ -15,6 +15,7 @@ import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 export function Sidebar() {
   const s = useApp();
   const updateVersion = availableVersion(s.update);
+  const pluginUpdateCount = (s.pluginUpdates ?? []).length;
   const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const pinRows = useRows(drag.order, (row) => row.id);
@@ -56,7 +57,13 @@ export function Sidebar() {
       </div>
       <div className="side-foot">
         <button className="frow" onClick={openStars}><Icon name="star" size={18} /><span className="sp">{t("收藏")}</span></button>
-        <button className="frow" onClick={() => openPlugins()}><Icon name="plugin" size={18} /><span className="sp">{t("插件")}</span></button>
+        <button className="frow" onClick={() => openPlugins()}>
+          <Icon name="plugin" size={18} />
+          <span className="sp">
+            {t("插件")}
+            {pluginUpdateCount > 0 ? <UpdateDot label={t("{n} 个插件有新版本", { n: pluginUpdateCount })} /> : null}
+          </span>
+        </button>
         <button className="frow" onClick={openKnowledge}>
           <Icon name="archive" size={18} />
           <span className="sp">{t("知识库")}</span>

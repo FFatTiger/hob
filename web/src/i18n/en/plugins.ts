@@ -57,6 +57,7 @@ export const pluginsEn = {
   "「{name}」读取失败：{error}": "Could not read “{name}”: {error}",
   "{name}（已移除）": "{name} (removed)",
   "插件": "Plugins",
+  "{n} 个插件有新版本": { one: "{n} plugin has an update", other: "{n} plugins have updates" },
   "市场": "Marketplace",
   "已安装": "Installed",
   "已安装的插件": "Installed plugins",

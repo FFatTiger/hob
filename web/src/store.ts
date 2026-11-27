@@ -42,6 +42,7 @@ import type {
   PageLive,
   PluginInstallProgress,
   PluginSignInSessionView,
+  PluginUpdate,
   ModelThinkingView,
   Profile,
   ProviderImportView,
@@ -70,6 +71,7 @@ import { shouldOpenLive } from "./page-live.ts";
 import { clearFresh, flashItem, markFresh } from "./motion.ts";
 import { isSentAs, localPath, pendingItem, type Attachment, type PendingMessage } from "./outbox.ts";
 import { isImagePath } from "../../shared/media.ts";
+import { newerPluginVersion } from "../../shared/plugin-version.ts";
 import { createMock, SCENE_UI, type SceneId } from "./mock.ts";
 import { currentSubscription, deviceLabel, subscribePush } from "./push.ts";
 import { mergeStep, mergeSteps } from "./steps.ts";
@@ -170,6 +172,7 @@ export interface State {
   pluginInstall: Record<string, PluginInstallProgress>;
   pluginProviderTick: number;
   pluginSignIn: Record<string, PluginSignInSessionView>;
+  pluginUpdates: PluginUpdate[];
   knowledge: { category: string; q: string; kind: KnowledgeGroup | ""; assistantId: string; entries: (KnowledgeEntry & { snippet?: string })[]; collections: KnowledgeCollection[]; collectionsLoaded: boolean; hasMore: boolean; loading: boolean; error: string | null };
   section: SettingsSection | null; // 设置页当前分栏；null = 手机上的列表（桌面当通用看）
   sub: SettingsSub | null; // 分栏里再进一层（模型详情、添加模型）；null = 分栏本身
@@ -347,6 +350,7 @@ function initial(): State {
     pluginInstall: {},
     pluginProviderTick: 0,
     pluginSignIn: {},
+    pluginUpdates: [],
     knowledge: { category: "all", q: "", kind: "", assistantId: "", entries: [], collections: [], collectionsLoaded: false, hasMore: false, loading: false, error: null },
     section: null,
     sub: null,
@@ -811,7 +815,15 @@ export const installPlugin = (id: string, source?: string) => api.installPlugin(
 export const addPluginSource = (url: string) => api.addPluginSource(url);
 export const deletePluginSource = (id: string) => api.deletePluginSource(id);
 export const refreshPluginSources = () => api.refreshPluginSources();
-export const updatePlugin = (id: string) => api.updatePlugin(id);
+export const updatePlugin = async (id: string) => {
+  const updated = await api.updatePlugin(id);
+  set((s) => ({
+    pluginUpdates: s.pluginUpdates.filter(
+      (u) => !(u.id === updated.plugin.id && u.source === updated.plugin.source && !newerPluginVersion(u.latest, updated.plugin.version)),
+    ),
+  }));
+  return updated;
+};
 export const savePluginConfig = (id: string, values: Record<string, unknown>) => api.savePluginConfig(id, values);
 export const addPluginProfile = (id: string, name: string) => api.addPluginProfile(id, name);
 export const updatePluginProfile = (id: string, profileId: string, name: string) => api.updatePluginProfile(id, profileId, name);
@@ -830,7 +842,11 @@ export const savePluginLogin = (id: string, body: Parameters<typeof api.savePlug
 export const deletePluginLogin = (id: string, loginId: string, service?: string) => api.deletePluginLogin(id, loginId, service);
 export const addCustomPlugin = (id: string, server: Record<string, unknown>) => api.addCustomPlugin(id, server);
 export const patchPlugin = (id: string, patch: import("../../shared/types.ts").PluginPatch) => api.patchPlugin(id, patch);
-export const deletePlugin = (id: string) => api.deletePlugin(id);
+export const deletePlugin = async (id: string) => {
+  const result = await api.deletePlugin(id);
+  set((s) => ({ pluginUpdates: s.pluginUpdates.filter((u) => u.id !== id) }));
+  return result;
+};
 export const loadPluginProviderHost = () => api.pluginProviderHost();
 export const approvePlugin = (id: string) => api.approvePlugin(id);
 export const loadPluginProviders = (id: string, load = false) => api.pluginProviders(id, load);
@@ -1232,6 +1248,7 @@ async function loadBootstrap(reconnect = false) {
       cards: {},
       settings: boot.settings,
       update: boot.update ?? null,
+      pluginUpdates: boot.pluginUpdates ?? [],
       ...(boot.settings.settings.general.locale ? { locale: boot.settings.settings.general.locale } : {}),
       theme: boot.settings.settings.general.theme,
     });
@@ -1557,6 +1574,9 @@ function applyEventState(ev: HobEvent) {
       break;
     case "update":
       set({ update: ev.update });
+      break;
+    case "plugin-updates":
+      set({ pluginUpdates: ev.updates });
       break;
   }
 }

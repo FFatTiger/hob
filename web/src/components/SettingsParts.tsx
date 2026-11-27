@@ -10,10 +10,10 @@ export function availableVersion(update: UpdateCheck | null | undefined): string
   return update?.status === "available" ? update.latest : null;
 }
 
-/** 侧栏「设置」和设置导航「关于」上的新版本小圆点：和列表里「有新消息」的点一个画法。 */
-export function UpdateDot({ version }: { version: string }) {
-  const label = t("有新版本 {version}", { version });
-  return <span className="update-dot" title={label} role="img" aria-label={label} />;
+/** 侧栏「设置」「插件」、设置导航「关于」及已安装插件列表上的新版本小圆点：和列表里「有新消息」的点一个画法。 */
+export function UpdateDot({ version, label }: { version?: string; label?: string }) {
+  const text = label ?? t("有新版本 {version}", { version: version ?? "" });
+  return <span className="update-dot" title={text} role="img" aria-label={text} />;
 }
 
 export function PageHead({ title, desc }: { title: string; desc: ReactNode }) {

@@ -3039,13 +3039,20 @@ html:lang(en) .screen .v {
   place-items: center;
   color: var(--text2);
 }
-.me.has-update {
+.me.has-update,
+.mhead .hob-icon-btn.has-update {
   position: relative;
 }
 .me .update-dot {
   position: absolute;
   top: 1px;
   right: 1px;
+  box-shadow: 0 0 0 2px var(--bg);
+}
+.mhead .hob-icon-btn .update-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
   box-shadow: 0 0 0 2px var(--bg);
 }
 .mpins {

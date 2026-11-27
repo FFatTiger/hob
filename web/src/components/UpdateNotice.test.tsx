@@ -1,6 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UpdateCheck } from "../../../shared/types.ts";
+import type { PluginUpdate, UpdateCheck } from "../../../shared/types.ts";
 
 const state = vi.hoisted(() => ({
   assistants: [],
@@ -13,6 +13,7 @@ const state = vi.hoisted(() => ({
   section: "about" as string | null,
   sub: null,
   update: null as UpdateCheck | null,
+  pluginUpdates: [] as PluginUpdate[],
   settings: {
     revision: 1,
     settings: {
@@ -65,6 +66,7 @@ import { Sidebar } from "./Sidebar.tsx";
 describe("新版本小箭头提示", () => {
   beforeEach(() => {
     state.update = null;
+    state.pluginUpdates = [];
     state.section = "about";
   });
 
@@ -116,5 +118,27 @@ describe("新版本小箭头提示", () => {
     expect(withUpdate).toContain('class="me has-update"');
     expect(withUpdate).toContain('class="update-dot"');
     expect(withUpdate).toContain('aria-label="有新版本 1.15.0"');
+  });
+
+  it("左栏与手机首页「插件」入口有可更新插件时带圆点与个数说明，没有时保持原样", () => {
+    const desktopPlain = renderToStaticMarkup(<Sidebar />);
+    expect(desktopPlain).toContain(">插件</span>");
+    expect(desktopPlain).not.toContain("update-dot");
+
+    const mobilePlain = renderToStaticMarkup(<MobileList />);
+    expect(mobilePlain).toContain('title="插件"');
+    expect(mobilePlain).not.toContain("个插件有新版本");
+
+    state.pluginUpdates = [
+      { id: "github", source: "official", current: "1.0.0", latest: "1.2.0" },
+      { id: "email", source: "official", current: "1.0.0", latest: "1.1.0" },
+    ];
+    const desktopUpdate = renderToStaticMarkup(<Sidebar />);
+    expect(desktopUpdate).toMatch(/插件<span class="update-dot" title="2 个插件有新版本" role="img" aria-label="2 个插件有新版本"/);
+
+    const mobileUpdate = renderToStaticMarkup(<MobileList />);
+    expect(mobileUpdate).toContain('class="hob-icon-btn has-update"');
+    expect(mobileUpdate).toContain('title="插件 · 2 个插件有新版本"');
+    expect(mobileUpdate).toContain('aria-label="2 个插件有新版本"');
   });
 });

@@ -22,11 +22,13 @@ const pickList = (s: State) => ({
   query: s.query,
   search: s.search,
   update: s.update,
+  pluginUpdates: s.pluginUpdates,
 });
 
 export const MobileList = memo(function MobileList() {
   const s = useAppSelect(pickList, shallow);
   const updateVersion = availableVersion(s.update);
+  const pluginUpdateCount = (s.pluginUpdates ?? []).length;
   const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
   const drag = usePinDrag(pins, s.query.trim().length > 0);
   const layout = pinLayout(pins.length);
@@ -54,7 +56,14 @@ export const MobileList = memo(function MobileList() {
         ) : (
           <>
             <button className="hob-icon-btn" title={t("收藏")} onClick={openStars}><Icon name="star" size={19} /></button>
-            <button className="hob-icon-btn" title={t("插件")} onClick={() => openPlugins()}><Icon name="plugin" size={19} /></button>
+            <button
+              className={`hob-icon-btn${pluginUpdateCount ? " has-update" : ""}`}
+              title={pluginUpdateCount ? `${t("插件")} · ${t("{n} 个插件有新版本", { n: pluginUpdateCount })}` : t("插件")}
+              onClick={() => openPlugins()}
+            >
+              <Icon name="plugin" size={19} />
+              {pluginUpdateCount ? <UpdateDot label={t("{n} 个插件有新版本", { n: pluginUpdateCount })} /> : null}
+            </button>
             <button className="hob-icon-btn" title={t("知识库")} onClick={openKnowledge}>
               <Icon name="archive" size={19} />
             </button>

@@ -1,6 +1,5 @@
 import { Children, useEffect, useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
-import { newerPluginVersion } from "../../../shared/plugin-version.ts";
 import type { PluginCatalogView, PluginServiceStatus, PluginToolLoginStatus, PluginToolView, PluginView } from "../../../shared/types.ts";
 import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
@@ -10,7 +9,7 @@ import { Select } from "./Select.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
 import { approvePlugin, DeviceCodeLoginCard, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
-import { hasProviderContribution, isUnofficialPlugin, pluginDetailText, pluginReviewedVersion } from "./plugin-meta.ts";
+import { hasProviderContribution, isUnofficialPlugin, pluginDetailText, pluginReviewedVersion, pluginUpdateVersion } from "./plugin-meta.ts";
 
 export function InlineLinks({ text }: { text: string }) {
   return <>{text.split(/(\[[^\]]+\]\(https?:\/\/[^)]+\))/g).map((part, index) => {
@@ -21,6 +20,17 @@ export function InlineLinks({ text }: { text: string }) {
 
 function Description({ text }: { text: string }) {
   return <div className="plugin-sub"><InlineLinks text={text} /></div>;
+}
+
+export function PluginUpdateRow({ version, busy, onUpdate }: { version: string; busy?: boolean; onUpdate: () => void }) {
+  return (
+    <div className="plugin-update-row">
+      <span className="plugin-update-label">{t("有新版本 {version}", { version })}</span>
+      <button type="button" className="hob-btn hob-btn-primary" disabled={busy} onClick={onUpdate}>
+        {t("更新")}
+      </button>
+    </div>
+  );
 }
 
 export function ToolPluginLoginRow({
@@ -146,7 +156,7 @@ function statusTone(status: PluginServiceStatus): "warn" | "bad" | "ok" {
 }
 
 export function PluginDetail({ id }: { id: string }) {
-  const { assistants, pluginProviderTick } = useApp();
+  const { assistants, pluginProviderTick, pluginUpdates } = useApp();
   const [item, setItem] = useState<PluginView | null>(null);
   const [catalog, setCatalog] = useState<PluginCatalogView | null>(null);
   const [values, setValues] = useState<Record<string, unknown>>({});
@@ -274,7 +284,7 @@ export function PluginDetail({ id }: { id: string }) {
   const restTools = visibleTools.slice(6);
   const hasAnnotations = tools.tools.some(tool => tool.annotations !== undefined);
   const toolErrors = item.services.flatMap(serviceItem => serviceItem.toolErrors ?? []);
-  const latest = catalog?.plugins.find(p => p.id === id && p.source === item.plugin.source && !p.error);
+  const latestVersion = pluginUpdateVersion(item, catalog, pluginUpdates);
   const source = catalog?.sources?.find(source => source.id === item.plugin.source);
   const origin = item.plugin.source === "custom" ? t("自定义") : item.plugin.source === "builtin" ? t("Hob 自带") : item.plugin.source === "official" ? t("Hob 官方") : source?.name ?? t("{name}（已移除）", { name: item.plugin.sourceName ?? item.plugin.source });
   const name = pluginName(item.manifest, id);
@@ -407,10 +417,11 @@ export function PluginDetail({ id }: { id: string }) {
     <div className="plugin-identity">
       <PluginIcon name={name} id={id} manifest={item.manifest} />
       <div className="plugin-identity-text"><div className="plugin-title">{name}</div><div className="plugin-sub">{subtitle}</div></div>
-      <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu">{!item.plugin.needsApproval ? <button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button> : null}{latest && newerPluginVersion(latest.version, item.plugin.version) ? <button onClick={() => void run(() => updatePlugin(id))}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
+      <div className="plugin-identity-menu"><button className="hob-icon-btn" title={t("更多")} aria-label={t("更多")} onClick={() => setMenuOpen(value => !value)}><Icon name="more" size={17} /></button>{menuOpen ? <div className="plugin-menu">{!item.plugin.needsApproval ? <button onClick={() => void run(() => patchPlugin(id, { enabled: !item.plugin.enabled }))}>{item.plugin.enabled ? t("停用") : t("启用")}</button> : null}{latestVersion ? <button onClick={() => { setMenuOpen(false); void run(() => updatePlugin(id)); }}>{t("更新")}</button> : null}<button onClick={() => { if (window.confirm(t("卸载插件「{name}」？", { name }))) void deletePlugin(id).then(() => openPlugins()).catch(e => setError(e instanceof Error ? e.message : String(e))); }}>{t("卸载插件")}</button></div> : null}</div>
     </div>
     <Description text={detailDesc} />
     {error && <div className="badline" role="alert">{error}</div>}
+    {latestVersion ? <PluginUpdateRow version={latestVersion} busy={busy} onUpdate={() => void run(() => updatePlugin(id))} /> : null}
 
     {item.plugin.needsApproval ? (
       <PluginUpdateApprovalBanner

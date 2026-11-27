@@ -142,6 +142,21 @@ export interface GroupState {
  * 进不到目录的地方要知道 jobId 落在哪个助手下面，所以这里维护一份内存索引，启动时扫一遍、
  * 新建任务时登记；不存索引文件，免得和实际目录对不上。
  */
+/** 从指定会话（单聊主对话或助手话题）交给群、尚未关闭的话题，供 nowBlock / hasPendingWork / todosBusy 共用。 */
+export function openHandedOverTopics(store: { groups?: () => Group[] }, assistantId: string, place?: Place): Group[] {
+  if (place?.groupId) return [];
+  const topicId = place?.topicId || undefined;
+  return (store.groups?.() ?? [])
+    .filter(
+      (group) =>
+        group.parentId !== undefined &&
+        !group.closedAt &&
+        group.handover?.by === assistantId &&
+        (group.handover.fromTopicId || undefined) === topicId,
+    )
+    .sort((a, b) => (a.handover?.at ?? a.createdAt).localeCompare(b.handover?.at ?? b.createdAt));
+}
+
 export class Store {
   /** jobId → 任务目录（含归档助手目录里的） */
   private jobIndex: Map<string, string> | null = null;
@@ -522,21 +537,6 @@ export class Store {
    * 读一个群。话题带 parentId，读出来时补上所属群的成员、群主和负责什么，
    * 再把话题的 overrides 叠上去；视图另外保留 overrides 原值。旧 workflow 字段保留在文件里但不进入视图。
    */
-  /** 从指定会话（单聊主对话或助手话题）交给群、尚未关闭的话题，供 nowBlock / hasPendingWork / todosBusy 共用。 */
-  openHandedOverTopics(assistantId: string, place?: Place): Group[] {
-    if (place?.groupId) return [];
-    const topicId = place?.topicId || undefined;
-    return this.groups()
-      .filter(
-        (group) =>
-          group.parentId !== undefined &&
-          !group.closedAt &&
-          group.handover?.by === assistantId &&
-          (group.handover.fromTopicId || undefined) === topicId,
-      )
-      .sort((a, b) => (a.handover?.at ?? a.createdAt).localeCompare(b.handover?.at ?? b.createdAt));
-  }
-
   group(id: string): Group | undefined {
     const own = readJson<Group | null>(join(groupDir(this.home, id), "group.json"), null);
     if (!own) return undefined;

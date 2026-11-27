@@ -5,6 +5,13 @@ import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../../shared/i18n.ts";
 import { nowBlock } from "../src/now.ts";
+import {
+  ASSISTANT_TOPIC_REPORT_BACK_LINE,
+  buildSystemPrompt,
+  GROUP_TOPIC_REPORT_BACK_LINE,
+  ONE_ON_ONE_REPORT_BACK_LINE,
+  groupTopicHandoverReportBackLine,
+} from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { todosBusy } from "../src/todos.ts";
 import { makeHob, type TestHob } from "./helpers.ts";
@@ -556,5 +563,58 @@ describe("nowBlock handed-over topics and shared pending work check", () => {
     expect(nowBlock(hob.runtime, "coord", { topicId: topicA.id })).not.toContain("交给群的：");
     expect(hob.runtime.router.hasPendingWork("coord", { topicId: topicA.id })).toBe(false);
     expect(todosBusy(hob.runtime, "coord", { topicId: topicA.id })).toBe(false);
+  });
+});
+
+describe("report_back prompt sections A1/A2/B/C", () => {
+  it("injects A1, A2, B, and C only into their designated sessions", async () => {
+    const hob = createHob();
+    addAssistant(hob, "owner", "策划助手", "统筹");
+    addAssistant(hob, "member", "后勤助手", "执行");
+    addAssistant(hob, "writer", "写作助手", "写作", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+
+    const group = hob.runtime.groups.create({ name: "活动群", purpose: "筹备", members: ["owner", "member"], ownerId: "owner" });
+    const generalTopic = hob.runtime.groups.createTopic(group.id, "场地布置", "owner");
+    const { topic: handedTopic } = hob.runtime.groups.handOver(group.id, "备份迁移", "hob", { text: "迁移", files: [] });
+    const { topic: writerTopic } = await hob.runtime.assistantTopics.create("writer", { title: "第三章", createdBy: "user" });
+
+    const baseSettings = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
+
+    // A1: 综合开的群话题，只给群主
+    const ownerGeneralTopicPrompt = buildSystemPrompt(hob.runtime.store, "owner", { ...baseSettings, group: hob.runtime.store.group(generalTopic.id) });
+    expect(ownerGeneralTopicPrompt).toContain(GROUP_TOPIC_REPORT_BACK_LINE);
+    expect(ownerGeneralTopicPrompt).not.toContain(ONE_ON_ONE_REPORT_BACK_LINE);
+
+    // 普通成员在群话题里不给 A1 / A2
+    const memberTopicPrompt = buildSystemPrompt(hob.runtime.store, "member", { ...baseSettings, group: hob.runtime.store.group(generalTopic.id) });
+    expect(memberTopicPrompt).not.toContain(GROUP_TOPIC_REPORT_BACK_LINE);
+    expect(memberTopicPrompt).not.toContain("report_back");
+
+    // 综合里的群主不给 A1 / A2
+    const ownerGeneralPrompt = buildSystemPrompt(hob.runtime.store, "owner", { ...baseSettings, group: hob.runtime.store.group(group.id) });
+    expect(ownerGeneralPrompt).not.toContain(GROUP_TOPIC_REPORT_BACK_LINE);
+    expect(ownerGeneralPrompt).not.toContain("report_back");
+
+    // A2: 主助手交来的群话题，只给群主，替换 A1
+    const ownerHandedPrompt = buildSystemPrompt(hob.runtime.store, "owner", { ...baseSettings, group: hob.runtime.store.group(handedTopic.id) });
+    expect(ownerHandedPrompt).toContain(groupTopicHandoverReportBackLine("Hob"));
+    expect(ownerHandedPrompt).not.toContain(GROUP_TOPIC_REPORT_BACK_LINE);
+
+    const memberHandedPrompt = buildSystemPrompt(hob.runtime.store, "member", { ...baseSettings, group: hob.runtime.store.group(handedTopic.id) });
+    expect(memberHandedPrompt).not.toContain("report_back");
+
+    // B: 助手话题，给 B，不混入 C
+    const writerTopicPrompt = buildSystemPrompt(hob.runtime.store, "writer", { ...baseSettings, topicId: writerTopic.id });
+    expect(writerTopicPrompt).toContain(ASSISTANT_TOPIC_REPORT_BACK_LINE);
+    expect(writerTopicPrompt).not.toContain(ONE_ON_ONE_REPORT_BACK_LINE);
+
+    // C: 非主助手单聊 / 主对话，给 C，不给 B
+    const writerMainPrompt = buildSystemPrompt(hob.runtime.store, "writer", baseSettings);
+    expect(writerMainPrompt).toContain(ONE_ON_ONE_REPORT_BACK_LINE);
+    expect(writerMainPrompt).not.toContain(ASSISTANT_TOPIC_REPORT_BACK_LINE);
+
+    // 主助手单聊：不给 C
+    const hobPrompt = buildSystemPrompt(hob.runtime.store, "hob", baseSettings);
+    expect(hobPrompt).not.toContain("report_back");
   });
 });

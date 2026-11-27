@@ -50,6 +50,7 @@ function expectedTopicText(name: string): string {
   return [
     `这里是你的话题「${name}」，只谈这一件事。主对话和别的话题里说了什么，这里看不到，这件事需要的来龙去脉都记在这个话题里；用户提到别处说过的事，用 search_history 或 show_assistant 查。`,
     "这件事办完、用户也认可了结果，或者用户说不做了，用 close_topic 写上结论，关闭话题：结论会显示在话题上，主对话里的你也会收到。刚交付结果、用户还没回应时先不关，用户可能还有后续；关闭的话题用户随时能重新打开。",
+    "主对话里的你看得到你所有的话题。办到一半碰到要主对话来定的事，比如要用到别的话题的结果、和别的话题的安排撞了，用 report_back 把情况和要定的事写清楚交回主对话：主对话里的你会收到，接着安排，这个话题不关，你还能接着办。只在这个话题里就能办完的事，办完直接告诉用户。用户在这里亲自拿主意的，交不交回听用户的。",
     "在这里定的规则通常只管这个话题，用 set_rule 时 scope 填 topic。用户明确要求不只针对这件事，比如「你以后都这样」，scope 才填 assistant，写到你自己的规则里，别的话题和主对话也会照着做；拿不准时填 topic，用户想推广可以再说。",
   ].join("\n\n");
 }
@@ -58,6 +59,8 @@ const EXPECTED_RECALL_LINE = "用户提的事和以前的话题有关，先用 s
 
 const ONE_ON_ONE_INTRO =
   "用户在一对一的对话里和你合作。别的助手会把归你管的事交给你：交来的消息是交接方写的交接说明，里面引用的用户原话等同用户本人的要求，你完成任务后的结果会自动回到交接方。用户找你处理的事不归你管时，看「助手」一节：明显归某个助手管的，用 message_assistant 直接分派给它，少绕一手；拿不准归谁，或者是别人交给你、却不归你管的，用 hand_back 交回。";
+const ONE_ON_ONE_REPORT_BACK =
+  "转来的事这一轮说完，结果会自动回到转交方。之后用户在你这里接着办这件事，有了转交方要知道的新结果，或者用户要你告诉它，用 report_back 交回去。";
 
 describe("助手多话题系统提示词（票 F）", () => {
   it("逐字匹配第十节原文，主对话与话题会话放在一对一合作句后且互斥", async () => {
@@ -79,9 +82,9 @@ describe("助手多话题系统提示词（票 F）", () => {
       const mainPrompt = buildSystemPrompt(store, "life", PROMPT_OPTS);
       const topicPrompt = buildSystemPrompt(store, "life", { ...PROMPT_OPTS, topicId: topic.id });
 
-      // 主对话：紧接在「用户在一对一的对话里和你合作……」后面，且补在补充提示词之后
-      expect(mainPrompt).toContain(`${ONE_ON_ONE_INTRO}\n\n${EXPECTED_MAIN_TEXT}`);
-      expect(mainPrompt).toContain(`先说重点，再列待确认项。\n\n${ONE_ON_ONE_INTRO}\n\n${EXPECTED_MAIN_TEXT}`);
+      // 主对话：紧接在「用户在一对一的对话里和你合作……」和单聊汇报说明后面，且补在补充提示词之后
+      expect(mainPrompt).toContain(`${ONE_ON_ONE_INTRO}\n\n${ONE_ON_ONE_REPORT_BACK}\n\n${EXPECTED_MAIN_TEXT}`);
+      expect(mainPrompt).toContain(`先说重点，再列待确认项。\n\n${ONE_ON_ONE_INTRO}\n\n${ONE_ON_ONE_REPORT_BACK}\n\n${EXPECTED_MAIN_TEXT}`);
       expect(mainPrompt).not.toContain("这里是你的话题");
 
       // 话题会话：接在同样位置，替换主对话那段，且不出话题清单
@@ -93,7 +96,7 @@ describe("助手多话题系统提示词（票 F）", () => {
       // 运行时 RouterManager.ensure 激活的系统提示词同样精确匹配
       const mainState = await hob.runtime.router.ensure("life");
       const topicState = await hob.runtime.router.ensure("life", { topicId: topic.id });
-      expect(mainState.session!.systemPrompt).toContain(`${ONE_ON_ONE_INTRO}\n\n${EXPECTED_MAIN_TEXT}`);
+      expect(mainState.session!.systemPrompt).toContain(`${ONE_ON_ONE_INTRO}\n\n${ONE_ON_ONE_REPORT_BACK}\n\n${EXPECTED_MAIN_TEXT}`);
       expect(mainState.session!.systemPrompt).toContain("## 你的话题");
       expect(topicState.session!.systemPrompt).toContain(`${ONE_ON_ONE_INTRO}\n\n${expectedTopicText("下月搬家")}`);
       expect(topicState.session!.systemPrompt).not.toContain(EXPECTED_MAIN_TEXT);

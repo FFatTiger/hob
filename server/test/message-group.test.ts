@@ -293,7 +293,7 @@ describe("message_group", () => {
 
       const empty = await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "  " });
       expect(isError(empty)).toBe(true);
-      expect(textOf(empty)).toBe("title 不能为空：写这件事，如「相册备份出错」。");
+      expect(textOf(empty)).toBe("title 和 topic 要填一个：创建新话题填 title，转到已有话题填 topic。");
 
       const long = await toolOf(hob, "message_group").execute("c", { groupId: group.id, title: "字".repeat(41) });
       expect(isError(long)).toBe(true);

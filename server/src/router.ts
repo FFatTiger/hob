@@ -52,7 +52,7 @@ import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
 import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
-import { reactionsList, type AssistantState } from "./store.ts";
+import { openHandedOverTopics, reactionsList, type AssistantState } from "./store.ts";
 import { TOPIC_CLOSED } from "./groups.ts";
 import { assertAssistantTopic, TopicError } from "./assistant-topics.ts";
 import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./follow-up.ts";
@@ -1707,7 +1707,7 @@ export class RouterManager {
       .delegations()
       .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
     if (openDelegations) return true;
-    return this.store.openHandedOverTopics(assistantId, normalized).length > 0;
+    return openHandedOverTopics(this.store, assistantId, normalized).length > 0;
   }
 
   /** 读取当前正在进行的轮次来源（open_topic 转入话题时沿用）。 */

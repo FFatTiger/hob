@@ -2,6 +2,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { nowText } from "./time.ts";
 import { sessionOrigin } from "./origin.ts";
 import { placeOf, samePlace } from "./place.ts";
+import { openHandedOverTopics } from "./store.ts";
 import { readTodoBook, sessionTodosPath, todosBlockText, todosReminderText } from "./todos.ts";
 import type { Job, Place } from "../../shared/types.ts";
 
@@ -50,9 +51,9 @@ export function nowBlock(runtime: HobRuntime, assistantId: string, current?: Pla
   const delegations = runtime.store.delegations().filter((item) => item.from === assistantId && (item.status === "running" || item.status === "waiting") && samePlace(item.fromTopicId ? { topicId: item.fromTopicId } : undefined, current))
     .map((item) => `${runtime.store.assistant(item.to)?.name ?? item.to}「${short(item.text)}」，${clock(item.createdAt)} 起`);
   if (delegations.length) lines.push(`转交中：${delegations.join("；")}`);
-  const handedOver = runtime.store.openHandedOverTopics(assistantId, current)
+  const handedOver = openHandedOverTopics(runtime.store, assistantId, current)
     .map((topic) => {
-      const hostName = runtime.store.group(topic.parentId!)?.name ?? topic.parentId!;
+      const hostName = runtime.store.group?.(topic.parentId!)?.name ?? topic.parentId!;
       return `群「${hostName}」话题「${short(topic.name)}」，${clock(topic.handover!.at)} 起`;
     });
   if (handedOver.length) lines.push(`交给群的：${handedOver.join("；")}`);

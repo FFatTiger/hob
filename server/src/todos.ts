@@ -10,6 +10,7 @@ import type { Iso, Place, TodoItem } from "../../shared/types.ts";
 import { assistantTodosPath, assistantTopicTodosPath, groupTodosPath } from "./config.ts";
 import { placeOf, samePlace } from "./place.ts";
 import type { HobRuntime } from "./runtime.ts";
+import { openHandedOverTopics } from "./store.ts";
 import { agoText } from "./time.ts";
 
 export type TodoStatus = TodoItem["status"];
@@ -195,7 +196,7 @@ export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Plac
     .delegations()
     .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
   if (delegating) return true;
-  if (runtime.store.openHandedOverTopics(assistantId, place).length > 0) return true;
+  if (openHandedOverTopics(runtime.store, assistantId, place).length > 0) return true;
   const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), place) && (place?.groupId !== undefined || approval.assistantId === assistantId));
   if (asking) return true;
   return place?.groupId !== undefined && runtime.router.busyMembers(place.groupId).some((id) => id !== assistantId);

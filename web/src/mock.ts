@@ -71,6 +71,7 @@ import type { PluginLoginView, PluginUpdate, PluginView } from "../../shared/typ
 import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
 import { currentLocale } from "../../shared/i18n.ts";
+import { allowAlwaysRuleText, matchesRememberRule } from "../../shared/rules.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 import { newerPluginVersion } from "../../shared/plugin-version.ts";
 import { GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
@@ -3451,10 +3452,10 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   }
   let globalRules: Rule[] = [
     ...[
-      L("执行前确认：删除或覆盖文件、数据和备份", "Ask first: deleting or overwriting files, data or backups"),
-      L("执行前确认：对外发送（消息、邮件、发布）、付费、充值、改计费", "Ask first: sending anything out (messages, email, publishing), paying, topping up or changing billing"),
-      L("执行前确认：停止或重启别人正在使用的服务和设备", "Ask first: stopping or restarting services and devices that others are using"),
-      L("执行前确认：修改可能让你失去远程访问的设置（网络、防火墙、登录方式）", "Ask first: changing settings that could cut off your remote access (network, firewall, sign-in methods)"),
+      L("删除或覆盖文件、数据和备份之前，先问我。", "Ask me before deleting or overwriting files, data or backups."),
+      L("对外发消息、发邮件、发布内容，或者付费、充值、改计费之前，先问我。", "Ask me before sending messages or emails, publishing content, or paying, topping up or changing billing."),
+      L("停止或重启别人正在用的服务和设备之前，先问我。", "Ask me before stopping or restarting services or devices that others are using."),
+      L("改网络、防火墙、登录方式这类可能让我连不上的设置之前，先问我。", "Ask me before changing network, firewall or sign-in settings that could cut off my access."),
       L("过去的记录是线索不是现状：动手前先核实实际状态。", "Past records are leads, not the current state: check the actual state before acting."),
       L("改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。", "Before changing configuration or data, keep a way back (a backup or the original values); afterwards, verify the actual effect, not just the command's output."),
       L("凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。", "Read credentials (passwords, keys, tokens, cookies) only when you use them; don't echo them, write them into files or reports, or store them."),
@@ -5017,8 +5018,8 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const option = ap.options.find((o) => o.key === answer.key);
       if (option?.always && ap.ruleText) {
         const rules = (db.rules[ap.assistantId] ??= []);
-        const ruleText = `直接执行：${ap.ruleText}`;
-        const existing = rules.find((rule) => rule.text === ruleText || rule.text === `执行前确认：${ap.ruleText}` || rule.text === ap.ruleText);
+        const ruleText = allowAlwaysRuleText(ap.ruleText);
+        const existing = rules.find((rule) => matchesRememberRule(rule.text, ap.ruleText!));
         if (existing) {
           existing.text = ruleText;
           existing.changedAt = ap.answeredAt;

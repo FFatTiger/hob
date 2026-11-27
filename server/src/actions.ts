@@ -1,4 +1,5 @@
 import { t } from "../../shared/i18n.ts";
+import { allowAlwaysRuleText, askFirstRuleText, matchesRememberRule } from "../../shared/rules.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
 import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft, LoginEntryApproval } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
@@ -594,9 +595,8 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
   if (option?.always) {
     const assistant = store.assistant(approval.assistantId);
     const remember = approval.ruleText?.trim() || option.label;
-    const ruleText = `直接执行：${remember}`;
-    const matchesExisting = (text: string) =>
-      text === ruleText || text === `执行前确认：${remember}` || text === remember;
+    const ruleText = allowAlwaysRuleText(remember);
+    const matchesExisting = (text: string) => matchesRememberRule(text, remember);
     const group = approval.groupId ? store.group(approval.groupId) : undefined;
     const assistantTopic = !group && approval.topicId
       ? store.assistantTopic(approval.assistantId, approval.topicId)
@@ -808,7 +808,7 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string, opti
     assistant.id,
     draft.askFirst.map((text) => ({
       id: newId("r-"),
-      text: text.startsWith("执行前确认：") ? text : `执行前确认：${text}`,
+      text: askFirstRuleText(text),
       changedAt: now,
     })),
   );

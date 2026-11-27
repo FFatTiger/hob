@@ -8271,21 +8271,22 @@ button.screen,
 .hc > .qs { font-size: 14px; line-height: 1.58; color: var(--text2); margin-top: 6px; }
 .hc > .qs strong { color: var(--text); }
 .hc > .qs code { font-size: 12.5px; }
-.hc > .qs + .hc-elements { margin-top: 14px; }
+.hc > .qs + .hc-elements { margin-top: 18px; }
 .hc h1,
 .hc h2,
 .hc h3,
 .hc h4 {
   font-weight: 600;
   line-height: 1.45;
-  margin: 20px 0 6px;
+  margin: 18px 0 6px;
 }
 .hc h1 { font-size: 16.5px; }
 .hc h2 { font-size: 16px; }
 .hc h3 { font-size: 16px; }
 .hc h4 { font-size: 15.5px; }
-.hc-elements > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 10px; }
-.hc-collapse-body > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 12px; }
+.hc-elements > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 8px; }
+.hc-collapse-body > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 10px; }
+.hc-column > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 12px; }
 .hc-source { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text2); font-size: 12.5px; }
 .hc-source img { flex: none; }
 .hc-source .hc-lock { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text3); }

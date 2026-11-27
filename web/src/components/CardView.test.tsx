@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it, vi } from "vitest";
 import type { CardRecord } from "../../../shared/types.ts";
@@ -223,6 +224,15 @@ describe("CardView", () => {
               tag: "markdown",
               content: "### 第一节\n\n第一段正文。\n\n第二段正文，详情见 [报告](https://example.org/report)。",
             },
+            {
+              tag: "table",
+              columns: [{ name: "c0", display_name: "项目" }, { name: "c1", display_name: "结论" }],
+              rows: [{ c0: "API", c1: "兼容" }],
+            },
+            {
+              tag: "markdown",
+              content: "### 第二节\n\n表格后正文。\n\n### 第三节\n\n段落后正文。",
+            },
           ],
         },
       },
@@ -234,5 +244,13 @@ describe("CardView", () => {
     expect(html).toContain('<div class="hc-md"><h3>第一节</h3>');
     expect(html).toContain("<p>第一段正文。</p>");
     expect(html).toContain('<p>第二段正文，详情见 <a target="_blank" rel="noreferrer" href="https://example.org/report">报告</a>。</p>');
+    expect(html).toContain('</div><div class="hc-table-wrap">');
+    expect(html).toContain('</table></div><div class="hc-md"><h3>第二节</h3>');
+    expect(html).toContain("</p>\n<h3>第三节</h3>\n<p>段落后正文。</p>");
+
+    const css = readFileSync(new URL("../styles.css", import.meta.url), "utf8");
+    expect(css).toContain(".hc > .qs + .hc-elements { margin-top: 18px; }");
+    expect(css).toContain("margin: 18px 0 6px;");
+    expect(css).toContain(".hc-elements > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 8px; }");
   });
 });

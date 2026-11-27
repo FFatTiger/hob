@@ -1106,9 +1106,11 @@ darkQuery.addEventListener("change", () => {
 let started = false;
 let stopEvents: (() => void) | null = null;
 
+/** 实时连接状态：open 是这次登录后第一次真正连上，reconnect 是断过之后又连上，down 是断开或退出登录。 */
 export type ConnectionStatus = "open" | "reconnect" | "down";
 const eventListeners = new Set<(ev: HobEvent) => void>();
 const connectionListeners = new Set<(status: ConnectionStatus) => void>();
+let connection: ConnectionStatus = "down";
 
 export function subscribeEvents(listener: (ev: HobEvent) => void): () => void {
   eventListeners.add(listener);
@@ -1120,8 +1122,25 @@ export function subscribeConnection(listener: (status: ConnectionStatus) => void
   return () => { connectionListeners.delete(listener); };
 }
 
+/** 实时连接现在是不是连着：连着才收得到推送，这时拉的快照之后的变化不会漏。 */
+export function liveConnected(): boolean {
+  return connection !== "down";
+}
+
+/** 一个订阅者出错只记下来，不让它拦住其他订阅者和后面的补拉。 */
+function notify<T>(listeners: Set<(value: T) => void>, value: T): void {
+  for (const listener of listeners) {
+    try {
+      listener(value);
+    } catch (error) {
+      console.error("live event subscriber failed:", error);
+    }
+  }
+}
+
 function emitConnection(status: ConnectionStatus): void {
-  for (const listener of connectionListeners) listener(status);
+  connection = status;
+  notify(connectionListeners, status);
 }
 
 export async function start() {
@@ -1227,10 +1246,12 @@ async function loadBootstrap(reconnect = false) {
       stopEvents = api.events(
         {
           onEvent: applyEvent,
+          onOpen: () => emitConnection("open"),
           onReconnect: () => {
             set({ offline: null });
-            reportVisibility({ force: true });
             emitConnection("reconnect");
+            // 旧连接断开时服务端已把这页记成不可见，重连后强制再报一次，否则开着页面也会收到推送
+            reportVisibility({ force: true });
             void loadBootstrap(true);
           },
           onDown: (reason) => {
@@ -1241,7 +1262,6 @@ async function loadBootstrap(reconnect = false) {
         CLIENT_ID,
       );
       watchVisibility();
-      emitConnection("open");
     }
     void loadStars();
     const sel =
@@ -1281,7 +1301,7 @@ async function loadBootstrap(reconnect = false) {
 const closedLivePages = new Set<string>();
 export function applyEvent(ev: HobEvent) {
   applyEventState(ev);
-  for (const listener of eventListeners) listener(ev);
+  notify(eventListeners, ev);
 }
 
 function applyEventState(ev: HobEvent) {

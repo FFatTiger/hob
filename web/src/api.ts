@@ -116,6 +116,8 @@ function json(body: unknown, method = "POST"): RequestInit {
 
 export interface EventHandlers {
   onEvent(ev: HobEvent): void;
+  /** 第一次真正连上（不是开始连）：这之后拉的快照不会漏掉推送 */
+  onOpen?(): void;
   onReconnect(): void;
   onDown(reason: string): void;
 }
@@ -635,42 +637,89 @@ export const realApi: HobApi = {
       ...json({ clientId, visible, target }),
       ...(opts?.keepalive ? { keepalive: true } : {}),
     }),
-  events: ({ onEvent, onReconnect, onDown }, clientId) => {
+  events: ({ onEvent, onOpen, onReconnect, onDown }, clientId) => {
+    const query = clientId ? `?clientId=${encodeURIComponent(clientId)}` : "";
     const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-    const url = `${protocol}//${location.host}/api/events/ws${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`;
+    const url = `${protocol}//${location.host}/api/events/ws${query}`;
     let closed = false;
     let wasDown = false;
+    let opened = false;
     let delay = 1000;
     let socket: WebSocket | null = null;
+    let sse: EventSource | null = null;
+    let useSse = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const connected = () => {
+      const first = !opened;
+      opened = true;
+      delay = 1000;
+      if (wasDown) {
+        wasDown = false;
+        onReconnect();
+      } else if (first) onOpen?.();
+    };
+
+    const deliver = (data: unknown) => {
+      if (typeof data !== "string") return;
+      try {
+        onEvent(JSON.parse(data) as HobEvent);
+      } catch {
+        /* 坏事件丢弃，不影响其他事件 */
+      }
+    };
+
+    const retry = (again: () => void) => {
+      wasDown = true;
+      onDown(t("实时连接中断，正在重连"));
+      timer = setTimeout(again, delay);
+      delay = Math.min(delay * 2, 15_000);
+    };
+
+    // 反向代理没配 WebSocket 升级时，握手一次都成功不了：退回这一条 SSE，页面仍只占一条连接。
+    // 断网时 EventSource 自己重连；服务重启时代理回 502，它就关掉不再连，这时按退避重新建一条
+    const connectSse = () => {
+      if (closed) return;
+      useSse = true;
+      const es = new EventSource(`/api/events${query}`);
+      sse = es;
+      es.onmessage = (e) => {
+        if (!closed && sse === es) deliver(e.data);
+      };
+      es.onerror = () => {
+        if (closed || sse !== es) return;
+        if (es.readyState !== EventSource.CLOSED) {
+          wasDown = true;
+          onDown(t("实时连接中断，正在重连"));
+          return;
+        }
+        es.close();
+        sse = null;
+        retry(connectSse);
+      };
+      es.onopen = () => {
+        if (!closed && sse === es) connected();
+      };
+    };
 
     const connect = () => {
       if (closed) return;
       const ws = new WebSocket(url);
       socket = ws;
       ws.onopen = () => {
-        if (closed || socket !== ws) return;
-        delay = 1000;
-        if (wasDown) {
-          wasDown = false;
-          onReconnect();
-        }
+        if (!closed && socket === ws) connected();
       };
       ws.onmessage = (e) => {
-        if (closed || socket !== ws || typeof e.data !== "string") return;
-        try {
-          onEvent(JSON.parse(e.data) as HobEvent);
-        } catch {
-          /* 坏事件丢弃，不影响其他事件 */
-        }
+        if (!closed && socket === ws) deliver(e.data);
       };
       ws.onclose = () => {
         if (closed || socket !== ws) return;
         socket = null;
-        wasDown = true;
-        onDown(t("实时连接中断，正在重连"));
-        timer = setTimeout(connect, delay);
-        delay = Math.min(delay * 2, 15_000);
+        if (!opened) {
+          connectSse();
+          return;
+        }
+        retry(connect);
       };
       ws.onerror = () => {
         if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
@@ -678,11 +727,11 @@ export const realApi: HobApi = {
     };
 
     const onOnline = () => {
-      if (!closed && !socket) {
-        clearTimeout(timer);
-        delay = 1000;
-        connect();
-      }
+      if (closed || socket || sse) return;
+      clearTimeout(timer);
+      delay = 1000;
+      if (useSse) connectSse();
+      else connect();
     };
     globalThis.addEventListener?.("online", onOnline);
     connect();
@@ -694,6 +743,8 @@ export const realApi: HobApi = {
       const current = socket;
       socket = null;
       current?.close();
+      sse?.close();
+      sse = null;
     };
   },
 };

@@ -56,16 +56,28 @@ describe("全局规则设置", () => {
     expect(load).toHaveBeenCalledTimes(2);
   });
 
-  it("API 使用整表接口且监听 rules 事件", async () => {
+  it("API 使用整表接口，实时连接收到 rules 事件就重拉", async () => {
     const fetch = vi.fn().mockImplementation(async () => new Response(JSON.stringify({ rules: initial })) );
     vi.stubGlobal("fetch", fetch);
     await realApi.rules();
     await realApi.saveRules(initial);
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/rules", expect.anything());
     expect(fetch).toHaveBeenNthCalledWith(2, "/api/rules", expect.objectContaining({ method: "PUT", body: JSON.stringify({ rules: initial }) }));
-    const addEventListener = vi.fn();
-    vi.stubGlobal("EventSource", class { addEventListener = addEventListener; close() {} });
-    realApi.events({ onEvent() {}, onReconnect() {}, onDown() {} });
-    expect(addEventListener).toHaveBeenCalledWith("rules", expect.any(Function));
+    // 实时事件从 WebSocket 进来，经 realApi.events 交给 store.applyEvent，和页面里接的是同一条路
+    const sockets: Array<{ onopen?: () => void; onmessage?: (event: { data: string }) => void; close(): void }> = [];
+    vi.stubGlobal("location", { protocol: "http:", host: "hob.test", search: "", hash: "" });
+    vi.stubGlobal("WebSocket", class { static OPEN = 1; static CONNECTING = 0; readyState = 0; constructor() { sockets.push(this); } close() {} });
+    const store = await import("../src/store.ts");
+    // 只有正开着规则设置页时，rules 事件才会重拉
+    store.openSettings();
+    store.setSection("rules");
+    const load = vi.spyOn(realApi, "rules").mockImplementation(async () => ({ rules: [{ ...initial[1], text: "推送后的规则" }] }));
+    const stop = realApi.events({ onEvent: store.applyEvent, onReconnect() {}, onDown() {} });
+    expect(sockets).toHaveLength(1);
+    sockets[0].onopen?.();
+    sockets[0].onmessage?.({ data: JSON.stringify({ type: "rules" }) });
+    await vi.waitFor(() => expect(store.getState().globalRules.rules?.[0].text).toBe("推送后的规则"));
+    expect(load).toHaveBeenCalledTimes(1);
+    stop();
   });
 });

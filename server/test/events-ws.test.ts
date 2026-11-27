@@ -1,6 +1,10 @@
 import { once } from "node:events";
+import { mkdtempSync, rmSync } from "node:fs";
 import type { AddressInfo } from "node:net";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { serve } from "@hono/node-server";
+import { createServer } from "vite";
 import { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/http.ts";
@@ -91,6 +95,47 @@ describe("实时事件 WebSocket (/api/events/ws)", () => {
       });
       expect(hob.runtime.push.hasVisible()).toBe(false);
     } finally {
+      detach();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      hob.close();
+    }
+  });
+  it("经开发用的 Vite 代理连接时同源校验仍按浏览器地址判断", async () => {
+    const hob = makeHob();
+    const app = createApp(hob.runtime, { home: hob.home });
+    const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+    const detach = attachEventsWebSocket(server, hob.runtime);
+    await once(server, "listening");
+    const cacheDir = mkdtempSync(join(tmpdir(), "hob-events-ws-vite-"));
+    const previousPort = process.env.HOB_PORT;
+    // vite.config.ts 读 HOB_PORT 决定代理目标：指到这个测试服务，不碰本机其他实例
+    process.env.HOB_PORT = String((server.address() as AddressInfo).port);
+    const vite = await createServer({ cacheDir, logLevel: "silent", optimizeDeps: { noDiscovery: true, include: [] }, server: { port: 0, host: "127.0.0.1" } });
+    try {
+      await vite.listen();
+      const devBase = `http://127.0.0.1:${(vite.httpServer!.address() as AddressInfo).port}`;
+      const login = await fetch(`${devBase}/api/login`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ password: "test" }),
+      });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const wsUrl = `${devBase.replace("http:", "ws:")}/api/events/ws?clientId=tab-dev`;
+
+      const ws = new WebSocket(wsUrl, { headers: { cookie, origin: devBase } });
+      await new Promise<void>((resolve, reject) => {
+        ws.once("open", () => resolve());
+        ws.once("unexpected-response", (_req, res) => reject(new Error(`upgrade rejected: ${res.statusCode}`)));
+      });
+      ws.close();
+      await once(ws, "close");
+
+      expect(await expectUpgradeStatus(wsUrl, { cookie, origin: "http://evil.example" })).toBe(403);
+    } finally {
+      await vite.close();
+      if (previousPort === undefined) delete process.env.HOB_PORT;
+      else process.env.HOB_PORT = previousPort;
+      rmSync(cacheDir, { recursive: true, force: true });
       detach();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       hob.close();

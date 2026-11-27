@@ -132,7 +132,7 @@ npm run typecheck
 
 前端地址加上 `?mock=1` 会改用浏览器里的模拟后端，不需要模型和服务端，README 里的截图就是这样拍的（`scripts/readme-screenshots.mjs`）。
 
-技术栈：Node 22 + TypeScript，Hono + SSE，Vite + React，CSS 全部手写；智能体引擎是进程内运行的 [pi](https://github.com/earendil-works/pi) SDK。设计、数据布局和工具列表见 [docs/architecture.md](docs/architecture.md)。
+技术栈：Node 22 + TypeScript，Hono + WebSocket 实时事件（连不上时退回 SSE），Vite + React，CSS 全部手写；智能体引擎是进程内运行的 [pi](https://github.com/earendil-works/pi) SDK。设计、数据布局和工具列表见 [docs/architecture.md](docs/architecture.md)。
 
 ### 编写和贡献插件
 

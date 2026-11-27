@@ -132,7 +132,7 @@ npm run typecheck
 
 Add `?mock=1` to the dev URL to run the UI against an in-browser fake backend, with no model or server needed. The screenshots in this README are taken that way by `scripts/readme-screenshots.mjs`.
 
-Stack: Node 22 + TypeScript, Hono with SSE, Vite + React with hand-written CSS. The agent engine is the [pi](https://github.com/earendil-works/pi) SDK, running in-process. See [docs/architecture.md](docs/architecture.md) for the design, data layout and tool list (in Chinese).
+Stack: Node 22 + TypeScript, Hono with WebSocket live events (SSE fallback), Vite + React with hand-written CSS. The agent engine is the [pi](https://github.com/earendil-works/pi) SDK, running in-process. See [docs/architecture.md](docs/architecture.md) for the design, data layout and tool list (in Chinese).
 
 ### Writing and contributing plugins
 

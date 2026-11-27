@@ -21,7 +21,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 ## 进程和底座
 
-- 单个 Node 22 进程：`server/`（Hono + SSE）+ `web/`（Vite + React，构建后由 server 静态托管）。入口是 `server/src/boot.ts`。
+- 单个 Node 22 进程：`server/`（Hono + WebSocket 实时事件，连不上时退回 SSE）+ `web/`（Vite + React，构建后由 server 静态托管）。入口是 `server/src/boot.ts`。
 - 底座是 pi SDK `@earendil-works/pi-coding-agent@1.5.2`（引擎），在进程内 `createAgentSession`。界面、提示词、错误信息里不出现 pi：用户不需要知道它。
   - 服务商和凭据全归 Hob 自己管：引擎目录是 `HOB_HOME/system/engine`（`authPath` 在这里，模型配置 `modelsPath` 是 `HOB_HOME/system/engine/models.json`），不读不写任何别的工具的配置。
   - Hob 为每个 Router 和 Worker 会话显式设置 `cacheWarming: "streaming"`。1.5.1 的默认值改为 `idle`，只对模型声明了 prompt cache 生命周期且预计节省达到阈值的请求生效；Hob 同时维护许多可独立空闲的会话，idle 会在两轮之间额外发刷新请求，因此保留升级前只在活动运行期间预热的行为。
@@ -159,7 +159,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 - **Group（群与群话题）**：群记录成员、群主、职责、`replyMode`、默认 `models`、`memberModels`（仅 `{ work?: ModelPick }`，成员不再单设对话模型）、`cwd`；群话题是带 `parentId` 的 `Group`，文件只存话题自身字段及 `overrides` 原值，另带 `pinnedAt?: Iso`（进行中话题置顶时间，关闭与重开时清除）、`closedAt`、`closeNote`、`handover`。
 - **助手的补充提示词**：`Assistant.instructions` 存在助手的 `profile.json`，用户通过资料面板或 PATCH 修改，主助手可用 `update_assistant` 修改任何助手，普通助手可修改自己；创建助手时草稿 `Draft.instructions` 原样带入。只去首尾空白，空字符串视为没有。原文紧接身份那几句、原样进入单聊、群和话题的系统提示词，不加标题和别的话；任务提示词也带所属助手的补充提示词；其他助手的名单不包含它。助手和草稿的补充提示词在重启时保留，旧群说明仍归档。
 - **Item（对话条目）**：对话 = 有序的 Item 列表。用户消息、助手回复从 pi 会话的消息得出；卡片类（question / job / draft / note / file / card / topic）用 pi 的自定义条目 `customType: "hob.item"` 存在同一个 `router.jsonl` 里，**不进模型上下文**。其中 `{ kind: "topic", topicId }` 是群综合或多话题助手主对话里的话题卡；`forwardedFrom` 记转进话题的来源（`{ groupId, itemId }` 或 `{ assistantId, itemId? }`）。卡片的可变状态（审批是否已选、任务进度、草稿是否已建）在 approvals.json / jobs / drafts.json / cards.json 里，条目只存 id 引用，渲染时合并。历史搜索与收藏用 `ConversationRef`（`{ kind: "assistant" | "group" | "topic"; id: string }`）区分单聊/主对话、群/群话题和助手话题。老数据里还有 `todos` 条目（以前收起的一份待办），现在不再写入、界面也不显示。
-- **卡片**：卡片正文是服务端校验过的声明式 JSON 子集，完整记录按助手或群写在 `cards.json`，时间线只保存 `{ kind: "card", cardId }`。主人有两种：助手卡记 `assistantId`，插件卡同时记插件、服务、回调工具和调起它的助手。助手卡允许展示或交互；交互卡操作后锁成 `done`，结果保存在卡片记录里，并以 `[hob-event]` 系统消息回到原助手。插件卡的表单值只在一次回调调用的内存参数里经过 Hob，卡片记录、时间线、会话文件、模型消息、SSE 和日志都不写这些值；插件可以返回新卡整卡替换、toast、字段错误或文字事件，插件不可用时卡片保留并禁用操作；插件更新到新版本时，它更新前出的、还没处理的卡作废并写明原因（卡片内容是出卡时旧版定下的，字段和回调可能已经变了）。模型后续历史只接收一行标题和摘要（没有摘要时用「表单 N 项」或「表格 N 行」），不接收卡片 JSON。Hob 在飞书子集上加的扩展字段：`input` 的 `min_length`、`generate`（密码框旁的「生成」按钮）；`select_static` 的 `display`（`dropdown` 画成下拉、`chips` 画成圆角小块，不写时选项少画小块、多了画下拉）；`div` 的 `icon`（`file` / `doc` 画成文件行，`check` 画成结果行：勾 + 灰字）。`column_set` 每栏按 `weight` 分宽度。插件卡的来源行用插件自己在 `plugin.json` 里声明的图标，取不到用通用的插件图标。
+- **卡片**：卡片正文是服务端校验过的声明式 JSON 子集，完整记录按助手或群写在 `cards.json`，时间线只保存 `{ kind: "card", cardId }`。主人有两种：助手卡记 `assistantId`，插件卡同时记插件、服务、回调工具和调起它的助手。助手卡允许展示或交互；交互卡操作后锁成 `done`，结果保存在卡片记录里，并以 `[hob-event]` 系统消息回到原助手。插件卡的表单值只在一次回调调用的内存参数里经过 Hob，卡片记录、时间线、会话文件、模型消息、实时事件和日志都不写这些值；插件可以返回新卡整卡替换、toast、字段错误或文字事件，插件不可用时卡片保留并禁用操作；插件更新到新版本时，它更新前出的、还没处理的卡作废并写明原因（卡片内容是出卡时旧版定下的，字段和回调可能已经变了）。模型后续历史只接收一行标题和摘要（没有摘要时用「表单 N 项」或「表格 N 行」），不接收卡片 JSON。Hob 在飞书子集上加的扩展字段：`input` 的 `min_length`、`generate`（密码框旁的「生成」按钮）；`select_static` 的 `display`（`dropdown` 画成下拉、`chips` 画成圆角小块，不写时选项少画小块、多了画下拉）；`div` 的 `icon`（`file` / `doc` 画成文件行，`check` 画成结果行：勾 + 灰字）。`column_set` 每栏按 `weight` 分宽度。插件卡的来源行用插件自己在 `plugin.json` 里声明的图标，取不到用通用的插件图标。
 - **Job（任务）**：一次隔离执行 = Hob 进程里的一个 Worker pi 会话（`cwd` 给了就在那个目录干，不给就用 `HOB_HOME/assistants/<助手id>/jobs/<id>/work`）。任务记录带干活用的 `model` / `thinking`、`usage`（token 和花费）、`durationMs`，以及归属字段 `groupId` / `topicId`；过程从 `worker.jsonl` 推导成 JobStep 列表（`server/src/transcript.ts`），实时动作走 `job_step` 事件。`assistantName` 记下建任务时的助手名，助手归档后任务详情照样显示。结束的任务可以接着做（续做）：上一轮结束时的状态、原因、用时存进 `rounds`，对话里再放一张带 `round`（第几轮）的任务卡。界面上同一个任务只显示最新一轮那张卡（`Items.tsx` 的 `visibleItems`），它跟着任务实时变；前几轮按 `rounds` 在任务详情里切换着看。
 - **Approval（审批）**：选择题卡片，带 `groupId` / `topicId` 记明提卡的会话。来源可以是 Router（不阻塞，答案作为下一条用户消息回到提卡的会话）或旧数据中的 Worker 提问（新任务只向助手提问，不生成用户审批卡）。带 `always` 的选项（"以后这类直接…"）选中后自动写一条 `mode: "allow"` 的 Rule 到提卡的那一层（群话题或助手话题写话题覆盖层，群综合写群规则，单聊或主对话写助手规则），并在当前会话出一行"已记入 X 的规则 · …"。审批仍属于提问的助手；转交回合中助手提出的审批，也在主助手的委派卡内展示同一条审批，两处调用同一答复接口。
 - **Routine（定时）**：cron 表达式或具体时间（`croner` 库），带 `groupId`（群综合或群话题）、`topicId`（助手话题）和 `pausedBy?: "topicClosed"`（见下文“定时”）。定时任务保存「要做的事」是谁写的（`instructionBy`：`"user"` 或助手 id）；到点时区分标明。
@@ -393,14 +393,14 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
 
 - **清单与元数据**：在 `plugin.json` 的 `extensions["com.hob.plugins"]` 下声明 `providers: [{ package, version, integrity, export?, defaultConfig? }]`（`integrity` 为 `sha512-…` SRI），同时可声明 `maintainer`、`sourceUrl`、`riskNotice`、`permissions`（如 `network`、`subprocess`、`local-auth`、`bun-runtime`）及 `categories`（带 `providers` 的插件在目录里自动带上 `providers` 分类和 `hasProviders: true`）。
 - **权限变化重确认**：安装时记住已批准的清单能力（`approvedPermissions`、`approvedProviders`）；更新插件后若新增了权限或变更了供应商包名，自动停用插件并置 `needsApproval: true`、`capabilityChanges`，在用户调用 `POST /api/plugins/:id/approve` 确认前禁止启用。
-- **按需下载 Bun 与包校验（`server/src/bun-runtime.ts`）**：首次安装带模型的插件时，按平台下载固定版本 Bun（`BUN_VERSION = 1.4.2`）到 `HOB_HOME/runtime/bun/<version>/bin/bun`，内置官方 `SHASUMS256.txt` 的 SHA-256 哈希，校验通过后再解压；没装这类插件时不下载。随后用该 Bun 在 `HOB_HOME/plugins/<id>/providers-runtime/` 下按固定版本安装 npm 包（`--ignore-scripts`），从 npm registry 下载对应 tarball 核对 `integrity`（SHA-512），不通过就回滚并报错。安装期间通过 SSE 推送 `plugin-install` 进度事件。
+- **按需下载 Bun 与包校验（`server/src/bun-runtime.ts`）**：首次安装带模型的插件时，按平台下载固定版本 Bun（`BUN_VERSION = 1.4.2`）到 `HOB_HOME/runtime/bun/<version>/bin/bun`，内置官方 `SHASUMS256.txt` 的 SHA-256 哈希，校验通过后再解压；没装这类插件时不下载。随后用该 Bun 在 `HOB_HOME/plugins/<id>/providers-runtime/` 下按固定版本安装 npm 包（`--ignore-scripts`），从 npm registry 下载对应 tarball 核对 `integrity`（SHA-512），不通过就回滚并报错。安装期间通过实时事件推送 `plugin-install` 进度。
 - **共享 Bun 宿主进程（`server/src/provider-plugin-host.ts`、`server/src/provider-host.mjs`）**：所有启用的带模型插件共用一个 Bun 子进程，通过 stdio 上的行分隔 JSON-RPC 通信（请求/响应、流式 chunk、abort、反向回调）。首次用到才启动，之后一直运行、不因闲置退出：插件把对话会话放在宿主进程里，停掉后下一轮要整段重发、缓存全丢（设了 `HOB_PROVIDER_HOST_IDLE_MS` 才按这个毫秒数闲置退出），崩溃后标记 `crashed` 并在下次使用时自动重启。宿主子进程环境变量清掉 Hob 自身的密钥和 `HOB_PASSWORD`，只传每个插件自己的 `HOB_HOME/plugin-data/<id>`；插件代码仍以当前系统用户身份运行，不是沙箱隔离。
 - **兼容面（OpenCode V1 + Magpie 扩展）**：支持插件导出的 `config`、`auth`（`methods`、`prompts`、`loader` 返回的 `baseURL`/`apiKey`/`headers`/`fetch`、`refresh`/`refreshLead`、`usage`、`single`、`cli`、`icon`、`keyless`）、`provider.models`、`chat.headers`；向插件提供 `client`（`auth.set`）、`directory`、`worktree`、`serverUrl` 和 `Bun`。
 - **内部代理端点与模型注册（`server/src/provider-plugins.ts`）**：`ProviderPluginManager` 启动一个只监听 `127.0.0.1` 随机端口的 HTTP 服务，每次启动生成 32 字节随机令牌，拒绝缺少或错误 `Authorization: Bearer <token>` 及非本机来源的请求。每个已启用且有在用账号的插件供应商以 `plugin-<pluginId>`（单供应商）或 `plugin-<pluginId>-<providerId>` 注册进 pi 的 `ModelRegistry`（OpenAI Chat / OpenAI Responses / Anthropic Messages 三种协议），请求指向内部端点 `http://127.0.0.1:<port>/p/<pluginId>/<providerId>/*`，流式响应原样透传，浏览器/助手中止时一路 abort 到插件的 `fetch`；请求前按 `refreshLead` 自动刷新快过期的 OAuth 令牌，刷新失败标为 `expired`。
 - **思考档映射**：插件模型声明的 `variants` 键（`minimal` / `low` / `medium` / `high` / `xhigh` / `max`）映射为 Hob 的思考档，与 `off` 组合；插件未声明 `variants` 时默认不提供思考档（仍可在模型思考档设置里自定义）。
 - **凭据、多账号与模型缓存**：
   - 账号元数据、当前在用账号（`activeAccountId`）和按账号缓存的模型列表保存在 `HOB_HOME/system/provider-plugins.json`；拉取模型失败保留上次成功的模型列表并在 `modelsError` 写原因，不以空数组冒充成功。
-  - 账号凭据（API Key 或 OAuth `access`/`refresh`/`expires`）按 `plugin:<pluginId>:provider:<providerId>:account:<accountId>` 存在 `HOB_HOME/system/secrets.json`（0600），不进日志、SSE 事件、对话或其它文件，只在需要时经内存传给宿主。
+  - 账号凭据（API Key 或 OAuth `access`/`refresh`/`expires`）按 `plugin:<pluginId>:provider:<providerId>:account:<accountId>` 存在 `HOB_HOME/system/secrets.json`（0600），不进日志、实时事件、对话或其它文件，只在需要时经内存传给宿主。
   - 一个供应商默认支持多账号登录并切换「在用」账号；插件声明 `single: true` 时覆盖唯一账号。
 - **五种登录流程**：
   1. **填密钥 / 免登录**（`api` / `keyless`）：按需执行 `prompts`，提交后保存账号并拉取模型；`keyless` 免输入密钥。
@@ -427,7 +427,7 @@ Hob 是常驻助手。你只跟助手说话；几步就能完成的事助手自�
   - `POST /api/plugins/:id/providers/:providerId/auth/cancel` `{ sessionId }` → 取消登录会话，返回 `PluginSignInSessionView`。
   - `GET /api/plugins/:id/providers/:providerId/cli` → 检测本机 CLI 安装状态，返回 `PluginCliStatusView`。
   - `POST /api/plugins/:id/providers/:providerId/cli/install` → 调用插件 `cli.install()` 安装本机 CLI，返回 `PluginCliStatusView`。
-- **SSE 实时事件（`HobEvent`）**：
+- **实时事件（`HobEvent`）**：
   - `{ type: "plugin-install", pluginId, stage, detail?, bytes?, totalBytes?, bunVersion?, packageName? }`：`stage` 依次为 `downloading_bun`、`verifying_bun`、`extracting_bun`、`installing_package`、`verifying_package`、`done`、`error`。
   - `{ type: "plugin-providers", pluginId?, providerId?, host?, signIn? }`：宿主状态变化、登录会话推进/完成/失败/取消、账号或模型变更时广播，前端据此刷新插件详情、登录弹窗或宿主状态行。
 
@@ -492,7 +492,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 
 登录态是跨屏幕共享的。desktopd 在 `/data/shared-login/cookies.json` 保存公共 cookie 快照，在 `/data/shared-login/state.json` 记每个 profile 是否完成首次迁移；每个 profile 启动时通过 CDP 合并旧 profile 的 cookie 并导入公共快照。每个带调试口的浏览器每 5 秒检查 cookie 变化，只把新增、变更和退出登录的 cookie 合进公共快照，再推给其他开着的浏览器；推送后刷新同一网站的页面，同一浏览器同一网站 60 秒最多刷新 3 次，浏览器正被任务或助手使用时延后到空闲再刷。localStorage、IndexedDB 和已保存密码不复制；依赖这些状态的网站由用户在桌面上完成登录。多个助手仍可同时操作各自屏幕，同一网站是否因新登录使旧会话失效由网站决定。
 
-接管状态按屏幕隔离。Hob 监听 desktopd 的 `/api/events`，断线时清空快照并退避重连，屏幕变化经 Hob SSE 推送；服务端在 `DesktopToolSession` 占用或释放屏幕时按 `Place` 追踪屏幕使用者 `DesktopScreenUser { assistantId, jobId?, place }`（`desktopScreenUsers`），随 `GET /api/desktop/screens`（返回 `screens`、`profiles`、`users`）及 `desktop-screens` SSE 事件推送；`POST /api/desktop/screens/:id/start` 只允许已存在助手的屏幕。VNC 经登录保护的 `/api/desktop/vnc?screen=…&client=…` 代理；只看时过滤键鼠输入。Hob 每次请求把设置里的 IANA 时区通过请求头传给 desktopd，之后新起的屏幕和浏览器用这个时区，语言照 `DESKTOP_LANG`。
+接管状态按屏幕隔离。Hob 监听 desktopd 的 `/api/events`，断线时清空快照并退避重连，屏幕变化经 Hob 实时事件推送；服务端在 `DesktopToolSession` 占用或释放屏幕时按 `Place` 追踪屏幕使用者 `DesktopScreenUser { assistantId, jobId?, place }`（`desktopScreenUsers`），随 `GET /api/desktop/screens`（返回 `screens`、`profiles`、`users`）及 `desktop-screens` 实时事件推送；`POST /api/desktop/screens/:id/start` 只允许已存在助手的屏幕。VNC 经登录保护的 `/api/desktop/vnc?screen=…&client=…` 代理；只看时过滤键鼠输入。Hob 每次请求把设置里的 IANA 时区通过请求头传给 desktopd，之后新起的屏幕和浏览器用这个时区，语言照 `DESKTOP_LANG`。
 
 右栏由 `panelDesk`（`web/src/panel-stack.ts`）按当前会话（`Place`）决定云桌面呈现状态（`active` / `elsewhere` / `idle` / `off`）与自动展开列表（`activeWatch`）：仅当屏幕正在运行且当前使用者匹配本会话（`active`）时才内嵌小屏并自动展开（群综合汇总本群及全部话题，多话题助手主对话汇总主对话及全部助手话题，群话题与助手话题仅匹配自身 `Place`）；屏幕被其他会话占用时（`elsewhere`）不自动展开，由 `desktopUserWhere` 显示「「…」正在用」；已接入但没人用（`idle`）显示空闲；未接入（`off`）不显示。普通接管和登录卡接管都只改变输入互斥状态，浏览器和原有页面继续运行，用户直接在助手的浏览器里登录；用户点“好了”或交还时，Hob 同步一次 cookie 并推给其他开着的浏览器。浏览器启动参数关闭自动化标记、统一系统信息和 WebGL 信息，并禁止 WebRTC 使用非代理 UDP；不改 `navigator`、不伪造指纹。
 
@@ -553,7 +553,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `PUT /api/models/thinking {ref, levels}` → 存一个模型的自定义思考档（`null` = 恢复默认），返回新 revision 的整份设置和这个模型现在的思考档、`PUT /api/providers/:id`（新建或改，Key 可选留空沿用）、`DELETE /api/providers/:id`、`POST /api/providers/discover {api, baseUrl, apiKey?, id?}`（从兼容接口拉模型列表）、`GET /api/providers/import`（本机能导入的服务商，不带 Key）、`POST /api/providers/import {ids}`（导入所选，同 id 覆盖）
   - `GET /api/models`（可用模型 + 名单里哪些不可用）
   - `GET /api/usage`、`PUT /api/usage/price {revision, model, price}`（消耗，见下文“消耗”）
-  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录、版本检查结果；`main.ts` 启动时和每 6 小时查一次 npm 上 `hob-bot` 的 `latest`，只放内存，变化时同时推 `update` SSE 事件）
+  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录、版本检查结果；`main.ts` 启动时和每 6 小时查一次 npm 上 `hob-bot` 的 `latest`，只放内存，变化时同时推 `update` 实时事件）
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
   - `POST /api/assistants/:id/messages {text, quote?, files?}`、`POST /api/assistants/:id/stop`、`POST /api/assistants/:id/read`
@@ -565,7 +565,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `GET /api/memory`、`PUT /api/memory {revision, provider}`、`PUT /api/memory/lore {baseUrl, token?}`、`POST /api/memory/lore-test`（记忆提供者与 Lore 连接，见上文“记忆”）、`GET /api/memory/lore/import`（本机的 Lore 连接，不带 Token）、`POST /api/memory/lore/import`（导进 Hob 自己的配置）
   - `GET /api/image`（Key 配没配）、`PUT /api/image {revision, image, apiKey?}`（Key 只写不读，留空 = 沿用）、`POST /api/image/test {image?, apiKey?}`（试一张，失败也是 200，原因在 `error` 里）
   - `GET /api/push`（publicKey + 已订阅设备）、`POST /api/push/subscribe {subscription, label}`、`DELETE /api/push/subscribe {endpoint}`、`POST /api/push/test {endpoint?}`（推送，见下文“PWA 与推送”）
-  - `POST /api/visibility {clientId, visible, target?}`（页面是否在前台及当前查看的会话 `"assistant:<id>"` / `"group:<id>"` / `"topic:<tid>"` / `null`，只存内存；SSE 断开即视为不可见）
+  - `POST /api/visibility {clientId, visible, target?}`（页面是否在前台及当前查看的会话 `"assistant:<id>"` / `"group:<id>"` / `"topic:<tid>"` / `null`，只存内存；实时连接断开即视为不可见）
   - `POST /api/delegations/:id/retry`（重新转交已中断的委派）
   - `POST /api/approvals/:id {key}` 或 `{text}`（用户没选选项、自己写的一段，空白和超长都是 400）、`POST /api/drafts/:id/create {topics?}`（可选覆盖草稿的多话题开关）、`POST /api/drafts/:id/dismiss`
   - `POST /api/routines`（支持 `groupId` / `topicId` 指定归属会话）、`PATCH /api/routines/:id`、`DELETE /api/routines/:id`、`POST /api/routines/:id/run`
@@ -574,7 +574,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
   - `GET /api/knowledge?origin&collection&kind&assistantId&groupId&topicId&exact&q&before&limit` → 知识库列表；支持与 `/api/jobs` 同口径的 `groupId` / `topicId` / `exact` 筛选
   - `GET /api/jobs/:id/transcript` → 任务过程（步骤列表，从 `worker.jsonl` 推导；单步输出超 20KB 时截断并给出全文路径）
   - `POST /api/uploads?assistantId=`（multipart，存进这个助手的 `files/uploads/`，没传或助手不存在就 400/404）；`POST /api/uploads?groupId=` 存进 `groups/<gid>/files/uploads/`；`GET /api/files?path=`（数据目录里除 `system/` 和 `backup-*` 以外的文件，以及任务工作目录和绑定工作目录里的文件；符号链接解不开的不给，`.bak`、密钥类文件不给）
-- 实时：`GET /api/events`（SSE）。`assistant_topic` 推送助手话题新建或摘要变化；`item`、`delta`、`router-activity`、`page-live` 均带可选 `topicId` 以区分主对话与助手话题；`desktop-screens` 同时携带各屏幕的 `users`（`DesktopScreenUser[]`）。`page-live` 推送对话页面的完整草稿及完成或失败状态；进行中的草稿在内存中，可从对话条目接口恢复。`router-activity` 推送助手对话的思考 / 工具状态和中文标签（思考中的标签是模型当前思考的最后一段，压成一行，节流约 200ms；不进对话记录），文字开始输出、停止或结束时清空；当前状态只存内存，并随助手概要和助手话题概要返回供刷新和重连恢复。Worker 的 `activity` 仍是独立的任务活动流。事件类型见 `HobEvent`。前端断线重连后重新拉 bootstrap 和当前对话（EventSource 自带重连）。连接上带 `clientId`，断开时服务端把这台客户端的可见性一起清掉。
+- 实时：`GET /api/events/ws`（WebSocket，同样要登录 cookie，带 Origin 时必须同源；服务端每 25 秒 ping，收不到 pong 就断开）和 `GET /api/events`（SSE）推同一份事件。每个页面只开一条实时连接（`web/src/api.ts` 的 `events`），其他模块经 `store.ts` 的 `subscribeEvents` / `subscribeConnection` 订阅，不自己建连接：HTTP/1.1 下同一源最多 6 条并发连接，长连接多了会把普通请求堵住。前端先连 WebSocket（不占 HTTP 连接池），断线按 1–15 秒退避重连、`online` 时立刻重连；这一页一次都没连上（反向代理没配升级）就退回 SSE。连接真正打开后才通知 `open`（还在握手时拉的快照会漏掉推送）；一个订阅者出错只记日志，不拦住其他订阅者和重连补拉。`assistant_topic` 推送助手话题新建或摘要变化；`item`、`delta`、`router-activity`、`page-live` 均带可选 `topicId` 以区分主对话与助手话题；`desktop-screens` 同时携带各屏幕的 `users`（`DesktopScreenUser[]`）。`page-live` 推送对话页面的完整草稿及完成或失败状态；进行中的草稿在内存中，可从对话条目接口恢复。`router-activity` 推送助手对话的思考 / 工具状态和中文标签（思考中的标签是模型当前思考的最后一段，压成一行，节流约 200ms；不进对话记录），文字开始输出、停止或结束时清空；当前状态只存内存，并随助手概要和助手话题概要返回供刷新和重连恢复。Worker 的 `activity` 仍是独立的任务活动流。事件类型见 `HobEvent`。前端断线重连后重新拉 bootstrap 和当前对话。连接上带 `clientId`，断开时服务端把这台客户端的可见性一起清掉，所以重连后页面再报一次可见性。
 
 ## 国际化
 

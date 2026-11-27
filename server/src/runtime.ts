@@ -38,6 +38,7 @@ import { Store as StoreImpl } from "./store.ts";
 import { UsagePrices as UsagePricesImpl } from "./usage-prices.ts";
 import { UsageService as UsageServiceImpl } from "./usage.ts";
 import { UpdateChecker } from "./update-check.ts";
+import { PluginUpdateChecker } from "./plugin-updates.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 
 /**
@@ -80,6 +81,8 @@ export interface HobRuntime {
   usage: UsageService;
   /** 版本检查：查 npm 上 hob-bot 最新版本，结果只放内存，定时由 main.ts 启动 */
   update: UpdateChecker;
+  /** 插件更新检查：定时拉插件源并比对已安装插件版本，定时由 main.ts 启动 */
+  pluginUpdates: PluginUpdateChecker;
 }
 
 export interface CreateRuntimeOptions {
@@ -194,5 +197,11 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
     ...(options.fetchImpl ? { fetchImpl: options.fetchImpl } : {}),
     onChange: (update) => bus.emit({ type: "update", update }),
   });
+  runtime.pluginUpdates = new PluginUpdateChecker({
+    store: plugins.store,
+    onChange: (updates) => bus.emit({ type: "plugin-updates", updates }),
+  });
+  plugins.store.onChanged = () => runtime.pluginUpdates.refresh();
+  plugins.store.sources.onChanged = () => runtime.pluginUpdates.refresh();
   return runtime;
 }

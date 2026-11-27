@@ -49,6 +49,7 @@ const object = (value: unknown): value is Obj => value !== null && typeof value 
 /** Plugin files and user state are independent: updating files preserves settings. */
 export class PluginStore {
   readonly sources: PluginSources;
+  onChanged?: () => void;
   constructor(readonly home: string, proxy?: () => ProxyEnvironmentSettings, officialUrl?: string) { this.sources = new PluginSources(home, proxy, officialUrl); }
   private get path(): string { return join(systemDir(this.home), "plugins.json"); }
   private dir(id: string): string {
@@ -85,6 +86,7 @@ export class PluginStore {
       writeFileSync(temp, `${JSON.stringify(doc, null, 2)}\n`, { mode: 0o600 });
       renameSync(temp, this.path);
     } finally { rmSync(temp, { force: true }); }
+    this.onChanged?.();
   }
   list(): InstalledPlugin[] { return this.read().plugins; }
   get(id: string): InstalledPlugin {

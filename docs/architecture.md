@@ -565,13 +565,13 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 
 - 登录：`POST /api/login {password}` → HttpOnly cookie（签名随机 token，存内存 + `config.json` 里的 secret）。其余 `/api/*` 都要 cookie。
 - REST（详见 `shared/types.ts` 的 `Api` 注释）：
-  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、全部助手话题摘要（`assistantTopics`）、在跑和最近的任务、定时、未答审批、设置（带 revision）、版本检查结果（`update`，有结果时返回）
+  - `GET /api/bootstrap` → 助手列表（带最后一句、未读、是否在忙）、全部助手话题摘要（`assistantTopics`）、在跑和最近的任务、定时、未答审批、设置（带 revision）、版本检查结果（`update`，有结果时返回）、可更新插件列表（`pluginUpdates`，只算来自插件源且源版本较新的已安装插件）
   - `GET /api/settings` / `PUT /api/settings {revision, patch}` → 读 / 按节合并写设置
   - `GET /api/providers` → 已配的服务商、引擎自带的服务商目录、整份设置，以及每个已配置服务商的模型和思考档（`models`，键是服务商 id；内置服务商列出引擎目录里的全部模型）；`POST /api/providers/test` 测试连接（内置服务商发起少量模型调用，兼容接口访问模型列表，失败不保存配置）
   - `PUT /api/models/thinking {ref, levels}` → 存一个模型的自定义思考档（`null` = 恢复默认），返回新 revision 的整份设置和这个模型现在的思考档、`PUT /api/providers/:id`（新建或改，Key 可选留空沿用）、`DELETE /api/providers/:id`、`POST /api/providers/discover {api, baseUrl, apiKey?, id?}`（从兼容接口拉模型列表）、`GET /api/providers/import`（本机能导入的服务商，不带 Key）、`POST /api/providers/import {ids}`（导入所选，同 id 覆盖）
   - `GET /api/models`（可用模型 + 名单里哪些不可用）
   - `GET /api/usage`、`PUT /api/usage/price {revision, model, price}`（消耗，见下文“消耗”）
-  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录、版本检查结果；`main.ts` 启动时和每 6 小时查一次 npm 上 `hob-bot` 的 `latest`，只放内存，变化时同时推 `update` 实时事件）
+  - `POST /api/password {old, new}`、`GET /api/about`（版本、数据目录、版本检查结果；`main.ts` 启动时和每 6 小时查一次 npm 上 `hob-bot` 的 `latest`，只放内存，变化时同时推 `update` 实时事件；插件源也在 `main.ts` 启动时和每 6 小时拉取一次，并与打开市场时的后台拉取、手动「检查更新」和插件安装/更新/卸载共用结果比对，可更新插件列表变化时推 `plugin-updates` 实时事件）
   - `GET /api/assistants/:id/items?before&limit` → 条目 + 引用到的 approvals/jobs/drafts
   - `GET /api/assistants/:id/profile` → 助手 + rules + routines + 最近工作日志
   - `POST /api/assistants/:id/messages {text, quote?, files?}`、`POST /api/assistants/:id/stop`、`POST /api/assistants/:id/read`

@@ -2321,6 +2321,7 @@ export class RouterManager {
   bootstrap(): Bootstrap {
     const jobCutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString();
     const update = this.runtime.update.status();
+    const pluginUpdates = this.runtime.pluginUpdates.sync();
     return {
       assistants: this.store.assistants().map((assistant) => this.summary(assistant)),
       assistantTopics: this.runtime.assistantTopics.allSummaries(),
@@ -2332,6 +2333,7 @@ export class RouterManager {
       delegations: this.store.delegations(),
       settings: this.runtime.settings.get(),
       ...(update ? { update } : {}),
+      pluginUpdates,
     };
   }
 

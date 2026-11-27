@@ -85,6 +85,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.usage.warmup();
   // 版本检查只在真正启动服务时跑（启动查一次，之后每 6 小时查一次）
   runtime.update.start();
+  runtime.pluginUpdates.start();
 
   const app = createApp(runtime, { webDir: fileURLToPath(new URL("../../dist/web", import.meta.url)), home });
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);
@@ -97,6 +98,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
     close: async () => {
       detachWebSockets();
       runtime.update.stop();
+      runtime.pluginUpdates.stop();
       runtime.desktopEvents.stop();
       runtime.desktopControl.dispose();
       runtime.routines.stop();

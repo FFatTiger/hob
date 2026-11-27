@@ -60,6 +60,7 @@ function checkTree(root: string): void {
 export class PluginSources {
   private pending = new Map<string, Promise<void>>();
   private attempted = new Map<string, number>();
+  onChanged?: () => void;
   isRefreshing(id: string): boolean { return this.pending.has(id); }
   constructor(readonly home: string, private readonly proxy: () => ProxyEnvironmentSettings = () => ({ proxy: "", noProxy: "" }), private readonly officialUrl = OFFICIAL_SOURCE_URL) {}
   private get root() { return join(this.home, "cache", "plugin-sources"); }
@@ -92,6 +93,7 @@ export class PluginSources {
     if (this.pending.has(id)) throw new Error("插件源正在更新，请稍后再试");
     this.save(this.list().filter(s => s.id !== id));
     rmSync(this.dir(id), { recursive: true, force: true });
+    this.onChanged?.();
   }
   async open(): Promise<void> {
     await Promise.all(this.list().map(async source => {
@@ -141,6 +143,7 @@ export class PluginSources {
       try { renameSync(temp, dir); } catch (error) { if (moved) renameSync(backup, dir); throw error; }
       rmSync(backup, { recursive: true, force: true });
       this.save(this.list().map(s => s.id === id ? { ...s, name: id === OFFICIAL_SOURCE ? "Hob 官方" : typeof index.name === "string" && index.name.trim() ? index.name.trim() : sourceName(s.url), updatedAt: new Date().toISOString(), error: undefined } : s));
+      this.onChanged?.();
     } catch (error) {
       this.save(this.list().map(s => s.id === id ? { ...s, error: reason(error) } : s));
       throw error;

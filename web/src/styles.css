@@ -1580,15 +1580,28 @@ svg.i {
   font-size: 14px;
   line-height: 1.75;
 }
-.b p + p, .md p + p,
-.b ul + p, .md ul + p,
-.b ol + p, .md ol + p,
-.b pre + p, .md pre + p {
+.b :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display),
+.md :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display) {
+  margin-top: 0;
+  margin-bottom: 0;
+}
+.b :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display) + :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display),
+.md :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display) + :is(p, ul, ol, pre, blockquote, hr, .code-block, .md-table, .math-display) {
+  margin-top: 10px;
+}
+.b li :is(ul, ol),
+.md li :is(ul, ol) {
+  margin-top: 4px;
+}
+.b li > p + p,
+.md li > p + p {
   margin-top: 6px;
 }
-.b p + ul, .md p + ul,
-.b p + ol, .md p + ol {
-  margin-top: 4px;
+.b hr,
+.md hr {
+  width: 100%;
+  border: 0;
+  border-top: 1px solid var(--line);
 }
 .b strong, .md strong {
   font-weight: 600;
@@ -1605,7 +1618,6 @@ svg.i {
   border-radius: 10px;
   padding: 9px 11px;
   overflow-x: auto;
-  margin-top: 6px;
 }
 .b pre code, .md pre code {
   background: none;
@@ -1618,6 +1630,11 @@ svg.i {
   text-decoration: underline;
   text-decoration-color: var(--text3);
   text-underline-offset: 3px;
+}
+@media (hover: hover) {
+  .b a:hover, .md a:hover {
+    text-decoration-color: currentColor;
+  }
 }
 .qt {
   font-weight: 500;
@@ -7567,19 +7584,18 @@ button.screen,
   margin: 12px 0 4px;
 }
 .md h1 { font-size: 15px; }
-/* 气泡和卡片里的标题和正文一样大，只加粗：层级靠粗细和间距，不靠字号压过卡片标题 */
+/* 气泡里的标题比正文略重且留足上距；卡片里的标题层级再拉开一档 */
 .b h1,
 .b h2,
 .b h3,
 .b h4 {
   font-size: 15px;
   font-weight: 600;
-  margin: 10px 0 2px;
+  margin: 14px 0 4px;
 }
 .b :is(h1, h2, h3, h4):first-child { margin-top: 0; }
 .b blockquote,
 .md blockquote {
-  margin-top: 6px;
   padding: 6px 12px;
   border-radius: 10px;
   background: color-mix(in srgb, var(--text) 5%, transparent);
@@ -8251,6 +8267,25 @@ button.screen,
 /* 通用卡片：内容由服务端声明，样式由 Hob 统一提供 */
 .hc { width: 548px; max-width: 100%; flex: 0 1 548px; padding: 12px 14px 14px; box-sizing: border-box; }
 .hc.hc-disabled { opacity: .88; }
+.hc > .qt { font-size: 17px; font-weight: 600; line-height: 1.4; }
+.hc > .qs { font-size: 14px; line-height: 1.58; color: var(--text2); margin-top: 6px; }
+.hc > .qs strong { color: var(--text); }
+.hc > .qs code { font-size: 12.5px; }
+.hc > .qs + .hc-elements { margin-top: 14px; }
+.hc h1,
+.hc h2,
+.hc h3,
+.hc h4 {
+  font-weight: 600;
+  line-height: 1.45;
+  margin: 20px 0 6px;
+}
+.hc h1 { font-size: 16.5px; }
+.hc h2 { font-size: 16px; }
+.hc h3 { font-size: 16px; }
+.hc h4 { font-size: 15.5px; }
+.hc-elements > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 10px; }
+.hc-collapse-body > * + .hc-md > :is(h1, h2, h3, h4):first-child { margin-top: 12px; }
 .hc-source { display: flex; align-items: center; gap: 6px; margin-bottom: 6px; color: var(--text2); font-size: 12.5px; }
 .hc-source img { flex: none; }
 .hc-source .hc-lock { margin-left: auto; display: inline-flex; align-items: center; gap: 4px; color: var(--text3); }
@@ -8268,7 +8303,7 @@ button.screen,
 .hc-table-wrap { overflow-x: auto; background: var(--card); border-radius: 10px; }
 .hc-table { width: 100%; border-collapse: collapse; font-size: 13.5px; line-height: 1.5; }
 .hc-table th, .hc-table td { padding: 8px 10px; text-align: left; vertical-align: top; }
-.hc-table th { color: var(--text3); font-weight: 500; white-space: nowrap; }
+.hc-table th { color: var(--text2); font-weight: 500; white-space: nowrap; }
 /* 长内容在格子里按词和标点换行，不把短词拆成一字一行；再放不下就在框内左右滑 */
 .hc-table td { border-top: 1px solid var(--line); max-width: 16em; word-break: keep-all; overflow-wrap: break-word; }
 .hc-table-switch { width: 32px; height: 19px; padding: 0; border-radius: 999px; background: var(--text3); }

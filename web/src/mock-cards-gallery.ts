@@ -9,7 +9,35 @@ type Entry = { label: string; card: Card; patch?: Partial<CardRecord>; plugin?: 
 const opts = (...texts: string[]) => texts.map((text) => ({ text, value: text }));
 const md = (content: string) => ({ tag: "markdown" as const, content });
 
+/** 票 285：文档式长卡片（两三行带加粗副标题、三个 ### 小标题、多段正文+段尾链接、中间两列表格）。 */
+export const DOC_REPORT_CARD: Card = {
+  schema: "2.0",
+  header: {
+    title: "图表渲染库 v4.0 升级兼容性评估",
+    subtitle: "基于现有三个业务页面的依赖扫描与回归测试整理，重点核对了破坏性变更、**构建产物体积变化**以及旧版浏览器适配情况，结论供本周发版前确认使用。",
+  },
+  body: {
+    elements: [
+      md("### 破坏性接口变更\n\n新版移除了已废弃两年的旧版配置入口，改用统一的初始化对象传参；项目里共有两处页面还在沿用旧写法，调整参数名即可兼容，不需要改业务逻辑。\n\n默认主题色板也从固定值改成了跟随宿主样式变量，浅色模式下与当前一致，深色模式需补充一组对比度校验。详情见 [官方迁移指南](https://example.org/docs/migration-v4)。"),
+      {
+        tag: "table",
+        columns: [
+          { name: "c0", display_name: "检查项" },
+          { name: "c1", display_name: "评估结果" },
+        ],
+        rows: [
+          { c0: "核心 API 兼容", c1: "2 处旧调用需改写参数名" },
+          { c0: "压缩后体积", c1: "减少 18 KB（Tree-shaking 生效）" },
+          { c0: "低版本浏览器", c1: "支持最近两个主版本，无额外垫片" },
+        ],
+      },
+      md("### 性能与体积实测\n\n在同等数据量（五千个数据点）下首屏渲染耗时缩短约 22%，内存峰值下降明显；按需引入开启后打包时间基本持平，没有新增第三方传递依赖。\n\n本地压测与打包对比记录已归档，可参考 [基准测试报告](https://example.org/bench/v4-report)。\n\n### 升级建议与回滚预案\n\n建议先在预发环境开启灰度开关观察两天，重点留意导出图片与响应式缩放两项边界场景；若出现样式错位，可通过锁定小版本号在五分钟内回退。更多排查步骤见 [回滚操作说明](https://example.org/ops/rollback)。"),
+    ],
+  },
+};
+
 export const GALLERY: Entry[] = [
+  { label: "文档式长卡片（标题、长副标题、小标题、多段正文与链接、表格）", card: DOC_REPORT_CARD },
   { label: "只有标题和一段文字", card: { schema: "2.0", header: { title: "备份已完成" }, body: { elements: [md("昨晚的备份用时 18 分钟，比平时多 4 分钟，原因是新增了 3.2 GB 的照片。")] } } },
   { label: "标题、副标题，正文里有小标题、列表、加粗、行内代码和代码块", card: { schema: "2.0", header: { title: "本周运营周报", subtitle: "11 月第 3 周 · 三个渠道合并" }, body: { elements: [
     md("## 二级小标题\n本周订单 **412 单**，比上周多 12.9%。\n\n### 需要关注\n- **支付失败率**升到 2.1%，集中在周三晚上\n- 两个工单超过 48 小时没回复\n  - 一个是退款\n  - 一个是改地址\n\n1. 先查支付通道\n2. 再补回复\n\n#### 四级小标题\n配置在 `config/pay.yaml` 里：\n\n```yaml\nretry: 3\ntimeout: 15s\n```\n\n> 引用：上周同期失败率是 0.8%。"),

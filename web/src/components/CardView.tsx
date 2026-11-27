@@ -337,7 +337,7 @@ function CardElementView({ element, values, setValue, errors, disabled, submit, 
   const field = typeof element.name === "string" ? element.name : undefined;
   const interactive = ["input", "select_static", "multi_select_static", "date_picker", "picker_time", "picker_datetime", "checker", "overflow"].includes(element.tag);
   const inForm = Boolean(formElements);
-  if (element.tag === "markdown") return <Markdown text={cardText(element.content)} />;
+  if (element.tag === "markdown") return <Markdown className="hc-md" text={cardText(element.content)} />;
   if (element.tag === "div") {
     // icon 是 Hob 的扩展：check 画成结果行（勾 + 灰字），file / doc 画成文件行
     if (element.icon === "check") return <div className="hc-result"><Icon name="check" size={15} /><span>{cardText(element.text)}</span></div>;
@@ -445,6 +445,7 @@ export function CardView({
   }, [record.card]);
   useEffect(() => { setErrors(record.feedback?.errors ?? {}); }, [record.feedback?.errors]);
   const title = cardText(record.card.header?.title) || t("未命名卡片");
+  const subtitle = cardText(record.card.header?.subtitle);
   const disabled = busy || record.status === "done" || Boolean(record.processing);
   const openUrl = (url: string) => { if (/^https?:\/\//i.test(url)) window.open(url, "_blank", "noopener"); };
   const submit: Submit = async (element, formElements, directValue) => {
@@ -469,7 +470,7 @@ export function CardView({
   const body = <div className={`b q hc${plugin ? " hc-plugin" : ""}${disabled ? " hc-disabled" : ""}${bare && fresh ? " enter" : ""}`}>
     {plugin ? <div className="hc-source"><PluginIcon pluginId={record.owner.type === "plugin" ? record.owner.pluginId : ""} />{record.plugin?.pluginName ?? (record.owner.type === "plugin" ? record.owner.pluginId : t("插件"))}{hasPassword(record.card) ? <span className="hc-lock"><Icon name="lock" size={16} />{t("填写的内容只交给 {plugin}", { plugin: record.plugin?.pluginName ?? t("插件") })}</span> : null}</div> : null}
     <div className="qt">{title}</div>
-    {record.card.header?.subtitle ? <div className="qs">{cardText(record.card.header.subtitle)}</div> : null}
+    {subtitle ? <Markdown className="qs" text={subtitle} inline /> : null}
     {record.feedback?.unavailable ? <div className="hc-unavailable">{record.feedback.unavailable}</div> : null}
     {record.status === "done" ? <CardResult record={record} /> : <div className="hc-elements"><CardElementList elements={elements} values={values} setValue={(name, value) => { setValues((current) => ({ ...current, [name]: value })); setErrors((current) => { const next = { ...current }; delete next[name]; return next; }); }} errors={errors} disabled={disabled} submit={submit} openUrl={openUrl} disableIncompleteSubmit={disableIncompleteSubmit} /></div>}
     {record.feedback?.toast ? <div className={`hc-toast ${record.feedback.toast.type}`}>{record.feedback.toast.content}</div> : null}

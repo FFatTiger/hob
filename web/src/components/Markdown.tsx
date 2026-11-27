@@ -2,7 +2,7 @@ import { t } from "../../../shared/i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../clipboard.ts";
 import { iconSvg } from "../icons.tsx";
-import { hasMath, loadMath, renderMarkdown } from "../markdown.ts";
+import { hasMath, loadMath, renderInlineMarkdown, renderMarkdown } from "../markdown.ts";
 import { getKnowledgeEntry, openFilePreview, setNotice } from "../store.ts";
 import { ApiError } from "../api.ts";
 import { parseKnowledgeLink } from "../../../shared/knowledge.ts";
@@ -17,7 +17,7 @@ export async function openKnowledgeCitation(entryId: string, chunk?: number) {
   }
 }
 
-export function Markdown({ text, className, streaming, mentions, onMathRendered }: { text: string; className?: string; streaming?: boolean; mentions?: string[]; onMathRendered?: () => void }) {
+export function Markdown({ text, className, inline, streaming, mentions, onMathRendered }: { text: string; className?: string; inline?: boolean; streaming?: boolean; mentions?: string[]; onMathRendered?: () => void }) {
   const [mathVersion, refresh] = useState(0);
   useEffect(() => {
     let active = true;
@@ -27,7 +27,7 @@ export function Markdown({ text, className, streaming, mentions, onMathRendered 
   useEffect(() => { if (mathVersion) onMathRendered?.(); }, [mathVersion, onMathRendered]);
   // 整个界面跟着一份状态重画（回首页、任务进度推送），正文没变就不再解析一遍，长任务、长对话才不卡
   const mentionKey = mentions?.join("\n");
-  const html = useMemo(() => renderMarkdown(text, mentions), [text, mentionKey, mathVersion]);
+  const html = useMemo(() => (inline ? renderInlineMarkdown(text) : renderMarkdown(text, mentions)), [text, inline, mentionKey, mathVersion]);
   return <div className={className} onClick={(event) => {
     const link = (event.target as Element).closest<HTMLAnchorElement>("a.knowledge-citation");
     const citation = link && parseKnowledgeLink(link.getAttribute("href") ?? "");

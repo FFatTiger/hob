@@ -204,4 +204,35 @@ describe("CardView", () => {
     const incompleteHtml = renderToStaticMarkup(<CardView record={incomplete} fresh={false} bare disableIncompleteSubmit />);
     expect(incompleteHtml).toMatch(/<button type="submit"[^>]*disabled=""/);
   });
+
+  it("renders inline markdown in subtitle and semantic elements/classes in card markdown", () => {
+    const docCard: CardRecord = {
+      id: "c-doc",
+      owner: { type: "assistant", assistantId: "hob" },
+      status: "open",
+      createdAt: "2026-01-01T00:00:00.000Z",
+      card: {
+        schema: "2.0",
+        header: {
+          title: "兼容性评估",
+          subtitle: "重点核对了 **产物体积**、`v4.0` 入口与 [迁移说明](https://example.org/guide) <script>alert(1)</script>",
+        },
+        body: {
+          elements: [
+            {
+              tag: "markdown",
+              content: "### 第一节\n\n第一段正文。\n\n第二段正文，详情见 [报告](https://example.org/report)。",
+            },
+          ],
+        },
+      },
+    };
+    const html = renderToStaticMarkup(<CardView record={docCard} fresh={false} bare />);
+    expect(html).toContain('<div class="qt">兼容性评估</div>');
+    expect(html).toContain('<div class="qs">重点核对了 <strong>产物体积</strong>、<code>v4.0</code> 入口与 <a target="_blank" rel="noreferrer" href="https://example.org/guide">迁移说明</a> &lt;script&gt;alert(1)&lt;/script&gt;</div>');
+    expect(html).not.toContain("**产物体积**");
+    expect(html).toContain('<div class="hc-md"><h3>第一节</h3>');
+    expect(html).toContain("<p>第一段正文。</p>");
+    expect(html).toContain('<p>第二段正文，详情见 <a target="_blank" rel="noreferrer" href="https://example.org/report">报告</a>。</p>');
+  });
 });

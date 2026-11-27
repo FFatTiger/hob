@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasMath, loadMath, renderMarkdown, splitTables } from "../src/markdown.ts";
+import { hasMath, loadMath, renderInlineMarkdown, renderMarkdown, splitTables } from "../src/markdown.ts";
 
 describe("renderMarkdown", () => {
   it("公式异步加载后渲染，代码和钱数不受影响", async () => {
@@ -148,5 +148,12 @@ describe("renderMarkdown", () => {
     expect(parts[1].md).toContain("| 聊天 | 简单 |");
     expect(splitTables("```\n| a | b |\n| - | - |\n```").map((p) => p.table)).toEqual([false]);
     expect(splitTables("没有表格")).toEqual([{ table: false, md: "没有表格" }]);
+  });
+
+  it("renderInlineMarkdown 渲染行内格式与链接且不包外层段落、不留原始 HTML", () => {
+    const html = renderInlineMarkdown("重点看 **体积变化**、`v4.0` 和 [指南](https://example.org/guide) <b>raw</b>");
+    expect(html).toBe('重点看 <strong>体积变化</strong>、<code>v4.0</code> 和 <a target="_blank" rel="noreferrer" href="https://example.org/guide">指南</a> &lt;b&gt;raw&lt;/b&gt;');
+    expect(html).not.toContain("<p>");
+    expect(renderInlineMarkdown("1. 不把序号当成有序列表")).toBe("1. 不把序号当成有序列表");
   });
 });

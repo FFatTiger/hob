@@ -7,6 +7,7 @@ import { join } from "node:path";
 import type { SearchSettings, SearchProviderSetting } from "../../shared/search.ts";
 import type { ProviderSettings } from "../../shared/types.ts";
 import { createOpenAISearchProvider } from "./openai-search.ts";
+import { createDeepSeekSearchProvider } from "./deepseek-search.ts";
 import { readSecrets } from "./secrets.ts";
 
 export type SearchClient = ReturnType<typeof createSearchProvider>;
@@ -30,6 +31,9 @@ export class WebSearch {
   private client(provider: SearchProviderSetting, keys: Record<string, string>, depth: "fast" | "deep" = "fast"): SearchClient {
     if (provider.name === "openai" && this.factory === createSearchProvider) {
       return createOpenAISearchProvider(provider, this.modelProviders(), keys, depth) as SearchClient;
+    }
+    if (provider.name === "deepseek" && this.factory === createSearchProvider) {
+      return createDeepSeekSearchProvider(keys["search:deepseek"]) as SearchClient;
     }
     return this.factory(provider.name, { apiKey: keys[`search:${provider.name}`], baseUrl: provider.baseUrl });
   }
@@ -77,7 +81,7 @@ export class WebSearch {
       const github = new GitHubInterceptor({ enabled: true, clonePath: join(this.home, "cache", "github") });
       let result = await github.intercept(url, { raw, signal });
       if (!result) {
-        const native = this.settings().find((p) => p.enabled && ["exa", "tavily", "jina", "firecrawl"].includes(p.name));
+        const native = this.settings().find((p) => p.enabled && ["deepseek", "exa", "tavily", "jina", "firecrawl"].includes(p.name));
         const client = native ? this.client(native, keys) : undefined;
         result = client && "fetch" in client && typeof client.fetch === "function"
           ? await client.fetch(url, raw, signal)

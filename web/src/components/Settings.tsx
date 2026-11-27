@@ -3132,6 +3132,7 @@ const SEARCH_INFO: Record<SearchProviderName, { label: string; url?: boolean; ke
   youcom: { label: "You.com" },
   ollama: { label: "Ollama", url: true },
   openai: { label: "OpenAI", url: true },
+  deepseek: { label: "DeepSeek" },
 };
 function searchDesc(name: SearchProviderName): string {
   switch (name) {
@@ -3146,6 +3147,7 @@ function searchDesc(name: SearchProviderName): string {
     case "youcom": return t("You.com 搜索接口");
     case "ollama": return t("Ollama 的网页搜索");
     case "openai": return t("使用 OpenAI Responses API 原生联网搜索，可复用已有 OpenAI 服务商");
+    case "deepseek": return t("使用 DeepSeek 原生网页搜索与网页抓取（Markdown）");
   }
 }
 

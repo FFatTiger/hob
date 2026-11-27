@@ -76,6 +76,7 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "建议使用轻量模型（如 gpt-4.1-mini、gpt-4o-mini）以控制延迟和费用。": "A lightweight model (such as gpt-4.1-mini or gpt-4o-mini) is recommended to keep latency and cost low.",
   "当前服务商配置的模型：{models}。": "Models configured on this provider: {models}.",
   "按 OpenAI API 用量计费（含模型 token 与联网搜索调用费）；自定义服务地址需支持 Responses API（/v1/responses）。": "Billed by OpenAI API usage (model tokens plus web search calls). Custom endpoints must support the Responses API (/v1/responses).",
+  "使用 DeepSeek 原生网页搜索与网页抓取（Markdown）": "Native web search and Markdown page fetching via DeepSeek API",
   "选择可用服务商或填写 API Key 并保存后即可启用。": "Select a ready provider or enter an API key and save to enable it.",
   "填写 API Key 并保存后即可启用。": "Enter an API key and save to enable it.",
   "基础": "Basics",

@@ -98,7 +98,7 @@ function answersText(approval: Approval, questions: ApprovalQuestion[], answers:
 /** 答案的去向：转交回合回到目标助手，群里回到群会话，其余回到这个助手的对话。 */
 async function routeAnswer(runtime: HobRuntime, approval: Approval, reply: string, delegationId?: string): Promise<void> {
   if (delegationId) {
-    void runtime.router.relay(approval.assistantId, reply, delegationId).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
+    void runtime.router.relay(approval.assistantId, reply, delegationId, { userInitiated: true }).catch(() => runtime.delegations.turnEnded(delegationId, "目标助手处理失败", true));
   } else await runtime.router.answerEvent(approval.assistantId, reply, placeOf(approval));
 }
 

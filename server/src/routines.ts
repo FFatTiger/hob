@@ -158,7 +158,7 @@ export class RoutineScheduler {
     this.apply(next);
     const timers = this.timers.get(next.id) ?? [];
     if (timers.length && timers.every((cron) => cron.nextRun() === null)) {
-      void this.stopRoutine(next, "finished");
+      void this.stopRoutine(next, "expiredWhileClosed");
       return;
     }
     this.runtime.store.saveRoutine(next);
@@ -172,7 +172,7 @@ export class RoutineScheduler {
     }
   }
 
-  /** 群话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按完成停止。 */
+  /** 群话题重开时只恢复因话题关闭而暂停的定时任务，用户自己暂停的不动；所有执行时间都已过的按过期停止。 */
   resumeForTopic(groupId: string): void {
     for (const routine of this.runtime.store.routines()) {
       if (routine.groupId === groupId && !routine.active && routine.pausedBy === "topicClosed") {
@@ -296,17 +296,23 @@ export class RoutineScheduler {
   }
 
   /** 停掉：和别的修改一样存盘、发事件，并在对话里留一条 note（到执行时间那行已经说过停了的不再留）。 */
-  private async stopRoutine(routine: Routine, reason: "hit" | "finished", noted = false): Promise<void> {
+  private async stopRoutine(routine: Routine, reason: "hit" | "finished" | "expiredWhileClosed", noted = false): Promise<void> {
     for (const cron of this.timers.get(routine.id) ?? []) cron.stop();
     this.timers.delete(routine.id);
     const next: Routine = { ...routine, active: false, stoppedAt: new Date().toISOString(), stopReason: reason };
     this.runtime.store.saveRoutine(next);
     this.runtime.bus.emit({ type: "routine", routine: next });
     if (noted) return;
+    const text =
+      reason === "hit"
+        ? t("定时任务「{name}」已触发，已按设置停止", { name: routine.name })
+        : reason === "expiredWhileClosed"
+          ? t("定时任务「{name}」的执行时间在话题关闭期间已经过了，没有运行，已停止", { name: routine.name })
+          : t("定时任务「{name}」已完成最后一次运行，已停止", { name: routine.name });
     await this.runtime.router.addItem(routine.assistantId, {
       kind: "note",
       icon: "routine",
-      text: reason === "hit" ? t("定时任务「{name}」已触发，已按设置停止", { name: routine.name }) : t("定时任务「{name}」已完成最后一次运行，已停止", { name: routine.name }),
+      text,
     }, this.place(routine));
   }
 

@@ -768,7 +768,7 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
     }
   });
 
-  it("已关闭的话题收到四类结果时自动重开、恢复定时、先落 note 再送事件开轮", async () => {
+  it("已关闭的话题收到四类结果时自动重开（不恢复定时）、先落 note 再送事件开轮", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const aid = "writer";
@@ -776,7 +776,7 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       addAssistant(hob, "editor", "校对助手");
       const group = hob.runtime.groups.create({ name: "设计群", purpose: "设计评审", ownerId: "editor", members: ["editor"] });
 
-      // 1. 任务结果触发重开（同时验证 pausedBy 定时恢复与 assistant_topic 事件）
+      // 1. 任务结果触发重开（自动重开不恢复 pausedBy 定时，验证 assistant_topic 事件与 note 顺序）
       const { topic: tJob } = await hob.runtime.assistantTopics.create(aid, { title: "任务重开" });
       const rt = hob.runtime.routines.create({ assistantId: aid, topicId: tJob.id, name: "巡检", instruction: "看看", schedules: ["0 9 * * *"] });
       const manualPausedRt = hob.runtime.routines.create({ assistantId: aid, topicId: tJob.id, name: "手停", instruction: "停", schedules: ["0 10 * * *"], active: false });
@@ -808,6 +808,10 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       const reopenedJobTopic = hob.runtime.store.assistantTopic(aid, tJob.id)!;
       expect(reopenedJobTopic.closedAt).toBeUndefined();
       expect(reopenedJobTopic.closeNote).toBeUndefined();
+      expect(hob.runtime.store.routine(rt.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.store.routine(manualPausedRt.id)?.active).toBe(false);
+      // 手动重开才恢复因关闭暂停的定时任务
+      hob.runtime.assistantTopics.reopen(aid, tJob.id);
       expect(hob.runtime.store.routine(rt.id)?.active).toBe(true);
       expect(hob.runtime.store.routine(rt.id)?.pausedBy).toBeUndefined();
       expect(hob.runtime.store.routine(manualPausedRt.id)?.active).toBe(false);
@@ -947,7 +951,7 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       expect(hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some((i) => i.kind === "assistant" && i.text === "有新提醒" && i.routine?.id === rtNotify.id)).toBe(true);
       expect(sent.some((s) => s.payload.url === `/#/chat/${aid}/topic/${topicA.id}` && s.target === `topic:${topicA.id}`)).toBe(true);
 
-      // 4. 一次性定时关闭后跨过时间点再重开，按完成停止并把 note 落进话题 A
+      // 4. 一次性定时关闭后跨过时间点再重开，按过期停止并把 note 落进话题 A（不补跑）
       const rtOnce = hob.runtime.routines.create({
         assistantId: aid,
         topicId: topicA.id,
@@ -962,9 +966,10 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       vi.setSystemTime(new Date("2026-11-26T01:30:00Z")); // 上海 09:30
       hob.runtime.assistantTopics.reopen(aid, topicA.id);
       const finishedOnce = hob.runtime.store.routine(rtOnce.id)!;
-      expect(finishedOnce).toMatchObject({ active: false, stopReason: "finished" });
+      expect(finishedOnce).toMatchObject({ active: false, stopReason: "expiredWhileClosed" });
+      expect(finishedOnce.runs).toEqual([]);
       expect(finishedOnce.pausedBy).toBeUndefined();
-      await waitFor(() => hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some((i) => i.kind === "note" && i.text === "定时任务「九点提醒」已完成最后一次运行，已停止"));
+      await waitFor(() => hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some((i) => i.kind === "note" && i.text === "定时任务「九点提醒」的执行时间在话题关闭期间已经过了，没有运行，已停止"));
     } finally {
       hob.close();
     }
@@ -1135,6 +1140,148 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
         (i) => i.kind === "note" && i.icon === "info" && i.text === "提问有了回答，话题已重新打开",
       );
       expect(notes).toHaveLength(1);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("relay 投递到已关闭的话题时自动重开（不恢复定时），说明按来源区分", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, "写作助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+
+      // 1. relay 投递任务结果
+      const { topic: t1 } = await hob.runtime.assistantTopics.create(aid, { title: "转交任务结果" });
+      const rt1 = hob.runtime.routines.create({ assistantId: aid, topicId: t1.id, name: "巡检", instruction: "查", schedules: ["0 9 * * *"] });
+      const dg1: Delegation = { id: "dg-relay-1", from: "hob", to: aid, toTopicId: t1.id, text: "查账", createdAt: new Date().toISOString(), status: "running", jobIds: ["t-relay-1"] };
+      hob.runtime.store.saveDelegation(dg1);
+      hob.runtime.store.saveJob({
+        id: "t-relay-1", assistantId: aid, assistantName: "写作助手", topicId: t1.id, delegationId: dg1.id,
+        title: "核对报表", instruction: "核对", status: "done", createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+      });
+      await hob.runtime.assistantTopics.close(aid, t1.id, "先关");
+      expect(hob.runtime.store.routine(rt1.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+
+      hob.faux.setResponses([text("已收到任务结果")]);
+      await hob.runtime.router.relay(aid, "任务已完成", dg1.id, { job: { id: "t-relay-1", round: 0, kind: "result" }, workDone: true });
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: t1.id });
+      expect(hob.runtime.store.assistantTopic(aid, t1.id)?.closedAt).toBeUndefined();
+      expect(hob.runtime.store.routine(rt1.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.router.items(aid, {}, { topicId: t1.id }).items.some((i) => i.kind === "note" && i.text === "任务「核对报表」有了结果，话题已重新打开")).toBe(true);
+
+      // 2. relay 投递任务提问
+      const { topic: t2 } = await hob.runtime.assistantTopics.create(aid, { title: "转交任务提问" });
+      const dg2: Delegation = { id: "dg-relay-2", from: "hob", to: aid, toTopicId: t2.id, text: "查账", createdAt: new Date().toISOString(), status: "running", jobIds: ["t-relay-2"] };
+      hob.runtime.store.saveDelegation(dg2);
+      hob.runtime.store.saveJob({
+        id: "t-relay-2", assistantId: aid, assistantName: "写作助手", topicId: t2.id, delegationId: dg2.id,
+        title: "生成摘要", instruction: "写", status: "waiting", createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+      });
+      await hob.runtime.assistantTopics.close(aid, t2.id, "先关");
+      hob.faux.setResponses([text("收到提问")]);
+      await hob.runtime.router.relay(aid, "任务提问", dg2.id, { job: { id: "t-relay-2", round: 0, kind: "question" }, workDone: false });
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: t2.id });
+      expect(hob.runtime.store.assistantTopic(aid, t2.id)?.closedAt).toBeUndefined();
+      expect(hob.runtime.router.items(aid, {}, { topicId: t2.id }).items.some((i) => i.kind === "note" && i.text === "任务「生成摘要」有问题要问，话题已重新打开")).toBe(true);
+
+      // 3. relay 投递提问卡回答（经 answerApproval -> routeAnswer -> relay）
+      const { topic: t3 } = await hob.runtime.assistantTopics.create(aid, { title: "转交提问回答" });
+      const dg3: Delegation = { id: "dg-relay-3", from: "hob", to: aid, toTopicId: t3.id, text: "查账", createdAt: new Date().toISOString(), status: "waiting", jobIds: [], approvalIds: ["q-relay-3"] };
+      hob.runtime.store.saveDelegation(dg3);
+      hob.runtime.store.saveApproval({
+        id: "q-relay-3", assistantId: aid, topicId: t3.id, title: "确认格式",
+        options: [{ key: "A", label: "PDF" }], status: "pending", source: "router", createdAt: new Date().toISOString(),
+      });
+      await hob.runtime.assistantTopics.close(aid, t3.id, "先关");
+      hob.faux.setResponses([text("收到回答")]);
+      await answerApproval(hob.runtime, "q-relay-3", { key: "A" });
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: t3.id });
+      expect(hob.runtime.store.assistantTopic(aid, t3.id)?.closedAt).toBeUndefined();
+      expect(hob.runtime.router.items(aid, {}, { topicId: t3.id }).items.some((i) => i.kind === "note" && i.text === "提问有了回答，话题已重新打开")).toBe(true);
+
+      // 4. relay 投递转交事件（无 job、非 userInitiated）
+      const { topic: t4 } = await hob.runtime.assistantTopics.create(aid, { title: "转交通用事件" });
+      const dg4: Delegation = { id: "dg-relay-4", from: "hob", to: aid, toTopicId: t4.id, text: "查账", createdAt: new Date().toISOString(), status: "running", jobIds: [] };
+      hob.runtime.store.saveDelegation(dg4);
+      await hob.runtime.assistantTopics.close(aid, t4.id, "先关");
+      hob.faux.setResponses([text("收到转交事件")]);
+      await hob.runtime.router.relay(aid, "转交补充说明", dg4.id, { workDone: true });
+      await hob.runtime.router.waitIdle(aid, 10_000, { topicId: t4.id });
+      expect(hob.runtime.store.assistantTopic(aid, t4.id)?.closedAt).toBeUndefined();
+      expect(hob.runtime.router.items(aid, {}, { topicId: t4.id }).items.some((i) => i.kind === "note" && i.text === "转交有了结果，话题已重新打开")).toBe(true);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("notifyAssistant 按事件种类写重开说明（提问、超时提醒、沉淀失败）", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const aid = "writer";
+      addAssistant(hob, aid, "写作助手", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      const notify = (hob.runtime.jobs as unknown as {
+        notifyAssistant: (job: Job, body: string, details?: Record<string, unknown>, noteKind?: string) => Promise<boolean>;
+      }).notifyAssistant.bind(hob.runtime.jobs);
+
+      const cases: Array<{ name: string; details?: Record<string, unknown>; noteKind?: string; expected: string }> = [
+        { name: "提问重开", details: { job: { id: "t-q", round: 0, kind: "question" }, workDone: false }, expected: "任务「对账任务」有问题要问，话题已重新打开" },
+        { name: "超时重开", details: { job: { id: "t-t", round: 0, kind: "timeout" }, workDone: false }, expected: "任务「对账任务」触发了超时提醒，话题已重新打开" },
+        { name: "沉淀失败重开", noteKind: "sediment", expected: "任务「对账任务」沉淀失败，话题已重新打开" },
+      ];
+
+      for (const item of cases) {
+        const { topic } = await hob.runtime.assistantTopics.create(aid, { title: item.name });
+        const job: Job = {
+          id: `t-${item.name}`, assistantId: aid, assistantName: "写作助手", topicId: topic.id,
+          title: "对账任务", instruction: "对账", status: "running", createdAt: new Date().toISOString(),
+          stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+        };
+        hob.runtime.store.saveJob(job);
+        await hob.runtime.assistantTopics.close(aid, topic.id, "先关");
+        hob.faux.setResponses([text("已收到")]);
+        await notify(job, "事件正文", item.details, item.noteKind);
+        await hob.runtime.router.waitIdle(aid, 10_000, { topicId: topic.id });
+        expect(hob.runtime.store.assistantTopic(aid, topic.id)?.closedAt).toBeUndefined();
+        expect(hob.runtime.router.items(aid, {}, { topicId: topic.id }).items.some((i) => i.kind === "note" && i.icon === "info" && i.text === item.expected)).toBe(true);
+      }
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("群话题关闭后收到任务结果自动重开（走 groups.reopen、不恢复定时、写时间线说明）", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "协作", ownerId: "hob", members: ["hob"] });
+      const topic = hob.runtime.groups.createTopic(group.id, "发布核对", "user");
+      const rt = hob.runtime.routines.create({ assistantId: "hob", groupId: topic.id, name: "每日巡检", instruction: "查", schedules: ["0 9 * * *"] });
+      const job: Job = {
+        id: "t-group-closed-reopen", assistantId: "hob", assistantName: "Hob", groupId: topic.id,
+        title: "检查构建", instruction: "检查", status: "running", createdAt: new Date().toISOString(),
+        stats: { reads: 0, commands: 0, edits: 0 }, activity: [],
+      };
+      hob.runtime.store.saveJob(job);
+      hob.runtime.groups.closeByUser(topic.id, "先关");
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeTruthy();
+      expect(hob.runtime.store.routine(rt.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+
+      hob.faux.setResponses([text("群话题收到结果")]);
+      await (hob.runtime.jobs as unknown as { finish: (id: string, status: Job["status"], summary?: string) => Promise<void> }).finish(job.id, "done", "构建通过");
+      await waitFor(() => !hob.runtime.store.group(topic.id)?.closedAt);
+      await hob.runtime.router.waitIdle("hob", 10_000, { groupId: topic.id });
+
+      expect(hob.runtime.store.group(topic.id)?.closedAt).toBeUndefined();
+      // 自动重开不恢复定时任务
+      expect(hob.runtime.store.routine(rt.id)).toMatchObject({ active: false, pausedBy: "topicClosed" });
+      expect(hob.runtime.groups.items(topic.id).items.some((i) => i.kind === "note" && i.icon === "info" && i.text === "任务「检查构建」有了结果，话题已重新打开")).toBe(true);
+
+      // 手动重开才恢复定时任务
+      hob.runtime.groups.reopen(topic.id);
+      expect(hob.runtime.store.routine(rt.id)?.active).toBe(true);
+      expect(hob.runtime.store.routine(rt.id)?.pausedBy).toBeUndefined();
     } finally {
       hob.close();
     }

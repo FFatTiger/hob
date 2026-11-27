@@ -342,7 +342,7 @@ describe("群话题的定时归话题（P2）", () => {
     } finally { hob.close(); }
   });
 
-  it("一次性定时因关闭暂停、过点后重开按完成停止", () => {
+  it("一次性定时因关闭暂停、过点后重开按过期停止且不补跑", () => {
     setNow("2026-11-08T00:30:00Z"); // 上海 08:30
     const hob = makeHob();
     try {
@@ -374,11 +374,12 @@ describe("群话题的定时归话题（P2）", () => {
       hob.runtime.groups.reopen(topic.id);
 
       const savedExpired = hob.runtime.store.routine(expired.id)!;
-      expect(savedExpired).toMatchObject({ active: false, stopReason: "finished" });
+      expect(savedExpired).toMatchObject({ active: false, stopReason: "expiredWhileClosed" });
+      expect(savedExpired.runs).toEqual([]);
       expect(savedExpired.pausedBy).toBeUndefined();
       expect(savedExpired.stoppedAt).toBeDefined();
       expect(hob.runtime.routines.nextRuns(expired.id)).toEqual([]);
-      expect(hob.runtime.groups.items(topic.id).items.some((item) => item.kind === "note" && item.text === "定时任务「九点发版提醒」已完成最后一次运行，已停止")).toBe(true);
+      expect(hob.runtime.groups.items(topic.id).items.some((item) => item.kind === "note" && item.text === "定时任务「九点发版提醒」的执行时间在话题关闭期间已经过了，没有运行，已停止")).toBe(true);
 
       const savedUpcoming = hob.runtime.store.routine(upcoming.id)!;
       expect(savedUpcoming.active).toBe(true);

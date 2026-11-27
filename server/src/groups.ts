@@ -356,15 +356,26 @@ export class GroupManager {
     return this.closeTopic(topic, text, text);
   }
 
-  /** 重新打开话题：清掉关闭说明与置顶，恢复因关闭而暂停的定时任务。 */
-  reopen(tid: string): Group {
+  /** 重新打开话题：清掉关闭说明与置顶，默认恢复因关闭而暂停的定时任务（自动重开传 resumeRoutines: false 不恢复）。 */
+  reopen(tid: string, options?: { resumeRoutines?: boolean }): Group {
     const topic = this.topic(tid);
     const { closedAt: _closedAt, closeNote: _closeNote, pinnedAt: _pinnedAt, ...rest } = topic;
     this.store.saveGroup(rest);
-    this.runtime.routines.resumeForTopic(tid);
+    if (options?.resumeRoutines !== false) this.runtime.routines.resumeForTopic(tid);
     this.publish(tid);
     if (topic.parentId) this.publish(topic.parentId);
     return this.group(tid);
+  }
+
+  /** 已关闭的群话题收到外部结果时自动重开（不恢复定时任务），并在时间线落一行说明。 */
+  reopenForResult(tid: string, noteText: string): boolean {
+    const topic = this.store.group(tid);
+    if (!topic || !topic.parentId || !topic.closedAt) return false;
+    this.reopen(tid, { resumeRoutines: false });
+    this.note(tid, SYSTEM, noteText, "info");
+    this.publish(tid);
+    this.publish(topic.parentId);
+    return true;
   }
 
   private closeTopic(topic: Group, note: unknown, conclusion: string, by: "user" | "assistant" = "user"): Group {

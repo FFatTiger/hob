@@ -678,6 +678,7 @@ function GroupMemberModels({ aid, groupId }: { aid: string; groupId: string }) {
 function stoppedText(routine: Routine): string | undefined {
   if (routine.stopReason === "hit") return t("已触发，已停止");
   if (routine.stopReason === "finished") return t("已完成");
+  if (routine.stopReason === "expiredWhileClosed") return t("已过期，已停止");
   return undefined;
 }
 

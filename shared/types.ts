@@ -839,7 +839,7 @@ export interface Routine {
   checks?: RoutineChecks; // 检查计数和最近一次失败的原因
   once?: boolean; // 做成一次就停：没有检查脚本的跑完就停，有检查的第一次有输出就停
   stoppedAt?: Iso; // 上次停下的时间
-  stopReason?: "hit" | "finished"; // hit=按 once 停了；finished=所有执行时间都跑完了
+  stopReason?: "hit" | "finished" | "expiredWhileClosed"; // hit=按 once 停了；finished=所有执行时间都跑完了；expiredWhileClosed=执行时间在话题关闭期间已过，没有运行
 }
 
 export interface Delegation {

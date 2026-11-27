@@ -258,6 +258,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "只在本群生效": "Only applies in this group",
   "跟随": "Follow",
   "已触发，已停止": "Triggered, stopped",
+  "已过期，已停止": "Missed while closed, stopped",
   "检查失败": "Check failed",
   "先检查，有输出交给群主处理": "Check first; hand any output to the group owner",
   "先检查，有输出交给助手处理": "Check first; hand any output to the assistant",

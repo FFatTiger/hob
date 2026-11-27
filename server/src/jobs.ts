@@ -35,7 +35,7 @@ import { overviewTool } from "./overview.ts";
 import { buildWorkerPrompt, type Abilities, type PromptSettings } from "./prompt.ts";
 import { loadedVisibleSkills, skillDirOf, visibleSkills } from "./skills.ts";
 import { combinedSkills, recordSkillUse, usableAssistantSkills } from "./assistant-skills.ts";
-import type { EventDetails } from "./router.ts";
+import { jobReopenNote, type EventDetails, type JobReopenKind } from "./router.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { briefModelError, showPath } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
@@ -421,18 +421,12 @@ export class JobManager {
   }
 
   /** 事件送到哪个助手的会话：群或话题里的任务回对应会话，其余回单聊/主对话。派给别的成员做的，回派任务的助手。 */
-  private async notifyAssistant(job: Job, text: string, details?: EventDetails): Promise<boolean> {
+  private async notifyAssistant(job: Job, text: string, details?: EventDetails, noteKind?: JobReopenKind): Promise<boolean> {
     const speaker = job.startedBy ?? job.assistantId;
     const place = placeOf(job);
-    if (place.topicId) {
-      await this.runtime.assistantTopics.reopenForResult(
-        speaker,
-        place.topicId,
-        t("任务「{title}」有了结果，话题已重新打开", { title: job.title }),
-      );
-      return this.runtime.router.event(speaker, text, details, place);
-    }
-    if (place.groupId) return this.runtime.router.event(speaker, text, details, place);
+    const kind = noteKind ?? details?.job?.kind ?? "result";
+    await this.runtime.router.reopenForEvent(speaker, place, jobReopenNote(job.title, kind));
+    if (place.topicId || place.groupId) return this.runtime.router.event(speaker, text, details, place);
     return details ? this.runtime.router.event(speaker, text, details) : this.runtime.router.event(speaker, text);
   }
 
@@ -970,17 +964,12 @@ export class JobManager {
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
         void (async () => {
-          if (next.topicId) {
-            await this.runtime.assistantTopics.reopenForResult(
-              next.assistantId,
-              next.topicId,
-              t("任务「{title}」有了结果，话题已重新打开", { title: next.title }),
-            );
-          }
+          const place = placeOf(next);
+          await this.runtime.router.reopenForEvent(next.assistantId, place, jobReopenNote(next.title, "result"));
           await this.runtime.router.event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
             routine: { id: routine.id, name: routine.name, jobId: job.id },
             ...resultDetails,
-          }, placeOf(next));
+          }, place);
         })().catch((error) => console.error("发送定时任务结果失败：", error));
       }
     } else if (assistant) {
@@ -1086,7 +1075,7 @@ export class JobManager {
     } finally {
       if (!state.cancelled) {
         const sediment = this.store.job(job.id)?.sediment;
-        if (sediment?.status === "failed") void this.notifyAssistant(job, `任务「${job.title}」（${job.id}）沉淀完了：沉淀失败，${sediment.reason}。`).catch((error) => console.error("发送沉淀结果失败：", error));
+        if (sediment?.status === "failed") void this.notifyAssistant(job, `任务「${job.title}」（${job.id}）沉淀完了：沉淀失败，${sediment.reason}。`, undefined, "sediment").catch((error) => console.error("发送沉淀结果失败：", error));
       }
       if (this.sediments.get(job.id) === state) this.sediments.delete(job.id);
     }

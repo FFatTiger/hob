@@ -301,11 +301,11 @@ export class AssistantTopicManager {
     return summary;
   }
 
-  reopen(aid: string, tid: string): AssistantTopicSummary {
+  reopen(aid: string, tid: string, options?: { resumeRoutines?: boolean }): AssistantTopicSummary {
     const topic = this.requireTopic(aid, tid);
     const { closedAt: _closedAt, closeNote: _closeNote, ...rest } = topic;
     this.store.saveAssistantTopic(rest);
-    this.runtime.routines.resumeForAssistantTopic(aid, tid);
+    if (options?.resumeRoutines !== false) this.runtime.routines.resumeForAssistantTopic(aid, tid);
     const summary = this.summaryOf(rest);
     this.bus.emit({ type: "assistant_topic", topic: summary });
     return summary;
@@ -391,7 +391,7 @@ export class AssistantTopicManager {
     const topic = this.store.assistantTopic(aid, tid);
     if (!topic || topic.assistantId !== aid || topic.id !== tid || !topic.closedAt) return Promise.resolve(false);
     const promise = (async () => {
-      this.reopen(aid, tid);
+      this.reopen(aid, tid, { resumeRoutines: false });
       await this.runtime.router.addItem(aid, { kind: "note", icon: "info", text: noteText }, { topicId: tid });
       return true;
     })().finally(() => {

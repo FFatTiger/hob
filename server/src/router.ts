@@ -72,6 +72,22 @@ const CONTEXT_TYPE = "hob.context";
 /** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
 export type EventText = string | (() => string);
 
+export type JobReopenKind = "result" | "question" | "timeout" | "sediment";
+
+/** 任务事件触发已关闭话题自动重开时的时间线说明文字。 */
+export function jobReopenNote(title: string, kind: JobReopenKind = "result"): string {
+  switch (kind) {
+    case "question":
+      return t("任务「{title}」有问题要问，话题已重新打开", { title });
+    case "timeout":
+      return t("任务「{title}」触发了超时提醒，话题已重新打开", { title });
+    case "sediment":
+      return t("任务「{title}」沉淀失败，话题已重新打开", { title });
+    default:
+      return t("任务「{title}」有了结果，话题已重新打开", { title });
+  }
+}
+
 export interface EventDetails {
   routine?: { id: string; name: string; jobId?: string };
   routineTrigger?: { id: string; name: string };
@@ -1603,9 +1619,9 @@ export class RouterManager {
     if (target.topicId) {
       const delegation = this.store.delegation(id);
       const name = (delegation ? this.store.assistant(delegation.to)?.name ?? delegation.to : undefined) ?? assistantId;
-      await this.runtime.assistantTopics.reopenForResult(
+      await this.reopenForEvent(
         assistantId,
-        target.topicId,
+        target,
         t("「{name}」交回了转交的结果，话题已重新打开", { name }),
       );
     }
@@ -1623,9 +1639,9 @@ export class RouterManager {
       const groupTopic = this.store.group(topicId);
       const host = groupTopic?.parentId ? this.store.group(groupTopic.parentId) : groupTopic;
       const name = host?.name ?? groupTopic?.parentId ?? topicId;
-      await this.runtime.assistantTopics.reopenForResult(
+      await this.reopenForEvent(
         assistantId,
-        target.topicId,
+        target,
         t("群「{name}」的话题有了结论，话题已重新打开", { name }),
       );
     }
@@ -2268,6 +2284,22 @@ export class RouterManager {
     this.itemCache.clear();
   }
 
+  /** 已关闭的话题（助手话题或群话题）收到外部事件时统一自动重开（不恢复定时任务），并在时间线落一行说明。 */
+  async reopenForEvent(assistantId: string, place: Place | undefined, noteText: string): Promise<boolean> {
+    if (place?.topicId) return this.runtime.assistantTopics.reopenForResult(assistantId, place.topicId, noteText);
+    if (place?.groupId) return this.runtime.groups.reopenForResult(place.groupId, noteText);
+    return false;
+  }
+
+  private reopenNoteForRelay(details?: EventDetails): string {
+    if (details?.job) {
+      const job = this.store.job(details.job.id);
+      return job ? jobReopenNote(job.title, details.job.kind) : t("任务有了结果，话题已重新打开");
+    }
+    if (details?.userInitiated) return t("提问有了回答，话题已重新打开");
+    return t("转交有了结果，话题已重新打开");
+  }
+
   /** 直接走事件的 followUp 队列，实际收到这条消息时才开始关联任务。 */
   /** 把事件当作转交的一轮送给目标助手；这一轮没正常收尾就把转交记为受阻，不会一直挂着。 */
   async relay(
@@ -2280,6 +2312,9 @@ export class RouterManager {
   ): Promise<boolean> {
     const topicId = place?.topicId ?? this.store.delegation(delegationId)?.toTopicId;
     const targetPlace = topicId ? { topicId } : undefined;
+    if (targetPlace) {
+      await this.reopenForEvent(targetAssistantId, targetPlace, this.reopenNoteForRelay(details));
+    }
     const success = await this.pushEvent(targetAssistantId, text, { ...details, delegationId }, knowledgeQuery, targetPlace);
     const latest = this.store.delegation(delegationId);
     const moved = (latest?.toTopicId || undefined) !== (targetPlace?.topicId || undefined);
@@ -2291,13 +2326,7 @@ export class RouterManager {
 
   /** 审批答案或卡片操作回到 Router（router 来源的审批，答案作为事件进入上下文；群/话题里提的问题回对应会话）。 */
   async answerEvent(assistantId: string, text: string, place?: Place): Promise<void> {
-    if (place?.topicId) {
-      await this.runtime.assistantTopics.reopenForResult(
-        assistantId,
-        place.topicId,
-        t("提问有了回答，话题已重新打开"),
-      );
-    }
+    await this.reopenForEvent(assistantId, place, t("提问有了回答，话题已重新打开"));
     await this.event(assistantId, text, { userInitiated: true }, place);
   }
 }

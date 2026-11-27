@@ -5,6 +5,7 @@ import { engineDir, loadConfig, resolveHome } from "./config.ts";
 import { createApp } from "./http.ts";
 import { prepareHome } from "./layout.ts";
 import { attachDesktopWebSocket } from "./desktop-control.ts";
+import { attachEventsWebSocket } from "./events-ws.ts";
 import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
 import { generalSkillsDir, syncGeneralIndex } from "./skills.ts";
@@ -67,11 +68,13 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);
   const server = serve({ fetch: app.fetch, port, hostname: config.host });
   const detachDesktop = attachDesktopWebSocket(server, runtime);
+  const detachEvents = attachEventsWebSocket(server, runtime);
 
   return {
     runtime,
     port,
     close: async () => {
+      detachEvents();
       detachDesktop();
       runtime.update.stop();
       runtime.desktopEvents.stop();

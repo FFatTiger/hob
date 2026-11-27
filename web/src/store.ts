@@ -1083,6 +1083,24 @@ darkQuery.addEventListener("change", () => {
 let started = false;
 let stopEvents: (() => void) | null = null;
 
+export type ConnectionStatus = "open" | "reconnect" | "down";
+const eventListeners = new Set<(ev: HobEvent) => void>();
+const connectionListeners = new Set<(status: ConnectionStatus) => void>();
+
+export function subscribeEvents(listener: (ev: HobEvent) => void): () => void {
+  eventListeners.add(listener);
+  return () => { eventListeners.delete(listener); };
+}
+
+export function subscribeConnection(listener: (status: ConnectionStatus) => void): () => void {
+  connectionListeners.add(listener);
+  return () => { connectionListeners.delete(listener); };
+}
+
+function emitConnection(status: ConnectionStatus): void {
+  for (const listener of connectionListeners) listener(status);
+}
+
 export async function start() {
   if (started) return;
   started = true;
@@ -1132,6 +1150,7 @@ export async function login(password: string) {
 export async function logout() {
   stopEvents?.();
   stopEvents = null;
+  emitConnection("down");
   try {
     await api.logout();
   } catch {
@@ -1186,13 +1205,18 @@ async function loadBootstrap(reconnect = false) {
           onEvent: applyEvent,
           onReconnect: () => {
             set({ offline: null });
+            emitConnection("reconnect");
             void loadBootstrap(true);
           },
-          onDown: (reason) => set({ offline: reason }),
+          onDown: (reason) => {
+            set({ offline: reason });
+            emitConnection("down");
+          },
         },
         CLIENT_ID,
       );
       watchVisibility();
+      emitConnection("open");
     }
     void loadStars();
     const sel =
@@ -1221,6 +1245,11 @@ async function loadBootstrap(reconnect = false) {
 
 const closedLivePages = new Set<string>();
 export function applyEvent(ev: HobEvent) {
+  applyEventState(ev);
+  for (const listener of eventListeners) listener(ev);
+}
+
+function applyEventState(ev: HobEvent) {
   if (ev.type === "item" || ev.type === "delta") itemEvents.get(ev.assistantId)?.push(ev);
   if (ev.type === "group-item" || ev.type === "group-delta") groupEvents.get(ev.groupId)?.push(ev);
   switch (ev.type) {

@@ -2,14 +2,91 @@ import { useEffect, useState } from "react";
 import type { DesktopScreen } from "../../shared/types.ts";
 import { desktopMockScene } from "./mock.ts";
 import { realApi as api } from "./api.ts";
-import { MOCK } from "./store.ts";
+import { MOCK, getState, subscribeConnection, subscribeEvents } from "./store.ts";
 import { t } from "../../shared/i18n.ts";
 
-interface Snapshot { screens: DesktopScreen[]; profiles: Record<string, string>; error?: string }
+export interface DesktopScreensSnapshot { screens: DesktopScreen[]; profiles: Record<string, string>; error?: string }
 
-/** 首次和 SSE 重连拉快照，其余变化由服务端推送。 */
-export function useDesktopScreens(): Snapshot {
-  const [snapshot, setSnapshot] = useState<Snapshot>({ screens: [], profiles: {} });
+const EMPTY: DesktopScreensSnapshot = { screens: [], profiles: {} };
+
+let shared: DesktopScreensSnapshot = EMPTY;
+let version = 0;
+let initialized = false;
+const listeners = new Set<() => void>();
+let stopSubscriptions: (() => void) | null = null;
+
+function setShared(update: DesktopScreensSnapshot | ((old: DesktopScreensSnapshot) => DesktopScreensSnapshot)) {
+  shared = typeof update === "function" ? update(shared) : update;
+  for (const listener of listeners) listener();
+}
+
+async function refreshShared() {
+  const current = version;
+  try {
+    const result = await api.desktopScreens();
+    setShared((old) => ({ profiles: result.profiles, screens: version === current ? result.screens : old.screens }));
+  } catch (error) {
+    setShared((old) => ({ ...old, error: error instanceof Error ? error.message : String(error) }));
+  }
+}
+
+function attachShared() {
+  if (stopSubscriptions) return;
+  const unsubEvents = subscribeEvents((value) => {
+    if (value.type === "desktop-screens" && Array.isArray(value.screens)) {
+      version++;
+      setShared((old) => ({ profiles: old.profiles, screens: value.screens }));
+    } else if (value.type === "assistant" || value.type === "assistant_removed") {
+      void refreshShared();
+    }
+  });
+  const unsubConn = subscribeConnection((status) => {
+    if (status === "open" || status === "reconnect") {
+      initialized = true;
+      void refreshShared();
+    } else if (status === "down") {
+      initialized = false;
+      setShared((old) => ({ ...old, screens: [] }));
+    }
+  });
+  stopSubscriptions = () => {
+    unsubEvents();
+    unsubConn();
+    stopSubscriptions = null;
+  };
+  if (!initialized && getState().phase === "ready") {
+    initialized = true;
+    void refreshShared();
+  }
+}
+
+/** 测试用：重置共享快照状态。 */
+export function resetDesktopScreensForTest(): void {
+  stopSubscriptions?.();
+  shared = EMPTY;
+  version = 0;
+  initialized = false;
+  listeners.clear();
+}
+
+/** 订阅共享的云桌面快照：多处订阅只共用全局唯一实时连接与同一份快照。 */
+export function subscribeDesktopScreens(listener: (snapshot: DesktopScreensSnapshot) => void): () => void {
+  const sync = () => listener(shared);
+  listeners.add(sync);
+  attachShared();
+  sync();
+  return () => {
+    listeners.delete(sync);
+    if (listeners.size === 0) {
+      stopSubscriptions?.();
+      initialized = false;
+    }
+  };
+}
+
+/** 复用全局实时连接共享云桌面快照：首次和重连拉一次，其余由服务端推送。 */
+export function useDesktopScreens(): DesktopScreensSnapshot {
+  const [snapshot, setSnapshot] = useState<DesktopScreensSnapshot>(() => (MOCK ? EMPTY : shared));
   useEffect(() => {
     if (MOCK) {
       if (desktopMockScene() === "ready" || desktopMockScene() === "deployed") {
@@ -23,28 +100,7 @@ export function useDesktopScreens(): Snapshot {
       window.addEventListener("hob-mock-desktop", onMock);
       return () => window.removeEventListener("hob-mock-desktop", onMock);
     }
-    let alive = true;
-    let version = 0;
-    const refresh = async () => {
-      const current = version;
-      try {
-        const result = await api.desktopScreens();
-        if (alive) setSnapshot((old) => ({ profiles: result.profiles, screens: version === current ? result.screens : old.screens }));
-      } catch (error) { if (alive) setSnapshot((old) => ({ ...old, error: error instanceof Error ? error.message : String(error) })); }
-    };
-    const events = new EventSource("/api/events");
-    events.onopen = () => { void refresh(); };
-    events.onerror = () => { if (alive) setSnapshot((old) => ({ ...old, screens: [] })); };
-    events.onmessage = (event) => {
-      try {
-        const value = JSON.parse(event.data);
-        if (value.type === "desktop-screens" && Array.isArray(value.screens)) {
-          version++;
-          setSnapshot((old) => ({ ...old, screens: value.screens }));
-        } else if (value.type === "assistant" || value.type === "assistant_removed") void refresh();
-      } catch { /* 忽略无效事件 */ }
-    };
-    return () => { alive = false; events.close(); };
+    return subscribeDesktopScreens(setSnapshot);
   }, []);
   return snapshot;
 }

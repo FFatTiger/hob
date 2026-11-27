@@ -284,32 +284,6 @@ export interface HobApi {
   events(handlers: EventHandlers, clientId?: string): () => void;
 }
 
-const EVENT_TYPES: HobEvent["type"][] = [
-  "rules",
-  "assistant",
-  "assistant_removed",
-  "item",
-  "delta",
-  "job",
-  "delegation",
-  "job_step",
-  "activity",
-  "approval",
-  "card",
-  "draft",
-  "routine",
-  "routine_removed",
-  "profile",
-  "knowledge",
-  "skills",
-  "group",
-  "group_removed",
-  "group-item",
-  "group-delta",
-  "group-activity",
-  "plugin-install",
-  "plugin-providers",
-];
 export const realApi: HobApi = {
   knowledge: (query = {}) => {
     const params = new URLSearchParams();
@@ -540,27 +514,64 @@ export const realApi: HobApi = {
     req<{ sent: number; removed: number; error?: string }>("/api/push/test", json(endpoint ? { endpoint } : {})),
   visibility: (clientId, visible) => req<void>("/api/visibility", json({ clientId, visible })),
   events: ({ onEvent, onReconnect, onDown }, clientId) => {
-    const es = new EventSource(`/api/events${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`);
+    const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+    const url = `${protocol}//${location.host}/api/events/ws${clientId ? `?clientId=${encodeURIComponent(clientId)}` : ""}`;
+    let closed = false;
     let wasDown = false;
-    const handle = (e: MessageEvent) => {
-      try {
-        onEvent(JSON.parse(e.data) as HobEvent);
-      } catch {
-        /* 坏事件丢弃，不影响其他事件 */
+    let delay = 1000;
+    let socket: WebSocket | null = null;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+
+    const connect = () => {
+      if (closed) return;
+      const ws = new WebSocket(url);
+      socket = ws;
+      ws.onopen = () => {
+        if (closed || socket !== ws) return;
+        delay = 1000;
+        if (wasDown) {
+          wasDown = false;
+          onReconnect();
+        }
+      };
+      ws.onmessage = (e) => {
+        if (closed || socket !== ws || typeof e.data !== "string") return;
+        try {
+          onEvent(JSON.parse(e.data) as HobEvent);
+        } catch {
+          /* 坏事件丢弃，不影响其他事件 */
+        }
+      };
+      ws.onclose = () => {
+        if (closed || socket !== ws) return;
+        socket = null;
+        wasDown = true;
+        onDown(t("实时连接中断，正在重连"));
+        timer = setTimeout(connect, delay);
+        delay = Math.min(delay * 2, 15_000);
+      };
+      ws.onerror = () => {
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+      };
+    };
+
+    const onOnline = () => {
+      if (!closed && !socket) {
+        clearTimeout(timer);
+        delay = 1000;
+        connect();
       }
     };
-    es.onmessage = handle;
-    for (const type of EVENT_TYPES) es.addEventListener(type, handle as EventListener);
-    es.onerror = () => {
-      wasDown = true;
-      onDown(es.readyState === EventSource.CLOSED ? t("实时连接已断开") : t("实时连接中断，正在重连"));
+    globalThis.addEventListener?.("online", onOnline);
+    connect();
+
+    return () => {
+      closed = true;
+      clearTimeout(timer);
+      globalThis.removeEventListener?.("online", onOnline);
+      const current = socket;
+      socket = null;
+      current?.close();
     };
-    es.onopen = () => {
-      if (wasDown) {
-        wasDown = false;
-        onReconnect();
-      }
-    };
-    return () => es.close();
   },
 };

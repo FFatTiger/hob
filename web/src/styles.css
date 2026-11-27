@@ -61,7 +61,7 @@
 .settings-card > * + *::before { left: 0; }
 .sidebar-list .sidebar-row + .sidebar-row::before, .card-rows > .sidebar-row + .sidebar-row::before { left: calc(var(--sidebar-inset) + 28px); }
 .card-rows > .ctl, .card-rows > .assistant-skill, .card-rows > .rule-wrap { padding: 10px var(--sidebar-inset); margin: 0; }
-.card-rows .rule { border-top: 0; }
+.card-rows .rule, .card-rows .rule-add, .card-rows .rule-new { border-top: 0; }
 .sidebar-page-routine > .field, .sidebar-page-newRoutine > .field, .sidebar-page-routine > .when, .sidebar-page-newRoutine > .when { background: var(--field); border-radius: 10px; }
 .sidebar-page-routine .sidebar-card-group > .pick, .sidebar-page-newRoutine .sidebar-card-group > .pick, .sidebar-page-routine > .pick { width: 100%; }
 .sidebar-page-routine > .field, .sidebar-page-newRoutine > .field { padding-left: var(--sidebar-inset); padding-right: var(--sidebar-inset); }

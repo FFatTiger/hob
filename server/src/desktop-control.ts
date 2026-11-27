@@ -7,6 +7,8 @@ import { validCookie } from "./http.ts";
 import { desktopProfile } from "./desktop-tools.ts";
 
 const CLIENT = /^[a-f0-9-]{36}$/;
+// 云桌面已启动的屏幕升级是毫秒级的。浏览器对同一 host:port 的 WebSocket 握手排队，这里挂着就会挡住 /api/events/ws，所以给个短上限。
+export const VNC_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 export class DesktopControl {
   private screens = new Map<string, { owner: string | null; connections: Map<string, number>; timer?: NodeJS.Timeout }>();
@@ -124,7 +126,9 @@ export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime
     try { connection = runtime.desktop.connection(); } catch { return reject("503 Service Unavailable"); }
     const target = new URL(`/vnc/${screen}`, connection.url);
     target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
-    const upstream = new WebSocket(target, { headers: { Authorization: `Bearer ${connection.token}` }, perMessageDeflate: false });
+    // 超时时 ws 会关掉上游连接并发 error，走下面的 502：浏览器那一侧的 socket 也在这时关掉。
+    // 在升级完成前没人读它，浏览器先走了这里察觉不到，靠这个上限收尾。
+    const upstream = new WebSocket(target, { headers: { Authorization: `Bearer ${connection.token}` }, perMessageDeflate: false, handshakeTimeout: VNC_HANDSHAKE_TIMEOUT_MS });
     const failed = () => reject("502 Bad Gateway");
     upstream.once("error", failed);
     socket.once("close", () => { if (upstream.readyState === WebSocket.CONNECTING) upstream.terminate(); });

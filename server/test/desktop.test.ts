@@ -1,13 +1,13 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { once } from "node:events";
 import { WebSocket, WebSocketServer } from "ws";
 import { pointerEventLength } from "../../desktop/desktopd/pointer-event.mjs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesktopControl, RfbClientFilter, attachDesktopWebSocket } from "../src/desktop-control.ts";
+import { DesktopControl, RfbClientFilter, VNC_HANDSHAKE_TIMEOUT_MS, attachDesktopWebSocket } from "../src/desktop-control.ts";
 import { filledSecretsFor, redactSecrets, rememberFilledSecret } from "../src/desktop-tools.ts";
 import { createApp } from "../src/http.ts";
 import { makeHob } from "./helpers.ts";
@@ -224,6 +224,61 @@ describe("云桌面配置", () => {
       hob.close();
     }
   });
+  it("云桌面接受连接却不回应升级：按握手超时回 502，两端连接和接管登记都清掉", async () => {
+    // 浏览器对同一 host:port 的 WebSocket 握手是排队的：VNC 握手一直挂着，/api/events/ws 也连不上
+    const hob = makeHob();
+    const held = new Set<Socket>();
+    // 读走请求但永不回应；要读着才察觉得到对端关闭
+    const upstream = createTcpServer((socket) => { held.add(socket); socket.on("error", () => {}); socket.on("close", () => held.delete(socket)); socket.resume(); });
+    upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
+    hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, enabled: true });
+    writeSecret(hob.home, "desktop:token", "test-token");
+    const proxy = createServer();
+    const detach = attachDesktopWebSocket(proxy, hob.runtime);
+    proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
+    const waiting = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+    const gaveUp = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+    const url = (client: string) => `ws://127.0.0.1:${(proxy.address() as AddressInfo).port}/api/desktop/vnc?screen=hob&client=${client}`;
+    const connections = (server: { getConnections(cb: (error: Error | null, count: number) => void): void }) =>
+      new Promise<number>((resolve) => server.getConnections((_error, count) => resolve(count)));
+    try {
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const started = Date.now();
+      const client = new WebSocket(url(waiting), { headers: { cookie } });
+      client.on("error", () => {});
+      // 另一个浏览器等不及先走了：它那一侧的断开代理察觉不到，也要在超时时一起清掉
+      const quitter = new WebSocket(url(gaveUp), { headers: { cookie } });
+      quitter.on("error", () => {});
+      setTimeout(() => quitter.terminate(), 200);
+      const status = await new Promise<number | string>((resolve) => {
+        const deadline = setTimeout(() => resolve("still pending"), VNC_HANDSHAKE_TIMEOUT_MS + 3_000);
+        client.once("unexpected-response", (_request, response) => { clearTimeout(deadline); response.resume(); resolve(response.statusCode ?? 0); });
+        client.once("open", () => { clearTimeout(deadline); resolve("opened"); });
+      });
+      const elapsed = Date.now() - started;
+      expect(status).toBe(502);
+      expect(elapsed).toBeGreaterThanOrEqual(VNC_HANDSHAKE_TIMEOUT_MS - 200);
+      expect(elapsed).toBeLessThan(VNC_HANDSHAKE_TIMEOUT_MS + 2_000);
+      // 到云桌面的两条连接、两个浏览器在代理这边的连接都关掉，没有留下等不到头的握手
+      await vi.waitFor(() => expect(held.size).toBe(0), { timeout: 2_000 });
+      await vi.waitFor(async () => expect(await connections(upstream)).toBe(0), { timeout: 2_000 });
+      await vi.waitFor(async () => expect(await connections(proxy)).toBe(0), { timeout: 2_000 });
+      // 握手没成，就没登记成桌面连接：不能接管，也不算被占
+      for (const id of [waiting, gaveUp]) {
+        expect(() => hob.runtime.desktopControl.take(id)).toThrow("请先打开云桌面");
+        expect(hob.runtime.desktopControl.state(id)).toEqual({ taken: false, mine: false });
+      }
+    } finally {
+      detach(); hob.runtime.desktopControl.dispose();
+      for (const socket of held) socket.destroy();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      hob.close();
+    }
+  });
+
   it("RFB 流按消息边界过滤旁观者输入并允许接管者操作", () => {
     let allowed = false;
     const filter = new RfbClientFilter(() => allowed);

@@ -535,4 +535,6 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "跟随助手": "Follows assistant",
   "跟随助手 · {model}": "Follows assistant · {model}",
   "跟随助手（{name}）": "Follows assistant ({name})",
+  "前往话题": "Open topic",
+  "{source} 交回：{text}": "{source} reported back: {text}",
 };

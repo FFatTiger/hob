@@ -1119,7 +1119,7 @@ export type NoteIcon = "memory" | "rule" | "routine" | "split" | "info" | "skill
 export type Item = (
   | { kind: "user"; id: string; at: Iso; text: string; quote?: { itemId: string; text: string }; files?: string[]; from?: { assistantId: string; name: string; delegationId: string }; forwardedFrom?: { groupId: string; itemId: string } | { assistantId: string; itemId?: string }; reactions?: { by: string; emoji: string }[] }
   | { kind: "assistant"; id: string; at: Iso; text: string; streaming?: boolean; routine?: { id: string; name: string; jobId?: string }; quote?: { itemId: string; text: string } }
-  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; routineId?: string; handbackId?: string; path?: string; targetGroupId?: string; detail?: string } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文） // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
+  | { kind: "note"; id: string; at: Iso; icon: NoteIcon; text: string; request?: string; routineId?: string; handbackId?: string; path?: string; targetGroupId?: string; targetTopicId?: string; detail?: string; files?: string[] } // request：定时任务到点时交给群主的全文，界面不显示，转进话题、派任务时带上 // path：点了预览这个文件（如技能的 SKILL.md） // detail：点开才看的原因（工具报错的原文）或较长的汇报正文 // 居中灰色一行，如 "记忆已更新 · 不看融资新闻"
   | { kind: "todos"; id: string; at: Iso; items: TodoItem[]; why: TodoArchiveWhy } // 老数据：以前收起的一份待办。现在不再写入，界面不显示（对话里只放用户需要看的东西）
   | { kind: "question"; id: string; at: Iso; approvalId: string }
   | { kind: "job"; id: string; at: Iso; jobId: string; round?: number } // 第几轮（续做一次 +1），缺省是第 0 轮

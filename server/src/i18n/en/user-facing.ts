@@ -364,4 +364,9 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "工作目录范围过大（包含 Hob 数据目录），请指定具体的项目目录。": "That directory is too broad (it contains Hob's data directory). Choose a specific project directory.",
   "工作目录不存在：{path}": "Work directory does not exist: {path}",
   "工作目录不是文件夹：{path}": "Work directory is not a folder: {path}",
+  "汇报": "Report back",
+  "{source} 交回：{text}": "{source} reported back: {text}",
+  "{text}（附件：{files}）": "{text} (Attachments: {files})",
+  "群「{group}」的话题「{name}」交回了进展，话题已重新打开": "Topic “{name}” in group “{group}” reported an update. The topic was reopened.",
+  "「{name}」交回了进展，话题已重新打开": "{name} reported an update. The topic was reopened.",
 };

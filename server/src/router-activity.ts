@@ -26,6 +26,7 @@ export function activityLabel(name: string, args: Record<string, unknown> = {}, 
     case "create_assistant": labelText = t("新建助手"); break;
     case "message_assistant": { const id = value("assistantId"); labelText = id ? t("交给「{name}」", { name: assistantName?.(id) ?? id }) : t("交给助手"); break; }
     case "hand_back": labelText = t("交回"); break;
+    case "report_back": labelText = t("汇报"); break;
     case "show_page": labelText = withValue(t("生成页面"), value("title")); break;
     case "find_knowledge": labelText = withValue(t("正在查找资料"), value("query")); break;
     case "search_knowledge": labelText = withValue(t("正在搜索知识库"), value("query")); break;

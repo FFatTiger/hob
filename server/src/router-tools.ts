@@ -1623,6 +1623,164 @@ export function buildRouterTools(
     }
   }
 
+  const reportBackKind = currentGroup
+    ? (currentGroup.parentId && currentGroup.ownerId === assistantId
+      ? (currentGroup.handover ? "group-handover" : "group-topic")
+      : undefined)
+    : (!assistant().primary
+      ? (isAssistantTopic ? "assistant-topic" : "one-on-one")
+      : undefined);
+
+  if (reportBackKind) {
+    const reportBackDescription =
+      reportBackKind === "group-topic"
+        ? "把这个话题的结果、进展，或者要综合来定的事交回综合。综合里的你会收到并接着安排；话题不关，这里还能接着办。"
+        : reportBackKind === "group-handover"
+          ? `把这个话题的结果、进展，或者要「${nameOf(currentGroup!.handover!.by)}」来定的事交回给它。它会收到并接着处理；话题不关，这里还能接着办。`
+          : reportBackKind === "assistant-topic"
+            ? "把这个话题的结果、进展，或者要主对话来定的事交回主对话。主对话里的你会收到并接着安排；话题不关，这里还能接着办。"
+            : "把转来的事的新结果交回最近一次把事转给你的助手。它会收到并接着处理。";
+
+    const formatReportNote = (source: string, body: string, attached: string[]): { text: string; detail?: string } => {
+      const withFiles = attached.length
+        ? t("{text}（附件：{files}）", { text: body, files: attached.map((file) => basename(file)).join("、") })
+        : body;
+      const isLong = withFiles.split("\n").length > 2 || [...withFiles].length > 180;
+      if (!isLong) return { text: t("{source} 交回：{text}", { source, text: withFiles }) };
+      const firstLine = withFiles.split("\n").map((line) => line.trim()).find(Boolean) ?? withFiles;
+      const preview = [...firstLine].length > 80 ? `${[...firstLine].slice(0, 80).join("")}…` : `${firstLine}…`;
+      return { text: t("{source} 交回：{text}", { source, text: preview }), detail: withFiles };
+    };
+    const missingAssistantName = (id: string) => store.assistant(id)?.name ?? store.archivedAssistantName(id) ?? id;
+    const shortDelegation = (value: string) => {
+      const clean = value.replace(/\s+/g, " ").trim();
+      return [...clean].length > 20 ? `${[...clean].slice(0, 20).join("")}…` : clean;
+    };
+
+    tools.push({
+      name: "report_back",
+      label: "汇报",
+      description: reportBackDescription,
+      parameters: Type.Object({
+        text: Type.String({ description: "要对方知道什么：结果、做到哪了、要它定什么。对方看不到这里的对话，要用到的都写进来。" }),
+        files: Type.Optional(Type.Array(Type.String({ description: "要一起交回的文件路径" }))),
+      }),
+      execute: async (_id, params: any) => {
+        const reportText = typeof params.text === "string" ? params.text.trim() : "";
+        if (!reportText) return fail("text 不能为空：写清结果、进展或要对方定什么，再调用一次。");
+        const resolvedFiles = resolveHandoffFiles(params.files);
+        if ("error" in resolvedFiles) return fail(resolvedFiles.error);
+        const { files } = resolvedFiles;
+
+        if (groupId) {
+          const live = store.group(groupId);
+          if (!live || !live.parentId) return fail("这个群和话题只在群里用。");
+          if (live.ownerId !== assistantId) return fail("只有群主能向上一层汇报。");
+          if (live.handover) {
+            const targetId = live.handover.by;
+            const target = store.assistant(targetId);
+            if (!target) return fail(`「${missingAssistantName(targetId)}」已经不在了，交不回去：结果直接告诉用户。`);
+            const targetPlace = live.handover.fromTopicId ? { topicId: live.handover.fromTopicId } : undefined;
+            const host = store.group(live.parentId);
+            const groupName = host?.name ?? live.parentId;
+            if (targetPlace?.topicId) {
+              await router.reopenForEvent(
+                targetId,
+                targetPlace,
+                t("群「{group}」的话题「{name}」交回了进展，话题已重新打开", { group: groupName, name: live.name }),
+              );
+            }
+            const formatted = formatReportNote(live.name, reportText, files);
+            await router.addItem(
+              targetId,
+              {
+                kind: "note",
+                icon: "info",
+                text: formatted.text,
+                ...(formatted.detail ? { detail: formatted.detail } : {}),
+                targetGroupId: live.id,
+                ...(files.length ? { files } : {}),
+              },
+              targetPlace,
+            );
+            const eventText = `群「${groupName}」的话题「${live.name}」（${live.id}）交回：${reportText}\n话题里看不到你这边说的话：要群里接着做什么，用 message_group 填 topic: ${live.id} 转过去。`;
+            void router
+              .event(targetId, eventText, { workDone: true, ...(files.length ? { files } : {}) }, targetPlace)
+              .catch((error) => console.error("话题交回事件没送到：", error));
+            return ok(`已交回「${target.name}」。`);
+          }
+          const host = store.group(live.parentId);
+          if (!host) return fail("所属的群已经不在了，交不回去：结果直接告诉用户。");
+          const owner = store.assistant(host.ownerId);
+          if (!owner) return fail(`「${missingAssistantName(host.ownerId)}」已经不在了，交不回去：结果直接告诉用户。`);
+          const formatted = formatReportNote(live.name, reportText, files);
+          runtime.groups.note(host.id, assistantId, formatted.text, "info", formatted.detail, live.id, files);
+          const eventText = `话题「${live.name}」（${live.id}）交回：${reportText}\n话题里看不到综合说的话：要它接着做什么，或者要别的话题配合，用 open_topic 填 topic 转过去。`;
+          void runtime.groups
+            .deliverEvent(host.id, host.ownerId, eventText, "", { workDone: true, ...(files.length ? { files } : {}) })
+            .catch((error) => console.error("话题交回综合的事件没送到：", error));
+          return ok("已交回综合。");
+        }
+
+        if (isAssistantTopic) {
+          const liveTopic = store.assistantTopic(assistantId, topicId!);
+          if (!liveTopic) return fail("这个话题已经不在了，交不回去：结果直接告诉用户。");
+          const formatted = formatReportNote(liveTopic.name, reportText, files);
+          await router.addItem(assistantId, {
+            kind: "note",
+            icon: "info",
+            text: formatted.text,
+            ...(formatted.detail ? { detail: formatted.detail } : {}),
+            targetTopicId: liveTopic.id,
+            ...(files.length ? { files } : {}),
+          });
+          const eventText = `话题「${liveTopic.name}」（${liveTopic.id}）交回：${reportText}\n话题里看不到主对话说的话：要它接着做什么，或者要别的话题配合，用 open_topic 填 topic 转过去。`;
+          void router
+            .event(assistantId, eventText, { workDone: true, ...(files.length ? { files } : {}) })
+            .catch((error) => console.error("助手话题交回主对话的事件没送到：", error));
+          return ok("已交回主对话。");
+        }
+
+        const latest = store
+          .delegations()
+          .filter((record) => record.to === assistantId && !record.toTopicId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt))[0];
+        if (!latest) return fail("这里没有别的助手转来的事，没有可以交回的地方：结果直接告诉用户。");
+        if (latest.status === "running" || latest.status === "waiting") {
+          return fail(`你在办「${missingAssistantName(latest.from)}」转来的事，这一轮说完，结果会自动回到它那里，不用另外交回。`);
+        }
+        const target = store.assistant(latest.from);
+        if (!target) return fail(`「${missingAssistantName(latest.from)}」已经不在了，交不回去：结果直接告诉用户。`);
+        const targetPlace = latest.fromTopicId ? { topicId: latest.fromTopicId } : undefined;
+        const selfName = assistant().name;
+        if (targetPlace?.topicId) {
+          await router.reopenForEvent(
+            target.id,
+            targetPlace,
+            t("「{name}」交回了进展，话题已重新打开", { name: selfName }),
+          );
+        }
+        const formatted = formatReportNote(selfName, reportText, files);
+        await router.addItem(
+          target.id,
+          {
+            kind: "note",
+            icon: "info",
+            text: formatted.text,
+            ...(formatted.detail ? { detail: formatted.detail } : {}),
+            ...(files.length ? { files } : {}),
+          },
+          targetPlace,
+        );
+        const eventText = `「${selfName}」交回（你之前转给它的「${shortDelegation(latest.text)}」）：${reportText}\n要它接着做什么，用 message_assistant 再转给它。`;
+        void router
+          .event(target.id, eventText, { workDone: true, ...(files.length ? { files } : {}) }, targetPlace)
+          .catch((error) => console.error("单聊交回转交方的事件没送到：", error));
+        return ok(`已交回「${target.name}」。`);
+      },
+    });
+  }
+
   tools.push(updateTodosTool(runtime, { assistantId, ...(place ? { place } : {}) }), findKnowledgeTool(runtime), searchKnowledgeTool(runtime, assistantId), ...searchTools(runtime.home, () => runtime.settings.settings.search, () => runtime.settings.settings.providers));
   return tools;
 }

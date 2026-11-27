@@ -1930,7 +1930,7 @@ export async function openGroupHome(id: string) {
   await selectGroup(id, true, false, true);
 }
 
-/** 从管理提示进入目标群综合；群列表可能尚未收到新群事件。 */
+/** 从管理提示进入目标群综合或群话题；群列表可能尚未收到新群事件。 */
 export async function openNoteGroup(id: string) {
   try {
     let group = state.groups.find((entry) => entry.id === id);
@@ -1939,7 +1939,7 @@ export async function openNoteGroup(id: string) {
       set({ groups });
       group = groups.find((entry) => entry.id === id);
     }
-    if (!group || group.parentId) {
+    if (!group) {
       set({ notice: t("目标群不可用") });
       return;
     }

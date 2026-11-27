@@ -260,6 +260,17 @@ export class Store {
     return profile;
   }
 
+  /** 从归档目录查已归档助手的名字，给「对方已经不在了」的提示用。 */
+  archivedAssistantName(id: string): string | undefined {
+    const root = archiveAssistantsDir(this.home);
+    if (!existsSync(root)) return undefined;
+    for (const folder of readdirSync(root)) {
+      const profile = readJson<{ id?: unknown; name?: unknown }>(join(root, folder, "profile.json"), {});
+      if (profile.id === id && typeof profile.name === "string" && profile.name.trim()) return profile.name;
+    }
+    return undefined;
+  }
+
   saveAssistant(assistant: Assistant): void {
     writeJsonAtomic(join(this.assistantDir(assistant.id), "profile.json"), assistant);
   }

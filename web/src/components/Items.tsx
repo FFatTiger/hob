@@ -74,7 +74,7 @@ const NOTE_ICON: Record<NoteIcon, IconName> = {
   info: "info",
 };
 
-function NoteWithDetail({ icon, text, detail, fresh }: { icon: NoteIcon; text: string; detail: string; fresh: boolean }) {
+function NoteWithDetail({ icon, text, detail, fresh, onOpenTarget }: { icon: NoteIcon; text: string; detail: string; fresh: boolean; onOpenTarget?: () => void }) {
   const long = detail.split("\n").length > 2 || detail.length > 180;
   const [open, setOpen] = useState(false);
   return (
@@ -83,9 +83,14 @@ function NoteWithDetail({ icon, text, detail, fresh }: { icon: NoteIcon; text: s
       {long ? (
         <Disclosure className="sys-why-disclosure" label={text} open={open} onToggle={() => setOpen(value => !value)}>
           <div className="why">{detail}</div>
+          {onOpenTarget ? <button className="sys-group" onClick={onOpenTarget}>{t("前往话题")}</button> : null}
         </Disclosure>
       ) : (
-        <div className="sys-why-body"><div>{text}</div><div className="why">{detail}</div></div>
+        <div className="sys-why-body">
+          <div>{text}</div>
+          <div className="why">{detail}</div>
+          {onOpenTarget ? <button className="sys-group" onClick={onOpenTarget}>{t("前往话题")}</button> : null}
+        </div>
       )}
     </div>
   );
@@ -933,11 +938,18 @@ function ItemView({
     if (item.icon === "routine" && isRoutineDueNote(item.text, item.routineId)) {
       return <div className={`sys routine-note${fresh ? " enter-fade" : ""}`}><Icon name="clock" size={14} /><span>{item.text.replace(/，检查到：[\s\S]*$/u, "")}</span></div>;
     }
-    // 长原因用统一展开行；一两行能看完的原文直接显示
-    if (item.detail) return <NoteWithDetail icon={item.icon} text={item.text} detail={item.detail} fresh={fresh} />;
+    const openTarget = !item.handbackId && !(item.icon === "skill" && item.path)
+      ? item.targetGroupId
+        ? () => void openNoteGroup(item.targetGroupId!)
+        : item.targetTopicId && s.sel
+          ? () => void openAssistantTopic(s.sel!, item.targetTopicId!)
+          : undefined
+      : undefined;
+    // 长原因或长汇报用统一展开行；一两行能看完的原文直接显示
+    if (item.detail) return <NoteWithDetail icon={item.icon} text={item.text} detail={item.detail} fresh={fresh} onOpenTarget={openTarget} />;
     return (
       <div className={`sys${fresh ? " enter-fade" : ""}`} id={item.handbackId ? `handback-${item.handbackId}` : undefined}>
-        {item.targetGroupId && !item.handbackId && !(item.icon === "skill" && item.path) ? <button className="sys-group" onClick={() => void openNoteGroup(item.targetGroupId!)}>{item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}{item.text}</button> : <>
+        {openTarget ? <button className="sys-group" onClick={openTarget}>{item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}{item.text}</button> : <>
           {item.icon !== "split" ? <Icon name={NOTE_ICON[item.icon]} size={14} /> : null}
           {item.handbackId ? <button onClick={() => void jumpToHandback("hob", item.handbackId!, true)}>{item.text}</button> : item.icon === "skill" && item.path ? <button onClick={() => openFilePreview(item.path!)}>{item.text}</button> : item.icon === "memory" ? <span className="sys-memory" title={item.text}>{item.text.replace(/[:：,，;；、]+\s*$/u, "")}</span> : item.text}
         </>}

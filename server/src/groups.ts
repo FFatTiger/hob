@@ -59,6 +59,7 @@ export interface DeliverEventOptions {
   workDone?: boolean;
   userInitiated?: boolean;
   bypassBusy?: boolean;
+  files?: string[];
 }
 
 /** 一条用户消息引出的一串助手回合，turns 是已经开了几个（按 @ 接力计，不含全员依次轮到的回合）。 */
@@ -779,13 +780,13 @@ export class GroupManager {
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */
-  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
+  private schedule(gid: string, assistantId: string, wave: Wave, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false, eventFiles?: string[]): Promise<void> {
     const key = `${gid}@${assistantId}`;
     const epoch = this.epochs.get(gid) ?? 0;
     wave.pending += 1;
     const previous = this.queues.get(key) ?? Promise.resolve();
     const next = previous
-      .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event, workDone, allReplyTurn))
+      .then(() => this.runTurn(gid, assistantId, wave, epoch, triggerId, event, workDone, allReplyTurn, eventFiles))
       .catch(() => undefined)
       .finally(() => {
         wave.pending = Math.max(0, wave.pending - 1);
@@ -898,7 +899,7 @@ export class GroupManager {
       userInitiated,
       bypassBusy,
     };
-    await this.schedule(gid, assistantId, wave, triggerId, text, workDone);
+    await this.schedule(gid, assistantId, wave, triggerId, text, workDone, false, options.files);
   }
 
   /**
@@ -920,7 +921,7 @@ export class GroupManager {
     return this.timeline(gid).findLast(isRequestItem);
   }
 
-  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false): Promise<void> {
+  private async runTurn(gid: string, assistantId: string, wave: Wave, epoch: number, triggerId: string, event?: EventText, workDone = true, allReplyTurn = false, eventFiles?: string[]): Promise<void> {
     const group = this.store.group(gid);
     if (!group || !group.members.includes(assistantId)) return;
     // 用户按了停止：这一轮不再开始
@@ -963,13 +964,14 @@ export class GroupManager {
     let text = "";
     let outcome: TurnOutcome | undefined;
     try {
-      const prompt = this.inputText(assistantId, group, input ?? { items: [] }, event);
+      const prompt = this.inputText(assistantId, group, input ?? { items: [] }, event, eventFiles);
+      const files = [...new Set([...(input ? this.inputFiles(input) : []), ...(eventFiles ?? [])])];
       outcome = await this.runtime.router.deliverMember(
         gid,
         assistantId,
         prompt,
         () => this.markSeen(gid, assistantId, input?.seenTo),
-        input ? this.inputFiles(input) : [],
+        files,
         event === undefined || workDone || hasDirectUserMessage,
         { userInitiated: wave.userInitiated, bypassBusy: wave.bypassBusy },
       );
@@ -1050,9 +1052,13 @@ export class GroupManager {
    * 这一轮的输入：这些条目按「名字：内容」一行一条，前面带现在的时间。
    * 事件那一轮还把事件接在后面，它先看到群里刚发生的事，不照着过时的事件做。
    */
-  private inputText(assistantId: string, group: Group, input: TurnInput, event?: EventText): string {
+  private inputText(assistantId: string, group: Group, input: TurnInput, event?: EventText, eventFiles?: string[]): string {
     const lines = input.items.map((item) => this.lineOf(item, group.id)).filter(Boolean);
-    const body = [lines.join("\n"), ...(event === undefined ? [] : [`[hob-event] ${typeof event === "function" ? event() : event}`])].filter(Boolean).join("\n\n");
+    const eventText = event === undefined ? undefined : typeof event === "function" ? event() : event;
+    const eventLine = eventText === undefined
+      ? undefined
+      : `[hob-event] ${eventText}${eventFiles?.length ? `\n附件：${eventFiles.join("、")}` : ""}`;
+    const body = [lines.join("\n"), ...(eventLine === undefined ? [] : [eventLine])].filter(Boolean).join("\n\n");
     return `${nowBlock(this.runtime, assistantId, { groupId: group.id })}\n\n${body}`;
   }
 
@@ -1197,9 +1203,9 @@ export class GroupManager {
   }
 
   /** 一行系统提示（停下、重启、无响应、记忆已更新）。 */
-  note(gid: string, speaker: string, text: string, icon: NoteIcon = "info", detail?: string, targetGroupId?: string): GroupItem {
+  note(gid: string, speaker: string, text: string, icon: NoteIcon = "info", detail?: string, targetGroupId?: string, files?: string[]): GroupItem {
     const visibleText = text === RELAY_NOTE ? t("群内转交次数过多，已在此暂停。") : text === RESTART_NOTE ? t("服务已重启，本轮已中断。") : text;
-    return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}), ...(targetGroupId ? { targetGroupId } : {}) });
+    return this.appendItem(gid, speaker, { kind: "note", icon, text: visibleText, ...(detail ? { detail } : {}), ...(targetGroupId ? { targetGroupId } : {}), ...(files?.length ? { files } : {}) });
   }
 
   /** 给这个群（或话题）时间线上最新的一条用户消息（或指定的那条）点表情回应；再点会换掉。 */

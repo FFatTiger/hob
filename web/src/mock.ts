@@ -1283,6 +1283,7 @@ cp now.txt "$seen"`,
       last: { at: at(0, 9, 27), speaker: "server", text: L("开始检查下载目录", "Started checking the downloads folder") },
       unread: 0,
       busy: ["server"],
+      activity: { server: { state: "tool", label: L("正在读取：downloads", "Reading: downloads") } },
       ...(scene === "g-chat" || scene === "g-mobile" || scene === "g-dark" ? { suggestions: [L("先把下载目录的清理清单发我", "Send me the cleanup list for the downloads folder first"), L("让服务器继续检查剩下的旧快照", "Have Ops check the remaining old snapshots")] } : {}),
     },
     {
@@ -4961,6 +4962,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const speaker = named ?? group.ownerId;
       group.last = { at: time, speaker: "user", text: body.text };
       group.busy = [speaker];
+      group.activity = { [speaker]: { state: "thinking", label: "正在思考…" } };
       emitGroup(groupId);
       emit({ type: "group-activity", groupId, speaker, activity: { state: "thinking", label: "正在思考…" } });
       setTimeout(() => {
@@ -4969,6 +4971,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         emit({ type: "group-item", groupId, item: clone(reply) });
         group.last = { at: reply.at, speaker, text: reply.text };
         group.busy = [];
+        delete group.activity;
         emitGroup(groupId);
         emit({ type: "group-activity", groupId, speaker, activity: null });
       }, 700);
@@ -4985,6 +4988,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       if (!group) throw new ApiError(404, "群不存在。");
       const stopped = group.busy;
       group.busy = [];
+      delete group.activity;
       emitGroup(groupId);
       const note: GroupItem = { kind: "note", id: uid("g"), at: new Date().toISOString(), icon: "info", text: "你叫停了群里的发言", speaker: "user" };
       (db.groupItems[groupId] ??= []).push(note);

@@ -399,7 +399,7 @@ function EmptyChat({ a }: { a: AssistantSummary }) {
   );
 }
 
-/** 群里正在说话的成员：底部一行一个人，头像 +「名字 正在思考…」。 */
+/** 群里正在说话的成员：底部一行一个人，头像 + 当前活动（没有具体活动时是「名字 正在思考…」）。 */
 function GroupThinking({ g }: { g: GroupSummary }) {
   const s = useApp();
   const speaking = groupSpeaking(s, g);
@@ -410,11 +410,16 @@ function GroupThinking({ g }: { g: GroupSummary }) {
       {speaking.map((id) => {
         const m = s.assistants.find((a) => a.id === id);
         if (!m) return null;
+        const act = s.groupActivity[g.id]?.[id];
+        const label = act?.label?.trim();
+        const text = label && label !== t("正在思考…", {}, "zh-CN") && label !== t("正在思考…")
+          ? t("{name}：{label}", { name: m.name, label })
+          : t("{name} 正在思考…", { name: sendName(m.name) });
         return (
           <div className="hov think" key={id}>
             <div className="activity-line" role="status">
-              <Avatar sprite={m.sprite} prop={m.prop} size={40} free motion={s.groupActivity[g.id]?.[id]?.state === "tool" ? "work" : "think"} />
-              <span className="activity-shimmer">{t("{name} 正在思考…", { name: sendName(m.name) })}</span>
+              <Avatar sprite={m.sprite} prop={m.prop} size={40} free motion={act?.state === "tool" ? "work" : "think"} />
+              <span className="activity-shimmer">{text}</span>
             </div>
           </div>
         );

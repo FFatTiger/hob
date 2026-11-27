@@ -84,6 +84,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "前往设置": "Open settings",
   "正在思考…": "Thinking…",
   "{name} 正在思考…": "{name} is thinking…",
+  "{name}：{label}": "{name}: {label}",
   "这件事的讨论、提问和进展都放在这个话题里。": "Discussion, questions, and progress for this matter go in this topic.",
   "{name}在综合创建了话题": "{name} created this topic from General",
   "你创建了这个话题": "You created this topic",

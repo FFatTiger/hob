@@ -84,7 +84,7 @@ describe("提示行写明对象", () => {
   it("主助手删别的助手的规则：写清是谁的", async () => {
     const hob = setup();
     try {
-      hob.runtime.store.saveRules("ops", [{ id: "r-1", text: "发布公众号", mode: "ask", changedAt: new Date().toISOString() }]);
+      hob.runtime.store.saveRules("ops", [{ id: "r-1", text: "发布公众号", changedAt: new Date().toISOString() }]);
       await tool(hob, "remove_rule").execute("c", { ruleId: "r-1", assistantId: "ops" });
       expect(notes(hob).map((item) => item.text)).toContain("删除了运维的一条规则");
     } finally { hob.close(); }

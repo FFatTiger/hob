@@ -670,7 +670,7 @@ export async function loadRules() {
   }
 }
 
-export async function saveRules(rules: { id?: string; text: string; mode: Rule["mode"] }[]): Promise<boolean> {
+export async function saveRules(rules: { id?: string; text: string }[]): Promise<boolean> {
   if (state.globalRules.busy) return false;
   set((s) => ({ globalRules: { ...s.globalRules, busy: true, error: null } }));
   try {
@@ -2936,13 +2936,13 @@ export async function saveListOrder(ids: string[]): Promise<string | null> {
   return message;
 }
 
-export async function addRule(assistantId: string, text: string, mode: "ask" | "allow"): Promise<string | null> {
+export async function addRule(assistantId: string, text: string): Promise<string | null> {
   if (state.groups.some((group) => group.id === assistantId)) {
-    try { await api.patchGroup(assistantId, { rule: { text, mode } }); await loadGroupProfile(assistantId); return null; }
+    try { await api.patchGroup(assistantId, { rule: { text } }); await loadGroupProfile(assistantId); return null; }
     catch (e) { return t("保存失败：{error}", { error: errText(e) }); }
   }
   try {
-    const result = await api.patchAssistant(assistantId, { rule: { text, mode } });
+    const result = await api.patchAssistant(assistantId, { rule: { text } });
     if (!result?.rule) throw new Error(t("保存响应缺少规则。"));
     const rule = result.rule;
     set((s) => {
@@ -2956,7 +2956,7 @@ export async function addRule(assistantId: string, text: string, mode: "ask" | "
   }
 }
 
-export async function updateRule(assistantId: string, rule: { id: string; text?: string; mode?: "ask" | "allow" }): Promise<string | null> {
+export async function updateRule(assistantId: string, rule: { id: string; text: string }): Promise<string | null> {
   if (state.groups.some((group) => group.id === assistantId)) {
     try { await api.patchGroup(assistantId, { rule }); await loadGroupProfile(assistantId); return null; }
     catch (e) { return t("保存失败：{error}", { error: errText(e) }); }
@@ -3004,9 +3004,9 @@ export async function resetGroupRule(groupId: string, ruleId: string): Promise<s
   }
 }
 
-export async function addAssistantTopicRule(assistantId: string, topicId: string, text: string, mode: "ask" | "allow"): Promise<string | null> {
+export async function addAssistantTopicRule(assistantId: string, topicId: string, text: string): Promise<string | null> {
   try {
-    await api.addAssistantTopicRule(assistantId, topicId, { text, mode });
+    await api.addAssistantTopicRule(assistantId, topicId, { text });
     await loadAssistantTopicConfig(assistantId, topicId);
     return null;
   } catch (e) {
@@ -3014,9 +3014,9 @@ export async function addAssistantTopicRule(assistantId: string, topicId: string
   }
 }
 
-export async function updateAssistantTopicRule(assistantId: string, topicId: string, rule: { id: string; text?: string; mode?: "ask" | "allow" }): Promise<string | null> {
+export async function updateAssistantTopicRule(assistantId: string, topicId: string, rule: { id: string; text: string }): Promise<string | null> {
   try {
-    await api.updateAssistantTopicRule(assistantId, topicId, rule.id, { ...(rule.text !== undefined ? { text: rule.text } : {}), ...(rule.mode !== undefined ? { mode: rule.mode } : {}) });
+    await api.updateAssistantTopicRule(assistantId, topicId, rule.id, { text: rule.text });
     await loadAssistantTopicConfig(assistantId, topicId);
     return null;
   } catch (e) {

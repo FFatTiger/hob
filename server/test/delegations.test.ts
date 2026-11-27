@@ -286,7 +286,7 @@ describe("交回 Hob", () => {
     try {
       vi.spyOn(hob.runtime.router, "event").mockResolvedValue();
       hob.faux.setResponses([
-        call("set_rule", { text: "记录操作", mode: "allow" }),
+        call("set_rule", { text: "记录操作" }),
         call("start_job", { title: "检查日志", instruction: "检查日志" }),
         call("report", { outcome: "done", result: "检查完毕" }),
       ]);

@@ -6,8 +6,8 @@ import { setLocale } from "../../shared/i18n.ts";
 import type { Rule } from "../../shared/types.ts";
 
 const initial: Rule[] = [
-  { id: "a", text: "发布前确认", mode: "ask", changedAt: new Date().toISOString() },
-  { id: "b", text: "使用中文", mode: "allow", changedAt: "2020-01-01T00:00:00.000Z" },
+  { id: "a", text: "发布前先问我确认", changedAt: new Date().toISOString() },
+  { id: "b", text: "沟通默认使用中文", changedAt: "2020-01-01T00:00:00.000Z" },
 ];
 
 beforeAll(() => {
@@ -20,7 +20,7 @@ beforeAll(() => {
 afterEach(() => vi.restoreAllMocks());
 
 describe("全局规则设置", () => {
-  it("渲染两组并保存编辑、新增、删除，失败显示原因，事件重拉", async () => {
+  it("渲染单列表并保存编辑、新增、删除，失败显示原因，事件重拉", async () => {
     let rules = initial.map((rule) => ({ ...rule }));
     const load = vi.spyOn(realApi, "rules").mockImplementation(async () => ({ rules: structuredClone(rules) }));
     const save = vi.spyOn(realApi, "saveRules").mockImplementation(async (next) => {
@@ -35,13 +35,13 @@ describe("全局规则设置", () => {
     store.setSection("rules");
     await store.loadRules();
     let html = renderToStaticMarkup(createElement(SettingsPage, { narrow: false, leaving: false }));
-    expect(html).toContain("执行前确认");
-    expect(html).toContain("一律照做");
-    expect(html).toContain("发布前确认");
-    expect(html).toContain("使用中文");
+    expect(html).not.toContain("一律照做");
+    expect(html).not.toContain("rule-mode");
+    expect(html).toContain("发布前先问我确认");
+    expect(html).toContain("沟通默认使用中文");
     expect(html).toContain("最近修改");
     await store.saveRules(rules.map((rule) => rule.id === "a" ? { ...rule, text: "发布需要确认" } : rule));
-    await store.saveRules([...store.getState().globalRules.rules!, { text: "新增规则", mode: "allow" }]);
+    await store.saveRules([...store.getState().globalRules.rules!, { text: "新增规则" }]);
     await store.saveRules(store.getState().globalRules.rules!.filter((rule) => rule.id !== "b"));
     expect(save).toHaveBeenCalledTimes(3);
     expect(store.getState().globalRules.rules?.map((rule) => rule.text)).toEqual(["发布需要确认", "新增规则"]);

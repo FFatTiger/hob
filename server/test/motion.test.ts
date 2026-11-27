@@ -83,7 +83,7 @@ describe("火苗动画", () => {
     try {
       let release!: () => void;
       const gate = new Promise<void>((resolve) => { release = resolve; });
-      hob.faux.setResponses([async () => { await gate; return call("set_rule", { text: "测试", mode: "ask" }); }, text("完成")]);
+      hob.faux.setResponses([async () => { await gate; return call("set_rule", { text: "测试" }); }, text("完成")]);
       await hob.runtime.router.send("hob", { text: "记下规矩" });
       await waitFor(() => hob.runtime.router.bootstrap().assistants[0].activity?.state === "thinking");
       release();

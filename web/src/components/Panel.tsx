@@ -118,7 +118,7 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
   const desktop = useDesktopScreens();
   const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop, s.tsel ? { topicId: s.tsel } : undefined, Boolean(!s.gsel && !s.tsel && selectedAssistant?.topics)).running;
   useEffect(() => setRootScrolled(false), [s.sel, s.gsel, s.tsel]);
-  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" || kind === "topicRules" ? t("执行前确认") : kind === "topicModels" ? t("模型") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
+  const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" || kind === "topicRules" ? t("规则") : kind === "topicModels" ? t("模型") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
     <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
       {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && !focus && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
@@ -703,8 +703,8 @@ function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }
   useEffect(() => { if (group) void loadGroupProfile(aid); }, [aid, group]);
   if (group && s.groupProfiles[aid]?.error) return <div className="badline">{t("加载失败：{error}", { error: s.groupProfiles[aid].error })} <button onClick={() => void loadGroupProfile(aid)}>{t("重试")}</button></div>;
   return <>
-    <div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")}{group ? ` ${t("本群默认，没单独改过的话题都会用。")}` : ""}</div>
-    {!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}
+    <div className="note">{t("每条写清要怎么做、什么情况下先问你。")}{group ? ` ${t("本群默认，没单独改过的话题都会用。")}` : ""}</div>
+    {!rules.length ? <Empty>{t("还没有规则")}</Empty> : null}
     <div className="group-card sidebar-card-group card-rows">{rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)}<RuleCreator aid={aid} /></div>
   </>;
 }
@@ -725,13 +725,13 @@ function TopicRules({ groupId, assistantId, topicId }: { groupId?: string; assis
   const hidden = resolved.value.hiddenRules ?? [];
   const parentLabel = isGroup ? t("跟随群") : t("跟随助手");
   const targetAid = groupId ?? assistantId!;
-  const onUpdate = isGroup ? undefined : (id: string, patch: { text?: string; mode?: "ask" | "allow" }) => updateAssistantTopicRule(assistantId!, topicId!, { id, ...patch });
+  const onUpdate = isGroup ? undefined : (id: string, text: string) => updateAssistantTopicRule(assistantId!, topicId!, { id, text });
   const onDelete = isGroup ? undefined : (id: string) => deleteAssistantTopicRule(assistantId!, topicId!, id);
-  const onAdd = isGroup ? undefined : (text: string, mode: "ask" | "allow") => addAssistantTopicRule(assistantId!, topicId!, text, mode);
+  const onAdd = isGroup ? undefined : (text: string) => addAssistantTopicRule(assistantId!, topicId!, text);
   const onResetRule = (id: string) => isGroup ? void resetGroupRule(groupId!, id) : void resetAssistantTopicRule(assistantId!, topicId!, id);
   return <>
-    <div className="note">{t("标为「需确认」的事项，助手执行前会先征求你的同意。")} {t("只在本话题生效")}</div>
-    {!rules.length ? <Empty>{t("还没有执行前确认事项")}</Empty> : null}
+    <div className="note">{t("每条写清要怎么做、什么情况下先问你。")} {t("只在本话题生效")}</div>
+    {!rules.length ? <Empty>{t("还没有规则")}</Empty> : null}
     <div className="group-card sidebar-card-group card-rows">
       {rules.map((rule) => (
         <RuleRow
@@ -740,7 +740,7 @@ function TopicRules({ groupId, assistantId, topicId }: { groupId?: string; assis
           rule={rule}
           topic
           parentLabel={parentLabel}
-          onUpdate={onUpdate ? (patch) => onUpdate(rule.id, patch) : undefined}
+          onUpdate={onUpdate ? (text) => onUpdate(rule.id, text) : undefined}
           onDelete={onDelete ? () => onDelete(rule.id) : undefined}
           onReset={rule.from === "parent" && rule.changed ? () => onResetRule(rule.id) : undefined}
         />
@@ -1443,7 +1443,7 @@ function SpritePicker({ aid, sprite, prop, onDone }: { aid: string; sprite: stri
   );
 }
 
-function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, onReset }: { aid: string; rule: Rule | EffectiveRule; topic?: boolean; parentLabel?: string; onUpdate?: (patch: { text?: string; mode?: "ask" | "allow" }) => Promise<string | null>; onDelete?: () => Promise<void>; onReset?: () => void }) {
+function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, onReset }: { aid: string; rule: Rule | EffectiveRule; topic?: boolean; parentLabel?: string; onUpdate?: (text: string) => Promise<string | null>; onDelete?: () => Promise<void>; onReset?: () => void }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState(rule.text);
   const [confirming, setConfirming] = useState(false);
@@ -1458,9 +1458,9 @@ function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, on
         ? t("本话题改过")
         : parentLabel ?? t("跟随群")
     : undefined;
-  const save = async (patch: { text?: string; mode?: "ask" | "allow" }) => {
+  const save = async (nextText: string) => {
     setBusy(true);
-    const error = await (onUpdate ? onUpdate(patch) : updateRule(aid, { id: rule.id, ...patch }));
+    const error = await (onUpdate ? onUpdate(nextText) : updateRule(aid, { id: rule.id, text: nextText }));
     setBusy(false);
     if (!error) setEditing(false);
     setMessage(error ?? t("已保存"));
@@ -1470,7 +1470,7 @@ function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, on
     const value = text.trim();
     if (value === rule.text) { setEditing(false); return; }
     if (!value) { setMessage(t("规则内容不能为空。")); return; }
-    void save({ text: value });
+    void save(value);
   };
   return (
     <div className="rule-wrap">
@@ -1488,7 +1488,6 @@ function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, on
         <span className="v">
           {badge ? <span className={`rule-badge${effective?.from === "topic" ? " own" : effective?.changed ? " changed" : ""}`}>{badge}</span> : null}
           {onReset ? <button type="button" className="rule-reset" disabled={busy} onClick={onReset}>{t("恢复跟随")}</button> : null}
-          <button className={`rule-mode ${rule.mode}`} disabled={busy} onClick={() => void save({ mode: rule.mode === "ask" ? "allow" : "ask" })} title={t("切换确认方式")}>{rule.mode === "ask" ? t("需确认") : t("直接执行")}</button>
           <button className="del" title={topic && effective?.from === "parent" ? t("本话题不用这条") : t("删除这条规则")} disabled={busy} onClick={() => setConfirming(true)}><Icon name="close" size={13} /></button>
         </span>
       </div>
@@ -1505,22 +1504,20 @@ function RuleRow({ aid, rule, topic = false, parentLabel, onUpdate, onDelete, on
   );
 }
 
-function RuleCreator({ aid, onAdd }: { aid: string; onAdd?: (text: string, mode: "ask" | "allow") => Promise<string | null> }) {
+function RuleCreator({ aid, onAdd }: { aid: string; onAdd?: (text: string) => Promise<string | null> }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
-  const [mode, setMode] = useState<"ask" | "allow">("ask");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useSaveMessage();
-  const cancel = () => { setEditing(false); setText(""); setMode("ask"); setMessage(null); };
+  const cancel = () => { setEditing(false); setText(""); setMessage(null); };
   const save = async () => {
     if (busy || !text.trim()) return;
     setBusy(true);
     setMessage(null);
-    const error = await (onAdd ? onAdd(text.trim(), mode) : addRule(aid, text.trim(), mode));
+    const error = await (onAdd ? onAdd(text.trim()) : addRule(aid, text.trim()));
     setBusy(false);
     if (error) { setMessage(error); return; }
     setText("");
-    setMode("ask");
     setEditing(false);
     setMessage(t("已保存"));
   };
@@ -1528,7 +1525,6 @@ function RuleCreator({ aid, onAdd }: { aid: string; onAdd?: (text: string, mode:
     {editing ? <form className="rule-new" onSubmit={(e) => { e.preventDefault(); void save(); }} onKeyDown={(e) => { if (e.key === "Escape" && !busy) { e.preventDefault(); cancel(); } }}>
       <input className="rule-input" autoFocus aria-label={t("规则文字")} placeholder={t("输入规则内容")} maxLength={1000} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
       <div className="ctl">
-        <Select aria-label={t("规则确认方式")} value={mode} disabled={busy} onChange={(value) => setMode(value as "ask" | "allow")} options={[{ value: "ask", label: t("需确认") }, { value: "allow", label: t("直接执行") }]} />
         <span className="sp" />
         <button type="button" className="hob-btn" disabled={busy} onClick={cancel}>{t("取消")}</button>
         <button type="submit" className="hob-btn hob-btn-primary" disabled={busy || !text.trim()}>{busy ? t("正在保存…") : t("保存")}</button>

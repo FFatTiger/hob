@@ -242,7 +242,7 @@ describe("继承链与不可变边界", () => {
       const patchRuleAndCwd = await app.request(`/api/assistants/${created.id}`, {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ rule: { text: "禁止偷偷改目录", mode: "ask" }, cwd: dirB }),
+        body: JSON.stringify({ rule: { text: "禁止偷偷改目录" }, cwd: dirB }),
       });
       expect(patchRuleAndCwd.status).toBe(400);
       expect(await patchRuleAndCwd.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
@@ -252,7 +252,7 @@ describe("继承链与不可变边界", () => {
       const patchPrimaryRuleAndCwd = await app.request("/api/assistants/hob", {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ rule: { text: "主助手规则", mode: "ask" }, cwd: dirB }),
+        body: JSON.stringify({ rule: { text: "主助手规则" }, cwd: dirB }),
       });
       expect(patchPrimaryRuleAndCwd.status).toBe(400);
       expect(await patchPrimaryRuleAndCwd.json()).toEqual({ error: "主助手不支持设置工作目录。" });
@@ -323,7 +323,7 @@ describe("继承链与不可变边界", () => {
       const patchGroupRuleAndCwd = await app.request(`/api/groups/${lockedGroup.id}`, {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ rule: { text: "群规则", mode: "ask" }, cwd: otherDir }),
+        body: JSON.stringify({ rule: { text: "群规则" }, cwd: otherDir }),
       });
       expect(patchGroupRuleAndCwd.status).toBe(400);
       expect(await patchGroupRuleAndCwd.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });

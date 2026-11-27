@@ -166,8 +166,8 @@ function setupFixture() {
       value: {
         group: g,
         rules: [
-          { id: "r-p1", text: "发版前确认", mode: "ask", changedAt: "2026-01-01T00:00:00Z", from: "parent" },
-          { id: "r-p2", text: "只读命令直接执行", mode: "allow", changedAt: "2026-01-01T00:00:00Z", from: "parent" },
+          { id: "r-p1", text: "发版前确认", changedAt: "2026-01-01T00:00:00Z", from: "parent" },
+          { id: "r-p2", text: "只读命令直接执行", changedAt: "2026-01-01T00:00:00Z", from: "parent" },
         ],
         hiddenRules: [],
         replyMode: { value: "owner", source: "group" },
@@ -195,10 +195,10 @@ function setupFixture() {
       value: {
         group: t1,
         rules: [
-          { id: "r-p1", text: "发版前在预发验证", mode: "ask", changedAt: "2026-01-01T00:00:00Z", from: "parent", changed: true },
-          { id: "r-own", text: "导出超过十万行拆分", mode: "ask", changedAt: "2026-01-01T00:00:00Z", from: "topic" },
+          { id: "r-p1", text: "发版前在预发验证", changedAt: "2026-01-01T00:00:00Z", from: "parent", changed: true },
+          { id: "r-own", text: "导出超过十万行拆分", changedAt: "2026-01-01T00:00:00Z", from: "topic" },
         ],
-        hiddenRules: [{ id: "r-p2", text: "只读命令直接执行", mode: "allow", changedAt: "2026-01-01T00:00:00Z" }],
+        hiddenRules: [{ id: "r-p2", text: "只读命令直接执行", changedAt: "2026-01-01T00:00:00Z" }],
         replyMode: { value: "all", source: "topic" },
         models: {
           conversation: { source: "global", pick: { ref: "p/global-chat", thinking: "low" }, inherited: { source: "global", pick: { ref: "p/global-chat", thinking: "low" } } },
@@ -244,7 +244,7 @@ describe("P3 群话题右栏与成员行", () => {
     // 技能：本群共用
     expect(html).toContain("<span>技能</span><small>本群共用 · 1 个</small>");
     // 规则：合成后的 2 条
-    expect(html).toContain("<span>执行前确认</span><small>2 条</small>");
+    expect(html).toContain("<span>规则</span><small>2 条</small>");
     // 模型入口：有话题覆盖显示本话题
     expect(html).toContain("<span>模型</span><small>本话题</small>");
     // 没点名时：本话题 · 全员回应
@@ -319,11 +319,11 @@ describe("P3 群话题右栏与成员行", () => {
     state.groupProfiles["t-1"]!.value!.rules.unshift({
       id: "r-p0",
       text: "删除前先备份",
-      mode: "ask",
       changedAt: "2026-01-01T00:00:00Z",
       from: "parent",
     });
     const html = renderToStaticMarkup(<Panel page={{ kind: "topicRules", groupId: "t-1" }} />);
+    expect(html).not.toContain("rule-mode");
     expect(html).toContain("删除前先备份");
     expect(html).toContain("跟随群");
     expect(html).toContain("发版前在预发验证");

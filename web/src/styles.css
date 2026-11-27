@@ -80,8 +80,6 @@
 .sidebar-facts button > span > :first-child, .sidebar-facts > div > span > :first-child { flex: none; }
 .sidebar-danger .hob-btn { padding: 0; background: transparent; }
 .sidebar-page-rules > .note, .sidebar-page-topicRules > .note { margin: 16px 0 6px; }
-.sidebar-page-rules .rule-mode.ask, .sidebar-page-topicRules .rule-mode.ask { color: var(--accent); background: color-mix(in srgb, var(--accent) 12%, transparent); border-radius: 20px; padding: 3px 7px; }
-.sidebar-page-rules .rule-mode.allow, .sidebar-page-topicRules .rule-mode.allow { color: var(--text2); background: var(--field); border-radius: 20px; padding: 3px 7px; }
 .sidebar-page-topicRules .rule { flex-wrap: wrap; }
 .sidebar-page-topicRules .rule-text { flex: 1 1 140px; }
 .rule-badge { font-size: 11px; color: var(--text3); background: var(--bg); border-radius: 20px; padding: 2px 7px; white-space: nowrap; }
@@ -2789,8 +2787,8 @@ html:lang(en) .screen .v {
   text-align: left;
   overflow-wrap: anywhere;
 }
-.rule-text, .rule-mode { cursor: pointer; }
-.rule-text:hover, .rule-mode:hover { color: var(--accent); }
+.rule-text { cursor: pointer; }
+.rule-text:hover { color: var(--accent); }
 .rule-confirm { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-bottom: 8px; font-size: 12px; }
 .rule-add, .rule-new { border-top: 1px solid var(--line); padding: 8px 0; width: 100%; }
 .rule-add { text-align: left; color: var(--text2); cursor: pointer; }

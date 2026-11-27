@@ -15,20 +15,20 @@ describe("设置演示模式", () => {
   it("助手规则可新增并校验空内容、超长和重复内容", async () => {
     const api = createMock();
     const original = await api.profile("hob");
-    await expect(api.patchAssistant("hob", { rule: { text: " ", mode: "ask" } })).rejects.toThrow("规则内容不能为空");
-    await expect(api.patchAssistant("hob", { rule: { text: "长".repeat(1001), mode: "ask" } })).rejects.toThrow("规则内容不能为空");
-    await expect(api.patchAssistant("hob", { rule: { text: original.rules[0].text, mode: "ask" } })).rejects.toThrow("规则内容已存在");
-    const result = await api.patchAssistant("hob", { rule: { text: "  发布前确认  ", mode: "allow" } });
-    expect(result?.rule).toMatchObject({ text: "发布前确认", mode: "allow" });
-    expect((await api.profile("hob")).rules.at(-1)).toMatchObject({ text: "发布前确认", mode: "allow" });
+    await expect(api.patchAssistant("hob", { rule: { text: " " } })).rejects.toThrow("规则内容不能为空");
+    await expect(api.patchAssistant("hob", { rule: { text: "长".repeat(1001) } })).rejects.toThrow("规则内容不能为空");
+    await expect(api.patchAssistant("hob", { rule: { text: original.rules[0].text } })).rejects.toThrow("规则内容已存在");
+    const result = await api.patchAssistant("hob", { rule: { text: "  发布前先问我  " } });
+    expect(result?.rule).toMatchObject({ text: "发布前先问我" });
+    expect((await api.profile("hob")).rules.at(-1)).toMatchObject({ text: "发布前先问我" });
   });
 
-  it("助手规则可编辑、切换模式并拒绝重复内容", async () => {
+  it("助手规则可编辑并拒绝重复内容", async () => {
     const api = createMock();
     const profile = await api.profile("hob");
     const rule = profile.rules[0];
-    await api.patchAssistant("hob", { rule: { id: rule.id, text: "新的规则", mode: "allow" } });
-    expect((await api.profile("hob")).rules[0]).toMatchObject({ text: "新的规则", mode: "allow" });
+    await api.patchAssistant("hob", { rule: { id: rule.id, text: "新的规则" } });
+    expect((await api.profile("hob")).rules[0]).toMatchObject({ text: "新的规则" });
     await expect(api.patchAssistant("hob", { rule: { id: rule.id, text: profile.rules[1].text } })).rejects.toThrow("规则内容已存在");
   });
 });

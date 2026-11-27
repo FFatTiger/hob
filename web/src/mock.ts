@@ -2073,16 +2073,16 @@ cp now.txt "$seen"`,
     ] },
     rules: {
       hob: [
-        { id: "rule-1", text: L("花钱", "Spending money"), mode: "ask", changedAt: at(10, 9, 0) },
-        { id: "rule-2", text: L("改线上服务", "Changing live services"), mode: "ask", changedAt: at(10, 9, 0) },
-        { id: "rule-3", text: L("清理我的文件", "Deleting my files"), mode: "ask", changedAt: at(3, 9, 0) },
+        { id: "rule-1", text: L("涉及付款、订阅或改计费的操作前先问我", "Ask before paying, subscribing, or changing billing"), changedAt: at(10, 9, 0) },
+        { id: "rule-2", text: L("改动线上服务配置前先说明影响并征求确认", "Explain the impact and ask before changing live service settings"), changedAt: at(10, 9, 0) },
+        { id: "rule-3", text: L("清理或删除工作目录以外的文件前先问我", "Ask before deleting files outside the workspace"), changedAt: at(3, 9, 0) },
       ],
-      page: scene.startsWith("readme-") ? [{ id: "readme-rule", text: L("向团队群发送周报", "Send the weekly report to the team group"), mode: "ask", changedAt: at(9, 9) }] : [
-        { id: "rule-4", text: "删除草稿", mode: "ask", changedAt: at(9, 9, 0) },
-        { id: "rule-5", text: "花钱", mode: "ask", changedAt: at(9, 9, 0) },
-        { id: "rule-6", text: "发公众号", mode: "allow", changedAt: minsAgo(120) },
+      page: scene.startsWith("readme-") ? [{ id: "readme-rule", text: L("向团队群发送周报前先给我看一眼", "Show me the weekly report before sending it to the team group"), changedAt: at(9, 9) }] : [
+        { id: "rule-4", text: "删除未发布的草稿前先问我", changedAt: at(9, 9, 0) },
+        { id: "rule-5", text: "购买付费图片或订阅素材库前先确认", changedAt: at(9, 9, 0) },
+        { id: "rule-6", text: "校对通过的公众号文章直接发布，不用再问", changedAt: minsAgo(120) },
       ],
-      bird: [{ id: "rule-7", text: "花钱订阅", mode: "ask", changedAt: at(7, 9, 0) }],
+      bird: [{ id: "rule-7", text: "需要付费订阅的信息源先问我再开通", changedAt: at(7, 9, 0) }],
     },
     worklog: {
       hob: [
@@ -3310,13 +3310,13 @@ export function createMock(scene: SceneId = "s1"): HobApi {
   const assistantRuleOverridesOf = (aid: string, tid: string): RuleOverrides => (assistantRuleOverrides[`${aid}@${tid}`] ??= { own: [], changed: {}, hidden: {} });
   if (scene.startsWith("assistant-topics")) {
     db.rules.planner = [
-      { id: "pl-r1", text: L("预约或付款前先确认", "Ask before booking or paying"), mode: "ask", changedAt: at(10, 9) },
-      { id: "pl-r2", text: L("对比报价时保留原始链接", "Keep original quote links when comparing"), mode: "allow", changedAt: at(10, 9) },
-      { id: "pl-r3", text: L("把中间草稿写进工作目录", "Write intermediate drafts to workspace"), mode: "allow", changedAt: at(10, 9) },
+      { id: "pl-r1", text: L("预约或付款前先问我确认", "Ask before booking or paying"), changedAt: at(10, 9) },
+      { id: "pl-r2", text: L("对比报价时保留原始链接，方便核对", "Keep original quote links when comparing"), changedAt: at(10, 9) },
+      { id: "pl-r3", text: L("中间草稿直接写进工作目录，不用另存", "Write intermediate drafts straight into the workspace"), changedAt: at(10, 9) },
     ];
     assistantRuleOverrides["planner@tp-move"] = {
-      own: [{ id: "tp-r1", text: L("搬家时间只约周六上午", "Only book Saturday morning slots"), mode: "ask", changedAt: at(0, 9, 13) }],
-      changed: { "pl-r2": { text: L("对比报价时附带楼层与拆装明细", "Include stair and disassembly fees in comparisons"), mode: "ask", changedAt: at(0, 9, 13) } },
+      own: [{ id: "tp-r1", text: L("搬家时间只约周六上午，其余时段先问我", "Only book Saturday morning slots; ask for other times"), changedAt: at(0, 9, 13) }],
+      changed: { "pl-r2": { text: L("对比报价时附带楼层与拆装明细", "Include stair and disassembly fees in comparisons"), changedAt: at(0, 9, 13) } },
       hidden: { "pl-r3": at(0, 9, 13) },
     };
   }
@@ -3327,7 +3327,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     const topic: GroupSummary = { ...group, id: "g-owns-topic", parentId: group.id, name: "监听项目动态", busy: [], unread: 0 };
     db.groups.push(topic);
     db.groupItems[topic.id] = [];
-    groupRules[group.id] = ["发布前先确认", "删除数据前先确认"].map((text, i) => ({ id: `owns-rule-${i}`, text, mode: "ask", changedAt: at(0, 9) }));
+    groupRules[group.id] = ["发布新版本前先在群里确认", "删除数据库表或归档记录前先问我"].map((text, i) => ({ id: `owns-rule-${i}`, text, changedAt: at(0, 9) }));
     db.assistantSkills[group.id] = ["问清要做什么", "代码审查", "发布前确认"].map((title, i) => ({ name: `team-${i}`, title, description: `团队${title}的做法`, path: `/mock/groups/${group.id}/skills/team-${i}/SKILL.md`, version: 1, createdAt: at(3, 9), updatedAt: at(1, 9), uses: 0, enabled: true }));
     for (let i = 0; i < 2; i++) db.routines.push({ id: `owns-routine-${i}`, assistantId: group.ownerId, groupId: i ? topic.id : group.id, name: i ? "监听项目动态" : "每日进度汇总", instruction: "检查进展并汇报", schedules: [i ? "*/15 * * * *" : "0 9 * * *"], active: true, createdAt: at(2, 9), runs: [{ at: at(0, 9), status: "handed" }] });
     (db.groupItems[group.id] ??= []).push({ id: "owns-routine-note", kind: "note", icon: "routine", speaker: group.ownerId, at: at(0, 9), text: "定时任务「监听项目动态」已到执行时间，检查到：\n问题一：登录异常\n问题二：保存失败\n问题三：加载缓慢\n问题四：显示错位\n问题五：链接失效\n问题六：通知延迟\n问题七：搜索错误" });
@@ -3411,13 +3411,13 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     ];
 
     groupRules[parentGroup.id] = [
-      { id: "p3-r1", text: "对外发布新版本或发公告前先确认", mode: "ask", changedAt: at(2, 9) },
-      { id: "p3-r2", text: "修改生产数据库索引前先备份计划", mode: "ask", changedAt: at(2, 9) },
-      { id: "p3-r3", text: "运行只读诊断命令可直接执行", mode: "allow", changedAt: at(2, 9) },
+      { id: "p3-r1", text: "对外发布新版本或发公告前先问我", changedAt: at(2, 9) },
+      { id: "p3-r2", text: "修改生产数据库索引前先给出备份方案并确认", changedAt: at(2, 9) },
+      { id: "p3-r3", text: "日常排查直接运行只读诊断命令，不用每次问", changedAt: at(2, 9) },
     ];
     groupRuleOverrides[topicA.id] = {
-      own: [{ id: "p3-own-1", text: "导出超过十万行时先拆分异步任务", mode: "ask", changedAt: at(0, 9) }],
-      changed: { "p3-r2": { text: "修改索引先在预发库压测验证", mode: "ask", changedAt: at(0, 9) } },
+      own: [{ id: "p3-own-1", text: "导出超过十万行数据时自动拆成异步任务", changedAt: at(0, 9) }],
+      changed: { "p3-r2": { text: "修改索引前先在预发库压测验证，通过后再问我上线", changedAt: at(0, 9) } },
       hidden: { "p3-r3": at(0, 9) },
     };
 
@@ -3437,10 +3437,22 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     db.jobs["p3-job-a2"] = { ...example, id: "p3-job-a2", groupId: topicA.id, assistantId: "po", title: "整理分批导出方案文档", status: "done", createdAt: at(0, 8, 50), startedAt: at(0, 8, 50), endedAt: at(0, 8, 55), durationMs: 300_000, activity: [] };
     db.jobs["p3-job-b1"] = { ...example, id: "p3-job-b1", groupId: topicB.id, assistantId: "qa", title: "复现夜间归档脚本卡顿", status: "running", createdAt: at(0, 8, 35), startedAt: at(0, 8, 35), activity: [] };
   }
-  let globalRules: Rule[] = scene.startsWith("readme-") ? [
-    ...["删除或覆盖文件、数据和备份", "对外发送（消息、邮件、发布）、付费、充值、改计费", "停止或重启别人正在使用的服务和设备", "修改可能让你失去远程访问的设置（网络、防火墙、登录方式）"].map((text, i) => ({ id: `ask-${i}`, text, mode: "ask" as const, changedAt: at(10, 9) })),
-    ...["过去的记录是线索不是现状：动手前先核实实际状态。", "改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。", "凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。"].map((text, i) => ({ id: `allow-${i}`, text, mode: "allow" as const, changedAt: at(10, 9) })),
-  ] : [];
+  let globalRules: Rule[] = [
+    ...[
+      L("执行前确认：删除或覆盖文件、数据和备份", "Ask first: deleting or overwriting files, data or backups"),
+      L("执行前确认：对外发送（消息、邮件、发布）、付费、充值、改计费", "Ask first: sending anything out (messages, email, publishing), paying, topping up or changing billing"),
+      L("执行前确认：停止或重启别人正在使用的服务和设备", "Ask first: stopping or restarting services and devices that others are using"),
+      L("执行前确认：修改可能让你失去远程访问的设置（网络、防火墙、登录方式）", "Ask first: changing settings that could cut off your remote access (network, firewall, sign-in methods)"),
+      L("过去的记录是线索不是现状：动手前先核实实际状态。", "Past records are leads, not the current state: check the actual state before acting."),
+      L("改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。", "Before changing configuration or data, keep a way back (a backup or the original values); afterwards, verify the actual effect, not just the command's output."),
+      L("凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。", "Read credentials (passwords, keys, tokens, cookies) only when you use them; don't echo them, write them into files or reports, or store them."),
+    ].map((text, i) => ({ id: `global-${i}`, text, changedAt: i === 6 && !scene.startsWith("readme-") ? minsAgo(90) : at(10, 9) })),
+  ];
+  groupRules["g-dev"] ??= [
+    { id: "dev-r1", text: L("合并到主分支并触发部署前先问我", "Ask before merging to main and triggering deployment"), changedAt: at(3, 9) },
+    { id: "dev-r2", text: L("日常修小问题先跑单测和类型检查，全部通过后直接提交", "Run unit tests and typecheck before committing routine fixes directly"), changedAt: at(2, 9) },
+    { id: "dev-r3", text: L("新增第三方依赖前先说明原因和替代方案", "Explain the reason and alternatives before adding a new dependency"), changedAt: minsAgo(45) },
+  ];
   if (new URLSearchParams(globalThis.location?.search ?? "").has("citation")) (db.items.hob ??= []).push({ kind: "assistant", id: "mock-citation", at: new Date().toISOString(), text: "这里是资料里的结论：[工作记录.md](#k/k-2/0)。" });
   let collections: KnowledgeCollection[] = [{ id: "kc-1", name: L("工作资料", "Work docs"), createdAt: minsAgo(1000), count: 0 }, { id: "kc-2", name: L("灵感收藏", "Ideas"), createdAt: minsAgo(900), count: 0 }];
   let entries: KnowledgeEntry[] = [
@@ -3716,7 +3728,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     settings: async () => clone(db.settings),
     rules: async () => ({ rules: clone(globalRules) }),
     saveRules: async (rules) => {
-      globalRules = rules.map((rule) => ({ ...rule, id: rule.id ?? `rule-${crypto.randomUUID()}`, changedAt: globalRules.find((old) => old.id === rule.id && old.text === rule.text && old.mode === rule.mode)?.changedAt ?? new Date().toISOString() }));
+      globalRules = rules.map((rule) => ({ ...rule, id: rule.id ?? `rule-${crypto.randomUUID()}`, changedAt: globalRules.find((old) => old.id === rule.id && old.text === rule.text)?.changedAt ?? new Date().toISOString() }));
       emit({ type: "rules" });
       return { rules: clone(globalRules) };
     },
@@ -4423,7 +4435,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
           if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
           const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
           if (!changed) return [{ ...rule, from: "parent" }];
-          return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+          return [{ id: rule.id, text: changed.text, changedAt: changed.changedAt, from: "parent", changed: true }];
         }),
         ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
       ];
@@ -4467,7 +4479,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
           if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
           const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
           if (!changed) return [{ ...rule, from: "parent" }];
-          return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+          return [{ id: rule.id, text: changed.text, changedAt: changed.changedAt, from: "parent", changed: true }];
         }),
         ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
       ];
@@ -4491,7 +4503,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     },
     addAssistantTopicRule: async (assistantId, topicId, body) => {
       const rov = assistantRuleOverridesOf(assistantId, topicId);
-      const rule: Rule = { id: uid("tp-r"), text: body.text.trim(), mode: body.mode, changedAt: new Date().toISOString() };
+      const rule: Rule = { id: uid("tp-r"), text: body.text.trim(), changedAt: new Date().toISOString() };
       rov.own.push(rule);
       emit({ type: "profile", assistantId });
       return { ok: true, rule: clone(rule) };
@@ -4499,20 +4511,16 @@ export function createMock(scene: SceneId = "s1"): HobApi {
     updateAssistantTopicRule: async (assistantId, topicId, ruleId, patch) => {
       const rov = assistantRuleOverridesOf(assistantId, topicId);
       const now = new Date().toISOString();
+      const text = patch.text.trim();
       const own = rov.own.find((r) => r.id === ruleId);
       if (own) {
-        Object.assign(own, patch, { changedAt: now });
+        Object.assign(own, { text, changedAt: now });
         emit({ type: "profile", assistantId });
         return { ok: true, rule: clone(own) };
       }
       const parent = (db.rules[assistantId] ?? []).find((r) => r.id === ruleId);
       if (!parent) throw new ApiError(404, "规则不存在");
-      const prev = rov.changed[ruleId];
-      rov.changed[ruleId] = {
-        ...(patch.text !== undefined ? { text: patch.text } : prev?.text !== undefined ? { text: prev.text } : {}),
-        ...(patch.mode !== undefined ? { mode: patch.mode } : prev?.mode !== undefined ? { mode: prev.mode } : {}),
-        changedAt: now,
-      };
+      rov.changed[ruleId] = { text, changedAt: now };
       emit({ type: "profile", assistantId });
       return { ok: true, rule: clone({ ...parent, ...rov.changed[ruleId] }) };
     },
@@ -4588,7 +4596,7 @@ export function createMock(scene: SceneId = "s1"): HobApi {
             if (Object.prototype.hasOwnProperty.call(rov.hidden, rule.id)) return [];
             const changed = Object.prototype.hasOwnProperty.call(rov.changed, rule.id) ? rov.changed[rule.id] : undefined;
             if (!changed) return [{ ...rule, from: "parent" }];
-            return [{ id: rule.id, text: changed.text ?? rule.text, mode: changed.mode ?? rule.mode, changedAt: changed.changedAt, from: "parent", changed: true }];
+            return [{ id: rule.id, text: changed.text, changedAt: changed.changedAt, from: "parent", changed: true }];
           }),
           ...rov.own.map((rule): EffectiveRule => ({ ...rule, from: "topic" })),
         ]
@@ -4744,28 +4752,22 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const group = db.groups.find((g) => g.id === groupId);
       if (!group) throw new ApiError(404, "群不存在。");
       if (patch.rule) {
+        const text = patch.rule.text.trim();
         if (group.parentId) {
           const rov = ruleOverridesOf(group.id);
           const now = new Date().toISOString();
           if (patch.rule.id) {
             const own = rov.own.find((r) => r.id === patch.rule?.id);
-            if (own) Object.assign(own, patch.rule, { changedAt: now });
-            else {
-              const prev = rov.changed[patch.rule.id];
-              rov.changed[patch.rule.id] = {
-                ...(patch.rule.text !== undefined ? { text: patch.rule.text } : prev?.text !== undefined ? { text: prev.text } : {}),
-                ...(patch.rule.mode !== undefined ? { mode: patch.rule.mode } : prev?.mode !== undefined ? { mode: prev.mode } : {}),
-                changedAt: now,
-              };
-            }
-          } else if (patch.rule.text && patch.rule.mode) {
-            rov.own.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: now });
+            if (own) Object.assign(own, { text, changedAt: now });
+            else rov.changed[patch.rule.id] = { text, changedAt: now };
+          } else if (text) {
+            rov.own.push({ id: `rule-${Date.now()}`, text, changedAt: now });
           }
         } else {
           const rules = groupRules[group.id] ??= [];
           const existing = rules.find((r) => r.id === patch.rule?.id);
-          if (existing) Object.assign(existing, patch.rule, { changedAt: new Date().toISOString() });
-          else if (patch.rule.text && patch.rule.mode) rules.push({ id: `rule-${Date.now()}`, text: patch.rule.text, mode: patch.rule.mode, changedAt: new Date().toISOString() });
+          if (existing) Object.assign(existing, { text, changedAt: new Date().toISOString() });
+          else if (text) rules.push({ id: `rule-${Date.now()}`, text, changedAt: new Date().toISOString() });
         }
       }
       // 话题只能改名字、回应方式和置顶：成员、群主都取所属的群
@@ -4949,12 +4951,10 @@ export function createMock(scene: SceneId = "s1"): HobApi {
         const rules = (db.rules[assistantId] ??= []);
         const existing = patch.rule.id === undefined ? undefined : rules.find((item) => item.id === patch.rule!.id);
         if (patch.rule.id !== undefined && !existing) throw new ApiError(404, "规则不存在。");
-        const text = patch.rule.text === undefined ? existing?.text ?? "" : patch.rule.text.trim();
+        const text = patch.rule.text.trim();
         if (!text || text.length > 1000) throw new ApiError(400, "规则内容不能为空或超过 1000 字。");
         if (rules.some((item) => item.id !== patch.rule!.id && item.text === text)) throw new ApiError(400, "规则内容已存在。");
-        const mode = patch.rule.mode ?? existing?.mode;
-        if (mode !== "ask" && mode !== "allow") throw new ApiError(400, "规则模式无效。");
-        const rule: Rule = { id: existing?.id ?? uid("r-"), text, mode, changedAt: new Date().toISOString() };
+        const rule: Rule = { id: existing?.id ?? uid("r-"), text, changedAt: new Date().toISOString() };
         if (existing) Object.assign(existing, rule);
         else rules.push(rule);
         emit({ type: "profile", assistantId });
@@ -4998,13 +4998,20 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const option = ap.options.find((o) => o.key === answer.key);
       if (option?.always && ap.ruleText) {
         const rules = (db.rules[ap.assistantId] ??= []);
-        rules.push({ id: uid("rule"), text: ap.ruleText, mode: "allow", changedAt: ap.answeredAt });
+        const ruleText = `直接执行：${ap.ruleText}`;
+        const existing = rules.find((rule) => rule.text === ruleText || rule.text === `执行前确认：${ap.ruleText}` || rule.text === ap.ruleText);
+        if (existing) {
+          existing.text = ruleText;
+          existing.changedAt = ap.answeredAt;
+        } else {
+          rules.push({ id: uid("rule"), text: ruleText, changedAt: ap.answeredAt });
+        }
         pushItem(ap.assistantId, {
           kind: "note",
           id: uid("mock-n"),
           at: ap.answeredAt,
           icon: "rule",
-          text: `已记入${assistant(ap.assistantId)?.name ?? ""}的规则 · ${ap.ruleText}无需确认`,
+          text: `已记入${assistant(ap.assistantId)?.name ?? ""}的规则 · ${ruleText}`,
         });
         emit({ type: "profile", assistantId: ap.assistantId });
       }

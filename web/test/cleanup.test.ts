@@ -94,7 +94,7 @@ describe("前端失败路径", () => {
     await root.getByTitle("编辑助手").click();
     await check(top);
     await back();
-    for (const title of ["定时任务", "技能", "知识库", "执行前确认"]) {
+    for (const title of ["定时任务", "技能", "知识库", "规则"]) {
       await page.locator(".panelwrap > .panel .pbody").getByText(title, { exact: false }).first().click();
       await check(top);
       if (title === "定时任务") {

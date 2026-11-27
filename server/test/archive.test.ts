@@ -43,7 +43,7 @@ describe("归档助手", () => {
     try {
       const assistant = addAssistant(hob, "writer");
       const now = new Date().toISOString();
-      hob.runtime.store.saveRules("writer", [{ id: "r-w1", text: "发布公众号", mode: "ask", changedAt: now }]);
+      hob.runtime.store.saveRules("writer", [{ id: "r-w1", text: "发布公众号", changedAt: now }]);
       const routine = hob.runtime.routines.create({
         assistantId: "writer",
         name: "周报",

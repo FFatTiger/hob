@@ -78,37 +78,37 @@ describe("助手话题规则覆盖层与存储", () => {
       addAssistant(hob, aid);
       const store = hob.runtime.store;
       const parentRules: Rule[] = [
-        { id: "r-1", text: "发版前确认", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
-        { id: "r-2", text: "删除前确认", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
-        { id: "r-3", text: "先跑单测", mode: "allow", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-1", text: "发版前确认", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-2", text: "删除前确认", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-3", text: "先跑单测", changedAt: "2026-11-26T00:00:00Z" },
       ];
       store.saveRules(aid, parentRules);
       const { topic } = await hob.runtime.assistantTopics.create(aid, { title: "修登录超时" });
 
       const host = store.assistantTopicConfigHost(aid, topic.id);
-      const edited = setTopicRule(host, { id: "r-1", mode: "allow" });
-      expect(edited).toMatchObject({ id: "r-1", text: "发版前确认", mode: "allow", from: "parent", changed: true });
+      const edited = setTopicRule(host, { id: "r-1", text: "本话题发版直接合并" });
+      expect(edited).toMatchObject({ id: "r-1", text: "本话题发版直接合并", from: "parent", changed: true });
       deleteTopicRule(host, "r-2");
-      const own = setTopicRule(host, { text: "只在话题确认迁移", mode: "ask" });
+      const own = setTopicRule(host, { text: "只在话题确认迁移" });
       expect(own.from).toBe("topic");
 
-      // 上级修改 r-1 文案并删掉 r-2：topicRules 保持顺序、未改字段跟随上级、孤儿条目被忽略
+      // 上级修改 r-1 文案并删掉 r-2：topicRules 保持顺序、覆盖过的不受上级影响、孤儿条目被忽略
       store.saveRules(aid, [
-        { id: "r-1", text: "上线前确认", mode: "ask", changedAt: "2026-11-26T01:00:00Z" },
-        { id: "r-3", text: "先跑单测", mode: "allow", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-1", text: "上线前确认", changedAt: "2026-11-26T01:00:00Z" },
+        { id: "r-3", text: "先跑单测", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       expect(
-        store.topicRules(aid, topic.id).map((r) => ({ id: r.id, text: r.text, mode: r.mode, from: r.from, changed: r.changed })),
+        store.topicRules(aid, topic.id).map((r) => ({ id: r.id, text: r.text, from: r.from, changed: r.changed })),
       ).toEqual([
-        { id: "r-1", text: "上线前确认", mode: "allow", from: "parent", changed: true },
-        { id: "r-3", text: "先跑单测", mode: "allow", from: "parent", changed: undefined },
-        { id: own.id, text: "只在话题确认迁移", mode: "ask", from: "topic", changed: undefined },
+        { id: "r-1", text: "本话题发版直接合并", from: "parent", changed: true },
+        { id: "r-3", text: "先跑单测", from: "parent", changed: undefined },
+        { id: own.id, text: "只在话题确认迁移", from: "topic", changed: undefined },
       ]);
       // 上级 rules(aid) 不被话题覆盖污染
       expect(store.rules(aid).map((r) => r.id)).toEqual(["r-1", "r-3"]);
 
       // 下次写入顺手清掉孤儿 r-2
-      setTopicRule(host, { text: "再加一条话题规则", mode: "allow" });
+      setTopicRule(host, { text: "再加一条话题规则" });
       expect(store.assistantTopicRuleOverrides(aid, topic.id).hidden["r-2"]).toBeUndefined();
 
       // reset 恢复跟随上级；own 规则和不存在规则不能 reset
@@ -116,7 +116,6 @@ describe("助手话题规则覆盖层与存储", () => {
       expect(store.topicRules(aid, topic.id)[0]).toMatchObject({
         id: "r-1",
         text: "上线前确认",
-        mode: "ask",
         from: "parent",
       });
       expect(store.topicRules(aid, topic.id)[0]!.changed).toBeUndefined();
@@ -516,7 +515,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
 
       // 缺省或非法 scope 均被拒绝
       for (const invalid of [undefined, "", "group"]) {
-        const badSet = await topicSet.execute("0a", { text: "x", mode: "ask", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        const badSet = await topicSet.execute("0a", { text: "x", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
         expect(badSet.isError).toBe(true);
         expect((badSet.content[0] as { text: string }).text).toContain("topic");
         expect((badSet.content[0] as { text: string }).text).toContain("assistant");
@@ -528,23 +527,23 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       }
 
       // scope: "topic" 写话题层
-      const rTopic = await topicSet.execute("1", { text: "只在这个话题直接修", mode: "allow", scope: "topic" }, undefined, undefined, undefined as never);
+      const rTopic = await topicSet.execute("1", { text: "只在这个话题直接修", scope: "topic" }, undefined, undefined, undefined as never);
       expect((rTopic.content[0] as { text: string }).text).toBe("已加到这个话题的规则，只在这个话题生效。");
       expect(hob.runtime.store.rules(multi.id)).toEqual([]);
       expect(hob.runtime.store.topicRules(multi.id, topic.id)).toMatchObject([
-        { text: "只在这个话题直接修", mode: "allow", from: "topic" },
+        { text: "只在这个话题直接修", from: "topic" },
       ]);
 
       // 带 scope: "assistant" 写助手层
       const rAsst = await topicSet.execute(
         "2",
-        { text: "发版前先问", mode: "ask", scope: "assistant" },
+        { text: "执行前确认：发版", scope: "assistant" },
         undefined,
         undefined,
         undefined as never,
       );
       expect((rAsst.content[0] as { text: string }).text).toBe("已加到你的规则，没有单独改过这一条的话题都会用。");
-      expect(hob.runtime.store.rules(multi.id)).toMatchObject([{ text: "发版前先问", mode: "ask" }]);
+      expect(hob.runtime.store.rules(multi.id)).toMatchObject([{ text: "执行前确认：发版" }]);
       const parentRuleId = hob.runtime.store.rules(multi.id)[0]!.id;
 
       // scope: "topic" 删除上级规则 → 只隐藏在话题层，助手层还在
@@ -553,10 +552,13 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.id === parentRuleId)).toBe(false);
       expect(hob.runtime.store.rules(multi.id).some((r) => r.id === parentRuleId)).toBe(true);
 
+      // 恢复上级规则，后面测话题内 always 原地替换它
+      resetTopicRule(hob.runtime.store.assistantTopicConfigHost(multi.id, topic.id), parentRuleId);
+
       // 带 scope: "assistant" 删除上级规则 → 从助手层删掉
       const rAsst2 = await topicSet.execute(
         "4",
-        { text: "推代码前先测", mode: "ask", scope: "assistant" },
+        { text: "推代码前先测", scope: "assistant" },
         undefined,
         undefined,
         undefined as never,
@@ -573,7 +575,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       expect((dAsst.content[0] as { text: string }).text).toBe("已从你的规则里删除。");
       expect(hob.runtime.store.rules(multi.id).some((r) => r.id === toDeleteId)).toBe(false);
 
-      // 提问卡 always：话题内写话题层（含覆盖已有上级 ask 规则），主对话写助手层
+      // 提问卡 always：话题内写话题层（含替换已有上级「执行前确认：…」规则），主对话写助手层
       hob.runtime.store.saveApproval({
         id: "q-topic",
         assistantId: multi.id,
@@ -585,27 +587,27 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "q-topic", { key: "A" });
-      expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.text === "以后直接清缓存" && r.mode === "allow" && r.from === "topic")).toBe(true);
-      expect(hob.runtime.store.rules(multi.id).some((r) => r.text === "以后直接清缓存")).toBe(false);
+      expect(hob.runtime.store.topicRules(multi.id, topic.id).some((r) => r.text === "直接执行：以后直接清缓存" && r.from === "topic")).toBe(true);
+      expect(hob.runtime.store.rules(multi.id).some((r) => r.text.includes("以后直接清缓存"))).toBe(false);
 
       hob.runtime.store.saveApproval({
         id: "q-topic-override",
         assistantId: multi.id,
         topicId: topic.id,
         title: "发布吗？",
-        ruleText: "发版前先问",
+        ruleText: "发版",
         options: [{ key: "A", label: "允许", always: true }],
         status: "pending",
         source: "router",
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "q-topic-override", { key: "A" });
-      expect(hob.runtime.store.topicRules(multi.id, topic.id).find((r) => r.text === "发版前先问")).toMatchObject({
-        mode: "allow",
+      expect(hob.runtime.store.topicRules(multi.id, topic.id).find((r) => r.id === parentRuleId)).toMatchObject({
+        text: "直接执行：发版",
         from: "parent",
         changed: true,
       });
-      expect(hob.runtime.store.rules(multi.id).find((r) => r.text === "发版前先问")?.mode).toBe("ask");
+      expect(hob.runtime.store.rules(multi.id).find((r) => r.id === parentRuleId)?.text).toBe("执行前确认：发版");
 
       hob.runtime.store.saveApproval({
         id: "q-main",
@@ -617,7 +619,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "q-main", { key: "A" });
-      expect(hob.runtime.store.rules(multi.id).some((r) => r.text === "以后主对话直接查日志" && r.mode === "allow")).toBe(true);
+      expect(hob.runtime.store.rules(multi.id).some((r) => r.text === "直接执行：以后主对话直接查日志")).toBe(true);
     } finally {
       hob.close();
     }
@@ -628,14 +630,14 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
     try {
       const store = hob.runtime.store;
       store.saveGlobalRules([
-        { id: "g-ask", text: "全局删库确认", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
-        { id: "g-allow", text: "全局只读直接查", mode: "allow", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "g-ask", text: "执行前确认：全局删库确认", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "g-allow", text: "全局只读直接查", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       const single = addAssistant(hob, "single", { topics: undefined });
       const multi = addAssistant(hob, "multi");
       store.saveRules(multi.id, [
-        { id: "a-hide", text: "助手默认先问再改", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
-        { id: "a-flip", text: "助手默认确认重跑", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "a-hide", text: "助手默认先问再改", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "a-flip", text: "助手默认确认重跑", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       const { topic } = await hob.runtime.assistantTopics.create(multi.id, { title: "独立话题" });
 
@@ -651,9 +653,9 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
 
       const host = store.assistantTopicConfigHost(multi.id, topic.id);
       deleteTopicRule(host, "a-hide");
-      setTopicRule(host, { id: "a-flip", mode: "allow" });
-      setTopicRule(host, { text: "话题新增确认发布", mode: "ask" });
-      setTopicRule(host, { text: "话题新增直接构建", mode: "allow" });
+      setTopicRule(host, { id: "a-flip", text: "直接执行：助手默认重跑" });
+      setTopicRule(host, { text: "执行前确认：话题新增确认发布" });
+      setTopicRule(host, { text: "直接执行：话题新增直接构建" });
 
       // 主对话、单会话、主助手提示词一个字不变
       expect(buildSystemPrompt(store, multi.id, opts)).toBe(mainPromptBefore);
@@ -664,7 +666,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       const topicPrompt = buildSystemPrompt(store, multi.id, { ...opts, topicId: topic.id });
       expect(topicPrompt).toContain("## 用户定的规则");
       expect(topicPrompt).toContain("- 执行前确认：全局删库确认");
-      expect(topicPrompt).toContain("- 直接执行：助手默认确认重跑");
+      expect(topicPrompt).toContain("- 直接执行：助手默认重跑");
       expect(topicPrompt).toContain("- 执行前确认：话题新增确认发布");
       expect(topicPrompt).toContain("- 直接执行：话题新增直接构建");
       expect(topicPrompt).not.toContain("助手默认先问再改");
@@ -683,7 +685,7 @@ describe("工具写分层、提问卡 always 与提示词接入", () => {
       const workerPrompt = buildWorkerPrompt(store, job.id, opts);
       expect(workerPrompt).toContain("全局只读直接查");
       expect(workerPrompt).toContain("全局删库确认");
-      expect(workerPrompt).toContain("助手默认确认重跑");
+      expect(workerPrompt).toContain("直接执行：助手默认重跑");
       expect(workerPrompt).toContain("话题新增直接构建");
       expect(workerPrompt).toContain("话题新增确认发布");
       expect(workerPrompt).not.toContain("助手默认先问再改");
@@ -719,7 +721,7 @@ describe("助手话题配置与规则 HTTP 接口", () => {
       });
       const a2 = addAssistant(hob, "a2", { cwd: assistantCwd });
       hob.runtime.store.saveRules(a1.id, [
-        { id: "p-1", text: "上级规则一", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "p-1", text: "上级规则一", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       const { topic } = await hob.runtime.assistantTopics.create(a1.id, { title: "配置接口", cwd });
       const { topic: topicNoCwd } = await hob.runtime.assistantTopics.create(a1.id, { title: "无目录" });
@@ -745,8 +747,8 @@ describe("助手话题配置与规则 HTTP 接口", () => {
         expect((await get(path)).status).toBe(404);
       }
       expect((await patch(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/config`, { models: {} })).status).toBe(404);
-      expect((await post(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules`, { text: "x", mode: "ask" })).status).toBe(404);
-      expect((await put(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules/p-1`, { mode: "allow" })).status).toBe(404);
+      expect((await post(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules`, { text: "x" })).status).toBe(404);
+      expect((await put(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules/p-1`, { text: "y" })).status).toBe(404);
       expect((await del(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules/p-1`)).status).toBe(404);
       expect((await post(`/api/assistants/${a1.id}/topics/${topicOfA2.id}/rules/p-1/reset`)).status).toBe(404);
 
@@ -755,7 +757,7 @@ describe("助手话题配置与规则 HTTP 接口", () => {
       expect(cfgRes.status).toBe(200);
       const cfg = (await cfgRes.json()) as TopicConfigView;
       expect(cfg.rules).toHaveLength(1);
-      expect(cfg.rules[0]).toMatchObject({ id: "p-1", text: "上级规则一", mode: "ask", from: "parent" });
+      expect(cfg.rules[0]).toMatchObject({ id: "p-1", text: "上级规则一", from: "parent" });
       expect(cfg.hiddenRules).toEqual([]);
       expect(cfg.cwd).toEqual({ path: cwd, source: "topic" });
       expect(cfg.models.conversation.source).toBe("global");
@@ -784,40 +786,36 @@ describe("助手话题配置与规则 HTTP 接口", () => {
       expect(patchedCfg.models.work).toMatchObject({ source: "topic", pick: { ref: "hob-faux/smart" } });
 
       // POST /rules：400 与 201
-      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "  ", mode: "ask" })).status).toBe(400);
-      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "a".repeat(1001), mode: "ask" })).status).toBe(400);
-      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "合法", mode: "bad" })).status).toBe(400);
-      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "上级规则一", mode: "allow" })).status).toBe(400);
+      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "  " })).status).toBe(400);
+      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "a".repeat(1001) })).status).toBe(400);
+      expect((await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "上级规则一" })).status).toBe(400);
 
-      const postRule = await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "本话题专属规则", mode: "ask" });
+      const postRule = await post(`/api/assistants/${a1.id}/topics/${topic.id}/rules`, { text: "本话题专属规则" });
       expect(postRule.status).toBe(201);
       const createdRule = ((await postRule.json()) as { rule: { id: string; text: string; from: string } }).rule;
       expect(createdRule).toMatchObject({ text: "本话题专属规则", from: "topic" });
 
       // PUT /rules/:rid：400、404、改上级记 changed、改 own 直接改
       expect((await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1`, {})).status).toBe(400);
-      expect((await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/r-none`, { mode: "allow" })).status).toBe(404);
+      expect((await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/r-none`, { text: "新文字" })).status).toBe(404);
       expect((await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1`, { text: "本话题专属规则" })).status).toBe(400);
 
-      const putParent = await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1`, { mode: "allow" });
+      const putParent = await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/p-1`, { text: "本话题改过的上级规则" });
       expect(putParent.status).toBe(200);
       expect(((await putParent.json()) as { rule: any }).rule).toMatchObject({
         id: "p-1",
-        text: "上级规则一",
-        mode: "allow",
+        text: "本话题改过的上级规则",
         from: "parent",
         changed: true,
       });
 
       const putOwn = await put(`/api/assistants/${a1.id}/topics/${topic.id}/rules/${createdRule.id}`, {
         text: "改过的话题规则",
-        mode: "allow",
       });
       expect(putOwn.status).toBe(200);
       expect(((await putOwn.json()) as { rule: any }).rule).toMatchObject({
         id: createdRule.id,
         text: "改过的话题规则",
-        mode: "allow",
         from: "topic",
       });
 

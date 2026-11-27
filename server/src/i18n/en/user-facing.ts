@@ -203,7 +203,6 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "启用状态无效": "Invalid enabled state.",
   "规则无效。": "Invalid rule.",
   "规则内容不能为空或超过 1000 字。": "Rule text cannot be empty or exceed 1,000 characters.",
-  "规则模式无效。": "Invalid rule mode.",
   "规则不存在。": "Rule not found.",
   "规则内容已存在。": "A rule with this text already exists.",
   "群不存在": "Group not found.",

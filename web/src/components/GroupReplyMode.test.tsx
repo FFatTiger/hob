@@ -177,7 +177,7 @@ describe("群和话题「全员回应」界面", () => {
     state.gsel = "g-1";
     const groupHtml = renderToStaticMarkup(<Panel page={null} />);
     expect(groupHtml).toContain("<span>没点名时</span><small>群主回应</small><b>›</b>");
-    expect(groupHtml.indexOf("执行前确认")).toBeLessThan(groupHtml.indexOf("没点名时"));
+    expect(groupHtml.indexOf("<span>规则</span>")).toBeLessThan(groupHtml.indexOf("没点名时"));
 
     // 话题未覆盖时：跟随群 · 全员回应
     state.gsel = "t-1";

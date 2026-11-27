@@ -48,36 +48,36 @@ function makeMemoryHost(initialParent: Rule[]): {
 }
 
 describe("话题配置覆盖层纯函数（topic-config）", () => {
-  it("规则合成：顺序、hidden、changed 仅改部分字段时仍跟随未改字段、孤儿改动清理", () => {
+  it("规则合成：顺序、hidden、changed 覆盖文字、孤儿改动清理", () => {
     const parent: Rule[] = [
-      { id: "r-1", text: "发版前确认", mode: "ask", changedAt: "2026-01-01T00:00:00Z" },
-      { id: "r-2", text: "删除前确认", mode: "ask", changedAt: "2026-01-01T00:00:00Z" },
-      { id: "r-3", text: "先跑测试", mode: "allow", changedAt: "2026-01-01T00:00:00Z" },
+      { id: "r-1", text: "发版前确认", changedAt: "2026-01-01T00:00:00Z" },
+      { id: "r-2", text: "删除前确认", changedAt: "2026-01-01T00:00:00Z" },
+      { id: "r-3", text: "先跑测试", changedAt: "2026-01-01T00:00:00Z" },
     ];
     const box = makeMemoryHost(parent);
 
-    // 改 r-1 的 mode（不改 text），停用 r-2，新增 own 规则
-    const edited = setTopicRule(box.host, { id: "r-1", mode: "allow" });
-    expect(edited).toMatchObject({ id: "r-1", text: "发版前确认", mode: "allow", from: "parent", changed: true });
+    // 改 r-1 的文字，停用 r-2，新增 own 规则
+    const edited = setTopicRule(box.host, { id: "r-1", text: "发版前直接合并" });
+    expect(edited).toMatchObject({ id: "r-1", text: "发版前直接合并", from: "parent", changed: true });
     deleteTopicRule(box.host, "r-2");
-    const own = setTopicRule(box.host, { text: "只在话题确认", mode: "ask" });
+    const own = setTopicRule(box.host, { text: "只在话题确认" });
     expect(own.from).toBe("topic");
 
-    // 上级把 r-1 的文字改了：话题里只改了 mode，文字跟着上级变
-    box.parent[0] = { id: "r-1", text: "上线前确认", mode: "ask", changedAt: "2026-01-02T00:00:00Z" };
+    // 上级把 r-1 的文字改了：话题里覆盖过 r-1，仍保留话题的文字
+    box.parent[0] = { id: "r-1", text: "上线前确认", changedAt: "2026-01-02T00:00:00Z" };
     // 上级把 r-2 删掉：r-2 在 hidden 里变成孤儿，读时忽略
     box.parent.splice(1, 1);
 
     const list = effectiveRules(box.parent, box.getRuleOverrides());
-    expect(list.map((r) => ({ id: r.id, text: r.text, mode: r.mode, from: r.from, changed: r.changed }))).toEqual([
-      { id: "r-1", text: "上线前确认", mode: "allow", from: "parent", changed: true },
-      { id: "r-3", text: "先跑测试", mode: "allow", from: "parent", changed: undefined },
-      { id: own.id, text: "只在话题确认", mode: "ask", from: "topic", changed: undefined },
+    expect(list.map((r) => ({ id: r.id, text: r.text, from: r.from, changed: r.changed }))).toEqual([
+      { id: "r-1", text: "发版前直接合并", from: "parent", changed: true },
+      { id: "r-3", text: "先跑测试", from: "parent", changed: undefined },
+      { id: own.id, text: "只在话题确认", from: "topic", changed: undefined },
     ]);
     expect(hiddenRules(box.parent, box.getRuleOverrides())).toEqual([]);
 
     // 下次写入顺手清掉孤儿 r-2
-    setTopicRule(box.host, { text: "再来一条", mode: "allow" });
+    setTopicRule(box.host, { text: "再来一条" });
     expect(box.getRuleOverrides().hidden["r-2"]).toBeUndefined();
 
     // reset r-1 恢复跟随上级；own 规则不能 reset
@@ -85,7 +85,6 @@ describe("话题配置覆盖层纯函数（topic-config）", () => {
     expect(effectiveRules(box.parent, box.getRuleOverrides())[0]).toMatchObject({
       id: "r-1",
       text: "上线前确认",
-      mode: "ask",
       from: "parent",
     });
     expect(effectiveRules(box.parent, box.getRuleOverrides())[0]!.changed).toBeUndefined();
@@ -402,14 +401,14 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
         });
 
       // 群新增一条规则 r-parent
-      const addParent = await req(`/api/groups/${group.id}`, "PATCH", { rule: { text: "上线前问我", mode: "ask" } });
+      const addParent = await req(`/api/groups/${group.id}`, "PATCH", { rule: { text: "上线前问我" } });
       expect(addParent.status).toBe(200);
       const parentRuleId = ((await addParent.json()) as { rule: Rule }).rule.id;
 
       // 话题修改父规则、再加一条自己的规则
-      const editInTopic = await req(`/api/groups/${topic.id}`, "PATCH", { rule: { id: parentRuleId, mode: "allow" } });
+      const editInTopic = await req(`/api/groups/${topic.id}`, "PATCH", { rule: { id: parentRuleId, text: "本话题上线直接发布" } });
       expect(editInTopic.status).toBe(200);
-      const addInTopic = await req(`/api/groups/${topic.id}`, "PATCH", { rule: { text: "只在这个话题直接发图", mode: "allow" } });
+      const addInTopic = await req(`/api/groups/${topic.id}`, "PATCH", { rule: { text: "只在这个话题直接发图" } });
       expect(addInTopic.status).toBe(200);
       const ownRuleId = ((await addInTopic.json()) as { rule: Rule }).rule.id;
 
@@ -423,15 +422,15 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
       expect(profile.replyMode).toEqual({ value: "all", source: "topic" });
       expect(profile.models?.conversation).toMatchObject({ source: "topic", pick: smart });
       expect(profile.rules).toMatchObject([
-        { id: parentRuleId, text: "上线前问我", mode: "allow", from: "parent", changed: true },
-        { id: ownRuleId, text: "只在这个话题直接发图", mode: "allow", from: "topic" },
+        { id: parentRuleId, text: "本话题上线直接发布", from: "parent", changed: true },
+        { id: ownRuleId, text: "只在这个话题直接发图", from: "topic" },
       ]);
       expect(profile.hiddenRules).toEqual([]);
 
       // 兄弟话题不受影响
       const siblingProfile = (await (await req(`/api/groups/${sibling.id}/profile`)).json()) as import("../../shared/types.ts").GroupProfile;
       expect(siblingProfile.replyMode).toEqual({ value: "owner", source: "group" });
-      expect(siblingProfile.rules).toMatchObject([{ id: parentRuleId, text: "上线前确认".replace("确认", "问我"), mode: "ask", from: "parent" }]);
+      expect(siblingProfile.rules).toMatchObject([{ id: parentRuleId, text: "上线前问我", from: "parent" }]);
 
       // 在话题里停用上级规则 → 进入 hiddenRules；再 reset → 恢复跟随
       expect((await req(`/api/groups/${topic.id}/rules/${parentRuleId}`, "DELETE")).status).toBe(200);
@@ -445,7 +444,7 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
 
       expect((await req(`/api/groups/${topic.id}/rules/${parentRuleId}/reset`, "POST")).status).toBe(200);
       const afterReset = (await (await req(`/api/groups/${topic.id}/profile`)).json()) as import("../../shared/types.ts").GroupProfile;
-      expect(afterReset.rules[0]).toMatchObject({ id: parentRuleId, mode: "ask", from: "parent" });
+      expect(afterReset.rules[0]).toMatchObject({ id: parentRuleId, text: "上线前问我", from: "parent" });
       expect(afterReset.rules[0]!.changed).toBeUndefined();
       expect(afterReset.hiddenRules).toEqual([]);
 
@@ -489,7 +488,7 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
 
       // 缺省或非法 scope 均拒绝并提示两个可选值
       for (const invalid of [undefined, "", "assistant"]) {
-        const badSet = await topicSet.execute("0a", { text: "x", mode: "ask", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
+        const badSet = await topicSet.execute("0a", { text: "x", ...(invalid !== undefined ? { scope: invalid } : {}) }, undefined, undefined, undefined as never);
         expect(badSet.isError).toBe(true);
         expect((badSet.content[0] as { text: string }).text).toContain("topic");
         expect((badSet.content[0] as { text: string }).text).toContain("group");
@@ -500,11 +499,11 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
         expect((badRm.content[0] as { text: string }).text).toContain("group");
       }
 
-      const resTopic = await topicSet.execute("1", { text: "临时直接改", mode: "allow", scope: "topic" }, undefined, undefined, undefined as never);
+      const resTopic = await topicSet.execute("1", { text: "临时直接改", scope: "topic" }, undefined, undefined, undefined as never);
       expect((resTopic.content[0] as { text: string }).text).toBe("已加到这个话题的规则，只在这个话题生效。");
       expect(hob.runtime.store.groupParentRules(group.id)).toEqual([]);
 
-      const resGroup = await topicSet.execute("2", { text: "全群发布先确认", mode: "ask", scope: "group" }, undefined, undefined, undefined as never);
+      const resGroup = await topicSet.execute("2", { text: "全群发布先确认", scope: "group" }, undefined, undefined, undefined as never);
       expect((resGroup.content[0] as { text: string }).text).toBe("已加到本群的规则，没有单独改过这一条的话题都会用。");
       const parentRuleId = hob.runtime.store.groupParentRules(group.id)[0]!.id;
 
@@ -514,7 +513,7 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
       expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.id === parentRuleId)).toBe(true);
 
       // 在话题里带 scope: "group" 删除上级规则 → 从本群规则删除
-      const resGroup2 = await topicSet.execute("4", { text: "仅群级测试规则", mode: "ask", scope: "group" }, undefined, undefined, undefined as never);
+      const resGroup2 = await topicSet.execute("4", { text: "仅群级测试规则", scope: "group" }, undefined, undefined, undefined as never);
       expect((resGroup2.content[0] as { text: string }).text).toBe("已加到本群的规则，没有单独改过这一条的话题都会用。");
       const toDeleteGroupRuleId = hob.runtime.store.groupParentRules(group.id).find((r) => r.text === "仅群级测试规则")!.id;
       const rmGroup = await topicRemove.execute("5", { ruleId: toDeleteGroupRuleId, scope: "group" }, undefined, undefined, undefined as never);
@@ -552,8 +551,8 @@ describe("群话题配置 HTTP 接口、工具与提示词", () => {
         createdAt: new Date().toISOString(),
       });
       await answerApproval(hob.runtime, "a-1", { key: "A" });
-      expect(hob.runtime.store.groupRules(topic.id).some((r) => r.text === "以后直接修" && r.mode === "allow" && r.from === "topic")).toBe(true);
-      expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.text === "以后直接修")).toBe(false);
+      expect(hob.runtime.store.groupRules(topic.id).some((r) => r.text === "直接执行：以后直接修" && r.from === "topic")).toBe(true);
+      expect(hob.runtime.store.groupParentRules(group.id).some((r) => r.text.includes("以后直接修"))).toBe(false);
 
       hob.runtime.store.saveJob({
         id: "t-topic-rules",

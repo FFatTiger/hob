@@ -176,7 +176,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
   app.get("/api/rules", (c) => c.json({ rules: store.globalRules() }));
   app.put("/api/rules", async (c) => {
     const body = await c.req.json().catch(() => null) as { rules?: unknown } | null;
-    if (!Array.isArray(body?.rules) || body.rules.some((rule) => !rule || typeof rule.text !== "string" || !rule.text.trim() || (rule.mode !== "ask" && rule.mode !== "allow") || (rule.id !== undefined && (typeof rule.id !== "string" || !rule.id.trim())))) {
+    if (!Array.isArray(body?.rules) || body.rules.some((rule) => !rule || typeof rule.text !== "string" || !rule.text.trim() || (rule.id !== undefined && (typeof rule.id !== "string" || !rule.id.trim())))) {
       return c.json({ error: "规则格式无效，文字不能为空" }, 400);
     }
     const changedAt = new Date().toISOString();
@@ -184,7 +184,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const rules = body.rules.map((rule) => {
       const previous = existing.get(rule.id);
       const text = rule.text.trim();
-      return { id: rule.id ?? newId("r-"), text, mode: rule.mode as "ask" | "allow", changedAt: previous && previous.text === text && previous.mode === rule.mode ? previous.changedAt : changedAt };
+      return { id: rule.id ?? newId("r-"), text, changedAt: previous && previous.text === text ? previous.changedAt : changedAt };
     });
     store.saveGlobalRules(rules);
     bus.emit({ type: "rules" });
@@ -1315,22 +1315,20 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const id = c.req.param("id");
     const assistant = store.assistant(id);
     if (!assistant) return c.json({ error: "助手不存在" }, 404);
-    const body = (await c.req.json().catch(() => ({}))) as Partial<Assistant> & { rule?: { id?: unknown; text?: unknown; mode?: unknown } };
+    const body = (await c.req.json().catch(() => ({}))) as Partial<Assistant> & { rule?: { id?: unknown; text?: unknown } };
     if (body.cwd !== undefined) {
       return c.json({ error: assistant.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE }, 400);
     }
     if (body.rule !== undefined) {
       const edit = body.rule;
       if (!edit || typeof edit !== "object" || (edit.id !== undefined && (typeof edit.id !== "string" || !edit.id))) return c.json({ error: "规则无效。" }, 400);
-      if ((edit.id === undefined || edit.text !== undefined) && (typeof edit.text !== "string" || !edit.text.trim() || edit.text.trim().length > 1000)) return c.json({ error: "规则内容不能为空或超过 1000 字。" }, 400);
-      if ((edit.id === undefined || edit.mode !== undefined) && edit.mode !== "ask" && edit.mode !== "allow") return c.json({ error: "规则模式无效。" }, 400);
+      if (typeof edit.text !== "string" || !edit.text.trim() || edit.text.trim().length > 1000) return c.json({ error: "规则内容不能为空或超过 1000 字。" }, 400);
       const rules = store.rules(id);
       const existing = edit.id === undefined ? undefined : rules.find((item) => item.id === edit.id);
       if (edit.id !== undefined && !existing) return c.json({ error: "规则不存在。" }, 404);
-      const text = typeof edit.text === "string" ? edit.text.trim() : existing!.text;
+      const text = edit.text.trim();
       if (rules.some((item) => item.id !== edit.id && item.text === text)) return c.json({ error: "规则内容已存在。" }, 400);
-      const mode = edit.mode === "ask" || edit.mode === "allow" ? edit.mode : existing!.mode;
-      const rule = { id: existing?.id ?? newId("r-"), text, mode, changedAt: new Date().toISOString() };
+      const rule = { id: existing?.id ?? newId("r-"), text, changedAt: new Date().toISOString() };
       if (existing) Object.assign(existing, rule);
       else rules.push(rule);
       store.saveRules(id, rules);
@@ -1489,24 +1487,14 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
 
   const validateTopicRuleBody = (
     body: unknown,
-    isCreate: boolean,
-  ): { text?: string; mode?: "ask" | "allow" } | { error: string } => {
+  ): { text: string } | { error: string } => {
     if (!body || typeof body !== "object" || Array.isArray(body)) return { error: "规则无效。" };
-    const raw = body as { text?: unknown; mode?: unknown };
-    if (!isCreate && raw.text === undefined && raw.mode === undefined) return { error: "规则无效。" };
-    let text: string | undefined;
-    if (isCreate || raw.text !== undefined) {
-      if (typeof raw.text !== "string" || !raw.text.trim() || raw.text.trim().length > 1000) {
-        return { error: "规则内容不能为空或超过 1000 字。" };
-      }
-      text = raw.text.trim();
+    const raw = body as { text?: unknown };
+    if (raw.text === undefined) return { error: "规则无效。" };
+    if (typeof raw.text !== "string" || !raw.text.trim() || raw.text.trim().length > 1000) {
+      return { error: "规则内容不能为空或超过 1000 字。" };
     }
-    let mode: "ask" | "allow" | undefined;
-    if (isCreate || raw.mode !== undefined) {
-      if (raw.mode !== "ask" && raw.mode !== "allow") return { error: "规则模式无效。" };
-      mode = raw.mode;
-    }
-    return { ...(text !== undefined ? { text } : {}), ...(mode !== undefined ? { mode } : {}) };
+    return { text: raw.text.trim() };
   };
 
   app.post("/api/assistants/:id/topics/:tid/rules", async (c) => {
@@ -1514,12 +1502,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const tid = c.req.param("tid");
     try {
       runtime.assistantTopics.requireTopic(id, tid);
-      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null), true);
+      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null));
       if ("error" in parsed) return c.json({ error: parsed.error }, 400);
       if (store.topicRules(id, tid).some((item) => item.text === parsed.text)) {
         return c.json({ error: "规则内容已存在。" }, 400);
       }
-      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { text: parsed.text!, mode: parsed.mode! });
+      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { text: parsed.text });
       bus.emit({ type: "profile", assistantId: id });
       return c.json({ ok: true, rule }, 201);
     } catch (error) {
@@ -1533,16 +1521,15 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const rid = c.req.param("rid");
     try {
       runtime.assistantTopics.requireTopic(id, tid);
-      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null), false);
+      const parsed = validateTopicRuleBody(await c.req.json().catch(() => null));
       if ("error" in parsed) return c.json({ error: parsed.error }, 400);
       const rules = store.topicRules(id, tid);
       const existing = rules.find((item) => item.id === rid);
       if (!existing) return c.json({ error: "规则不存在。" }, 404);
-      const nextText = parsed.text ?? existing.text;
-      if (rules.some((item) => item.id !== rid && item.text === nextText)) {
+      if (rules.some((item) => item.id !== rid && item.text === parsed.text)) {
         return c.json({ error: "规则内容已存在。" }, 400);
       }
-      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { id: rid, ...parsed });
+      const rule = setTopicRule(store.assistantTopicConfigHost(id, tid), { id: rid, text: parsed.text });
       bus.emit({ type: "profile", assistantId: id });
       return c.json({ ok: true, rule });
     } catch (error) {
@@ -1715,27 +1702,24 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       return c.json({ error: CWD_IMMUTABLE }, 400);
     }
     if (body.rule !== undefined) {
-      const edit = body.rule as { id?: unknown; text?: unknown; mode?: unknown };
+      const edit = body.rule as { id?: unknown; text?: unknown };
       if (!edit || typeof edit !== "object" || (edit.id !== undefined && (typeof edit.id !== "string" || !edit.id))) return c.json({ error: "规则无效。" }, 400);
-      if ((edit.id === undefined || edit.text !== undefined) && (typeof edit.text !== "string" || !edit.text.trim() || edit.text.trim().length > 1000)) return c.json({ error: "规则内容不能为空或超过 1000 字。" }, 400);
-      if ((edit.id === undefined || edit.mode !== undefined) && edit.mode !== "ask" && edit.mode !== "allow") return c.json({ error: "规则模式无效。" }, 400);
+      if (typeof edit.text !== "string" || !edit.text.trim() || edit.text.trim().length > 1000) return c.json({ error: "规则内容不能为空或超过 1000 字。" }, 400);
       const rules = store.groupRules(id);
       const existing = edit.id === undefined ? undefined : rules.find((item) => item.id === edit.id);
       if (edit.id !== undefined && !existing) return c.json({ error: "规则不存在。" }, 404);
-      const text = typeof edit.text === "string" ? edit.text.trim() : existing!.text;
+      const text = edit.text.trim();
       if (rules.some((item) => item.id !== edit.id && item.text === text)) return c.json({ error: "规则内容已存在。" }, 400);
-      const mode = edit.mode === "ask" || edit.mode === "allow" ? edit.mode : existing!.mode;
       if (group.parentId) {
         const rule = setTopicRule(store.groupTopicConfigHost(id), {
           ...(edit.id !== undefined ? { id: edit.id as string } : {}),
           text,
-          mode,
         });
         return c.json({ ok: true, rule });
       }
       const parentRules = store.groupParentRules(id);
       const existingParent = edit.id === undefined ? undefined : parentRules.find((item) => item.id === edit.id);
-      const rule = { id: existingParent?.id ?? newId("r-"), text, mode, changedAt: new Date().toISOString() };
+      const rule = { id: existingParent?.id ?? newId("r-"), text, changedAt: new Date().toISOString() };
       if (existingParent) Object.assign(existingParent, rule);
       else parentRules.push(rule);
       store.saveGroupRules(id, parentRules);

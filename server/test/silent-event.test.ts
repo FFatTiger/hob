@@ -31,7 +31,7 @@ const assistantItems = (items: Item[]) => items.filter((item) => item.kind === "
 
 /** 带一句开口、调一次工具、再说最后一句的模型回复。 */
 const opening = (words: string) => fauxAssistantMessage(
-  [fauxText(words), fauxToolCall("set_rule", { text: "发周报前先问我", mode: "ask" })],
+  [fauxText(words), fauxToolCall("set_rule", { text: "发周报前先问我" })],
   { stopReason: "toolUse" },
 );
 
@@ -178,7 +178,7 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
       hob.runtime.store.saveAssistant({ ...base, id: "ops", name: "服务器", duty: "机器", primary: false, pinned: false, sprite: "page" });
       const group = hob.runtime.groups.create({ name: "家里机器", purpose: "机器上的事", ownerId: "hob", members: ["hob", "ops"] });
       hob.faux.setResponses([
-        fauxAssistantMessage([fauxText("我先看一下它在做什么，这一步要一会儿。"), fauxToolCall("set_rule", { text: "重启前先问我", mode: "ask" })], { stopReason: "toolUse" }),
+        fauxAssistantMessage([fauxText("我先看一下它在做什么，这一步要一会儿。"), fauxToolCall("set_rule", { text: "重启前先问我" })], { stopReason: "toolUse" }),
         text("磁盘还剩一半，够用。"),
       ]);
       const deltas: string[] = [];
@@ -225,7 +225,7 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
       hob.runtime.store.saveAssistant({ ...base, id: "ops", name: "服务器", duty: "机器", primary: false, pinned: false, sprite: "page" });
       const group = hob.runtime.groups.create({ name: "家里机器", purpose: "机器上的事", ownerId: "hob", members: ["hob", "ops"] });
       hob.faux.setResponses([
-        fauxAssistantMessage([fauxText("先看一眼。"), fauxToolCall("set_rule", { text: "重启前先问我", mode: "ask" })], { stopReason: "toolUse" }),
+        fauxAssistantMessage([fauxText("先看一眼。"), fauxToolCall("set_rule", { text: "重启前先问我" })], { stopReason: "toolUse" }),
         text("NO_REPLY @服务器"),
       ]);
       const deltas: string[] = [];
@@ -248,7 +248,7 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
     try {
       const group = hob.runtime.groups.create({ name: "家里机器", purpose: "机器上的事", ownerId: "hob", members: ["hob"] });
       hob.faux.setResponses([
-        fauxAssistantMessage([fauxText("我看一下它在做什么。"), fauxToolCall("set_rule", { text: "重启前先问我", mode: "ask" })], { stopReason: "toolUse" }),
+        fauxAssistantMessage([fauxText("我看一下它在做什么。"), fauxToolCall("set_rule", { text: "重启前先问我" })], { stopReason: "toolUse" }),
         text("看过了，任务还在按原计划跑，我不动它。"),
       ]);
       await hob.runtime.groups.deliverEvent(group.id, "hob", "任务超过预计时间");

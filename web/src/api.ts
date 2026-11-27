@@ -143,7 +143,7 @@ export interface HobApi {
   bootstrap(): Promise<Bootstrap>;
   settings(): Promise<SettingsFile>;
   rules(): Promise<{ rules: Rule[] }>;
-  saveRules(rules: { id?: string; text: string; mode: Rule["mode"] }[]): Promise<{ rules: Rule[] }>;
+  saveRules(rules: { id?: string; text: string }[]): Promise<{ rules: Rule[] }>;
   models(): Promise<ModelsView>;
   putSettings(revision: number, patch: SettingsPatch): Promise<SettingsFile>;
   providers(): Promise<ProvidersView>;
@@ -262,17 +262,17 @@ export interface HobApi {
   addAssistantTopicRule(
     assistantId: string,
     topicId: string,
-    body: { text: string; mode: Rule["mode"] },
+    body: { text: string },
   ): Promise<{ ok: true; rule: Rule }>;
   updateAssistantTopicRule(
     assistantId: string,
     topicId: string,
     ruleId: string,
-    patch: { text?: string; mode?: Rule["mode"] },
+    patch: { text: string },
   ): Promise<{ ok: true; rule: Rule }>;
   deleteAssistantTopicRule(assistantId: string, topicId: string, ruleId: string): Promise<void>;
   resetAssistantTopicRule(assistantId: string, topicId: string, ruleId: string): Promise<void>;
-  patchAssistant(assistantId: string, patch: Partial<Assistant> & { rule?: { id?: string; text?: string; mode?: "ask" | "allow" } }): Promise<{ rule?: Rule } | void>;
+  patchAssistant(assistantId: string, patch: Partial<Assistant> & { rule?: { id?: string; text: string } }): Promise<{ rule?: Rule } | void>;
   archiveAssistant(assistantId: string): Promise<void>;
   deleteRule(assistantId: string, ruleId: string): Promise<void>;
   retryDelegation(id: string): Promise<void>;
@@ -298,7 +298,7 @@ export interface HobApi {
   resetGroupRule(groupId: string, ruleId: string): Promise<void>;
   groups(): Promise<GroupSummary[]>;
   createGroup(body: { name: string; purpose: string; ownerId: string; members: string[]; replyMode?: import("../../shared/types.ts").GroupReplyMode; cwd?: string }): Promise<Group>;
-  patchGroup(groupId: string, patch: { rule?: { id?: string; text?: string; mode?: "ask" | "allow" }; name?: string; purpose?: string; replyMode?: import("../../shared/types.ts").GroupReplyMode | null; listOrder?: number; pinned?: boolean; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
+  patchGroup(groupId: string, patch: { rule?: { id?: string; text: string }; name?: string; purpose?: string; replyMode?: import("../../shared/types.ts").GroupReplyMode | null; listOrder?: number; pinned?: boolean; models?: { conversation?: import("../../shared/types.ts").ModelPick | null; work?: import("../../shared/types.ts").ModelPick | null }; ownerId?: string; members?: string[] }): Promise<Group>;
   patchGroupMemberModels(groupId: string, assistantId: string, patch: { work?: import("../../shared/types.ts").ModelPick | null }): Promise<Group>;
   archiveGroup(groupId: string): Promise<void>;
   /** 在群里开一个话题 */

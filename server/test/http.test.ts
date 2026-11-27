@@ -60,14 +60,12 @@ describe("全局规则", () => {
     try {
       const old = "2020-01-01T00:00:00.000Z";
       hob.runtime.store.saveGlobalRules([
-        { id: "a", text: "保留", mode: "ask", changedAt: old },
-        { id: "b", text: "改文字", mode: "ask", changedAt: old },
-        { id: "c", text: "改模式", mode: "ask", changedAt: old },
+        { id: "a", text: "保留", changedAt: old },
+        { id: "b", text: "改文字", changedAt: old },
       ]);
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
       const response = await app.request("/api/rules", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rules: [
-        { id: "a", text: " 保留 ", mode: "ask" }, { id: "b", text: "新文字", mode: "ask" },
-        { id: "c", text: "改模式", mode: "allow" }, { text: "新增", mode: "allow" },
+        { id: "a", text: " 保留 " }, { id: "b", text: "新文字" }, { text: "新增" },
       ] }) });
       expect(response.status).toBe(200);
       const { rules } = await response.json() as { rules: { changedAt: string }[] };
@@ -81,17 +79,16 @@ describe("全局规则", () => {
     try {
       const { store, bus } = hob.runtime;
       expect(store.globalRules()).toHaveLength(7);
-      expect(store.globalRules().map((rule) => rule.mode)).toEqual(["ask", "ask", "ask", "ask", "allow", "allow", "allow"]);
+      expect(store.globalRules().slice(0, 4).every((rule) => rule.text.startsWith("执行前确认："))).toBe(true);
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
       expect((await app.request("/api/rules")).status).toBe(401);
       const events: string[] = [];
       bus.subscribe((event) => events.push(event.type));
       const put = (rules: unknown) => app.request("/api/rules", { method: "PUT", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rules }) });
-      expect((await put([{ text: "   ", mode: "ask" }])).status).toBe(400);
-      expect((await put([{ text: "测试", mode: "bad" }])).status).toBe(400);
-      const response = await put([{ text: "  检查  ", mode: "allow" }]);
+      expect((await put([{ text: "   " }])).status).toBe(400);
+      const response = await put([{ text: "  检查  " }]);
       expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ rules: [{ text: "检查", mode: "allow", id: expect.any(String), changedAt: expect.any(String) }] });
+      expect(await response.json()).toMatchObject({ rules: [{ text: "检查", id: expect.any(String), changedAt: expect.any(String) }] });
       expect(events).toContain("rules");
       expect(await (await app.request("/api/rules", { headers: { cookie } })).json()).toEqual({ rules: store.globalRules() });
       await put([]);
@@ -102,42 +99,40 @@ describe("全局规则", () => {
 });
 
 describe("助手规则编辑", () => {
-  it("通过助手设置新增规则，校验内容、模式及重复项", async () => {
+  it("通过助手设置新增规则，校验内容及重复项", async () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
-      hob.runtime.store.saveRules("hob", [{ id: "r1", text: "发布文章", mode: "ask", changedAt: "2020-01-01T00:00:00.000Z" }]);
+      hob.runtime.store.saveRules("hob", [{ id: "r1", text: "发布文章前先问我", changedAt: "2020-01-01T00:00:00.000Z" }]);
       const patch = (rule: unknown) => app.request("/api/assistants/hob", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rule }) });
-      expect((await patch({ text: " ", mode: "ask" })).status).toBe(400);
-      expect((await patch({ text: "长".repeat(1001), mode: "ask" })).status).toBe(400);
-      expect((await patch({ text: "发布文章", mode: "ask" })).status).toBe(400);
-      expect((await patch({ text: "发送邮件", mode: "invalid" })).status).toBe(400);
-      expect((await patch({ text: "发送邮件" })).status).toBe(400);
-      const response = await patch({ text: "  发送邮件  ", mode: "allow" });
+      expect((await patch({ text: " " })).status).toBe(400);
+      expect((await patch({ text: "长".repeat(1001) })).status).toBe(400);
+      expect((await patch({ text: "发布文章前先问我" })).status).toBe(400);
+      const response = await patch({ text: "  发送邮件前先确认  " });
       expect(response.status).toBe(200);
-      const { rule } = await response.json() as { rule: { id: string; text: string; mode: string } };
-      expect(rule).toMatchObject({ text: "发送邮件", mode: "allow" });
+      const { rule } = await response.json() as { rule: { id: string; text: string } };
+      expect(rule).toMatchObject({ text: "发送邮件前先确认" });
+      expect(rule).not.toHaveProperty("mode");
       expect(rule.id).toMatch(/^r-/);
       expect(hob.runtime.store.rules("hob")).toHaveLength(2);
       expect(hob.runtime.store.rules("hob")[1]).toMatchObject(rule);
     } finally { hob.close(); }
   });
 
-  it("通过助手设置修改规则，拒绝空内容、重复规则和无效模式", async () => {
+  it("通过助手设置修改规则，拒绝空内容和重复规则", async () => {
     const hob = makeHob();
     try {
       const { app, cookie } = await appWithCookie(hob.runtime, hob.home);
       hob.runtime.store.saveRules("hob", [
-        { id: "r1", text: "发布文章", mode: "ask", changedAt: "2020-01-01T00:00:00.000Z" },
-        { id: "r2", text: "发送邮件", mode: "allow", changedAt: "2020-01-01T00:00:00.000Z" },
+        { id: "r1", text: "发布文章前先问我", changedAt: "2020-01-01T00:00:00.000Z" },
+        { id: "r2", text: "发送邮件前先确认", changedAt: "2020-01-01T00:00:00.000Z" },
       ]);
       const patch = (rule: unknown) => app.request("/api/assistants/hob", { method: "PATCH", headers: { cookie, "content-type": "application/json" }, body: JSON.stringify({ rule }) });
-      expect((await patch({ id: "r1", text: "  修改文章  ", mode: "allow" })).status).toBe(200);
-      expect(hob.runtime.store.rules("hob")[0]).toMatchObject({ text: "修改文章", mode: "allow" });
+      expect((await patch({ id: "r1", text: "  修改文章  " })).status).toBe(200);
+      expect(hob.runtime.store.rules("hob")[0]).toMatchObject({ text: "修改文章" });
       expect((await patch({ id: "r1", text: " " })).status).toBe(400);
       expect((await patch({ id: "r1", text: "长".repeat(1001) })).status).toBe(400);
-      expect((await patch({ id: "r1", text: "发送邮件" })).status).toBe(400);
-      expect((await patch({ id: "r1", mode: "unknown" })).status).toBe(400);
+      expect((await patch({ id: "r1", text: "发送邮件前先确认" })).status).toBe(400);
       expect((await patch({ id: "missing", text: "其他" })).status).toBe(404);
       expect(hob.runtime.store.rules("hob")[0].text).toBe("修改文章");
     } finally { hob.close(); }

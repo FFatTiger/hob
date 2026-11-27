@@ -183,12 +183,12 @@ function setupFixture() {
   };
   const configMove: TopicConfigView = {
     rules: [
-      { id: "r-parent", text: "删除前先确认", mode: "ask", changedAt: "2026-11-20T00:00:00Z", from: "parent" },
-      { id: "r-changed", text: "预定车辆先对比", mode: "allow", changedAt: "2026-11-26T01:00:00Z", from: "parent", changed: true },
-      { id: "r-own", text: "纸箱报价超 500 需确认", mode: "ask", changedAt: "2026-11-26T01:05:00Z", from: "topic" },
+      { id: "r-parent", text: "删除前先确认", changedAt: "2026-11-20T00:00:00Z", from: "parent" },
+      { id: "r-changed", text: "预定车辆先对比", changedAt: "2026-11-26T01:00:00Z", from: "parent", changed: true },
+      { id: "r-own", text: "纸箱报价超 500 需确认", changedAt: "2026-11-26T01:05:00Z", from: "topic" },
     ],
     hiddenRules: [
-      { id: "r-hidden", text: "发日报前先确认", mode: "ask", changedAt: "2026-11-20T00:00:00Z" },
+      { id: "r-hidden", text: "发日报前先确认", changedAt: "2026-11-20T00:00:00Z" },
     ],
     models: {
       conversation: {
@@ -217,12 +217,12 @@ function setupFixture() {
     planner: {
       assistant: planner,
       rules: [
-        { id: "r-parent", text: "删除前先确认", mode: "ask", changedAt: "2026-11-20T00:00:00Z" },
-        { id: "r-changed", text: "预定车辆", mode: "ask", changedAt: "2026-11-20T00:00:00Z" },
-        { id: "r-hidden", text: "发日报前先确认", mode: "ask", changedAt: "2026-11-20T00:00:00Z" },
+        { id: "r-parent", text: "删除前先确认", changedAt: "2026-11-20T00:00:00Z" },
+        { id: "r-changed", text: "预定车辆", changedAt: "2026-11-20T00:00:00Z" },
+        { id: "r-hidden", text: "发日报前先确认", changedAt: "2026-11-20T00:00:00Z" },
       ],
     },
-    house: { assistant: single, rules: [{ id: "r-single", text: "清理旧图", mode: "ask", changedAt: "2026-11-20T00:00:00Z" }] },
+    house: { assistant: single, rules: [{ id: "r-single", text: "清理旧图", changedAt: "2026-11-20T00:00:00Z" }] },
   };
   state.assistantSkills = {
     planner: { skills: [{ name: "checklist", title: "清单梳理", description: "拆解清单", path: "/s", version: 1, createdAt: "", updatedAt: "", uses: 1, enabled: true }], loaded: true, loading: false, error: null },

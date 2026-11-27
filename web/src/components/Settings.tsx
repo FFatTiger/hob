@@ -399,18 +399,17 @@ function RulesSection() {
   const { rules, error, busy } = useApp().globalRules;
   useEffect(() => { void loadRules(); }, []);
 
-  const change = (next: { id?: string; text: string; mode: Rule["mode"] }[]) => saveRules(next);
+  const change = (next: { id?: string; text: string }[]) => saveRules(next);
   return <>
-    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。「执行前确认」的规则，助手执行前会征求你的确认；「一律照做」表示无需确认即可执行。每个助手自己的规则在其档案中修改。")} />
+    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。每条写清要怎么做、什么情况下先问你。每个助手自己的规则在其档案中修改。")} />
     {error ? <div className="badline" role="status">{error}</div> : null}
     {rules === null ? error ? <button className="hob-btn" onClick={() => void loadRules()}>{t("重试")}</button> : <Empty><DelayedText text={t("正在读取全局规则…")} /></Empty> :
-      ([{ mode: "ask", label: t("执行前确认") }, { mode: "allow", label: t("一律照做") }] as const).map(({ mode, label }) => <Group key={mode}>
-        <div className="lbl">{label}</div>
+      <Group>
         <div className="group-card settings-card rules-card">
-          {rules.filter((rule) => rule.mode === mode).map((rule) => <GlobalRuleRow key={rule.id} rule={rule} busy={busy} onSave={(text) => change(rules.map((item) => item.id === rule.id ? { ...item, text } : item))} onDelete={() => void change(rules.filter((item) => item.id !== rule.id))} />)}
-          <RuleAdd label={label} busy={busy} onAdd={(text) => change([...rules, { text, mode }])} />
+          {rules.map((rule) => <GlobalRuleRow key={rule.id} rule={rule} busy={busy} onSave={(text) => change(rules.map((item) => item.id === rule.id ? { ...item, text } : item))} onDelete={() => void change(rules.filter((item) => item.id !== rule.id))} />)}
+          <RuleAdd busy={busy} onAdd={(text) => change([...rules, { text }])} />
         </div>
-      </Group>)}
+      </Group>}
   </>;
 }
 
@@ -434,10 +433,10 @@ function GlobalRuleRow({ rule, busy, onSave, onDelete }: { rule: Rule; busy: boo
   </div>;
 }
 
-function RuleAdd({ label, busy, onAdd }: { label: string; busy: boolean; onAdd: (text: string) => Promise<boolean> }) {
+function RuleAdd({ busy, onAdd }: { busy: boolean; onAdd: (text: string) => Promise<boolean> }) {
   const [text, setText] = useState("");
   return <form className="rule-add-form" onSubmit={(e) => { e.preventDefault(); const value = text.trim(); if (value && !busy) void onAdd(value).then((ok) => { if (ok) setText(""); }); }}>
-    <input className="rule-input" aria-label={t("{label}添加规则", { label })} placeholder={t("＋ 添加规则")} maxLength={1000} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
+    <input className="rule-input" aria-label={t("添加规则")} placeholder={t("＋ 添加规则")} maxLength={1000} value={text} disabled={busy} onChange={(e) => setText(e.target.value)} />
     <button className="hob-btn" type="submit" disabled={busy || !text.trim()}>{t("添加")}</button>
   </form>;
 }

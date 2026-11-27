@@ -524,8 +524,8 @@ describe("Router", () => {
       const refreshed = hob.runtime.router.items("hob").items;
       expect(refreshed.map(lead)).toEqual(["user:false", "assistant:false", "assistant:true", "file:true", "assistant:false"]);
       expect(live.map(lead)).toEqual(refreshed.map(lead));
-      // 只有用户那一轮边写边推；事件那一轮（可能以 NO_REPLY 收尾）的文字整段在这一轮末尾才出，没有流式占位
-      expect(placeholders.map((item) => item.lead ?? false)).toEqual([false]);
+      // 事件那一轮也边写边推：流式占位就带着 lead，和刷新后一致
+      expect(placeholders.map((item) => item.lead ?? false)).toEqual([false, true, false]);
     } finally {
       hob.close();
     }

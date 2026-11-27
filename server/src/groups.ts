@@ -15,7 +15,7 @@ import type {
 import { newId } from "./ids.ts";
 import { reactionsList } from "./store.ts";
 import { patchOverrides } from "./topic-config.ts";
-import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
@@ -90,9 +90,10 @@ interface RunningTurn {
   lastId?: string;
   text: string;
   triggerId?: string;
-  /** 事件那一轮：文字先攒着，这一轮结束再写进时间线（以 NO_REPLY 收尾就不写） */
+  /** 事件那一轮（到用户插话为止）：文字照常边写边出，回了 NO_REPLY 的那一段整段不写 */
   event?: true;
-  held?: string[];
+  /** 这一条还没出条目时攒着的开头：可能是 NO_REPLY，确定不是再推 */
+  pending?: string;
   /** 这一轮以 NO_REPLY 收尾：收到了用户消息的话，替它挂 👀 */
   silent?: boolean;
 }
@@ -816,12 +817,9 @@ export class GroupManager {
       // 会话刚好收掉（不在流式、或者 abort 了）：照原来的路子排队，话不会丢
       const received = () => {
         this.markSeen(gid, assistantId, input.seenTo);
-        // 插进的是事件那一轮：从用户这条起是回用户的话，前面攒着的先收尾，之后照常边写边推（和单聊一致）
+        // 插进的是事件那一轮：从用户这条起是回用户的话（和单聊一致）
         const turn = this.turns.get(`${gid}@${assistantId}`);
-        if (turn?.event) {
-          this.settleEventTurn(gid, assistantId, turn);
-          delete turn.event;
-        }
+        if (turn?.event) delete turn.event;
       };
       if (await this.runtime.router.steerMember(gid, assistantId, text, this.inputFiles(input), received).catch(() => false)) {
         if (wave.allReply) {
@@ -925,7 +923,7 @@ export class GroupManager {
       wave.bypassBusy = true;
     }
     const key = `${gid}@${assistantId}`;
-    const turn: RunningTurn = { text: "", ...(event !== undefined ? { event: true as const, held: [] } : {}), ...(triggerId ? { triggerId } : {}) };
+    const turn: RunningTurn = { text: "", ...(event !== undefined ? { event: true as const } : {}), ...(triggerId ? { triggerId } : {}) };
     this.turns.set(key, turn);
     let text = "";
     let outcome: TurnOutcome | undefined;
@@ -940,11 +938,9 @@ export class GroupManager {
         event === undefined || workDone || hasDirectUserMessage,
         { userInitiated: wave.userInitiated, bypassBusy: wave.bypassBusy },
       );
-      if (turn.event) this.settleEventTurn(gid, assistantId, turn);
       text = turn.text;
     } catch (error) {
-      // 中途出错：没说到 NO_REPLY，已经写好的那几段照常出（和单聊一致），再写失败原因
-      if (turn.event) this.settleEventTurn(gid, assistantId, turn);
+      // 中途出错：已经写好的那几段照常留着（和单聊一致），再写失败原因
       const message = error instanceof Error ? error.message : String(error);
       this.note(gid, assistantId, t("回复失败：{error}。@{name} 发送一条消息即可重试。", { error: message, name: this.nameOf(assistantId) }), "info");
       pushAssistantTurnEnd(
@@ -1107,9 +1103,12 @@ export class GroupManager {
   delta(gid: string, assistantId: string, delta: string): void {
     const turn = this.turns.get(`${gid}@${assistantId}`);
     if (!turn) return;
-    // 事件那一轮的文字等这一轮结束再写（settle 里先攒着），这里不先出条目
-    if (turn.event) return;
     if (!turn.itemId) {
+      // 开头几个字还可能是 NO_REPLY：先攒着，确定不是再连同攒的一起推
+      turn.pending = (turn.pending ?? "") + delta;
+      if (mayBeNoReply(turn.pending)) return;
+      delta = turn.pending;
+      turn.pending = undefined;
       const item = this.append(gid, { kind: "assistant", speaker: assistantId, text: "", streaming: true });
       turn.itemId = item.id;
       this.bus.emit({ type: "group-item", groupId: gid, item });
@@ -1121,15 +1120,11 @@ export class GroupManager {
   settle(gid: string, assistantId: string, text: string): void {
     const turn = this.turns.get(`${gid}@${assistantId}`);
     if (!turn) return;
-    // 事件那一轮：先攒在手里，runTurn 结束时才知道这一轮该不该说
-    if (turn.event) {
-      if (text.trim()) (turn.held ??= []).push(text);
-      return;
-    }
     const id = turn.itemId;
     turn.itemId = undefined;
-    // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说
-    const visible = stripNoReply(text);
+    turn.pending = undefined;
+    // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说；事件那一轮回了 NO_REPLY 的这一段整段不写
+    const visible = turn.event && saysNoReply(text) ? "" : stripNoReply(text);
     if (saysNoReply(text)) turn.silent = true;
     if (!visible) {
       // 只流出了空白（工具调用前的换行）：把那条流式条目收掉，重启时才不会当成中断
@@ -1140,26 +1135,6 @@ export class GroupManager {
     const item = this.append(gid, { kind: "assistant", speaker: assistantId, text: visible }, id ?? this.nextId(gid));
     turn.lastId = item.id;
     this.bus.emit({ type: "group-item", groupId: gid, item });
-    this.publish(gid);
-  }
-
-  /**
-   * 事件那一轮收尾：以 NO_REPLY 收尾就一段都不写，也不按里面的 @ 叫人；
-   * 不然把攒着的各段照原来那样按顺序写进时间线。
-   */
-  private settleEventTurn(gid: string, assistantId: string, turn: RunningTurn): void {
-    const held = turn.held ?? [];
-    turn.held = [];
-    if (!held.length) return;
-    if (saysNoReply(held.at(-1)!)) { turn.silent = true; return; }
-    for (const one of held) {
-      const text = stripNoReply(one);
-      if (!text) continue;
-      turn.text += text;
-      const item = this.append(gid, { kind: "assistant", speaker: assistantId, text });
-      turn.lastId = item.id;
-      this.bus.emit({ type: "group-item", groupId: gid, item });
-    }
     this.publish(gid);
   }
 

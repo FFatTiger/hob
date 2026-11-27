@@ -16,3 +16,9 @@ export function saysNoReply(text: string): boolean {
   const out = text.trim();
   return !!out && (out.startsWith(NO_REPLY) || out.endsWith(NO_REPLY));
 }
+
+/** 流式的这一段到目前为止是 NO_REPLY 开头（或者还可能是）：先别推给前端，免得这个词闪一下。 */
+export function mayBeNoReply(text: string): boolean {
+  const out = text.trim();
+  return NO_REPLY.startsWith(out) || out.startsWith(NO_REPLY);
+}

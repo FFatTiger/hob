@@ -36,7 +36,7 @@ const opening = (words: string) => fauxAssistantMessage(
 );
 
 describe("系统事件那一轮可以只回 NO_REPLY", () => {
-  it("单聊：事件那一轮以 NO_REPLY 收尾，这一轮的文字一段都不出，卡片还在", async () => {
+  it("单聊：事件那一轮边做边说，回了 NO_REPLY 的那一段不出，这个词也不闪，卡片还在", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const bus = watch(hob);
@@ -45,12 +45,13 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
       await hob.runtime.router.waitIdle("hob");
 
       const items = hob.runtime.router.items("hob").items;
-      expect(assistantItems(items)).toEqual([]);
+      expect(assistantItems(items).map((item) => (item as { text: string }).text)).toEqual(["我先看一下进度。"]);
       // 这一轮调工具产生的卡片照常显示
       expect(items.filter((item) => item.kind === "note")).toMatchObject([{ text: "已记入Hob的规则 · 发周报前先问我" }]);
-      // 用户那边既没有流式条目，也没有增量
-      expect(bus.items).toEqual([]);
-      expect(bus.deltas).toEqual([]);
+      // 开口那句当场推出去；NO_REPLY 那一段连流式条目都没有
+      expect(bus.deltas.join("")).toBe("我先看一下进度。");
+      expect(bus.items.filter((item) => item.streaming)).toHaveLength(1);
+      expect(JSON.stringify([...items, ...bus.items])).not.toContain("NO_REPLY");
     } finally { hob.close(); }
   });
 
@@ -70,7 +71,7 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
     } finally { hob.close(); }
   });
 
-  it("单聊：事件那一轮不边写边推，这一轮结束时推的条目和刷新后推导的一致", async () => {
+  it("单聊：事件那一轮边写边推，推的条目和刷新后推导的一致", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const bus = watch(hob);
@@ -78,8 +79,8 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
       await hob.runtime.router.event("hob", "任务超过预计时间", undefined);
       await hob.runtime.router.waitIdle("hob");
 
-      // 事件那一轮一个字都不流式出去（开头那句也不行：这一轮可能以 NO_REPLY 收尾）
-      expect(bus.deltas).toEqual([]);
+      // 事件那一轮和用户那一轮一样，写一句推一句：不用等这一轮跑完
+      expect(bus.deltas.join("")).toBe("我先看一下进度。检查完了，它还在按原计划跑。");
       const pushed = bus.items.filter((item) => !item.streaming).map((item) => ({ id: item.id, text: (item as { text: string }).text, lead: item.lead ?? false }));
       const walked = assistantItems(fileItems(hob)).map((item) => ({ id: item.id, text: (item as { text: string }).text, lead: item.lead ?? false }));
       expect(pushed).toEqual(walked);
@@ -99,8 +100,8 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
 
       const items = hob.runtime.router.items("hob").items;
       expect(assistantItems(items).map((item) => (item as { text: string }).text)).toEqual(["这句我先改一版。"]);
-      // 只写了 NO_REPLY 的那一条被收成空条目（前端不留气泡），这个词本身一处都不出现
-      expect(bus.items.filter((item) => item.streaming)).toHaveLength(2);
+      // 只写了 NO_REPLY 的那一条连流式条目都不出，这个词本身一处都不出现
+      expect(bus.items.filter((item) => item.streaming)).toHaveLength(1);
       expect(JSON.stringify([...items, ...bus.items])).not.toContain("NO_REPLY");
     } finally { hob.close(); }
   });
@@ -132,7 +133,7 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
     ]);
   });
 
-  it("单聊：用户在事件那一轮还没跑完时发了消息，刷新后和实时一样整轮收起", () => {
+  it("单聊：用户在事件那一轮还没跑完时发了消息，只收起回了 NO_REPLY 的那一段", () => {
     // 真实的会话：hob.user 在按发送时就写了，夹在事件那一轮中间；模型读到用户消息（message user）才算用户那一轮
     const at = "2026-11-13T10:00:00.000Z";
     const assistant = (id: string, words: string) => ({ type: "message", id, timestamp: at, message: { role: "assistant", content: [{ type: "text", text: words }] } });
@@ -148,10 +149,10 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
       assistant("c", "周报在这里。"),
     ] as unknown as SessionEntry[]);
     expect(items.map((item) => (item.kind === "user" ? `用户：${item.text}` : `${item.kind}：${(item as { text: string }).text}`))).toEqual([
+      "assistant：我先看一下进度。",
       "用户：顺便把周报也发我",
       "assistant：周报在这里。",
     ]);
-
   });
 
   it("单聊：定时任务那一轮一个字没出，「⏱ 名字」不挂到用户下一轮的回复上", () => {
@@ -194,8 +195,8 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
         "我先看一下它在做什么，这一步要一会儿。",
         "磁盘还剩一半，够用。",
       ]);
-      // 插话之前那段是事件那一轮的，不流式；回用户的话照常边写边推
-      expect(deltas.join("")).not.toContain("我先看一下");
+      // 插话之前那段和回用户的话都边写边推
+      expect(deltas.join("")).toContain("我先看一下");
       expect(deltas.join("")).toContain("磁盘还剩一半");
     } finally { hob.close(); }
   });
@@ -217,22 +218,25 @@ describe("系统事件那一轮可以只回 NO_REPLY", () => {
     } finally { hob.close(); }
   });
 
-  it("群：事件那一轮以 NO_REPLY 收尾，不写时间线，也不按里面的 @ 叫人", async () => {
+  it("群：事件那一轮回了 NO_REPLY 的那一段不写时间线、不闪，也不按它里面的 @ 叫人", async () => {
     const hob = makeHob({}, { memory: "off" });
     try {
       const base = hob.runtime.store.assistant("hob")!;
       hob.runtime.store.saveAssistant({ ...base, id: "ops", name: "服务器", duty: "机器", primary: false, pinned: false, sprite: "page" });
       const group = hob.runtime.groups.create({ name: "家里机器", purpose: "机器上的事", ownerId: "hob", members: ["hob", "ops"] });
       hob.faux.setResponses([
-        fauxAssistantMessage([fauxText("@服务器 先看一眼"), fauxToolCall("set_rule", { text: "重启前先问我", mode: "ask" })], { stopReason: "toolUse" }),
-        text("@服务器 NO_REPLY"),
+        fauxAssistantMessage([fauxText("先看一眼。"), fauxToolCall("set_rule", { text: "重启前先问我", mode: "ask" })], { stopReason: "toolUse" }),
+        text("NO_REPLY @服务器"),
       ]);
+      const deltas: string[] = [];
+      hob.runtime.bus.subscribe((event) => { if (event.type === "group-delta" && event.groupId === group.id) deltas.push(event.text); });
       await hob.runtime.groups.deliverEvent(group.id, "hob", "任务超过预计时间");
       await waitFor(() => hob.runtime.groups.summary(group.id).busy.length === 0);
       await new Promise((resolve) => setTimeout(resolve, 50));
 
       const items = hob.runtime.groups.items(group.id).items;
-      expect(assistantItems(items)).toEqual([]);
+      expect(assistantItems(items).filter((item) => (item as { text: string }).text).map((item) => (item as { text: string }).text)).toEqual(["先看一眼。"]);
+      expect(deltas.join("")).toBe("先看一眼。");
       expect(items.some((item) => item.kind === "note")).toBe(true);
       // 只跑了自己这一轮里的两次模型调用，没按 @ 把别人叫起来
       expect(hob.faux.state.callCount).toBe(2);

@@ -51,7 +51,7 @@ import { cardInteractive, cardSummary, cardTitle } from "./cards.ts";
 import { browserShellEnv, DesktopToolSession } from "./desktop-tools.ts";
 import { textOfContent } from "./transcript.ts";
 import { briefModelError } from "./text.ts";
-import { saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
 import { reactionsList, type AssistantState } from "./store.ts";
 import { TOPIC_CLOSED } from "./groups.ts";
 import { assertAssistantTopic, TopicError } from "./assistant-topics.ts";
@@ -158,12 +158,9 @@ interface RouterState {
   /** 这次思考到目前为止的原文：只用来取最后一段给状态行 */
   thinkingText?: string;
   /** 正在流式的助手消息：条目 id 和 GET /items 推导出来的一致；shown 表示已经在对话里露过面 */
-  streaming?: { itemId: string; shown: boolean };
-  /**
-   * 事件那一轮：文字等这一轮结束再出（以 NO_REPLY 收尾就整轮不出）。
-   * held 记着这一轮已经写好的各段字和条目 id。
-   */
-  eventTurn?: { held: { text: string; itemId?: string }[] };
+  streaming?: { itemId: string; shown: boolean; text?: string };
+  /** 事件那一轮（到用户消息为止）：文字照常边写边出，回了 NO_REPLY 的那一段整段收起 */
+  eventTurn?: boolean;
   /** 这一轮最后一次有动静的时间，看门狗用它判断“没响应” */
   lastEventAt: number;
   /** 上一轮结束的时间；重启后从最后一条 assistant 会话条目恢复 */
@@ -274,39 +271,29 @@ function failureText(result: unknown): string {
 }
 
 /**
- * 事件那一轮（一条 [hob-event] 到下一个用户消息或下一条事件）的文字：最后一段以 NO_REPLY 收尾，
- * 这一轮的字一段都不给用户看。按助手消息的序号（对话条目的 a-N）返回要收起来的那些。
+ * 事件那一轮（一条 [hob-event] 到下一个用户消息或下一条事件）里回了 NO_REPLY 的那几段：整段不给用户看，
+ * 别的段落照常显示（实时那边边写边出，刷新后要一致）。按助手消息的序号（对话条目的 a-N）返回要收起来的那些。
  * 卡片、文件、图片不受影响：它们不是这段文字。
  */
 function silentEventTexts(entries: SessionEntry[]): Set<number> {
   const hidden = new Set<number>();
   let assistantIndex = 0;
   let inEvent = false;
-  let texts: { index: number; text: string }[] = [];
-  const close = () => {
-    if (texts.length && saysNoReply(texts.at(-1)!.text)) for (const one of texts) hidden.add(one.index);
-    texts = [];
-  };
   for (const entry of entries) {
     // 用户那一轮从模型真正读到用户消息算起（和实时那边 message_start 一致）；hob.user 条目在用户按发送时
     // 就写了，事件那一轮还没跑完时它会夹在这一轮中间，不能拿它当分界
     if (entry.type === "message" && entry.message.role === "user") {
-      close();
       inEvent = false;
       continue;
     }
     if (entry.type === "custom_message" && entry.customType === EVENT_TYPE) {
-      close();
       inEvent = true;
       continue;
     }
     if (entry.type !== "message" || entry.message.role !== "assistant") continue;
     assistantIndex += 1;
-    if (!inEvent || errorEcho(entry.message)) continue;
-    const text = messageText(entry.message.content);
-    if (text) texts.push({ index: assistantIndex, text });
+    if (inEvent && !errorEcho(entry.message) && saysNoReply(messageText(entry.message.content))) hidden.add(assistantIndex);
   }
-  close();
   return hidden;
 }
 
@@ -816,7 +803,7 @@ export class RouterManager {
     }
     if (event.type === "agent_end") {
       state.turnRoutine = undefined;
-      this.flushEventTurn(state, assistantId);
+      state.eventTurn = undefined;
     }
     this.progress(state);
     if (event.type === "agent_start" || (event.type === "message_update" && event.assistantMessageEvent.type === "thinking_start")) {
@@ -848,10 +835,10 @@ export class RouterManager {
     if (event.type === "agent_end" || (event.type === "message_end" && event.message.role === "assistant" && ["error", "aborted"].includes(event.message.stopReason))) this.setActivity(state, null);
     // 一轮结束：有副作用的调用里没办成、后来也没办成的，各留一行提示（原因是工具报错的原文）
     if (event.type === "agent_end") void this.flushTurnFailures(state).catch((error) => console.error("写失败提示失败：", error));
+    // 用户中途插话：从这条起是回用户的话（和刷新后推导的分界一致）
+    if (event.type === "message_start" && event.message.role === "user") state.eventTurn = undefined;
     if (event.type === "message_start" && event.message.role === "custom" && event.message.customType === EVENT_TYPE) {
-      // 事件那一轮：文字先攒着，这一轮结束时再决定出不出现
-      this.flushEventTurn(state, assistantId);
-      if (!state.place.groupId) state.eventTurn = { held: [] };
+      if (!state.place.groupId) state.eventTurn = true;
       const details = event.message.details as EventDetails | undefined;
       state.turnDelegation ||= Boolean(details?.delegationId);
       state.turnWorkDone ||= details?.workDone !== false;
@@ -938,10 +925,14 @@ export class RouterManager {
         this.runtime.groups?.delta(state.place.groupId, state.assistantId, event.assistantMessageEvent.delta);
         return;
       }
-      if (state.eventTurn) return;
       state.streaming ??= { itemId: `a-${this.assistantCount(assistantId, state.place) + 1}`, shown: false };
       const streaming = state.streaming;
+      let delta = event.assistantMessageEvent.delta;
       if (!streaming.shown) {
+        // 开头几个字还可能是 NO_REPLY：先攒着，确定不是再连同攒的一起推
+        streaming.text = (streaming.text ?? "") + delta;
+        if (mayBeNoReply(streaming.text)) return;
+        delta = streaming.text;
         streaming.shown = true;
         this.emitItem(assistantId, {
           kind: "assistant",
@@ -952,7 +943,7 @@ export class RouterManager {
           ...(this.derived(assistantId, state.place).result.lead ? { lead: true } : {}),
         }, state.place);
       }
-      this.emitDelta(assistantId, streaming.itemId, event.assistantMessageEvent.delta, state.place);
+      this.emitDelta(assistantId, streaming.itemId, delta, state.place);
       return;
     }
     if (event.type === "message_end" && event.message.role === "assistant") {
@@ -969,13 +960,8 @@ export class RouterManager {
       }
       const streaming = state.streaming;
       state.streaming = undefined;
-      // 事件那一轮：文字先攒着，这一轮结束再按条目发，或者整轮收起
-      if (state.eventTurn) {
-        if (text) state.eventTurn.held.push({ text, ...(streaming ? { itemId: streaming.itemId } : {}) });
-        return;
-      }
-      // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说
-      const clean = stripNoReply(text);
+      // NO_REPLY 这个词永远不显示：去掉之后什么都不剩，就当作这一段没说；事件那一轮回了 NO_REPLY 的这一段整段收起
+      const clean = state.eventTurn && saysNoReply(text) ? "" : stripNoReply(text);
       if (!clean) {
         if (streaming?.shown) this.emitItem(assistantId, { kind: "assistant", id: streaming.itemId, at: new Date().toISOString(), text: "" }, state.place);
         return;
@@ -1003,25 +989,6 @@ export class RouterManager {
     state.turnCalls = undefined;
     if (!calls?.size) return;
     for (const { label, error } of calls.values()) await this.note(state, "info", t("「{tool}」执行失败", { tool: label }), error);
-  }
-
-  /**
-   * 事件那一轮结束：攒着的文字这时才出。最后一段以 NO_REPLY 收尾就不出这一轮的文字，
-   * 卡片、文件、图片和工具提示照常（它们在各处已经实时发过了）。
-   * 用户中途插话（会话里来了新的用户消息）、或者下一条事件到来时，上一轮也在这里收尾。
-   */
-  private flushEventTurn(state: RouterState, assistantId: string): void {
-    const turn = state.eventTurn;
-    state.eventTurn = undefined;
-    if (!turn) return;
-    const last = turn.held.at(-1);
-    if (last && saysNoReply(last.text)) return;
-    const visible = turn.held.map((one) => ({ itemId: one.itemId, text: stripNoReply(one.text) })).filter((one) => one.text);
-    if (!visible.length) return;
-    // pi 在 message_end 之后才把消息写进会话文件，等一拍再按条目发，内容和 id 才和刷新后一致
-    setTimeout(() => {
-      for (const one of visible) this.emitSettledAssistant(assistantId, one.text, one.itemId, state.place);
-    }, 0);
   }
 
   private emitSettledAssistant(assistantId: string, text: string, expectedId?: string, place?: Place): void {
@@ -1618,8 +1585,7 @@ export class RouterManager {
       await this.fail(state, error);
       return false;
     } finally {
-      // 这一轮真结束了（含出错、被停）：攒着没发的文字在这里收尾
-      this.flushEventTurn(state, assistantId);
+      state.eventTurn = undefined;
       state.running = Math.max(0, state.running - 1);
       if (!state.running) this.setActivity(state, null);
       this.clearStall(state);

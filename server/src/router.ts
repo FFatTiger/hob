@@ -36,7 +36,7 @@ import { conversationPick, assistantForPlace, defaultWorkRef, followUpPick, jobM
 import { scriptToolList } from "./script-tools.ts";
 import { proxyEnvironment } from "./network-proxy.ts";
 import { buildRouterTools } from "./router-tools.ts";
-import { isInPagesDir } from "./files.ts";
+import { isInPagesDir, lookupFile } from "./files.ts";
 import { boundKnowledge, formatKnowledge, KNOWLEDGE_INTRO } from "./knowledge-tools.ts";
 import { MEMORY_TOOL_PATTERNS } from "./memory.ts";
 import { buildSystemPrompt, type PromptModel } from "./prompt.ts";
@@ -44,7 +44,7 @@ import { visibleSkills } from "./skills.ts";
 import { activityLabel, thinkingLine } from "./router-activity.ts";
 import { imageContents } from "./jobs.ts";
 import { nowBlock } from "./now.ts";
-import { loadWorkspaceAgentsFile, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
+import { allowedWorkspaceDirs, loadWorkspaceAgentsFile, resolveWorkspaceCwd, validateWorkspaceCwd } from "./workspace.ts";
 
 import { pushAssistantTurnEnd, pushInteractiveCard } from "./push.ts";
 import { cardInteractive, cardSummary, cardTitle } from "./cards.ts";
@@ -137,12 +137,12 @@ interface PendingEvent {
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
 
 /** 自定义消息不会经过普通用户输入的图片缩放。无法内联的文件仍以路径交给接手助手。 */
-async function eventContent(text: string, files: string[] | undefined, model: AgentSession["model"]) {
+async function eventContent(text: string, files: string[] | undefined, model: AgentSession["model"], inlineFiles?: string[]) {
   if (!files?.length) return text;
   const prompt = `${text}\n附件：${files.join("、")}`;
   if (!model?.input.includes("image")) return prompt;
   const images = [];
-  for (const file of imageContents(files)) {
+  for (const file of imageContents(inlineFiles ?? files)) {
     const image = await resizeImage(Buffer.from(file.data, "base64"), file.mimeType, model.inputLimits?.images?.resize).catch(() => null);
     if (image) images.push({ type: "image" as const, data: image.data, mimeType: image.mimeType });
   }
@@ -1599,7 +1599,7 @@ export class RouterManager {
       await this.refreshTools(state);
       await this.applyConversationModel(state);
       const prompt = `${nowBlock(this.runtime, assistantId, state.place)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`;
-      const content = await eventContent(prompt, details?.files, session.model);
+      const content = await eventContent(prompt, details?.files, session.model, this.safeImageFiles(details?.files));
       const message = { customType: EVENT_TYPE, content, display: false, details };
       if (session.isStreaming) {
         // 上面几步等待的空当里用户的话先开了一轮：排在它后面，不插进那一轮中间
@@ -1670,6 +1670,15 @@ export class RouterManager {
       );
     }
     const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true }, undefined, target);
+    const resumedId = this.runtime.delegations.pendingDelegationForTopic(topicId);
+    if (resumedId) {
+      const latest = this.store.delegation(resumedId);
+      const moved = (latest?.toTopicId || undefined) !== (target.topicId || undefined);
+      if (!moved && !latest?.turnFinished) {
+        if (state.currentDelegationId === resumedId) this.clearCurrentDelegation(assistantId, target);
+        this.runtime.delegations.turnEnded(resumedId, "目标助手处理失败或转交被中断", true);
+      }
+    }
     return success && received();
   }
 
@@ -1943,10 +1952,26 @@ export class RouterManager {
     return unsubscribe;
   }
 
+  private allowedImageDirs(): string[] {
+    return [...new Set([...this.store.jobs().flatMap((job) => (job.cwd ? [job.cwd] : [])), ...allowedWorkspaceDirs(this.store)])];
+  }
+
+  /** 只允许把 Hob 数据目录与受允许工作目录内、且非敏感路径的真实文件内联为图片块（同 /api/files 边界）。 */
+  private safeImageFiles(files: string[] | undefined): string[] {
+    if (!files?.length) return [];
+    const dirs = this.allowedImageDirs();
+    const allowed: string[] = [];
+    for (const file of files) {
+      const found = lookupFile(this.runtime.home, file, dirs);
+      if (found.ok) allowed.push(found.info.path);
+    }
+    return allowed;
+  }
+
   async steerMember(groupId: string, assistantId: string, text: string, files: string[] = [], received?: () => void): Promise<boolean> {
     const state = this.routers.get(sessionKey(assistantId, { groupId }));
     if (!state?.session?.isStreaming) return false;
-    const images = state.session.model?.input.includes("image") ? imageContents(files) : [];
+    const images = state.session.model?.input.includes("image") ? imageContents(this.safeImageFiles(files)) : [];
     const unsubscribe = this.onUserReceived(state, text, received);
     try { await state.session.steer(text, images.length ? images : undefined); }
     catch (error) { unsubscribe(); throw error; }
@@ -1992,7 +2017,7 @@ export class RouterManager {
       await this.applyConversationModel(state);
       await this.refreshTools(state);
       // 对话模型能看图就把图片直接给它（路径照样写在「附件」里，派任务时还能交出去）；看不了图就只有路径
-      const images = options.files?.length && state.session!.model?.input.includes("image") ? imageContents(options.files) : [];
+      const images = options.files?.length && state.session!.model?.input.includes("image") ? imageContents(this.safeImageFiles(options.files)) : [];
       unsubscribeReceived = this.onUserReceived(state, promptText, options.received);
       if (state.session!.isStreaming) {
         await state.session!.steer(promptText, images.length ? images : undefined);
@@ -2343,6 +2368,9 @@ export class RouterManager {
     const latest = this.store.delegation(delegationId);
     const moved = (latest?.toTopicId || undefined) !== (targetPlace?.topicId || undefined);
     if (!moved && (!success || !latest?.turnFinished)) {
+      if (this.currentDelegation(targetAssistantId, targetPlace) === delegationId) {
+        this.clearCurrentDelegation(targetAssistantId, targetPlace);
+      }
       this.runtime.delegations.turnEnded(delegationId, "目标助手处理失败或转交被中断", true);
     }
     return success;

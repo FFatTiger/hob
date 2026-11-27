@@ -103,6 +103,10 @@ export class DelegationManager {
     return this.runtime.store.internalDelegations().find((record) => record.topics?.[topicId] === "pending" && !record.pendingResult && !record.reportedAt);
   }
 
+  pendingDelegationForTopic(topicId: string): string | undefined {
+    return this.forTopic(topicId)?.id;
+  }
+
   resumeForTopic(topicId: string): string | undefined {
     const record = this.forTopic(topicId);
     return record && this.resume(record.id) ? record.id : undefined;
@@ -212,7 +216,7 @@ export class DelegationManager {
     const urgent = record.status === "stuck" || record.status === "interrupted";
     const fromPlace = record.fromTopicId ? { topicId: record.fromTopicId } : undefined;
     const files = record.status === "takenOver" ? undefined : record.resultFiles;
-    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent, fromPlace, files).then((received) => {
+    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent, fromPlace, ...(files?.length ? [files] : [])).then((received) => {
       if (!received) return;
       const current = this.runtime.store.internalDelegation(record.id);
       if (!current || current.reportedAt || current.pendingResult !== record.pendingResult) return;

@@ -1145,6 +1145,20 @@ export function buildRouterTools(
     });
   }
 
+  const resolveHandoffFiles = (raw: unknown): { files: string[] } | { error: string } => {
+    if (!Array.isArray(raw)) return { files: [] };
+    const files: string[] = [];
+    for (const entry of raw) {
+      const trimmed = typeof entry === "string" ? entry.trim() : "";
+      if (!trimmed) continue;
+      const path = resolve(cwd, trimmed);
+      const sensitive = checkSensitivePath(path, runtime.home);
+      if (sensitive) return { error: `${sensitive}：${path}` };
+      files.push(path);
+    }
+    return { files };
+  };
+
   if (runtime.settings.settings.general.showPage !== false) tools.push(pageTool(runtime, assistantId, place));
 
   {
@@ -1176,7 +1190,9 @@ export function buildRouterTools(
           try {
             const note = String(params.note ?? "").trim();
             if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-            const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
+            const resolvedFiles = resolveHandoffFiles(params.files);
+            if ("error" in resolvedFiles) return fail(resolvedFiles.error);
+            const { files } = resolvedFiles;
             const unfinished = readTodos(sessionTodosPath(runtime.home, assistantId, place)).filter((item) => item.status !== "done");
             const carried = unfinished.length
               ? `${note}\n\n「${assistant().name}」转交前列过的待办，没做完的：\n${unfinished.map((item) => `· ${item.text}`).join("\n")}`
@@ -1216,7 +1232,9 @@ export function buildRouterTools(
           if ([...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
           const note = String(params.note ?? "").trim();
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
+          const resolvedFiles = resolveHandoffFiles(params.files);
+          if ("error" in resolvedFiles) return fail(resolvedFiles.error);
+          const { files } = resolvedFiles;
           try {
             signal?.throwIfAborted();
             const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, {
@@ -1225,8 +1243,6 @@ export function buildRouterTools(
               ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
               ...(place?.topicId ? { fromTopicId: place.topicId } : {}),
             });
-            const delegationId = router.currentDelegation(assistantId, place);
-            if (delegationId) runtime.delegations.addTopic(delegationId, topic.id);
             const cancel = () => {
               const current = store.group(topic.id);
               if (current && !current.closedAt && !runtime.groups.summary(topic.id).busy?.length) {
@@ -1241,6 +1257,8 @@ export function buildRouterTools(
             } finally {
               signal?.removeEventListener("abort", cancel);
             }
+            const delegationId = router.currentDelegation(assistantId, place);
+            if (delegationId) runtime.delegations.addTopic(delegationId, topic.id);
             void runtime.groups
               .deliverEvent(topic.id, topic.ownerId, handoverEvent(nameOf(assistantId)), item.id, { workDone: true, userInitiated: false, bypassBusy: false })
               .catch((error) => console.error("交给群的事件没送到：", error));
@@ -1356,7 +1374,9 @@ export function buildRouterTools(
           if (title && [...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
           const note = typeof params.note === "string" ? params.note.trim() : "";
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
-          const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
+          const resolvedFiles = resolveHandoffFiles(params.files);
+          if ("error" in resolvedFiles) return fail(resolvedFiles.error);
+          const { files } = resolvedFiles;
           const event = `这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n${note}`;
 
           const origin = router.turnOrigin(assistantId, place);
@@ -1481,17 +1501,14 @@ export function buildRouterTools(
           const noteText = typeof params.note === "string" ? params.note.trim() : "";
           if (!noteText) return fail("note 不能为空：写清交接说明后再调用一次。");
 
-          const files = Array.isArray(params.files)
-            ? params.files.flatMap((file: unknown) => {
-                const trimmed = typeof file === "string" ? file.trim() : "";
-                return trimmed ? [resolve(cwd, trimmed)] : [];
-              })
-            : [];
+          const resolvedFiles = resolveHandoffFiles(params.files);
+          if ("error" in resolvedFiles) return fail(resolvedFiles.error);
+          const { files } = resolvedFiles;
           const origin = router.turnOrigin(assistantId, place);
           const delegationId = router.currentDelegation(assistantId, place);
           const delegationConflict = (): string | undefined => {
             if (!delegationId) return undefined;
-            const current = store.delegation(delegationId);
+            const current = store.internalDelegation(delegationId);
             const hasMainJob = store.jobs().some(
               (job) =>
                 !job.topicId &&
@@ -1511,6 +1528,12 @@ export function buildRouterTools(
             );
             if (hasMainApproval) {
               return "这件转交已经在主对话向用户发了待答提问，等用户答复后再决定是否转到话题，或继续在主对话处理。";
+            }
+            const hasMainGroupTopic = Object.entries(current?.topics ?? {}).some(
+              ([tid, status]) => status === "pending" && !store.group(tid)?.handover?.fromTopicId,
+            );
+            if (hasMainGroupTopic) {
+              return "这件转交已经在主对话交给群处理，等群返回结论后再决定是否转到话题，或继续在主对话处理。";
             }
             return undefined;
           };

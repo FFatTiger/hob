@@ -1,6 +1,7 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { UserMessage } from "@earendil-works/pi-ai";
 import type { Assistant, Delegation } from "../../shared/types.ts";
 import { createApp } from "../src/http.ts";
@@ -268,6 +269,258 @@ describe("PR #30 回归复现（本地 main 基线）", () => {
       expect(serialized).toContain(preview);
       expect(serialized).toContain("接口超时");
       expect(received).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/png" })]));
+    } finally {
+      hob.close();
+    }
+  });
+});
+
+describe("PR #30 审查修复（安全边界与本地话题/异常收口）", () => {
+  it("安全：转交事件与普通消息不内联目录外、符号链接越界和敏感目录的图片，允许工作区内的图片正常内联", async () => {
+    const hob = makeHob({}, { memory: "off", models: [{ id: "vision", input: ["text", "image"] }] });
+    const outsideDir = mkdtempSync(join(tmpdir(), "hob-outside-img-"));
+    const workspaceDir = mkdtempSync(join(tmpdir(), "hob-workspace-img-"));
+    const png = readFileSync(new URL("../../web/public/icons/favicon-32.png", import.meta.url));
+    try {
+      const base = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...base, id: "reviewer", name: "审核", duty: "审图", primary: false, cwd: workspaceDir });
+      const outsideImg = join(outsideDir, "outside.png");
+      const linkImg = join(hob.home, "escape-link.png");
+      const systemImg = join(hob.home, "system", "secret.png");
+      const workspaceImg = join(workspaceDir, "diagram.png");
+      writeFileSync(outsideImg, png);
+      symlinkSync(outsideImg, linkImg);
+      mkdirSync(dirname(systemImg), { recursive: true });
+      writeFileSync(systemImg, png);
+      writeFileSync(workspaceImg, png);
+
+      const seenImages: number[] = [];
+      hob.faux.setResponses([
+        (context) => {
+          const last = context.messages.findLast((message) => message.role === "user");
+          seenImages.push(Array.isArray(last?.content) ? last.content.filter((part) => part.type === "image").length : 0);
+          return text("已处理敏感路径委派");
+        },
+        text("收到 1"),
+        (context) => {
+          const last = context.messages.findLast((message) => message.role === "user");
+          seenImages.push(Array.isArray(last?.content) ? last.content.filter((part) => part.type === "image").length : 0);
+          return text("已处理工作区委派");
+        },
+        text("收到 2"),
+        (context) => {
+          const last = context.messages.findLast((message) => message.role === "user");
+          seenImages.push(Array.isArray(last?.content) ? last.content.filter((part) => part.type === "image").length : 0);
+          return text("已处理单聊");
+        },
+      ]);
+
+      const blocked = await hob.runtime.delegations.start("hob", "reviewer", "检查越界图", [outsideImg, linkImg, systemImg]);
+      await waitFor(() => Boolean(hob.runtime.store.delegation(blocked.id)?.reportedAt));
+      const allowed = await hob.runtime.delegations.start("hob", "reviewer", "检查工作区图", [workspaceImg]);
+      await waitFor(() => Boolean(hob.runtime.store.delegation(allowed.id)?.reportedAt));
+      await hob.runtime.router.send("hob", { text: "看这两张图", files: [outsideImg, systemImg] });
+      await hob.runtime.router.waitIdle("hob");
+
+      expect(seenImages).toEqual([0, 1, 0]);
+    } finally {
+      rmSync(outsideDir, { recursive: true, force: true });
+      rmSync(workspaceDir, { recursive: true, force: true });
+      hob.close();
+    }
+  });
+
+  it("安全：message_assistant、message_group 和 open_topic 拒绝敏感路径附件", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const base = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...base, id: "worker", name: "经办", duty: "处理", primary: false, topics: true });
+      const group = hob.runtime.groups.create({
+        name: "协作群",
+        purpose: "协作",
+        ownerId: "hob",
+        members: ["hob", "worker"],
+      });
+      const secretPath = join(hob.home, "system", "secrets.json");
+      const envPath = join(hob.home, ".env");
+
+      const msgAssistant = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "message_assistant")!;
+      const r1 = await msgAssistant.execute("c1", { assistantId: "worker", note: "查看", files: [secretPath] });
+      expect((r1 as { isError?: boolean }).isError).toBe(true);
+
+      const msgGroup = buildRouterTools(hob.runtime, "hob").find((tool) => tool.name === "message_group")!;
+      const r2 = await msgGroup.execute("c2", { groupId: group.id, title: "检查", note: "查看", files: [envPath] });
+      expect((r2 as { isError?: boolean }).isError).toBe(true);
+
+      const openGroupTopic = buildRouterTools(hob.runtime, "hob", { groupId: group.id }).find((tool) => tool.name === "open_topic")!;
+      const r3 = await openGroupTopic.execute("c3", { title: "核查", note: "查看", files: [join(hob.home, ".ssh", "id_rsa")] });
+      expect((r3 as { isError?: boolean }).isError).toBe(true);
+
+      const openAssistantTopic = buildRouterTools(hob.runtime, "worker").find((tool) => tool.name === "open_topic")!;
+      const r4 = await openAssistantTopic.execute("c4", { title: "核查", note: "查看", files: [secretPath] });
+      expect((r4 as { isError?: boolean }).isError).toBe(true);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("中断：message_group 在落话题卡时中止，不会把已中止的话题挂进当前委派", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "coord", "协调", "统筹");
+      addAssistant(hob, "qa", "测试", "验收");
+      const group = hob.runtime.groups.create({
+        name: "测试群",
+        purpose: "验收",
+        ownerId: "qa",
+        members: ["hob", "coord", "qa"],
+      });
+      const delegation: Delegation = {
+        id: "dg-abort-test",
+        from: "hob",
+        to: "coord",
+        text: "请验收",
+        createdAt: new Date().toISOString(),
+        status: "running",
+        jobIds: [],
+        approvalIds: [],
+      };
+      hob.runtime.store.saveDelegation(delegation);
+      vi.spyOn(hob.runtime.router, "currentDelegation").mockReturnValue(delegation.id);
+      const controller = new AbortController();
+      vi.spyOn(hob.runtime.router, "addItem").mockImplementationOnce(async () => {
+        controller.abort(new Error("aborted"));
+        throw new Error("aborted");
+      });
+
+      const msgGroup = buildRouterTools(hob.runtime, "coord").find((tool) => tool.name === "message_group")!;
+      const result = await msgGroup.execute("c1", { groupId: group.id, title: "验收", note: "请执行验收" }, controller.signal);
+      expect((result as { isError?: boolean }).isError).toBe(true);
+      expect(hob.runtime.store.internalDelegation(delegation.id)?.topics).toBeUndefined();
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("冲突：主对话委派已有待结群话题时，open_topic 拒绝把委派挪进助手话题", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const base = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...base, id: "coord", name: "协调", duty: "统筹", primary: false, topics: true });
+      addAssistant(hob, "qa", "测试", "验收");
+      const group = hob.runtime.groups.create({
+        name: "测试群",
+        purpose: "验收",
+        ownerId: "qa",
+        members: ["hob", "coord", "qa"],
+      });
+      const { topic } = hob.runtime.groups.handOver(group.id, "回归验收", "coord", { text: "请回归", files: [] });
+      const delegation: Delegation = {
+        id: "dg-open-topic-conflict",
+        from: "hob",
+        to: "coord",
+        text: "协调回归",
+        createdAt: new Date().toISOString(),
+        status: "running",
+        jobIds: [],
+        approvalIds: [],
+      };
+      hob.runtime.store.saveDelegation(delegation);
+      hob.runtime.delegations.addTopic(delegation.id, topic.id);
+      vi.spyOn(hob.runtime.router, "currentDelegation").mockReturnValue(delegation.id);
+
+      const openTopic = buildRouterTools(hob.runtime, "coord").find((tool) => tool.name === "open_topic")!;
+      const result = await openTopic.execute("c1", { title: "新话题", note: "转到话题处理" });
+      expect((result as { isError?: boolean }).isError).toBe(true);
+      expect((result.content[0] as { text: string }).text).toContain("交给群处理");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("话题重试：从助手话题发起的中断委派重试时同时保留原附件和 fromTopicId", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const base = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...base, id: "lead", name: "统筹", duty: "排期", primary: false, topics: true });
+      addAssistant(hob, "analyst", "分析", "核对");
+      const { topic } = await hob.runtime.assistantTopics.create("lead", { title: "季度核账", createdBy: "user" });
+      const file = join(hob.home, "账单.csv");
+      writeFileSync(file, "项,金额\nA,99\n");
+      const interrupted: Delegation = {
+        id: "dg-topic-retry",
+        from: "lead",
+        fromTopicId: topic.id,
+        to: "analyst",
+        text: "请核对账单",
+        files: [file],
+        createdAt: new Date().toISOString(),
+        status: "interrupted",
+        endedAt: new Date().toISOString(),
+        reportedAt: new Date().toISOString(),
+        jobIds: [],
+      };
+      hob.runtime.store.saveDelegation(interrupted);
+
+      hob.faux.setResponses([text("已重新核对完成"), text("收到核对结果")]);
+      const retried = await hob.runtime.delegations.retry(interrupted);
+      expect(retried.fromTopicId).toBe(topic.id);
+      expect(retried.files).toEqual([file]);
+      await waitFor(() => Boolean(hob.runtime.store.delegation(retried.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("lead", 2_000, { topicId: topic.id });
+      expect(hob.runtime.router.items("lead", { limit: 50 }, { topicId: topic.id }).items).toContainEqual(
+        expect.objectContaining({ kind: "delegation", delegationId: retried.id }),
+      );
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("异常收口：handoverResult 在 resumeForTopic 后异常失败未进入 turn_end 时，清理状态并让委派可正常收尾", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      addAssistant(hob, "coord", "协调", "统筹");
+      addAssistant(hob, "qa", "测试", "验收");
+      const group = hob.runtime.groups.create({
+        name: "验收群",
+        purpose: "验收",
+        ownerId: "qa",
+        members: ["hob", "coord", "qa"],
+      });
+      const { topic } = hob.runtime.groups.handOver(group.id, "验收", "coord", { text: "请验收", files: [] });
+      const delegation: Delegation = {
+        id: "dg-handover-fail",
+        from: "hob",
+        to: "coord",
+        text: "请协调验收",
+        createdAt: new Date().toISOString(),
+        status: "running",
+        turnFinished: true,
+        jobIds: [],
+        approvalIds: [],
+      };
+      hob.runtime.store.saveDelegation(delegation);
+      hob.runtime.delegations.addTopic(delegation.id, topic.id);
+
+      const state = await hob.runtime.router.ensure("coord");
+      vi.spyOn(state.session!, "sendCustomMessage").mockImplementationOnce(async () => {
+        // 模拟 message_start 已触发 resumeForTopic，但随后未走 turn_end 即抛错
+        const resumed = hob.runtime.delegations.resumeForTopic(topic.id);
+        expect(resumed).toBe(delegation.id);
+        (state as { currentDelegationId?: string }).currentDelegationId = resumed;
+        throw new Error("simulated transport drop");
+      });
+
+      const ok = await hob.runtime.router.handoverResult("coord", topic.id, "验收失败详情");
+      expect(ok).toBe(false);
+      expect(hob.runtime.router.currentDelegation("coord")).toBeUndefined();
+      expect(hob.runtime.store.internalDelegation(delegation.id)?.turnFinished).toBe(true);
+      expect(hob.runtime.store.internalDelegation(delegation.id)?.turnFailed).toBe(true);
+
+      hob.faux.setResponses([text("已知悉受阻")]);
+      hob.runtime.delegations.topicEnded(topic.id, "验收失败详情");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe("stuck");
     } finally {
       hob.close();
     }

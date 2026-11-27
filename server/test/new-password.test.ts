@@ -13,7 +13,6 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/login.ts", () => ({
   credentialCandidates: mocks.candidates,
-  defaultUriMatch: (runtime: { settings?: { settings?: { general?: { loginUriMatch?: 0 | 1 | 2 | 3 | 5 } } } }) => runtime?.settings?.settings?.general?.loginUriMatch ?? 0,
   inspectCurrentPage: mocks.inspect,
   pageInfo: mocks.pageInfo,
 }));
@@ -141,7 +140,7 @@ describe("fill_new_password", () => {
     try {
       mocks.inspect.mockResolvedValue({ url: "http://10.0.0.5:8080/register", host: "10.0.0.5", port: "8080", inputs: [{ index: 0, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
       mocks.candidates.mockResolvedValue([{ provider: "bitwarden", providerName: "Bitwarden", id: "item-9090", name: "内网服务 9090", username: "admin", uris: [{ uri: "http://10.0.0.5:9090", match: 1 }] }]);
-      const runtime = { home, settings: { settings: { general: { loginUriMatch: 1 } } }, plugins: { hasPasswordGenerator: () => true, credentialProviders: () => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: "tool", role: "generate" }] } } as any;
+      const runtime = { home, plugins: { hasPasswordGenerator: () => true, credentialProviders: () => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: "tool", role: "generate" }] } } as any;
       const result = await prepareFillNewPassword(runtime, "hob", "admin", 16);
       assert.equal(result.kind, "approval");
       if (result.kind !== "approval") return;

@@ -29,7 +29,6 @@ import { checkTimezone } from "./time.ts";
 import { systemDir } from "./config.ts";
 import { checkPrice } from "./usage-prices.ts";
 import { checkProxy, DEFAULT_NO_PROXY, normalizeNoProxy, normalizeProxy } from "./network-proxy.ts";
-import { isDefaultUriMatchMode, URI_MATCH_BASE_DOMAIN } from "./uri-match.ts";
 import type { Locale } from "../../shared/i18n.ts";
 
 const FILE = "settings.json";
@@ -92,7 +91,7 @@ export function systemTimezone(): string {
 
 export function defaultSettings(timezone = systemTimezone(), models: ModelSettings = seedModels()): Settings {
   return {
-    general: { theme: "system", timezone, showPage: true, avatarBackground: true, loginUriMatch: URI_MATCH_BASE_DOMAIN, proxy: "", noProxy: DEFAULT_NO_PROXY, aboutYou: { name: "", language: "", notes: "" } },
+    general: { theme: "system", timezone, showPage: true, avatarBackground: true, proxy: "", noProxy: DEFAULT_NO_PROXY, aboutYou: { name: "", language: "", notes: "" } },
     providers: [],
     models,
     image: { source: "off" },
@@ -237,7 +236,6 @@ function normalize(raw: unknown, base: Settings): Settings {
       timezone: checkTimezone(text(general.timezone, "") || base.general.timezone),
       showPage: typeof general.showPage === "boolean" ? general.showPage : base.general.showPage !== false,
       avatarBackground: typeof general.avatarBackground === "boolean" ? general.avatarBackground : base.general.avatarBackground !== false,
-      loginUriMatch: isDefaultUriMatchMode(general.loginUriMatch) ? general.loginUriMatch : (base.general.loginUriMatch ?? URI_MATCH_BASE_DOMAIN),
       proxy: normalizeProxy(general.proxy, base.general.proxy),
       noProxy: normalizeNoProxy(general.noProxy, base.general.noProxy),
       aboutYou: {
@@ -394,9 +392,6 @@ export class SettingsStore {
     const general = patch.general ?? {};
     const models = patch.models ?? {};
     if (general.proxy !== undefined) checkProxy(general.proxy);
-    if (general.loginUriMatch !== undefined && !isDefaultUriMatchMode(general.loginUriMatch)) {
-      throw new Error("默认登录网址匹配方式无效。");
-    }
     if (models.thinkingChoice !== undefined && models.thinkingChoice !== "auto" && models.thinkingChoice !== "fixed") {
       throw new Error("任务思考档选择方式无效：可选值为 auto 或 fixed。");
     }

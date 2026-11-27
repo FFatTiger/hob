@@ -6,6 +6,7 @@ import { Avatar } from "../sprites.tsx";
 import { Icon } from "../icons.tsx";
 import { MOCK, deletePlugin, deletePluginProfile, disconnectPluginOAuth, loadPluginCatalog, loadPluginLogins, loadPlugins, logoutPluginToolLogin, openPlugins, patchPlugin, pollPluginToolLogin, removePluginLoginAuto, savePluginConfig, savePluginProfileConfig, startPluginOAuth, startPluginToolLogin, updatePlugin, updatePluginProfile, addPluginProfile, useApp } from "../store.ts";
 import { Disclosure } from "./Disclosure.tsx";
+import { Select } from "./Select.tsx";
 import { PluginLogins, type LoginData } from "./PluginLogins.tsx";
 import { PluginIcon, pluginDescription, pluginName, PluginStatus } from "./Plugins.tsx";
 import { approvePlugin, DeviceCodeLoginCard, PluginProvidersSection, PluginUpdateApprovalBanner } from "./PluginProviders.tsx";
@@ -338,8 +339,23 @@ export function PluginDetail({ id }: { id: string }) {
         {typeof field.description === "string" && <Description text={field.description} />}
       </div>;
     }
+    if (Array.isArray(field.options)) {
+      const options = field.options.map(option => ({ value: String(option), label: String(option) }));
+      return <div className="lbl" key={key}>
+        <div>{label}{field.required ? " *" : ""}</div>
+        <Select
+          className="field"
+          aria-label={label}
+          value={String(value)}
+          displayLabel={String(value) || t("请选择")}
+          onChange={next => setValues({ ...values, [key]: field.type === "number" ? Number(next) : next })}
+          options={options}
+        />
+        {typeof field.description === "string" && <Description text={field.description} />}
+      </div>;
+    }
     return <label className="lbl" key={key}>{label}{field.required ? " *" : ""}
-      {field.type === "file" ? <FileField configured={Boolean(field.configured || field.value)} onChange={text => setValues({ ...values, [key]: text })} /> : Array.isArray(field.options) ? <select className="field" value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" ? Number(e.target.value) : e.target.value })}><option value="">{t("请选择")}</option>{field.options.map(option => <option key={String(option)} value={String(option)}>{String(option)}</option>)}</select> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
+      {field.type === "file" ? <FileField configured={Boolean(field.configured || field.value)} onChange={text => setValues({ ...values, [key]: text })} /> : <input className="field" type={field.sensitive ? "password" : field.type === "number" ? "number" : "text"} min={typeof field.min === "number" ? field.min : undefined} max={typeof field.max === "number" ? field.max : undefined} placeholder={field.sensitive && field.configured ? t("已填，留空不改") : undefined} value={String(value)} onChange={e => setValues({ ...values, [key]: field.type === "number" && e.target.value !== "" ? Number(e.target.value) : e.target.value })} />}
       {typeof field.description === "string" && <Description text={field.description} />}</label>;
   };
   const serviceOAuth = item.services.filter(candidate => candidate.oauth?.declared);
@@ -405,7 +421,7 @@ export function PluginDetail({ id }: { id: string }) {
       />
     ) : null}
 
-    {!credentialConnected && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${effectiveTone}`}>
+    {(!credentialConnected || configFields) && (!hasProviders || (item.services.length > 0 && serviceStatus !== "connected" && serviceStatus !== "idle")) ? <section className={`plugin-connection ${effectiveTone}`}>
       {toolLoginReady && toolLogin && !toolLoginSignedIn ? (
         <ToolPluginLoginRow
           status={toolLogin.status}

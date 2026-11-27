@@ -75,18 +75,16 @@ describe("uri-match", () => {
     expect(matchUriEntry({ uri: "[unclosed(", match: URI_MATCH_REGEX }, "https://example.com/login")).toBeNull();
   });
 
-  it("mode 5 (never): never matches regardless of URL equality or global default", () => {
-    expect(matchUriEntry({ uri: "https://example.com/login", match: URI_MATCH_NEVER }, "https://example.com/login", URI_MATCH_BASE_DOMAIN)).toBeNull();
-    expect(matchUriEntry("https://example.com/login", "https://example.com/login", URI_MATCH_NEVER)).toBeNull();
+  it("mode 5 (never): never matches regardless of URL equality", () => {
+    expect(matchUriEntry({ uri: "https://example.com/login", match: URI_MATCH_NEVER }, "https://example.com/login")).toBeNull();
   });
 
-  it("uses global default when match is missing, null, or entry is a plain string; per-URI match overrides global default", () => {
-    expect(urisMatchUrl(["http://10.0.0.5:8080"], "http://10.0.0.5:9090/login", URI_MATCH_BASE_DOMAIN)).toBe(true);
-    expect(urisMatchUrl(["http://10.0.0.5:8080"], "http://10.0.0.5:9090/login", URI_MATCH_HOST)).toBe(false);
-    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: null }], "http://10.0.0.5:9090/login", URI_MATCH_HOST)).toBe(false);
-    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: URI_MATCH_BASE_DOMAIN }], "http://10.0.0.5:9090/login", URI_MATCH_HOST)).toBe(true);
-    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: URI_MATCH_HOST }], "http://10.0.0.5:9090/login", URI_MATCH_BASE_DOMAIN)).toBe(false);
-    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: URI_MATCH_HOST }], "http://10.0.0.5:8080/login", URI_MATCH_NEVER)).toBe(true);
+  it("defaults to base domain when match is missing, null, or entry is a plain string; explicit match controls per-URI matching", () => {
+    expect(urisMatchUrl(["http://10.0.0.5:8080"], "http://10.0.0.5:9090/login")).toBe(true);
+    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: null }], "http://10.0.0.5:9090/login")).toBe(true);
+    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080" }], "http://10.0.0.5:9090/login")).toBe(true);
+    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: URI_MATCH_HOST }], "http://10.0.0.5:9090/login")).toBe(false);
+    expect(urisMatchUrl([{ uri: "http://10.0.0.5:8080", match: URI_MATCH_HOST }], "http://10.0.0.5:8080/login")).toBe(true);
   });
 
   it("normalizes mixed legacy strings and { uri, match } entries", () => {
@@ -113,7 +111,7 @@ describe("uri-match", () => {
     const result = matchCandidateUris([
       { uri: "http://10.0.0.5", match: URI_MATCH_BASE_DOMAIN },
       { uri: "http://10.0.0.5:8080", match: URI_MATCH_HOST },
-    ], "http://10.0.0.5:8080/login", URI_MATCH_BASE_DOMAIN);
+    ], "http://10.0.0.5:8080/login");
     expect(result).toEqual({
       uri: "http://10.0.0.5:8080",
       mode: URI_MATCH_HOST,

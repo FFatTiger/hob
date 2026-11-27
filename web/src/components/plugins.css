@@ -86,6 +86,7 @@
 .plugin-config-form .lbl, .plugin-section .lbl { display: block; margin-top: 18px; }
 .plugin-config-form > .lbl:first-child { margin-top: 12px; }
 .plugin-config-form .field { background: var(--bg); margin-top: 6px; }
+.plugin-config-form .select-trigger.field, .plugin-profile-form .select-trigger.field { display: flex; width: 100%; height: auto; padding: 9px 12px; border-radius: 10px; background: var(--bg); color: var(--text); font-size: 14px; line-height: 1.6; margin-top: 6px; }
 .lbl .plugin-sub { font-size: 12.5px; color: var(--text3); line-height: 1.55; margin-top: 6px; }
 .plugin-bool-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .plugin-bool .tog { border: 0; cursor: pointer; flex: none; }

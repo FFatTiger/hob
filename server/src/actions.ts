@@ -10,8 +10,8 @@ import { monthDayText } from "./time.ts";
 import { cronToChinese } from "./cron-text.ts";
 import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
-import { candidateId, defaultUriMatch, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
-import { URI_MATCH_BASE_DOMAIN, URI_MATCH_EXACT, URI_MATCH_HOST, URI_MATCH_NEVER, parseUrl } from "./uri-match.ts";
+import { candidateId, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
+import { parseUrl } from "./uri-match.ts";
 import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
 import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
 import { setTopicRule } from "./topic-config.ts";
@@ -461,13 +461,10 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
       runtime.bus.emit({ type: "approval", approval: failed });
       return { status: 400, body: { error: message } };
     }
-    // 存进密码管理器的名称用助手写的网站名（去掉「」这类引号）；网址带非标准端口或非基础域名默认时保留协议/端口/完整地址
+    // 存进密码管理器的名称用助手写的网站名（去掉「」这类引号）；网址带非标准端口时保留协议和端口
     const name = site.trim().replace(/^[「『"'“]+|[」』"'”]+$/g, "") || entry.host;
-    const defaultMatch = defaultUriMatch(runtime);
     const parsedEntryUrl = entry.pageUrl ? parseUrl(entry.pageUrl) : undefined;
-    const savedUri = parsedEntryUrl && (parsedEntryUrl.port || defaultMatch !== URI_MATCH_BASE_DOMAIN)
-      ? (defaultMatch === URI_MATCH_EXACT ? entry.pageUrl! : parsedEntryUrl.origin)
-      : `https://${entry.host}`;
+    const savedUri = parsedEntryUrl?.port ? parsedEntryUrl.origin : `https://${entry.host}`;
     const uris = [savedUri];
     let savedId: string;
     try {
@@ -483,8 +480,7 @@ async function answerLoginEntryApproval(runtime: HobRuntime, approval: Approval,
       runtime.bus.emit({ type: "approval", approval: failed });
       return { status: 400, body: { error: message } };
     }
-    const fillUris = defaultMatch === URI_MATCH_NEVER ? [{ uri: savedUri, match: URI_MATCH_HOST }] : uris;
-    const candidate = { provider: provider.pluginId, providerName: provider.providerName, id: savedId, uris: fillUris };
+    const candidate = { provider: provider.pluginId, providerName: provider.providerName, id: savedId, uris };
     try {
       const result = await fillLoginPage(runtime, approval.assistantId, candidate, entry.host, async () => ({ username, password }), entry.pageUrl);
       const withoutError = { ...entry };

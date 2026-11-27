@@ -1,6 +1,6 @@
 import type { Page } from "playwright-core";
 import { t } from "../../shared/i18n.ts";
-import type { Approval, ApprovalOption, DefaultUriMatchMode, FillLoginApproval, FillLoginCandidate, LoginAutoEntry, LoginEntryApproval } from "../../shared/types.ts";
+import type { Approval, ApprovalOption, FillLoginApproval, FillLoginCandidate, LoginAutoEntry, LoginEntryApproval } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
 import { readLoginAuto, saveLoginAuto } from "./login-auto.ts";
@@ -14,7 +14,6 @@ import {
   hostPortOf,
   hostnameOf,
   hostsMatch,
-  isDefaultUriMatchMode,
   matchCandidateUris,
   normalizeCredentialUris,
   parseUrl,
@@ -48,11 +47,6 @@ const RECENT_MS = 10 * 60 * 1000;
 const recentAllowed = new WeakMap<HobRuntime, Map<string, number>>();
 /** 同一个助手对同一站点报过「没有账号密码框」的时间：10 分钟内第二次就不再回这句话，改出自己登录卡 */
 const noFieldsSeen = new WeakMap<HobRuntime, Map<string, number>>();
-
-export function defaultUriMatch(runtime: Partial<Pick<HobRuntime, "settings">>): DefaultUriMatchMode {
-  const value = runtime.settings?.settings.general.loginUriMatch;
-  return isDefaultUriMatchMode(value) ? value : URI_MATCH_BASE_DOMAIN;
-}
 
 function candidateKey(candidate: Pick<FillLoginCandidate, "provider" | "id">): string {
   return `${candidate.provider}:${candidate.id}`;
@@ -133,7 +127,6 @@ function siteRefersToPage(site: string, pageUrl: string): boolean {
 
 export async function credentialCandidates(runtime: HobRuntime, assistantId: string, site: string, account?: string, pageUrl?: string): Promise<FillLoginCandidate[]> {
   const providers = runtime.plugins.credentialProviders(assistantId, "list");
-  const defaultMatch = defaultUriMatch(runtime);
   const query = site.trim().toLowerCase();
   const siteUrl = query ? parseUrl(site.trim())?.href : undefined;
   const queryHost = siteUrl ? hostnameOf(siteUrl) : undefined;
@@ -141,7 +134,7 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
   const rankTarget = matchPageUrl ?? siteUrl;
   const targetHost = rankTarget ? hostnameOf(rankTarget) : undefined;
   const targetHostPort = rankTarget ? hostPortOf(rankTarget) : undefined;
-  const result: Array<FillLoginCandidate & { exact: boolean }> = [];
+  const result: Array<FillLoginCandidate & { rank: number }> = [];
   for (const provider of providers) {
     const value = await runtime.plugins.callCredential(provider, {});
     const logins = Array.isArray(value.logins) ? value.logins : [];
@@ -153,14 +146,14 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
       const uris = normalizeCredentialUris(login.uris);
       if (query !== "") {
         // 所有保存网址都设为「从不」或没有保存网址的条目不参与匹配
-        if (!hasActiveUri(uris, defaultMatch)) continue;
+        if (!hasActiveUri(uris)) continue;
         const nameMatch = name.toLowerCase().includes(query);
-        const pageMatch = matchPageUrl !== undefined && urisMatchUrl(uris, matchPageUrl, defaultMatch);
+        const pageMatch = matchPageUrl !== undefined && urisMatchUrl(uris, matchPageUrl);
         // site 是网址时按每条网址的匹配方式查；基础域名模式下允许父域名查子域名（后续再由 matchingCandidates 按真实页面严格核对）
         const siteMatch = siteUrl !== undefined && (
-          urisMatchUrl(uris, siteUrl, defaultMatch)
+          urisMatchUrl(uris, siteUrl)
           || (queryHost !== undefined && uris.some((entry) => {
-            if (effectiveMatchMode(entry, defaultMatch) !== URI_MATCH_BASE_DOMAIN) return false;
+            if (effectiveMatchMode(entry) !== URI_MATCH_BASE_DOMAIN) return false;
             const savedHost = hostnameOf(credentialUriText(entry));
             return savedHost !== undefined && hostsMatch(savedHost, queryHost);
           }))
@@ -168,14 +161,15 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
         if (!nameMatch && !pageMatch && !siteMatch) continue;
       }
       if (account && !username.toLowerCase().includes(account.trim().toLowerCase())) continue;
-      const exact = uris.some((entry) => {
-        if (effectiveMatchMode(entry, defaultMatch) === URI_MATCH_NEVER) return false;
+      let rank = 0;
+      for (const entry of uris) {
+        if (effectiveMatchMode(entry) === URI_MATCH_NEVER) continue;
         const uri = credentialUriText(entry);
-        return (targetHostPort !== undefined && hostPortOf(uri) === targetHostPort)
-          || (targetHost !== undefined && hostnameOf(uri) === targetHost);
-      });
+        if (targetHostPort !== undefined && hostPortOf(uri) === targetHostPort) rank = Math.max(rank, 2);
+        else if (targetHost !== undefined && hostnameOf(uri) === targetHost) rank = Math.max(rank, 1);
+      }
       result.push({
-        exact,
+        rank,
         provider: provider.pluginId,
         providerName: provider.providerName,
         id: typeof login.id === "string" ? login.id : String(login.id ?? ""),
@@ -186,11 +180,11 @@ export async function credentialCandidates(runtime: HobRuntime, assistantId: str
       });
     }
   }
-  return result.filter((candidate) => candidate.id).sort((a, b) => Number(b.exact) - Number(a.exact)).map(({ exact: _exact, ...candidate }) => candidate);
+  return result.filter((candidate) => candidate.id).sort((a, b) => b.rank - a.rank).map(({ rank: _rank, ...candidate }) => candidate);
 }
 
-export function matchingCandidates(candidates: FillLoginCandidate[], pageUrl: string, defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): FillLoginCandidate[] {
-  return candidates.filter((candidate) => urisMatchUrl(candidate.uris, pageUrl, defaultMatch));
+export function matchingCandidates(candidates: FillLoginCandidate[], pageUrl: string): FillLoginCandidate[] {
+  return candidates.filter((candidate) => urisMatchUrl(candidate.uris, pageUrl));
 }
 
 function approvalDetail(candidates: FillLoginCandidate[]): string {
@@ -220,10 +214,9 @@ export async function prepareLogin(runtime: HobRuntime, assistantId: string, sit
   const info = await inspect(runtime, assistantId);
   // 验证码这类只能用户本人填的页面：存没存账号都请用户自己登录
   if (info.otpIndex !== undefined) return { kind: "self", title: selfTitle(site) };
-  const defaultMatch = defaultUriMatch(runtime);
   const siteHost = displayHostOf(info.url) ?? info.host;
   const candidates = await credentialCandidates(runtime, assistantId, site, account, info.url);
-  const matched = matchingCandidates(candidates, info.url, defaultMatch);
+  const matched = matchingCandidates(candidates, info.url);
   if (candidates.length && !matched.length) {
     const savedHosts = [...new Set(candidates.flatMap((candidate) => candidate.uris.map((entry) => displayHostOf(credentialUriText(entry)) ?? credentialUriText(entry)).filter(Boolean)))];
     return {
@@ -237,7 +230,7 @@ export async function prepareLogin(runtime: HobRuntime, assistantId: string, sit
     // 出卡之前就看清页面上有没有能填的框：只有搜索框之类的页面不该让用户白批一次
     if (!hasFields) return noFieldsAgain(runtime, assistantId, siteHost) ? { kind: "self", title: selfTitle(site) } : { kind: "message", text: noFieldsText(info) };
     const auto = matched.filter((candidate) => {
-      const hit = matchCandidateUris(candidate.uris, info.url, defaultMatch);
+      const hit = matchCandidateUris(candidate.uris, info.url);
       return hit !== null && (autoFor(runtime.home, candidate, hit.scope) || recentFor(runtime, candidate, hit.scope));
     });
     if (auto.length === 1) {
@@ -314,7 +307,7 @@ export async function fillLoginPage(runtime: HobRuntime, assistantId: string, ca
       const expectedHost = expectedParsed ? expectedParsed.hostname.toLowerCase().replace(/\.$/, "") : host.toLowerCase().replace(/\.$/, "");
       const expectedPort = expectedUrl && expectedParsed ? portOfUrl(expectedParsed) : (expectedParsed?.port || undefined);
       const samePage = current.host === expectedHost && (expectedPort === undefined || current.port === expectedPort);
-      const matched = matchCandidateUris(candidate.uris, current.url, defaultUriMatch(runtime));
+      const matched = matchCandidateUris(candidate.uris, current.url);
       if (!samePage || !matched) {
         throw new Error(`当前页面是 ${currentSite}，和保存的网址对不上，可能是仿冒的页面。`);
       }

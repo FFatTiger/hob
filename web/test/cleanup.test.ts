@@ -193,7 +193,7 @@ describe("前端失败路径", () => {
     expect(await page.getByLabel("数量").getAttribute("min")).toBe("1");
     expect(await page.getByLabel("数量").getAttribute("max")).toBe("10");
     expect(await page.getByLabel("开关").isChecked()).toBe(true);
-    expect(await page.getByLabel("选项").inputValue()).toBe("a");
+    expect((await page.getByLabel("选项").textContent())?.trim()).toBe("a");
     await page.getByLabel("名称").fill("example");
     await page.locator('input[type="file"]').setInputFiles({ name: "example-file", mimeType: "text/plain", buffer: Buffer.from("/tmp/example-file") });
     await page.getByLabel("目录路径").fill("/tmp/example-dir");

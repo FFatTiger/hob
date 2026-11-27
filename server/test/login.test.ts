@@ -56,32 +56,31 @@ describe("login safety boundaries", () => {
     expect(await ids("wiki.example.org")).toEqual([]);
   });
 
-  it("filters same-IP different-port accounts when global default is Host, while honoring per-URI match and legacy strings", async () => {
-    const logins = [
-      { id: "svc-a", name: "内网看板", username: "ops-a", uris: ["http://10.0.0.5:8080/login"] }, // 老插件纯字符串
-      { id: "svc-b", name: "内网仓库", username: "ops-b", uris: [{ uri: "http://10.0.0.5:9090/login", match: null }] },
-      { id: "svc-regex-bad", name: "坏正则条目", username: "ops-bad", uris: [{ uri: "[invalid-regex(", match: URI_MATCH_REGEX }] },
-      { id: "svc-never", name: "不自动匹配", username: "ops-never", uris: [{ uri: "http://10.0.0.5:8080/login", match: URI_MATCH_NEVER }] },
-      { id: "svc-base-override", name: "全端口共用", username: "ops-all", uris: [{ uri: "http://10.0.0.5:7000", match: URI_MATCH_BASE_DOMAIN }] },
-    ];
-    const makeRuntime = (loginUriMatch: 0 | 1 | 2 | 3 | 5) => ({
-      settings: { settings: { general: { loginUriMatch } } },
+  it("filters same-IP different-port accounts when provider returns Host match, while supporting legacy strings and other match modes", async () => {
+    const makeRuntime = (logins: unknown[]) => ({
       plugins: { credentialProviders: () => [{ pluginId: "bitwarden", providerName: "Bitwarden" }], callCredential: async () => ({ logins }) },
     }) as any;
 
-    // 默认基础域名：8080 和 9090、7000 都会命中，但「从不」和坏正则不命中
-    const baseCandidates = await credentialCandidates(makeRuntime(URI_MATCH_BASE_DOMAIN), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login");
-    expect(matchingCandidates(baseCandidates, "http://10.0.0.5:8080/login", URI_MATCH_BASE_DOMAIN).map((c) => c.id)).toEqual(["svc-a", "svc-b", "svc-base-override"]);
+    // 老插件纯字符串和未设 match 的默认按基础域名：8080 和 9090 都命中，但「从不」和坏正则不命中
+    const legacyLogins = [
+      { id: "svc-legacy", name: "内网看板", username: "ops-a", uris: ["http://10.0.0.5:8080/login"] },
+      { id: "svc-unset", name: "内网仓库", username: "ops-b", uris: [{ uri: "http://10.0.0.5:9090/login", match: null }] },
+      { id: "svc-regex-bad", name: "坏正则条目", username: "ops-bad", uris: [{ uri: "[invalid-regex(", match: URI_MATCH_REGEX }] },
+      { id: "svc-never", name: "不自动匹配", username: "ops-never", uris: [{ uri: "http://10.0.0.5:8080/login", match: URI_MATCH_NEVER }] },
+    ];
+    const baseCandidates = await credentialCandidates(makeRuntime(legacyLogins), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login");
+    expect(matchingCandidates(baseCandidates, "http://10.0.0.5:8080/login").map((c) => c.id)).toEqual(["svc-legacy", "svc-unset"]);
 
-    // 全局默认改成「主机」后：9090 不再被列出来，8080（老插件字符串）和单条覆盖为基础域名的 7000 命中
-    const hostCandidates = await credentialCandidates(makeRuntime(URI_MATCH_HOST), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login");
-    expect(matchingCandidates(hostCandidates, "http://10.0.0.5:8080/login", URI_MATCH_HOST).map((c) => c.id)).toEqual(["svc-a", "svc-base-override"]);
-
-    // 全局默认「开始于」「精确」也按规则生效
-    const startsCandidates = await credentialCandidates(makeRuntime(URI_MATCH_STARTS_WITH), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login?from=home");
-    expect(matchingCandidates(startsCandidates, "http://10.0.0.5:8080/login?from=home", URI_MATCH_STARTS_WITH).map((c) => c.id)).toEqual(["svc-a", "svc-base-override"]);
-    const exactCandidates = await credentialCandidates(makeRuntime(URI_MATCH_EXACT), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login?from=home");
-    expect(matchingCandidates(exactCandidates, "http://10.0.0.5:8080/login?from=home", URI_MATCH_EXACT).map((c) => c.id)).toEqual(["svc-base-override"]);
+    // 插件把 match 设为「主机」(1) 时，同 IP 不同端口（9090）不再被列出来；单条覆盖为基础域名（0）的仍命中
+    const hostLogins = [
+      { id: "svc-8080", name: "内网看板", username: "ops-a", uris: [{ uri: "http://10.0.0.5:8080/login", match: URI_MATCH_HOST }] },
+      { id: "svc-9090", name: "内网仓库", username: "ops-b", uris: [{ uri: "http://10.0.0.5:9090/login", match: URI_MATCH_HOST }] },
+      { id: "svc-base-override", name: "全端口共用", username: "ops-all", uris: [{ uri: "http://10.0.0.5:7000", match: URI_MATCH_BASE_DOMAIN }] },
+      { id: "svc-starts", name: "前缀匹配", username: "ops-prefix", uris: [{ uri: "http://10.0.0.5:8080/login", match: URI_MATCH_STARTS_WITH }] },
+      { id: "svc-exact", name: "精确匹配", username: "ops-exact", uris: [{ uri: "http://10.0.0.5:8080/login", match: URI_MATCH_EXACT }] },
+    ];
+    const hostCandidates = await credentialCandidates(makeRuntime(hostLogins), "hob", "10.0.0.5", undefined, "http://10.0.0.5:8080/login?from=home");
+    expect(matchingCandidates(hostCandidates, "http://10.0.0.5:8080/login?from=home").map((c) => c.id)).toEqual(["svc-8080", "svc-starts", "svc-base-override"]);
   });
 
   it("always-allow recorded on one port does not auto-fill another port under Host match", async () => {
@@ -101,8 +100,6 @@ describe("login safety boundaries", () => {
     const spy = vi.spyOn(DesktopToolSession.prototype, "withCurrentPage").mockImplementation(async (run) => run(fakePage as any));
     const disposeSpy = vi.spyOn(DesktopToolSession.prototype, "dispose").mockResolvedValue();
     try {
-      const rev = hob.runtime.settings.get().revision;
-      hob.runtime.settings.patch(rev, { general: { loginUriMatch: URI_MATCH_HOST } });
       const logins = [
         {
           id: "shared-item",
@@ -143,17 +140,5 @@ describe("login safety boundaries", () => {
       disposeSpy.mockRestore();
       hob.close();
     }
-  });
-
-  it("rejects regex (4) and out-of-range values for global general.loginUriMatch setting", () => {
-    const hob = makeHob();
-    try {
-      const rev = hob.runtime.settings.get().revision;
-      expect(hob.runtime.settings.get().settings.general.loginUriMatch).toBe(0);
-      expect(() => hob.runtime.settings.patch(rev, { general: { loginUriMatch: 4 as any } })).toThrow(/匹配方式/);
-      expect(() => hob.runtime.settings.patch(rev, { general: { loginUriMatch: 99 as any } })).toThrow(/匹配方式/);
-      const updated = hob.runtime.settings.patch(rev, { general: { loginUriMatch: 1 } });
-      expect(updated?.settings.general.loginUriMatch).toBe(1);
-    } finally { hob.close(); }
   });
 });

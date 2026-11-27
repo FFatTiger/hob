@@ -1014,9 +1014,6 @@ export interface ApprovalAnswer {
  */
 export type UriMatchMode = 0 | 1 | 2 | 3 | 4 | 5;
 
-/** 全局默认匹配方式：不含正则（正则只认每条网址自己设的）。 */
-export type DefaultUriMatchMode = 0 | 1 | 2 | 3 | 5;
-
 /** 凭据服务商返回的网址条目：可以是字符串（老插件），也可以带按条匹配方式。 */
 export type CredentialUri = string | { uri: string; match?: UriMatchMode | null };
 
@@ -1237,8 +1234,6 @@ export interface GeneralSettings {
   showPage?: boolean;
   /** 头像带不带彩色圆底；旧设置缺省为带。 */
   avatarBackground?: boolean;
-  /** 登录网址的全局默认匹配方式（0 基础域名、1 主机、2 开始于、3 精确、5 从不）；旧设置缺省为 0。 */
-  loginUriMatch?: DefaultUriMatchMode;
   theme: Theme;
   locale?: Locale;
   timezone: string; // IANA 时区名，默认系统时区

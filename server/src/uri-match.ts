@@ -1,4 +1,4 @@
-import type { CredentialUri, DefaultUriMatchMode, UriMatchMode } from "../../shared/types.ts";
+import type { CredentialUri, UriMatchMode } from "../../shared/types.ts";
 
 export const URI_MATCH_BASE_DOMAIN = 0 as const;
 export const URI_MATCH_HOST = 1 as const;
@@ -33,10 +33,6 @@ export interface UriMatchResult {
 
 export function isUriMatchMode(value: unknown): value is UriMatchMode {
   return typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 5;
-}
-
-export function isDefaultUriMatchMode(value: unknown): value is DefaultUriMatchMode {
-  return value === 0 || value === 1 || value === 2 || value === 3 || value === 5;
 }
 
 export function credentialUriText(entry: CredentialUri): string {
@@ -114,23 +110,23 @@ export function hostsMatch(pageHost: string, savedHost: string): boolean {
   return Boolean(page && saved) && (page === saved || page.endsWith(`.${saved}`));
 }
 
-export function effectiveMatchMode(entry: CredentialUri, defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): UriMatchMode {
-  if (typeof entry === "string") return defaultMatch;
-  return isUriMatchMode(entry.match) ? entry.match : defaultMatch;
+export function effectiveMatchMode(entry: CredentialUri): UriMatchMode {
+  if (typeof entry === "string") return URI_MATCH_BASE_DOMAIN;
+  return isUriMatchMode(entry.match) ? entry.match : URI_MATCH_BASE_DOMAIN;
 }
 
-export function hasActiveUri(uris: readonly CredentialUri[], defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): boolean {
-  return uris.some((entry) => effectiveMatchMode(entry, defaultMatch) !== URI_MATCH_NEVER);
+export function hasActiveUri(uris: readonly CredentialUri[]): boolean {
+  return uris.some((entry) => effectiveMatchMode(entry) !== URI_MATCH_NEVER);
 }
 
 /**
- * 按一条保存网址自己的 match（未设时用全局默认）判断当前页面完整网址是否匹配。
+ * 按一条保存网址自己的 match（未设或纯字符串按基础域名）判断当前页面完整网址是否匹配。
  * 返回命中后的匹配方式和审批作用域键；不匹配返回 null。
  */
-export function matchUriEntry(entry: CredentialUri, pageUrl: string, defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): UriMatchResult | null {
+export function matchUriEntry(entry: CredentialUri, pageUrl: string): UriMatchResult | null {
   const savedUri = credentialUriText(entry);
   if (!savedUri || !pageUrl) return null;
-  const mode = effectiveMatchMode(entry, defaultMatch);
+  const mode = effectiveMatchMode(entry);
   if (mode === URI_MATCH_NEVER) return null;
   switch (mode) {
     case URI_MATCH_BASE_DOMAIN: {
@@ -177,16 +173,16 @@ export function matchUriEntry(entry: CredentialUri, pageUrl: string, defaultMatc
  * 判断候选账号的多条保存网址是否命中当前页面；多条同时命中时取更具体的一条，
  * 让「总是允许」和 10 分钟批准记录落在更窄的作用域上。
  */
-export function matchCandidateUris(uris: readonly CredentialUri[], pageUrl: string, defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): UriMatchResult | null {
+export function matchCandidateUris(uris: readonly CredentialUri[], pageUrl: string): UriMatchResult | null {
   let best: UriMatchResult | null = null;
   for (const entry of uris) {
-    const matched = matchUriEntry(entry, pageUrl, defaultMatch);
+    const matched = matchUriEntry(entry, pageUrl);
     if (!matched) continue;
     if (!best || MODE_SPECIFICITY[matched.mode] > MODE_SPECIFICITY[best.mode]) best = matched;
   }
   return best;
 }
 
-export function urisMatchUrl(uris: readonly CredentialUri[], pageUrl: string, defaultMatch: DefaultUriMatchMode = URI_MATCH_BASE_DOMAIN): boolean {
-  return matchCandidateUris(uris, pageUrl, defaultMatch) !== null;
+export function urisMatchUrl(uris: readonly CredentialUri[], pageUrl: string): boolean {
+  return matchCandidateUris(uris, pageUrl) !== null;
 }

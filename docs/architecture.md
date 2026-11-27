@@ -468,7 +468,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 
 所有声明 `list` 角色的凭据提供者都会在插件详情页显示登录列表。列表只通过 app-only 的 `list` 角色读取概况；密码显示、复制、编辑、删除和 CSV 导入分别调用 `secret`、`save`、`delete`，密码只在这一次请求和界面内存中经过，不写入 Hob 文件、事件、日志或会话。详情页支持 Bitwarden、Chrome 和 1Password 的 CSV 表头，文件只在浏览器内存里解析，重复的名称、用户名和网址会跳过。
 
-密码管理插件可以在 MCP 工具的 `_meta["hob/credentials"]` 上声明 `list`、`secret`、`generate`、`save` 四个角色；这些工具同时带 `_meta.ui.visibility: ["app"]`，不进入助手和任务的模型工具列表。Hob 按角色调用它们，`list` 只拿登录概况，`secret` 只在一次填写操作中拿账号、密码和可选的当前两步验证码，`delete` 是只给界面用的 app-only 角色；模型只看到插件提供的 `list_logins` 和 `save_login`。`list` 返回的每条登录的 `uris` 既可以是纯字符串（兼容老插件和自带密码库），也可以是 `{ uri, match }`，其中 `match` 沿用 Bitwarden 取值：`0` 基础域名、`1` 主机（主机名加端口）、`2` 开始于、`3` 精确、`4` 正则、`5` 从不；缺失或 `null` 表示未单独设置，按 Hob 的全局默认匹配方式（`settings.general.loginUriMatch`，默认 `0` 基础域名，全局选项不含正则）判断。
+密码管理插件可以在 MCP 工具的 `_meta["hob/credentials"]` 上声明 `list`、`secret`、`generate`、`save` 四个角色；这些工具同时带 `_meta.ui.visibility: ["app"]`，不进入助手和任务的模型工具列表。Hob 按角色调用它们，`list` 只拿登录概况，`secret` 只在一次填写操作中拿账号、密码和可选的当前两步验证码，`delete` 是只给界面用的 app-only 角色；模型只看到插件提供的 `list_logins` 和 `save_login`。`list` 返回的每条登录的 `uris` 既可以是纯字符串（兼容老插件和自带密码库），也可以是 `{ uri, match }`，其中 `match` 沿用 Bitwarden 取值：`0` 基础域名、`1` 主机（主机名加端口）、`2` 开始于、`3` 精确、`4` 正则、`5` 从不；不带 `match` 或为 `null` 时按基础域名（`0`）判断。默认匹配方式由凭据服务商插件自己决定并在返回每条网址时填进 `match`（例如 Bitwarden 插件在自身配置里提供「默认匹配方式」）。
 
 网址匹配逻辑统一收口在 `server/src/uri-match.ts`，供候选查找、页面核对、填写前复查和 `fill_new_password` 共用：
 
@@ -521,7 +521,7 @@ Hob 首次启动会安装自带的「密码库」插件，默认对所有助手�
 ## 设置（settings.json / secrets.json）
 
 - 界面能改的东西都在 `HOB_HOME/system/settings.json`：`{ revision, settings: { general, providers, models, image, work } }`。
-  - `general`：`theme`（system / light / dark）、`timezone`（默认系统时区）、`loginUriMatch`（登录网址的全局默认匹配方式，0 基础域名 / 1 主机 / 2 开始于 / 3 精确 / 5 从不，默认 0）、`proxy`（HTTP/HTTPS 代理地址，空表示关闭）、`noProxy`（逗号分隔的 NO_PROXY 地址，默认 `localhost,127.0.0.1,::1`）、`aboutYou`（称呼、语言、其他说明）。
+  - `general`：`theme`（system / light / dark）、`timezone`（默认系统时区）、`proxy`（HTTP/HTTPS 代理地址，空表示关闭）、`noProxy`（逗号分隔的 NO_PROXY 地址，默认 `localhost,127.0.0.1,::1`）、`aboutYou`（称呼、语言、其他说明）。
   - `models`：`roster`（能用哪些模型 + 每句定位 + 默认思考档）、`conversation` / `work` 两个角色、`thinking`（每个模型的自定义思考档，键是 `"服务商/模型"`；没存就用默认规则，见“思考档”）。
   - `providers`：`ProviderSettings[]`，只有 `kind: "builtin"`（引擎自带服务商，只填 Key）和 `kind: "custom"`（兼容接口：`id` slug、`name`、`api`、`baseUrl`、`models[]`，每个模型可带 `extra` 原样透传给引擎）。Key 在 `secrets.json` 的 `provider:<id>`，接口只给 `keyConfigured`。写入走 `PUT /api/providers/:id`。
   - `search`：联网搜索服务商顺序、开关和服务地址（支持 SearXNG、Exa、Tavily、Brave、Serper、Jina、Firecrawl、Perplexity、You.com、Ollama、OpenAI、DeepSeek；其中 DeepSeek、Exa、Tavily、Jina、Firecrawl 兼作 `web_fetch` 原生网页抓取，其余或 `raw=true` 走通用 HTML 抓取），密钥手动填写并存入 `secrets.json` 的 `search:<name>`（OpenAI 可复用已配置的模型服务商）。搜索与抓取工具对 Router 和 Worker 可用。

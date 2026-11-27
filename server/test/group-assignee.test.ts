@@ -134,6 +134,55 @@ describe("群里派任务可以指定成员", () => {
       expect(single.parameters.properties.assistantId).toBeUndefined();
     } finally { hob.close(); }
   });
+
+  it("用户在任务卡上直接追加回复时，记进派任务的助手（startedBy）群会话，不污染成员会话", async () => {
+    const { hob, topic } = setup();
+    try {
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "初版完成" }),
+        text("第一轮完成"),
+        call("report", { outcome: "done", result: "已按新要求更新" }),
+        text("第二轮完成"),
+      ]);
+      await runTool(hob, "hob", topic.id, "start_job", { title: "查磁盘", assistantId: "ops" });
+      const job = hob.runtime.store.jobs().find((item) => item.title === "查磁盘")!;
+      await hob.runtime.jobs.waitIdle();
+      await waitFor(() => groupItems(hob, topic.id).some((item) => item.kind === "assistant" && item.speaker === "hob"));
+
+      const rememberSpy = vi.spyOn(hob.runtime.router, "remember");
+      await hob.runtime.jobs.reply(job.id, "顺便把 /var/log 也检查一下", "user");
+      expect(rememberSpy).toHaveBeenCalledWith("hob", expect.stringContaining("顺便把 /var/log 也检查一下"), { groupId: topic.id });
+      await hob.runtime.jobs.waitIdle();
+      expect(existsSync(hob.runtime.store.groupMemberFile(topic.id, "ops"))).toBe(false);
+    } finally { hob.close(); }
+  });
+
+  it("群定时任务派给成员执行时，结单事件回到派发者（startedBy）", async () => {
+    const { hob, group } = setup();
+    try {
+      const routine = hob.runtime.routines.create({
+        assistantId: "hob",
+        groupId: group.id,
+        name: "每日巡检",
+        instruction: "查磁盘",
+        schedules: ["0 9 * * *"],
+      });
+      hob.faux.setResponses([
+        call("report", { outcome: "done", result: "一切正常" }),
+        text("巡检无异常。"),
+      ]);
+      const job = await hob.runtime.jobs.start("ops", {
+        title: "巡检磁盘",
+        instruction: "查磁盘",
+        groupId: group.id,
+        startedBy: "hob",
+        routineId: routine.id,
+      });
+      await hob.runtime.jobs.waitIdle();
+      await waitFor(() => userTexts(hob.runtime.store.groupMemberFile(group.id, "hob")).some((line) => line.includes(`定时任务「每日巡检」（${job.id}）`)));
+      expect(userTexts(hob.runtime.store.groupMemberFile(group.id, "ops"))).toEqual([]);
+    } finally { hob.close(); }
+  });
 });
 
 describe("交给群的话题关掉时，结论后面附任务记录", () => {

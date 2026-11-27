@@ -969,14 +969,10 @@ export class JobManager {
         const updated = { ...routine, runs };
         this.store.saveRoutine(updated);
         this.bus.emit({ type: "routine", routine: updated });
-        void (async () => {
-          const place = placeOf(next);
-          await this.runtime.router.reopenForEvent(next.assistantId, place, jobReopenNote(next.title, "result"));
-          await this.runtime.router.event(job.assistantId, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
-            routine: { id: routine.id, name: routine.name, jobId: job.id },
-            ...resultDetails,
-          }, place);
-        })().catch((error) => console.error("发送定时任务结果失败：", error));
+        void this.notifyAssistant(next, assistantJobResultEvent(this.runtime.home, next, { prefix: `定时任务「${routine.name}」`, toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills }), {
+          routine: { id: routine.id, name: routine.name, jobId: job.id },
+          ...resultDetails,
+        }).catch((error) => console.error("发送定时任务结果失败：", error));
       }
     } else if (assistant) {
       const text = assistantJobResultEvent(this.runtime.home, next, { toolCount, group: next.groupId ? this.store.group(next.groupId) : undefined, skills: resultSkills });
@@ -995,7 +991,7 @@ export class JobManager {
     const target = this.store.job(jobId);
     if (!target) throw new Error("没有这个任务。");
     // 用户绕过助手直接对任务说的话，助手也要知道：任务之后来问、交结果时它才对得上
-    if (source === "user") void this.runtime.router.remember(target.assistantId, `用户给任务「${target.title}」（${target.id}）追加了回复：${text}`, placeOf(target)).catch((error) => console.error("记进助手会话失败：", error));
+    if (source === "user") void this.runtime.router.remember(target.startedBy ?? target.assistantId, `用户给任务「${target.title}」（${target.id}）追加了回复：${text}`, placeOf(target)).catch((error) => console.error("记进助手会话失败：", error));
     const interrupted = this.sediments.has(jobId) ? await this.stopSediment(jobId) : undefined;
     const job = this.store.job(jobId);
     if (!job) throw new Error("没有这个任务。");

@@ -97,4 +97,29 @@ describe("现在", () => {
       ].join("\n"));
     } finally { vi.useRealTimers(); }
   });
+
+  it("群里派给其他成员的任务出现在派发者（startedBy）的【现在】里并标明执行人，不出现在成员名下", () => {
+    vi.useFakeTimers().setSystemTime(new Date("2026-11-04T09:07:00Z"));
+    try {
+      const groups: Record<string, { id: string; name: string; parentId?: string }> = {
+        "g-team": { id: "g-team", name: "敏捷团队" },
+        "g-t1": { id: "g-t1", name: "登录重构", parentId: "g-team" },
+      };
+      const jobs = [
+        { id: "t-dev", assistantId: "dev", assistantName: "开发", startedBy: "po", title: "写登录接口", status: "running", startedAt: "2026-11-04T09:04:00Z", groupId: "g-team" },
+        { id: "t-qa", assistantId: "qa", assistantName: "测试", startedBy: "po", title: "回归测试", status: "done", endedAt: "2026-11-04T09:05:00Z", groupId: "g-team" },
+        { id: "t-topic", assistantId: "dev", assistantName: "开发", startedBy: "po", title: "补单测", status: "queued", groupId: "g-t1" },
+      ];
+      const root = (id: string) => groups[id]?.parentId ?? groups[id]?.id;
+      const store = { jobs: () => jobs, group: (id: string) => groups[id], groupMatches: (filter: string, id?: string) => !!id && !!root(id) && root(filter) === root(id), delegations: () => [], approvals: () => [], assistant: (id: string) => ({ name: id }) };
+      const runtime = { store, home: "/tmp/hob-now-empty", settings: { settings: { general: { timezone: "Asia/Shanghai" } } } } as unknown as HobRuntime;
+      expect(nowBlock(runtime, "po", { groupId: "g-team" })).toBe([
+        "【现在】2026-11-04 17:07 周三",
+        "进行中：t-dev「写登录接口」（开发），运行 3 分钟",
+        "最近结束：t-qa「回归测试」（测试）17:05 已完成",
+        "别处进行中：话题「登录重构」里 t-topic「补单测」（开发），排队中",
+      ].join("\n"));
+      expect(nowBlock(runtime, "dev", { groupId: "g-team" })).toBe("【现在】2026-11-04 17:07 周三");
+    } finally { vi.useRealTimers(); }
+  });
 });

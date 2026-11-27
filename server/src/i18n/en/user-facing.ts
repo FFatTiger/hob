@@ -369,4 +369,6 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "{text}（附件：{files}）": "{text} (Attachments: {files})",
   "群「{group}」的话题「{name}」交回了进展，话题已重新打开": "Topic “{name}” in group “{group}” reported an update. The topic was reopened.",
   "「{name}」交回了进展，话题已重新打开": "{name} reported an update. The topic was reopened.",
+  "Hob 重启过，刚才这一轮被打断了，正在接着做": "Hob restarted and the previous turn was interrupted. Continuing now.",
+  "Hob 重启过，刚才这一轮被打断了": "Hob restarted and the previous turn was interrupted.",
 };

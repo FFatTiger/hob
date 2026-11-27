@@ -1,16 +1,16 @@
 import { pluginCommandToolsForAssistant, pluginToolsForAssistant } from "./plugin-host.ts";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { parseStreamingJson } from "@earendil-works/pi-ai/utils/json-parse";
-import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { newId } from "./ids.ts";
 import { placeFields, placeOf, samePlace, sessionKey } from "./place.ts";
-import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
+import type { AgentSession, AgentSessionEvent, ProjectedSessionEntry, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
 import { resizeImage, SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
 import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
-import { assistantTodosPath, assistantWorkDir, engineDir } from "./config.ts";
+import { assistantTodosPath, assistantWorkDir, engineDir, systemDir } from "./config.ts";
 import type {
   Assistant,
   AssistantSummary,
@@ -60,6 +60,11 @@ import { generateFollowUpSuggestions, groupHistory, routerHistory } from "./foll
 export const IDLE_COMPACTION_IDLE_MS = 6 * 60 * 60 * 1000;
 export const IDLE_COMPACTION_TOKEN_THRESHOLD = 150_000;
 const IDLE_COMPACTION_INTERVAL_MS = 10 * 60 * 1000;
+/**
+ * 重启后自动接着做的用户消息时间窗（1 小时）：
+ * 足够覆盖升级/部署/崩溃重启期间用户刚交代的长活，又避免把几小时或几天前已搁置的会话意外拉起。
+ */
+export const INTERRUPTED_RESUME_WINDOW_MS = 60 * 60 * 1000;
 
 export const ITEM_TYPE = "hob.item";
 export const ITEM_UPDATE_TYPE = "hob.item.update";
@@ -67,6 +72,25 @@ export const USER_TYPE = "hob.user";
 export const EVENT_TYPE = "hob.event";
 /** 只给助手知道、不开一轮的事（用户直接对任务说的话）。 */
 const CONTEXT_TYPE = "hob.context";
+/** 内部重启恢复标记（不进上下文、不显示在界面），防止非续跑会话在多次重启时重复写提示行。 */
+const RESTART_TYPE = "hob.restart";
+const SHUTDOWN_TURNS_FILE = "interrupted-turns.json";
+
+/** 执行成功后会通过 pi 的 terminate 直接结束本轮的工具（最后停在它们的 toolResult 属于正常结束）。 */
+const TERMINATING_TOOLS = new Set([
+  "start_job",
+  "ask_user",
+  "login",
+  "fill_new_password",
+  "send_card",
+  "message_assistant",
+  "message_group",
+  "hand_back",
+  "open_topic",
+  "close_topic",
+  "manage_topic",
+  "show_page",
+]);
 
 /** 会话条目的 id 和 at 由会话文件给出，写卡片时不用传。 */
 /** 事件附带的信息，落在会话的事件条目上：routine 给回复挂「⏱ 名字」，cont 见 walk。 */
@@ -240,6 +264,8 @@ interface RouterState {
   terminatingTools?: Set<string>;
   /** 本轮已经查看过的任务快照，用于无变化时压缩 check_job 返回。 */
   checkJobSnapshots?: Map<string, string>;
+  /** 进程退出释放中：禁止再往对话写错误提示或发推送。 */
+  disposed?: boolean;
   scriptRevokes?: Set<() => void>;
   desktop?: DesktopToolSession;
   /** 这个会话装的工具在界面上叫什么名字（只盯 Hob 自己装的那批） */
@@ -263,6 +289,228 @@ function readEntries(file: string): SessionEntry[] {
     }
   }
   return out;
+}
+
+type InterruptedReason = "tool_call" | "after_tool" | "user_message" | "event" | "shutdown";
+
+interface UndeliveredUser {
+  text: string;
+  quote?: { itemId: string; text: string };
+  files?: string[];
+  timestamp: number;
+}
+
+interface InterruptedInspection {
+  danglingTools: { id: string; name: string }[];
+  interruptedReason?: InterruptedReason;
+  interruptedToolNames: string[];
+  eventDetails?: EventDetails;
+  undeliveredUser?: UndeliveredUser;
+  lastUserMessageAt?: number;
+  alreadyNoted: boolean;
+  alreadyDeclinedResume: boolean;
+}
+
+interface ShutdownTurnRecord {
+  assistantId: string;
+  place: Place;
+  stoppedAt: string;
+}
+
+interface ResumeTask {
+  key: string;
+  assistantId: string;
+  place: Place;
+  file: string;
+  inspection: InterruptedInspection;
+  token: { assistantId: string; place: Place; cancelled: boolean };
+}
+
+function danglingToolCallResultText(toolName: string): string {
+  const base = "Hob 重启，这次调用被中断，没有结果。";
+  return toolName === "bash" ? `${base}命令可能跑到一半，要用到它的结果就重跑。` : base;
+}
+
+function parseEntryTimestamp(iso: unknown, fallbackMs?: unknown): number | undefined {
+  if (typeof iso === "string") {
+    const parsed = Date.parse(iso);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  if (typeof fallbackMs === "number" && Number.isFinite(fallbackMs) && fallbackMs > 0) return fallbackMs;
+  return undefined;
+}
+
+function openExistingSessionManager(file: string, cwd: string): SessionManager | undefined {
+  if (!existsSync(file)) return undefined;
+  try {
+    if (statSync(file).size === 0) return undefined;
+    return SessionManagerImpl.open(file, dirname(file), cwd);
+  } catch (error) {
+    console.error(`读取会话文件失败，跳过恢复检查（${file}）：`, error);
+    return undefined;
+  }
+}
+
+/**
+ * 检查一个会话当前分支是否停在被打断的回合上：
+ * 1. 助手最后一条消息带 toolCall 却缺少对应 toolResult；
+ * 2. 工具已返回结果但还没等到助手下一句回复（非终止类工具）；
+ * 3. 最后是用户消息（含 steer）或事件通知，还没有助手回复；
+ * 4. 用户刚发的 hob.user 还没来得及写进模型消息队列；
+ * 5. 正常关机记录（interrupted-turns.json）表明关机时该会话仍在运行。
+ */
+function inspectInterruptedSession(
+  branch: SessionEntry[],
+  projectionEntries: ProjectedSessionEntry[],
+  fromShutdown: boolean,
+): InterruptedInspection {
+  let lastUserMessageAt: number | undefined;
+  for (const entry of branch) {
+    if (entry.type === "message" && entry.message.role === "user") {
+      const ts = parseEntryTimestamp(entry.timestamp, entry.message.timestamp);
+      if (ts !== undefined) lastUserMessageAt = Math.max(lastUserMessageAt ?? 0, ts);
+    } else if (entry.type === "custom" && entry.customType === USER_TYPE && !(entry.data as { from?: unknown } | undefined)?.from) {
+      const ts = parseEntryTimestamp(entry.timestamp);
+      if (ts !== undefined) lastUserMessageAt = Math.max(lastUserMessageAt ?? 0, ts);
+    }
+  }
+
+  let alreadyNoted = false;
+  let alreadyDeclinedResume = false;
+  for (let i = branch.length - 1; i >= 0; i -= 1) {
+    const entry = branch[i]!;
+    if (
+      (entry.type === "message" && entry.message.role !== "system") ||
+      entry.type === "compaction" ||
+      entry.type === "branch_summary" ||
+      (entry.type === "custom_message" && entry.customType === EVENT_TYPE) ||
+      (entry.type === "custom" && entry.customType === USER_TYPE)
+    ) {
+      break;
+    }
+    if (entry.type === "custom" && entry.customType === RESTART_TYPE) {
+      const data = entry.data as { resumed?: boolean } | undefined;
+      if (data?.resumed === false) alreadyDeclinedResume = true;
+      else if (data?.resumed === true) alreadyNoted = true;
+    }
+  }
+
+  let undeliveredUser: UndeliveredUser | undefined;
+  const lastHobUserIdx = branch.findLastIndex((entry) => entry.type === "custom" && entry.customType === USER_TYPE);
+  if (lastHobUserIdx >= 0) {
+    const entry = branch[lastHobUserIdx]!;
+    const data = (entry.type === "custom" ? entry.data : undefined) as { text?: string; quote?: { itemId: string; text: string }; files?: string[]; from?: unknown; forwardedFrom?: unknown } | undefined;
+    if (data && !data.from && !data.forwardedFrom) {
+      const trailing = branch.slice(lastHobUserIdx + 1);
+      const handled = trailing.some((item) =>
+        (item.type === "message" && item.message.role === "user") ||
+        item.type === "compaction" ||
+        item.type === "branch_summary" ||
+        (item.type === "custom" && item.customType === ITEM_TYPE && (item.data as { kind?: string } | undefined)?.kind === "note"),
+      );
+      if (!handled) {
+        undeliveredUser = {
+          text: typeof data.text === "string" ? data.text : "",
+          ...(data.quote ? { quote: data.quote } : {}),
+          ...(data.files?.length ? { files: data.files } : {}),
+          timestamp: parseEntryTimestamp(entry.timestamp) ?? Date.now(),
+        };
+      }
+    }
+  }
+
+  const isTurnEntry = (proj: ProjectedSessionEntry): boolean => {
+    const src = proj.sourceEntry;
+    if (src.type === "message") return src.message.role === "user" || src.message.role === "assistant" || src.message.role === "toolResult";
+    return src.type === "custom_message" && src.customType === EVENT_TYPE;
+  };
+  let lastAssistantIdx = -1;
+  let lastTurnIdx = -1;
+  for (let i = 0; i < projectionEntries.length; i += 1) {
+    const proj = projectionEntries[i]!;
+    if (proj.messages.some((msg) => msg.role === "assistant")) lastAssistantIdx = i;
+    if (isTurnEntry(proj)) lastTurnIdx = i;
+  }
+
+  let danglingTools: { id: string; name: string }[] = [];
+  let interruptedReason: InterruptedReason | undefined;
+  let interruptedToolNames: string[] = [];
+  let eventDetails: EventDetails | undefined;
+
+  const afterAssistant = lastAssistantIdx >= 0 ? projectionEntries.slice(lastAssistantIdx + 1) : [];
+  const hasNonResultAfterAssistant = afterAssistant.some((proj) =>
+    proj.messages.some((msg) => msg.role === "user" || msg.role === "compactionSummary" || msg.role === "branchSummary") ||
+    (proj.sourceEntry.type === "custom_message" && proj.sourceEntry.customType === EVENT_TYPE),
+  );
+
+  if (lastAssistantIdx >= 0 && !hasNonResultAfterAssistant) {
+    const assistantMsg = projectionEntries[lastAssistantIdx]!.messages.findLast((msg) => msg.role === "assistant");
+    if (assistantMsg && assistantMsg.role === "assistant") {
+      const blocks = Array.isArray(assistantMsg.content) ? assistantMsg.content : [];
+      const toolCalls = blocks.flatMap((part) =>
+        part && typeof part === "object" && part.type === "toolCall" && typeof part.id === "string" && typeof part.name === "string"
+          ? [{ id: part.id, name: part.name }]
+          : [],
+      );
+      const toolResults = afterAssistant.flatMap((proj) => proj.messages.filter((msg) => msg.role === "toolResult"));
+      const answeredIds = new Set(toolResults.map((msg) => msg.toolCallId));
+      danglingTools = toolCalls.filter((tc) => !answeredIds.has(tc.id));
+      if (danglingTools.length > 0) {
+        if (fromShutdown || (assistantMsg.stopReason !== "error" && assistantMsg.stopReason !== "aborted")) {
+          interruptedReason = "tool_call";
+          interruptedToolNames = [...new Set(danglingTools.map((tc) => tc.name))];
+        }
+      } else if (toolCalls.length > 0) {
+        const terminatedNormally = toolResults.length > 0 && toolResults.every((res) => TERMINATING_TOOLS.has(res.toolName) && !res.isError);
+        if (fromShutdown || !terminatedNormally) {
+          interruptedReason = "after_tool";
+          interruptedToolNames = [...new Set(toolResults.map((res) => res.toolName))];
+        }
+      } else if (fromShutdown) {
+        interruptedReason = "shutdown";
+      }
+    }
+  } else if (lastTurnIdx > lastAssistantIdx) {
+    const lastProj = projectionEntries[lastTurnIdx]!;
+    const lastMsg = lastProj.messages.at(-1);
+    if (lastMsg?.role === "user") {
+      interruptedReason = "user_message";
+    } else if (lastProj.sourceEntry.type === "custom_message" && lastProj.sourceEntry.customType === EVENT_TYPE) {
+      interruptedReason = "event";
+      eventDetails = lastProj.sourceEntry.details as EventDetails | undefined;
+    }
+  }
+
+  if (!interruptedReason && (undeliveredUser || fromShutdown)) {
+    interruptedReason = undeliveredUser ? "user_message" : "shutdown";
+  }
+
+  return {
+    danglingTools,
+    interruptedReason,
+    interruptedToolNames,
+    eventDetails,
+    undeliveredUser,
+    lastUserMessageAt,
+    alreadyNoted,
+    alreadyDeclinedResume,
+  };
+}
+
+function buildResumePrompt(inspection: InterruptedInspection): string {
+  const names = inspection.interruptedToolNames.join("、");
+  switch (inspection.interruptedReason) {
+    case "tool_call":
+      return `Hob 刚刚重启，你上一轮在调用工具（${names || "工具"}）时被打断，中断的调用已补上失败结果。请结合上面的上下文和用户最后交代的事继续完成（如需中断前工具的结果，请重新执行）。`;
+    case "after_tool":
+      return `Hob 刚刚重启，你上一轮在执行完工具（${names || "工具"}）等待继续回复时被打断。请结合上面的上下文和工具结果，继续把用户交代的事做完。`;
+    case "event":
+      return "Hob 刚刚重启，你上一轮在处理刚收到的事件通知时被打断。请结合上面的上下文继续处理并向用户交代结果。";
+    case "user_message":
+    case "shutdown":
+    default:
+      return "Hob 刚刚重启，你上一轮在回复用户消息时被打断。请结合上面的上下文，接着把用户交代的事做完。";
+  }
 }
 
 /**
@@ -417,6 +665,11 @@ export class RouterManager {
   private suggestionEpoch = new Map<string, number>();
   /** 不在内存里的会话：上次查过的会话文件修改时间，文件没变就不再打开 */
   private idleChecked = new Map<string, number>();
+  private disposed = false;
+  /** 启动后正在排队的自动续跑会话（键 → 任务令牌，供 isBusy / waitIdle / cancelPendingResume 使用）。 */
+  private pendingResumes = new Map<string, { assistantId: string; place: Place; cancelled: boolean }>();
+  private resumeQueue: Promise<void> = Promise.resolve();
+  private recoveringPromise?: Promise<void>;
 
   private liveUpdate(assistantId: string, callId: string, args: Record<string, unknown>, flush = false, place?: Place): void {
     const key = sessionKey(assistantId, place);
@@ -533,6 +786,7 @@ export class RouterManager {
   }
 
   async ensure(assistantId: string, place?: Place): Promise<RouterState> {
+    if (this.recoveringPromise) await this.recoveringPromise;
     const assistant = this.assistant(assistantId);
     const normalized = placeOf(place);
     if (normalized.topicId) {
@@ -1723,6 +1977,7 @@ export class RouterManager {
   /** 这一轮收尾：待办清理由 todosBusy 判断，单聊推送在此判定，群会话交给 GroupManager 按波次收口判定。 */
   private finishTurn(state: RouterState): TurnOutcome | undefined {
     if (state.running > 0) return undefined;
+    if (state.disposed || this.disposed) return undefined;
     const error = state.turnFailure;
     const busy = todosBusy(this.runtime, state.assistantId, state.place);
     if (!error && !busy) releaseIdleTodos(this.runtime, state.assistantId, state.place);
@@ -1812,7 +2067,7 @@ export class RouterManager {
   }
 
   private async fail(state: RouterState, error: unknown): Promise<void> {
-    if (state.stalled) return;
+    if (state.stalled || state.disposed || this.disposed) return;
     const message = error instanceof Error ? error.message : String(error);
     state.turnFailure ??= message;
     await this.note(state, "info", t("发生错误：{error}", { error: message }));
@@ -1865,6 +2120,7 @@ export class RouterManager {
 
   async send(assistantId: string, body: SendMessageBody, place?: Place): Promise<Item> {
     const target = placeOf(place);
+    this.cancelPendingResume(assistantId, target);
     if (target.topicId) {
       this.assistant(assistantId);
       const topic = assertAssistantTopic(this.store, assistantId, target.topicId);
@@ -2063,6 +2319,7 @@ export class RouterManager {
   }
 
   async stop(assistantId: string, place?: Place): Promise<void> {
+    this.cancelPendingResume(assistantId, place);
     const state = this.routers.get(sessionKey(assistantId, place));
     if (state) {
       state.stalled = true;
@@ -2106,20 +2363,37 @@ export class RouterManager {
     }
   }
 
+  hasPendingResume(assistantId: string, place?: Place): boolean {
+    return this.pendingResumes.has(sessionKey(assistantId, place));
+  }
+
+  cancelPendingResume(assistantId: string, place?: Place): void {
+    const key = sessionKey(assistantId, place);
+    const pending = this.pendingResumes.get(key);
+    if (!pending) return;
+    pending.cancelled = true;
+    this.pendingResumes.delete(key);
+    this.publishPlaceSummary(assistantId, place);
+  }
+
   isBusy(assistantId: string, place?: Place): boolean {
-    const state = this.routers.get(sessionKey(assistantId, place));
+    const key = sessionKey(assistantId, place);
+    const state = this.routers.get(key);
     // 只看助手自己在不在回复：任务不阻塞对话，任务的进度在任务卡上，不再算进来（不然任务跑多久「…」就挂多久）
-    return (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
+    return (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false) || this.pendingResumes.has(key);
   }
 
   /** 这个群里正在说话的成员（左栏小橙点、群状态行用）。 */
   busyMembers(groupId: string): string[] {
-    const busy: string[] = [];
+    const busy = new Set<string>();
     for (const state of this.routers.values()) {
       if (state.place.groupId !== groupId) continue;
-      if ((state.running ?? 0) > 0 || state.session?.isStreaming) busy.push(state.assistantId);
+      if ((state.running ?? 0) > 0 || state.session?.isStreaming) busy.add(state.assistantId);
     }
-    return busy;
+    for (const pending of this.pendingResumes.values()) {
+      if (pending.place.groupId === groupId && !pending.cancelled) busy.add(pending.assistantId);
+    }
+    return [...busy];
   }
 
   /** 这个群里正在说话的成员各自在做什么（页面刚打开时补上「正在思考」）。 */
@@ -2131,13 +2405,14 @@ export class RouterManager {
 
   /** 等到这个助手没有在跑的回复，并且会话条目已经落定（测试和冒烟用）。 */
   async waitIdle(assistantId: string, timeoutMs = 15_000, place?: Place): Promise<void> {
+    const key = sessionKey(assistantId, place);
     const started = Date.now();
     let stable = 0;
     let lastCount = -1;
     await new Promise((resolve) => setTimeout(resolve, 20));
     while (Date.now() - started < timeoutMs) {
-      const state = this.routers.get(sessionKey(assistantId, place));
-      const busy = (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false);
+      const state = this.routers.get(key);
+      const busy = (state?.running ?? 0) > 0 || (state?.session?.isStreaming ?? false) || this.pendingResumes.has(key);
       const count = state?.manager?.getEntryCount() ?? -1;
       if (!busy) {
         stable = count === lastCount ? stable + 1 : 0;
@@ -2337,11 +2612,273 @@ export class RouterManager {
     };
   }
 
+  /** 正常关机前记录仍在跑（或排队待续）的会话，供下次启动更准确地判断被打断的回合。 */
+  recordShutdownTurns(): void {
+    const records = new Map<string, ShutdownTurnRecord>();
+    const now = new Date().toISOString();
+    for (const state of this.routers.values()) {
+      if (state.stalled || state.disposed) continue;
+      if (state.running > 0 || state.session?.isStreaming || Boolean(state.opening)) {
+        records.set(state.key, { assistantId: state.assistantId, place: placeOf(state.place), stoppedAt: now });
+      }
+    }
+    for (const [key, pending] of this.pendingResumes) {
+      if (pending.cancelled || records.has(key)) continue;
+      records.set(key, { assistantId: pending.assistantId, place: placeOf(pending.place), stoppedAt: now });
+    }
+    const file = join(systemDir(this.runtime.home), SHUTDOWN_TURNS_FILE);
+    if (!records.size) {
+      rmSync(file, { force: true });
+      return;
+    }
+    mkdirSync(dirname(file), { recursive: true });
+    const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
+    writeFileSync(tmp, `${JSON.stringify([...records.values()], null, 2)}\n`);
+    renameSync(tmp, file);
+  }
+
+  private takeShutdownKeys(): Set<string> {
+    const file = join(systemDir(this.runtime.home), SHUTDOWN_TURNS_FILE);
+    if (!existsSync(file)) return new Set();
+    try {
+      const raw = JSON.parse(readFileSync(file, "utf8")) as unknown;
+      if (!Array.isArray(raw)) return new Set();
+      return new Set(
+        raw
+          .filter((item): item is { assistantId: string; place?: Place } => Boolean(item && typeof item === "object" && typeof (item as { assistantId?: unknown }).assistantId === "string"))
+          .map((item) => sessionKey(item.assistantId, placeOf(item.place))),
+      );
+    } catch {
+      return new Set();
+    } finally {
+      rmSync(file, { force: true });
+    }
+  }
+
+  private sessionClosed(assistantId: string, place: Place): boolean {
+    if (place.topicId) return Boolean(this.store.assistantTopic(assistantId, place.topicId)?.closedAt);
+    if (place.groupId) return Boolean(this.store.group(place.groupId)?.closedAt);
+    return false;
+  }
+
+  private isInterruptedDelegationTurn(inspection: InterruptedInspection): boolean {
+    const delegationId = inspection.eventDetails?.delegationId;
+    if (!delegationId) return false;
+    return this.store.delegation(delegationId)?.status === "interrupted";
+  }
+
+  private hasPendingRouterApproval(assistantId: string, place: Place): boolean {
+    return this.store.approvals().some((approval) =>
+      approval.status === "pending" &&
+      approval.source === "router" &&
+      samePlace(placeOf(approval), place) &&
+      (place.groupId !== undefined || approval.assistantId === assistantId),
+    );
+  }
+
+  private appendStartupNote(assistantId: string, place: Place, text: string, restartResumed?: boolean): void {
+    if (place.groupId) {
+      this.runtime.groups.recordRestartNote(place.groupId, assistantId, text);
+      if (restartResumed !== undefined) {
+        const file = this.sessionFile(assistantId, place);
+        const manager = openExistingSessionManager(file, this.store.home);
+        manager?.appendCustomEntry(RESTART_TYPE, { resumed: restartResumed });
+      }
+      return;
+    }
+    const key = sessionKey(assistantId, place);
+    const file = this.sessionFile(assistantId, place);
+    mkdirSync(dirname(file), { recursive: true });
+    if (!existsSync(file)) writeFileSync(file, "");
+    const manager = openExistingSessionManager(file, this.store.home) ?? SessionManagerImpl.open(file, dirname(file), this.store.home);
+    const lead = this.derived(assistantId, place).result.lead;
+    const id = manager.appendCustomEntry(ITEM_TYPE, { kind: "note", icon: "info", text });
+    const at = manager.getEntries().find((entry) => entry.id === id)?.timestamp ?? new Date().toISOString();
+    if (restartResumed !== undefined) manager.appendCustomEntry(RESTART_TYPE, { resumed: restartResumed });
+    this.itemCache.delete(key);
+    this.emitItem(assistantId, { kind: "note", icon: "info", text, ...(lead ? { lead: true } : {}), id, at }, place);
+  }
+
+  /**
+   * 重启恢复：扫描所有对话会话（单聊、助手话题、群成员），结合关机快照找出被打断的回合，
+   * 补全悬空工具调用的结果、写入可见系统提示，并将近期回合按顺序排入续跑队列。
+   */
+  async recover(now = Date.now()): Promise<void> {
+    let releaseRecover!: () => void;
+    const lock = new Promise<void>((resolve) => { releaseRecover = resolve; });
+    this.recoveringPromise = lock;
+    const tasks: ResumeTask[] = [];
+    try {
+      const shutdownKeys = this.takeShutdownKeys();
+      const targets: { assistantId: string; place: Place; file: string }[] = [
+        ...this.store.assistants().flatMap((assistant) => [
+          { assistantId: assistant.id, place: {}, file: this.store.routerFile(assistant.id) },
+          ...this.store.assistantTopics(assistant.id).map((topic) => ({
+            assistantId: assistant.id,
+            place: { topicId: topic.id },
+            file: this.store.assistantTopicRouterFile(assistant.id, topic.id),
+          })),
+        ]),
+        ...this.store.groups().flatMap((group) =>
+          group.members.map((assistantId) => ({
+            assistantId,
+            place: { groupId: group.id },
+            file: this.store.groupMemberFile(group.id, assistantId),
+          })),
+        ),
+      ];
+
+      const detected: { assistantId: string; place: Place; key: string; file: string; inspection: InterruptedInspection }[] = [];
+      for (const target of targets) {
+        const key = sessionKey(target.assistantId, target.place);
+        const fromShutdown = shutdownKeys.has(key);
+        const existingState = this.routers.get(key);
+        if (existingState && !existingState.running && !existingState.session?.isStreaming) {
+          this.close(existingState);
+          this.routers.delete(key);
+        }
+        const manager = openExistingSessionManager(target.file, this.store.home);
+        if (!manager) {
+          if (fromShutdown && target.place.groupId) {
+            const lastGroupUser = this.store.groupItems(target.place.groupId).findLast((item) => item.kind === "user");
+            const lastUserMessageAt = lastGroupUser ? parseEntryTimestamp(lastGroupUser.at) : undefined;
+            detected.push({
+              ...target,
+              key,
+              inspection: {
+                danglingTools: [],
+                interruptedReason: "shutdown",
+                interruptedToolNames: [],
+                lastUserMessageAt,
+                alreadyNoted: false,
+                alreadyDeclinedResume: false,
+              },
+            });
+          }
+          continue;
+        }
+
+        const inspection = inspectInterruptedSession(manager.getBranch(), manager.buildSessionProjection().entries, fromShutdown);
+        if (inspection.danglingTools.length > 0) {
+          for (const tool of inspection.danglingTools) {
+            manager.appendMessage({
+              role: "toolResult",
+              toolCallId: tool.id,
+              toolName: tool.name,
+              content: [{ type: "text", text: danglingToolCallResultText(tool.name) }],
+              isError: true,
+              timestamp: now,
+            });
+          }
+          this.itemCache.delete(key);
+        }
+
+        if (!inspection.interruptedReason) continue;
+        if (inspection.alreadyDeclinedResume && !fromShutdown) continue;
+        if (inspection.lastUserMessageAt === undefined && target.place.groupId && fromShutdown) {
+          const lastGroupUser = this.store.groupItems(target.place.groupId).findLast((item) => item.kind === "user");
+          if (lastGroupUser) inspection.lastUserMessageAt = parseEntryTimestamp(lastGroupUser.at);
+        }
+        detected.push({ ...target, key, inspection });
+      }
+
+      for (const item of detected) {
+        if (this.disposed) break;
+        const recent = item.inspection.lastUserMessageAt !== undefined && now - item.inspection.lastUserMessageAt <= INTERRUPTED_RESUME_WINDOW_MS;
+        const canResume =
+          recent &&
+          !this.sessionClosed(item.assistantId, item.place) &&
+          !this.isInterruptedDelegationTurn(item.inspection) &&
+          !this.hasPendingRouterApproval(item.assistantId, item.place) &&
+          !(await this.modelGap(item.assistantId, item.place));
+
+        if (!item.inspection.alreadyNoted || !canResume) {
+          const noteText = canResume
+            ? t("Hob 重启过，刚才这一轮被打断了，正在接着做")
+            : t("Hob 重启过，刚才这一轮被打断了");
+          this.appendStartupNote(item.assistantId, item.place, noteText, canResume);
+        } else {
+          const manager = openExistingSessionManager(item.file, this.store.home);
+          manager?.appendCustomEntry(RESTART_TYPE, { resumed: canResume });
+          this.itemCache.delete(item.key);
+        }
+
+        if (canResume) {
+          const token = { assistantId: item.assistantId, place: item.place, cancelled: false };
+          this.pendingResumes.set(item.key, token);
+          this.publishPlaceSummary(item.assistantId, item.place);
+          tasks.push({ key: item.key, assistantId: item.assistantId, place: item.place, file: item.file, inspection: item.inspection, token });
+        }
+      }
+    } finally {
+      releaseRecover();
+      if (this.recoveringPromise === lock) this.recoveringPromise = undefined;
+    }
+
+    if (!tasks.length || this.disposed) return;
+    this.resumeQueue = this.resumeQueue.then(async () => {
+      for (const task of tasks) {
+        if (this.disposed || task.token.cancelled) continue;
+        await this.runResumedTurn(task);
+      }
+    });
+  }
+
+  private async runResumedTurn(task: ResumeTask): Promise<void> {
+    const { key, assistantId, place, inspection, token } = task;
+    try {
+      if (this.disposed || token.cancelled) return;
+      if (this.sessionClosed(assistantId, place)) return;
+      const resumePrompt = buildResumePrompt(inspection);
+      if (place.groupId) {
+        const group = this.store.group(place.groupId);
+        if (!group || !group.members.includes(assistantId)) return;
+        const isHandoverPending = Boolean(group.parentId && group.handover && (!group.handover.result || !group.handover.deliveredAt));
+        await this.runtime.groups.deliverEvent(place.groupId, assistantId, resumePrompt, "", {
+          workDone: true,
+          userInitiated: !isHandoverPending,
+          bypassBusy: true,
+        });
+        return;
+      }
+      if (inspection.undeliveredUser) {
+        const state = await this.ensure(assistantId, place);
+        if (this.disposed || token.cancelled) return;
+        const lines = [inspection.undeliveredUser.text];
+        if (inspection.undeliveredUser.quote) lines.unshift(`（引用我之前的话：「${inspection.undeliveredUser.quote.text}」）`);
+        if (inspection.undeliveredUser.files?.length) lines.push(`附件：${inspection.undeliveredUser.files.join("、")}`);
+        const prompt = `${nowBlock(this.runtime, assistantId, place)}\n\n${lines.filter(Boolean).join("\n")}\n\n[hob-event] ${resumePrompt}`;
+        await this.deliver(state, prompt, {
+          ...(inspection.undeliveredUser.files?.length ? { files: inspection.undeliveredUser.files } : {}),
+          knowledgeQuery: inspection.undeliveredUser.text,
+          userInitiated: true,
+          bypassBusy: true,
+        });
+        return;
+      }
+      await this.pushEvent(assistantId, resumePrompt, { workDone: true, userInitiated: true }, undefined, place);
+    } catch (error) {
+      console.error(`重启续跑失败（${key}）：`, error);
+    } finally {
+      token.cancelled = true;
+      if (this.pendingResumes.get(key) === token) {
+        this.pendingResumes.delete(key);
+        this.publishPlaceSummary(assistantId, place);
+      }
+    }
+  }
+
   /** 进程退出或测试收尾：释放所有 Router 会话。 */
   disposeAll(): void {
+    this.disposed = true;
+    for (const pending of this.pendingResumes.values()) pending.cancelled = true;
+    this.pendingResumes.clear();
     if (this.idleCompactionTimer) clearInterval(this.idleCompactionTimer);
     this.idleCompactionTimer = undefined;
-    for (const state of this.routers.values()) this.close(state);
+    for (const state of this.routers.values()) {
+      state.disposed = true;
+      this.close(state);
+    }
     this.routers.clear();
     this.itemCache.clear();
   }

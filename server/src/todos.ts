@@ -207,6 +207,7 @@ export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Plac
  * 一轮出错结束的那一轮调用方不清，留到下一轮。
  */
 export function releaseIdleTodos(runtime: HobRuntime, assistantId: string, place?: Place): void {
+  if (runtime.router.hasPendingResume(assistantId, place)) return;
   const path = sessionTodosPath(runtime.home, assistantId, place);
   if (!readTodos(path).length) return;
   if (todosBusy(runtime, assistantId, place)) return;

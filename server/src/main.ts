@@ -75,7 +75,8 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   runtime.jobs.recover();
   runtime.delegations.recover();
   runtime.groups.recoverHandovers();
-  // 重启后没有在跑的一轮，任务按中断、转交按中断处理过了：手上没活的待办这时候收起
+  await runtime.router.recover();
+  // 重启后没有在跑的一轮（且不在等待自动续跑），任务按中断、转交按中断处理过了：手上没活的待办这时候收起
   releaseIdleTodosAtStartup(runtime);
   void runtime.plugins.start().catch(error => console.error("插件连接启动失败：", error));
   runtime.routines.start();
@@ -104,6 +105,7 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
       runtime.routines.stop();
       runtime.scriptTools.close();
       runtime.jobs.disposeAll();
+      runtime.router.recordShutdownTurns();
       runtime.router.disposeAll();
       await runtime.providerPlugins.close();
       await runtime.plugins.close();
@@ -112,11 +114,28 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   };
 }
 
+/** 收到退出信号时执行优雅关机，记录仍在运行的对话回合并退出。 */
+export function attachShutdownSignals(server: HobServer): () => void {
+  let closing = false;
+  const onSignal = () => {
+    if (closing) return;
+    closing = true;
+    void server.close().finally(() => process.exit(0));
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  return () => {
+    process.off("SIGINT", onSignal);
+    process.off("SIGTERM", onSignal);
+  };
+}
+
 const isMain = process.argv[1]?.endsWith("main.ts") || process.argv[1]?.endsWith("main.js");
 if (isMain) {
   startHob()
     .then((server) => {
       console.log(`Hob 在 http://${server.runtime.config.host}:${server.port}（数据目录 ${server.runtime.home}）`);
+      attachShutdownSignals(server);
     })
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : error);

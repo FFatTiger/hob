@@ -165,6 +165,8 @@ export class GroupManager {
   private epochs = new Map<string, number>();
   /** 正在往主助手的对话送结论的话题 */
   private delivering = new Set<string>();
+  /** 启动修补流式条目时写入的重启提示 id（供 router.recover 替换为带续跑语义的提示，避免重复两行）。 */
+  private repairedNotes = new Map<string, string>();
 
   constructor(private readonly runtime: HobRuntime) {
     this.repairInterrupted();
@@ -754,6 +756,7 @@ export class GroupManager {
     const targets = explicit.length ? explicit : [group.ownerId];
     const allReply = !explicit.length && group.replyMode === "all";
     const recipients = allReply ? group.members : targets;
+    for (const id of recipients) this.runtime.router.cancelPendingResume(id, { groupId: gid });
     // 被用户重新叫到的成员可以按新消息继续处理；其他成员仍在等自己问题卡的答复。
     for (const approval of this.store.approvals()) {
       if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending" || !recipients.includes(approval.assistantId)) continue;
@@ -1329,13 +1332,30 @@ export class GroupManager {
     return group;
   }
 
+  /** 重启时在群时间线写一条提示；若启动修补刚写过占位提示则原地替换，避免重复两行。 */
+  recordRestartNote(gid: string, assistantId: string, text: string): GroupItem {
+    const existingId = this.repairedNotes.get(gid);
+    if (existingId) {
+      this.repairedNotes.delete(gid);
+      const existing = this.store.groupItems(gid).find((entry) => entry.id === existingId);
+      if (existing && existing.kind === "note") {
+        const updated: GroupItem = { ...existing, speaker: assistantId, text };
+        this.store.appendGroupItem(gid, updated);
+        this.bus.emit({ type: "group-item", groupId: gid, item: updated });
+        return updated;
+      }
+    }
+    return this.note(gid, assistantId, text, "info");
+  }
+
   /** 重启：被中断的回合和单聊一样不续，但时间线里留一条说明，不留永远在流式的条目。 */
   private repairInterrupted(): void {
     for (const group of this.store.groups()) {
       for (const item of this.store.groupItems(group.id)) {
         if (item.kind !== "assistant" || !item.streaming) continue;
         this.store.appendGroupItem(group.id, { ...item, streaming: false });
-        this.note(group.id, SYSTEM, RESTART_NOTE, "info");
+        const note = this.note(group.id, SYSTEM, RESTART_NOTE, "info");
+        this.repairedNotes.set(group.id, note.id);
       }
     }
   }

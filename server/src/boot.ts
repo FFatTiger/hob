@@ -88,9 +88,10 @@ export function boot(): void {
   applyEngineEnv(process.env, home);
   ensurePlaywrightCli(engineDir(home));
   import("./main.ts")
-    .then(({ startHob }) => startHob({ home }))
-    .then((server) => {
+    .then(({ startHob, attachShutdownSignals }) => startHob({ home }).then((server) => ({ server, attachShutdownSignals })))
+    .then(({ server, attachShutdownSignals }) => {
       console.log(`Hob 在 http://${server.runtime.config.host}:${server.port}（数据目录 ${server.runtime.home}）`);
+      attachShutdownSignals(server);
     })
     .catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : error);

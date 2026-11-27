@@ -13,6 +13,7 @@ import type {
   SendMessageBody,
 } from "../../shared/types.ts";
 import { newId } from "./ids.ts";
+import { filterSafeFiles } from "./files.ts";
 import { reactionsList } from "./store.ts";
 import { patchOverrides } from "./topic-config.ts";
 import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
@@ -445,7 +446,10 @@ export class GroupManager {
       const result = conclusion
         ? `交给群「${groupName}」的话题「${topic.name}」关了。结论：${conclusion}`
         : `交给群「${groupName}」的话题「${topic.name}」被${by === "user" ? "用户" : "助手"}关了，没有写结论。`;
-      const files = [...new Set([...this.store.groupItems(topic.id).flatMap(sentFiles), ...jobs.filter((job) => job.status === "done").flatMap((job) => job.files ?? [])])];
+      const files = filterSafeFiles(
+        [...this.store.groupItems(topic.id).flatMap(sentFiles), ...jobs.filter((job) => job.status === "done").flatMap((job) => job.files ?? [])],
+        this.runtime.home,
+      );
       next.handover = {
         ...topic.handover,
         result: rows.length ? `${result}\n话题里的任务：${rows.join("；")}` : result,
@@ -471,12 +475,13 @@ export class GroupManager {
     if (!handover || !result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
     const targetPlace = handover.fromTopicId ? { topicId: handover.fromTopicId } : undefined;
-    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace, handover.at, handover.resultFiles).then((received) => {
+    const resultFiles = filterSafeFiles(handover.resultFiles, this.runtime.home);
+    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace, handover.at, resultFiles.length ? resultFiles : undefined).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
       if (!current?.handover || current.handover.deliveredAt || current.handover.result !== result) return;
       this.store.saveGroup({ ...current, handover: { ...current.handover, deliveredAt: new Date().toISOString() } });
-      this.runtime.delegations.topicEnded(tid, result, { files: handover.resultFiles });
+      this.runtime.delegations.topicEnded(tid, result, { files: resultFiles });
     }).catch((error) => console.error("话题的结论没送到：", error)).finally(() => this.delivering.delete(tid));
   }
 

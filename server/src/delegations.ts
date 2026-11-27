@@ -1,5 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import type { Delegation, Place } from "../../shared/types.ts";
+import { filterSafeFiles } from "./files.ts";
 import { newId } from "./ids.ts";
 import { jobResultEvent } from "./jobs.ts";
 import type { HobRuntime } from "./runtime.ts";
@@ -95,7 +96,7 @@ export class DelegationManager {
 
   addTopic(id: string, topicId: string): void {
     const record = this.runtime.store.internalDelegation(id);
-    if (!record || record.reportedAt || record.pendingResult || record.topics?.[topicId]) return;
+    if (!record || record.reportedAt || record.pendingResult || record.topics?.[topicId] === "pending") return;
     this.runtime.store.saveDelegation({ ...record, topics: { ...record.topics, [topicId]: "pending" } });
   }
 
@@ -116,10 +117,11 @@ export class DelegationManager {
     const record = this.forTopic(topicId);
     if (!record) return;
     const reply = [record.reply, result].filter(Boolean).join("\n");
+    const files = filterSafeFiles(options.files, this.runtime.home);
     this.runtime.store.saveDelegation({
       ...record, reply,
       topics: { ...record.topics, [topicId]: options.failed ? "failed" : "done" },
-      ...(options.files?.length ? { resultFiles: [...new Set([...(record.resultFiles ?? []), ...options.files])] } : {}),
+      ...(files.length ? { resultFiles: filterSafeFiles([...(record.resultFiles ?? []), ...files], this.runtime.home) } : {}),
     });
     this.update(record.id);
   }
@@ -197,7 +199,7 @@ export class DelegationManager {
     const now = new Date().toISOString();
     const next: StoredDelegation = { ...record, status, ...(complete ? { endedAt: now } : {}) };
     if (complete) {
-      const files = [...new Set([...(record.resultFiles ?? []), ...jobs.flatMap((job) => job?.files ?? [])])];
+      const files = filterSafeFiles([...(record.resultFiles ?? []), ...jobs.flatMap((job) => job?.files ?? [])], this.runtime.home);
       if (files.length) next.resultFiles = files;
       const reports = jobs.map((job) => {
         if (!job) return "任务记录丢失";
@@ -219,7 +221,7 @@ export class DelegationManager {
     this.delivering.add(record.id);
     const urgent = record.status === "stuck" || record.status === "interrupted";
     const fromPlace = record.fromTopicId ? { topicId: record.fromTopicId } : undefined;
-    const files = record.status === "takenOver" ? undefined : record.resultFiles;
+    const files = record.status === "takenOver" ? undefined : filterSafeFiles(record.resultFiles, this.runtime.home);
     void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, urgent, fromPlace, ...(files?.length ? [files] : [])).then((received) => {
       if (!received) return;
       const current = this.runtime.store.internalDelegation(record.id);

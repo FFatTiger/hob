@@ -105,6 +105,22 @@ export function checkSensitivePath(targetPath: string, home?: string): string | 
   return undefined;
 }
 
+/** 过滤空白与敏感路径，按 resolve 归一化并去重（保留首次出现顺序）。 */
+export function filterSafeFiles(files: readonly string[] | undefined, home: string): string[] {
+  if (!files?.length) return [];
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const raw of files) {
+    const trimmed = typeof raw === "string" ? raw.trim() : "";
+    if (!trimmed) continue;
+    const path = resolve(trimmed);
+    if (seen.has(path) || checkSensitivePath(path, home)) continue;
+    seen.add(path);
+    out.push(path);
+  }
+  return out;
+}
+
 /**
  * 解析一个路径：realpath 后必须在数据目录或某个任务的工作目录里（符号链接指出去就是 403），
  * 凭据和内部状态文件不开放，不是普通文件当 404。

@@ -60,7 +60,13 @@ export interface OpenSessionOptions {
   /** Router 大结果落盘目录；任务不传。 */
   spillDir?: string;
   /** Router 单轮连续做事超过阈值时在工具返回末尾附客观事实；任务不传。 */
-  turnProgressFact?: { minElapsedMs?: number; minCalls?: number; now?: () => number };
+  turnProgressFact?: {
+    minElapsedMs?: number;
+    minCalls?: number;
+    repeatMs?: number;
+    repeatCalls?: number;
+    now?: () => number;
+  };
   /** 工具和模型各自的无响应时限；每次调用时读取当前设置。 */
   stall?: { milliseconds: () => number; onRetry: () => void };
 }
@@ -233,6 +239,8 @@ export function filterMemoryExtensions(
 
 const DEFAULT_TURN_FACT_MIN_ELAPSED_MS = 90_000;
 const DEFAULT_TURN_FACT_MIN_CALLS = 4;
+const DEFAULT_TURN_FACT_REPEAT_MS = 90_000;
+const DEFAULT_TURN_FACT_REPEAT_CALLS = 4;
 
 const TURN_DISPATCH_TOOLS = new Set([
   "start_job", "reply_job", "message_assistant", "message_group", "open_topic", "hand_back", "report_back",
@@ -266,18 +274,28 @@ function turnProgressFactExtension(
 ): ExtensionFactory {
   const minElapsedMs = config.minElapsedMs ?? DEFAULT_TURN_FACT_MIN_ELAPSED_MS;
   const minCalls = config.minCalls ?? DEFAULT_TURN_FACT_MIN_CALLS;
+  const repeatMs = config.repeatMs ?? DEFAULT_TURN_FACT_REPEAT_MS;
+  const repeatCalls = config.repeatCalls ?? DEFAULT_TURN_FACT_REPEAT_CALLS;
   const now = config.now ?? Date.now;
   return (pi) => {
     let turnStart = 0;
     let workCalls = 0;
-    pi.on("agent_start", async () => {
+    let factShown = false;
+    let lastFactCalls = 0;
+    let lastFactElapsedMs = 0;
+    const reset = () => {
       turnStart = now();
       workCalls = 0;
+      factShown = false;
+      lastFactCalls = 0;
+      lastFactElapsedMs = 0;
+    };
+    pi.on("agent_start", async () => {
+      reset();
     });
     pi.on("tool_result", async (event) => {
       if (TURN_DISPATCH_TOOLS.has(event.toolName) && !event.isError) {
-        turnStart = now();
-        workCalls = 0;
+        reset();
         return;
       }
       if (isTurnMetaTool(event.toolName)) return;
@@ -286,7 +304,14 @@ function turnProgressFactExtension(
       workCalls += 1;
       const elapsedMs = Math.max(0, current - turnStart);
       if (elapsedMs < minElapsedMs && workCalls < minCalls) return;
-      const fact = `（这一轮你已经自己连续执行了 ${workCalls} 次操作、耗时 ${formatTurnElapsed(elapsedMs)}，用户这边只能看到「正在做…」还插不上话。）`;
+      const shouldRepeat = !factShown
+        || (workCalls - lastFactCalls >= repeatCalls)
+        || (elapsedMs - lastFactElapsedMs >= repeatMs);
+      if (!shouldRepeat) return;
+      factShown = true;
+      lastFactCalls = workCalls;
+      lastFactElapsedMs = elapsedMs;
+      const fact = `（这一轮你已经自己连续执行了 ${workCalls} 次操作、耗时 ${formatTurnElapsed(elapsedMs)}，用户这段时间还没收到你的回复。）`;
       const content = [...event.content];
       let appended = false;
       for (let i = content.length - 1; i >= 0; i--) {

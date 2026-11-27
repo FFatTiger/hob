@@ -139,10 +139,14 @@ describe("Router 上下文边界", () => {
         turnProgressFact: { now: () => clock },
       });
 
-      // 前 3 次未达阈值不附带；meta 工具不计入；第 4 次触发次数阈值
+      // 前 3 次未达阈值不附带；meta 工具不计入；第 4 次触发，第 5~7 次不重复，第 8 次再次附带；派发后重置
       hob.faux.setResponses([
         call("probe", {}),
         call("update_todos", {}),
+        call("probe", {}),
+        call("probe", {}),
+        call("probe", {}),
+        call("probe", {}),
         call("probe", {}),
         call("probe", {}),
         call("probe", {}),
@@ -152,13 +156,16 @@ describe("Router 上下文边界", () => {
       ]);
       await session.prompt("第一轮");
       const results = session.messages.filter((m) => m.role === "toolResult");
-      expect(results).toHaveLength(7);
+      expect(results).toHaveLength(11);
       expect(JSON.stringify(results[0].content)).not.toContain("这一轮你已经自己连续执行了");
       expect(JSON.stringify(results[1].content)).not.toContain("这一轮你已经自己连续执行了"); // update_todos
       expect(JSON.stringify(results[3].content)).not.toContain("这一轮你已经自己连续执行了"); // 第 3 次 probe
-      expect(JSON.stringify(results[4].content)).toContain("这一轮你已经自己连续执行了 4 次操作、耗时 40 秒，用户这边只能看到「正在做…」还插不上话。");
-      expect(JSON.stringify(results[5].content)).not.toContain("这一轮你已经自己连续执行了"); // start_job
-      expect(JSON.stringify(results[6].content)).not.toContain("这一轮你已经自己连续执行了"); // start_job 后重置
+      expect(JSON.stringify(results[4].content)).toContain("这一轮你已经自己连续执行了 4 次操作、耗时 40 秒，用户这段时间还没收到你的回复。");
+      expect(JSON.stringify(results[5].content)).not.toContain("这一轮你已经自己连续执行了"); // 第 5 次不重复
+      expect(JSON.stringify(results[7].content)).not.toContain("这一轮你已经自己连续执行了"); // 第 7 次不重复
+      expect(JSON.stringify(results[8].content)).toContain("这一轮你已经自己连续执行了 8 次操作、耗时 1 分 20 秒，用户这段时间还没收到你的回复。");
+      expect(JSON.stringify(results[9].content)).not.toContain("这一轮你已经自己连续执行了"); // start_job
+      expect(JSON.stringify(results[10].content)).not.toContain("这一轮你已经自己连续执行了"); // start_job 后重置
 
       // 新一轮达到 90 秒时间阈值时，第 1 次调用即可触发
       const slowTool = {
@@ -182,7 +189,7 @@ describe("Router 上下文边界", () => {
       hob.faux.setResponses([call("probe", {}), text("好")]);
       await opened2.session.prompt("慢命令");
       const slowResult = opened2.session.messages.find((m) => m.role === "toolResult")!;
-      expect(JSON.stringify(slowResult.content)).toContain("这一轮你已经自己连续执行了 1 次操作、耗时 1 分 35 秒，用户这边只能看到「正在做…」还插不上话。");
+      expect(JSON.stringify(slowResult.content)).toContain("这一轮你已经自己连续执行了 1 次操作、耗时 1 分 35 秒，用户这段时间还没收到你的回复。");
 
       session.dispose();
       opened2.session.dispose();

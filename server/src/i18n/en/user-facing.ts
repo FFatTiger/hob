@@ -247,7 +247,7 @@ export const userFacingEn: Record<string, TranslationEntry> = {
   "成员必须是助手 ID 的列表": "Members must be a list of assistant IDs.",
   "助手不存在或已归档": "Assistant not found or already archived.",
   "模型设置无效": "Invalid model settings.",
-  "成员只能单设任务模型，对话模型在群设置里改": "Members can only have their own task model. Change the chat model in group settings.",
+  "成员只能单设任务模型，对话模型在群设置里改": "Members can only have their own job model. Change the chat model in group settings.",
   "只有话题可以恢复跟随规则。": "Only topics can reset a rule to follow the parent.",
   "本话题新增的规则不能恢复跟随。": "Rules added in this topic cannot be reset to follow the parent.",
   "助手不是这个群的成员": "The assistant is not a member of this group.",

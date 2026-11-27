@@ -106,7 +106,7 @@ describe("server user-facing translations", () => {
         body: JSON.stringify({ conversation: { ref: "faux/smart", thinking: "low" } }),
       });
       expect(response.status).toBe(400);
-      expect(await response.json()).toEqual({ error: "Members can only have their own task model. Change the chat model in group settings." });
+      expect(await response.json()).toEqual({ error: "Members can only have their own job model. Change the chat model in group settings." });
     } finally {
       hob.close();
     }

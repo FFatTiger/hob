@@ -1,6 +1,10 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AssistantSummary, AssistantTopicSummary, Bootstrap, Item } from "../../shared/types.ts";
+import type { AssistantSummary, AssistantTopicSummary, Bootstrap, Item, TopicConfigView } from "../../shared/types.ts";
 import { pushTarget } from "../../server/src/push.ts";
+import { userFacingEn } from "../../server/src/i18n/en/user-facing.ts";
+import { conversationEn } from "../src/i18n/en/conversation.ts";
 
 describe("issue 269 step 3 frontend store & target fixes", () => {
   beforeEach(() => {
@@ -211,5 +215,103 @@ describe("issue 269 step 3 frontend store & target fixes", () => {
     expect(store.getState().tsel).toBeNull();
     expect(store.getState().assistantTopics.some((t) => t.id === "tp-second")).toBe(true);
     expect(store.getState().items["planner@tp-second"]).toHaveLength(1);
+  });
+
+  it("报告 15：patchAssistantTopicConfig 推进请求序号、assistant 模型变更刷新话题配置、assistant_removed 清理 aid@tid 残留", async () => {
+    const { realApi } = await import("../src/api.ts");
+    const store = await import("../src/store.ts");
+    const boot = makeBootstrap();
+    Object.assign(store.getState(), { assistants: boot.assistants, assistantTopics: boot.assistantTopics, groups: [] });
+
+    const staleConfig: TopicConfigView = {
+      rules: [],
+      hiddenRules: [],
+      models: {
+        conversation: { source: "assistant", pick: { ref: "p/old", thinking: "low" }, inherited: { source: "assistant", pick: { ref: "p/old", thinking: "low" } } },
+        work: { source: "global", pick: { ref: "p/m1", thinking: "low" }, inherited: { source: "global", pick: { ref: "p/m1", thinking: "low" } } },
+      },
+    };
+    const savedConfig: TopicConfigView = {
+      rules: [],
+      hiddenRules: [],
+      models: {
+        conversation: { source: "topic", pick: { ref: "p/saved", thinking: "low" }, inherited: { source: "assistant", pick: { ref: "p/old", thinking: "low" } } },
+        work: { source: "global", pick: { ref: "p/m1", thinking: "low" }, inherited: { source: "global", pick: { ref: "p/m1", thinking: "low" } } },
+      },
+    };
+    const refreshedConfig: TopicConfigView = {
+      rules: [],
+      hiddenRules: [],
+      models: {
+        conversation: { source: "topic", pick: { ref: "p/saved", thinking: "low" }, inherited: { source: "assistant", pick: { ref: "p/asst-new", thinking: "low" } } },
+        work: { source: "global", pick: { ref: "p/m1", thinking: "low" }, inherited: { source: "global", pick: { ref: "p/m1", thinking: "low" } } },
+      },
+    };
+
+    // 1. 较早发出的 GET 晚于 PATCH 返回时，不覆盖 PATCH 刚保存的值
+    let resolveStaleGet!: (v: TopicConfigView) => void;
+    const staleGetPromise = new Promise<TopicConfigView>((r) => { resolveStaleGet = r; });
+    const getConfigSpy = vi.spyOn(realApi, "assistantTopicConfig").mockReturnValueOnce(staleGetPromise);
+    vi.spyOn(realApi, "patchAssistantTopicConfig").mockResolvedValueOnce(savedConfig);
+
+    const loadPromise = store.loadAssistantTopicConfig("planner", "tp-move");
+    const err = await store.patchAssistantTopicConfig("planner", "tp-move", { models: { conversation: { ref: "p/saved", thinking: "low" } } });
+    expect(err).toBeNull();
+    expect(store.getState().assistantTopicConfigs["planner@tp-move"]?.value?.models.conversation.pick.ref).toBe("p/saved");
+
+    resolveStaleGet(staleConfig);
+    await loadPromise;
+    expect(store.getState().assistantTopicConfigs["planner@tp-move"]?.value?.models.conversation.pick.ref).toBe("p/saved");
+
+    // 2. assistant SSE 事件里模型变更时，刷新该助手已加载的话题配置
+    getConfigSpy.mockResolvedValueOnce(refreshedConfig);
+    store.applyEvent({
+      type: "assistant",
+      assistant: { ...boot.assistants[0]!, models: { conversation: { ref: "p/asst-new", thinking: "low" } } },
+    });
+    await vi.waitFor(() => {
+      expect(store.getState().assistantTopicConfigs["planner@tp-move"]?.value?.models.conversation.inherited.pick.ref).toBe("p/asst-new");
+    });
+
+    // 3. assistant_removed 清理 pending、items、itemPages、itemGen、livePages 里的 aid 与 aid@tid 键
+    Object.assign(store.getState(), {
+      pending: { planner: [{ localId: "p1", to: "planner", at: "", text: "a", status: "sending" }], "planner@tp-move": [{ localId: "p2", to: "planner", topicId: "tp-move", at: "", text: "b", status: "sending" }], bird: [] },
+      items: { planner: [], "planner@tp-move": [], bird: [] },
+      itemPages: { planner: { hasMore: false, loading: false, error: null }, "planner@tp-move": { hasMore: false, loading: false, error: null }, bird: { hasMore: false, loading: false, error: null } },
+      itemGen: { planner: 1, "planner@tp-move": 2, bird: 3 },
+      livePages: {
+        "call-1": { assistantId: "planner", topicId: "tp-move", callId: "call-1", html: "<p>1</p>", state: "writing" },
+        "call-2": { assistantId: "bird", callId: "call-2", html: "<p>2</p>", state: "writing" },
+      },
+    });
+    store.applyEvent({ type: "assistant_removed", id: "planner" });
+    const after = store.getState();
+    expect("planner" in after.pending || "planner@tp-move" in after.pending).toBe(false);
+    expect("planner" in after.items || "planner@tp-move" in after.items).toBe(false);
+    expect("planner" in after.itemPages || "planner@tp-move" in after.itemPages).toBe(false);
+    expect("planner" in after.itemGen || "planner@tp-move" in after.itemGen).toBe(false);
+    expect("call-1" in after.livePages).toBe(false);
+    expect("bird" in after.items).toBe(true);
+    expect("call-2" in after.livePages).toBe(true);
+  });
+
+  it("报告 17：英文词条按 docs/copy.md 统一使用 job model 与 schedules", () => {
+    expect(conversationEn["这个话题有 {n} 个定时任务，关闭后暂停，重新打开时恢复"]).toBe(
+      "This topic has {n} schedules. They pause when it's closed and resume when it's reopened.",
+    );
+    expect(conversationEn["{name}的任务模型"]).toBe("{name}'s job model");
+    expect(conversationEn["成员任务模型"]).toBe("Member job models");
+    expect(conversationEn["成员只能单设任务模型，对话模型在群设置里改"]).toBe(
+      "Members can only have their own job model. Change the chat model in group settings.",
+    );
+    expect(userFacingEn["成员只能单设任务模型，对话模型在群设置里改"]).toBe(
+      "Members can only have their own job model. Change the chat model in group settings.",
+    );
+  });
+
+  it("报告 18：web/public/sw.js 不包含死代码 payload.tag / renotify", () => {
+    const sw = readFileSync(resolve(process.cwd(), "web/public/sw.js"), "utf8");
+    expect(sw).not.toContain("payload.tag");
+    expect(sw).not.toContain("renotify");
   });
 });

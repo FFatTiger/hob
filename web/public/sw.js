@@ -108,10 +108,6 @@ self.addEventListener("push", (event) => {
     badge: "/icons/favicon-32.png",
     data: { url: target },
   };
-  if (payload.tag) {
-    options.tag = payload.tag;
-    options.renotify = true;
-  }
   event.waitUntil(self.registration.showNotification(title, options));
 });
 

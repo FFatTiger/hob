@@ -1281,7 +1281,10 @@ export function applyEvent(ev: HobEvent) {
       // 已读请求和实时摘要可能交错：旧摘要不能把本地已经清掉的未读重新带回来。
       const assistant = mergeAssistantEvent(current, ev.assistant, read);
       const oldModels = state.assistants.find((a) => a.id === assistant.id)?.models;
-      if (JSON.stringify(oldModels) !== JSON.stringify(assistant.models)) refreshGroupProfiles(assistant.id);
+      if (JSON.stringify(oldModels) !== JSON.stringify(assistant.models)) {
+        refreshGroupProfiles(assistant.id);
+        refreshAssistantTopicConfigs(assistant.id);
+      }
       set((s) => ({
         assistants: upsert(s.assistants, assistant),
         profiles: s.profiles[assistant.id]
@@ -1312,20 +1315,34 @@ export function applyEvent(ev: HobEvent) {
       }
       break;
     case "assistant_removed":
+      for (const key of [...assistantTopicConfigRequests.keys()]) {
+        if (key.startsWith(`${ev.id}@`)) assistantTopicConfigRequests.delete(key);
+      }
       set((s) => {
         const removedTopics = s.assistantTopics.filter((topic) => topic.assistantId === ev.id);
         const drafts = new Map(s.composerDrafts);
         drafts.delete(ev.id);
         drafts.delete(`${ev.id}@new`);
         for (const topic of removedTopics) drafts.delete(assistantSessionKey(ev.id, topic.id));
+        const keepKey = (key: string) => key !== ev.id && !key.startsWith(`${ev.id}@`);
         const assistantTopicConfigs = Object.fromEntries(
           Object.entries(s.assistantTopicConfigs).filter(([key]) => !key.startsWith(`${ev.id}@`)),
         );
+        const pending = Object.fromEntries(Object.entries(s.pending).filter(([key]) => keepKey(key)));
+        const items = Object.fromEntries(Object.entries(s.items).filter(([key]) => keepKey(key)));
+        const itemPages = Object.fromEntries(Object.entries(s.itemPages).filter(([key]) => keepKey(key)));
+        const itemGen = Object.fromEntries(Object.entries(s.itemGen).filter(([key]) => keepKey(key)));
+        const livePages = Object.fromEntries(Object.entries(s.livePages).filter(([, page]) => page.assistantId !== ev.id));
         const removingCurrent = s.sel === ev.id;
         return {
           assistants: s.assistants.filter((a) => a.id !== ev.id),
           assistantTopics: s.assistantTopics.filter((topic) => topic.assistantId !== ev.id),
           assistantTopicConfigs,
+          pending,
+          items,
+          itemPages,
+          itemGen,
+          livePages,
           composerDrafts: drafts,
           sel: removingCurrent ? (s.assistants.find((a) => a.primary)?.id ?? null) : s.sel,
           ...(removingCurrent ? { tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true } : {}),
@@ -2683,9 +2700,13 @@ export async function patchAssistantTopicConfig(
   patch: { models?: { conversation?: ModelPick | null; work?: ModelPick | null } },
 ): Promise<string | null> {
   const key = assistantSessionKey(assistantId, topicId);
+  const request = (assistantTopicConfigRequests.get(key) ?? 0) + 1;
+  assistantTopicConfigRequests.set(key, request);
   try {
     const value = await api.patchAssistantTopicConfig(assistantId, topicId, patch);
-    set((s) => ({ assistantTopicConfigs: { ...s.assistantTopicConfigs, [key]: { value } } }));
+    if (assistantTopicConfigRequests.get(key) === request) {
+      set((s) => ({ assistantTopicConfigs: { ...s.assistantTopicConfigs, [key]: { value } } }));
+    }
     return null;
   } catch (e) {
     return errText(e);

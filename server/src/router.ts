@@ -922,6 +922,7 @@ export class RouterManager {
     const opened = await this.runtime.pi.open({
       file,
       spillDir: groupId ? join(dirname(file), `${assistant.id}-spill`) : join(dirname(file), "spill"),
+      turnProgressFact: {},
       cwd: sessionCwd,
       agentsFiles,
       writeGuard: {

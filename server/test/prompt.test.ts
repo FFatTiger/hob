@@ -335,7 +335,7 @@ describe("系统提示词", () => {
       const prompt = promptOf(hob);
       expect(prompt).not.toContain("外部工作台");
       expect(prompt).not.toContain("via");
-      expect(prompt).toContain("任务在自己的会话里做，不占你的对话");
+      expect(prompt).toContain("任务卡上会实时显示它在做什么");
     } finally {
       hob.close();
     }

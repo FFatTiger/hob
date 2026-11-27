@@ -59,6 +59,8 @@ export interface OpenSessionOptions {
   agentsFiles?: Array<{ path: string; content: string }>;
   /** Router 大结果落盘目录；任务不传。 */
   spillDir?: string;
+  /** Router 单轮连续做事超过阈值时在工具返回末尾附客观事实；任务不传。 */
+  turnProgressFact?: { minElapsedMs?: number; minCalls?: number; now?: () => number };
   /** 工具和模型各自的无响应时限；每次调用时读取当前设置。 */
   stall?: { milliseconds: () => number; onRetry: () => void };
 }
@@ -229,6 +231,78 @@ export function filterMemoryExtensions(
   return { ...result, extensions: [...result.extensions.filter(isInline), ...extensions] };
 }
 
+const DEFAULT_TURN_FACT_MIN_ELAPSED_MS = 90_000;
+const DEFAULT_TURN_FACT_MIN_CALLS = 4;
+
+const TURN_DISPATCH_TOOLS = new Set([
+  "start_job", "reply_job", "message_assistant", "message_group", "open_topic", "hand_back", "report_back",
+]);
+const TURN_META_TOOLS = new Set([
+  ...TURN_DISPATCH_TOOLS,
+  "stop_job", "check_job", "ask_user", "send_card", "send_file", "show_page", "react", "login",
+  "fill_new_password", "close_topic", "update_todos", "set_rule", "remove_rule", "create_routine",
+  "update_routine", "delete_routine", "save_skill", "delete_skill", "review_job", "show_assistant",
+  "show_group", "create_assistant", "update_assistant", "create_group", "update_group", "manage_topic",
+  "set_avatar", "overview", "search_plugins", "tool_search", "scratchpad",
+]);
+
+function formatTurnElapsed(ms: number): string {
+  const totalSec = Math.max(1, Math.round(ms / 1000));
+  if (totalSec >= 180) return `${Math.floor(totalSec / 60)} 分钟`;
+  if (totalSec >= 60) {
+    const minutes = Math.floor(totalSec / 60);
+    const seconds = totalSec % 60;
+    return seconds > 0 ? `${minutes} 分 ${seconds} 秒` : `${minutes} 分钟`;
+  }
+  return `${totalSec} 秒`;
+}
+
+function isTurnMetaTool(name: string): boolean {
+  return TURN_META_TOOLS.has(name) || name.startsWith("memory_") || name.startsWith("lore_");
+}
+
+function turnProgressFactExtension(
+  config: NonNullable<OpenSessionOptions["turnProgressFact"]>,
+): ExtensionFactory {
+  const minElapsedMs = config.minElapsedMs ?? DEFAULT_TURN_FACT_MIN_ELAPSED_MS;
+  const minCalls = config.minCalls ?? DEFAULT_TURN_FACT_MIN_CALLS;
+  const now = config.now ?? Date.now;
+  return (pi) => {
+    let turnStart = 0;
+    let workCalls = 0;
+    pi.on("agent_start", async () => {
+      turnStart = now();
+      workCalls = 0;
+    });
+    pi.on("tool_result", async (event) => {
+      if (TURN_DISPATCH_TOOLS.has(event.toolName) && !event.isError) {
+        turnStart = now();
+        workCalls = 0;
+        return;
+      }
+      if (isTurnMetaTool(event.toolName)) return;
+      const current = now();
+      if (!turnStart) turnStart = current;
+      workCalls += 1;
+      const elapsedMs = Math.max(0, current - turnStart);
+      if (elapsedMs < minElapsedMs && workCalls < minCalls) return;
+      const fact = `（这一轮你已经自己连续执行了 ${workCalls} 次操作、耗时 ${formatTurnElapsed(elapsedMs)}，用户这边只能看到「正在做…」还插不上话。）`;
+      const content = [...event.content];
+      let appended = false;
+      for (let i = content.length - 1; i >= 0; i--) {
+        const block = content[i];
+        if (block.type === "text") {
+          content[i] = { ...block, text: `${block.text.trimEnd()}\n\n${fact}` };
+          appended = true;
+          break;
+        }
+      }
+      if (!appended) content.push({ type: "text" as const, text: fact });
+      return { content };
+    });
+  };
+}
+
 /**
  * pi SDK 的宿主：模型运行时 + 会话工厂。不发现用户扩展、技能、AGENTS.md；
  * 扩展只有按记忆提供者挑出来的那一个捆绑插件。
@@ -371,6 +445,7 @@ export class PiHost {
             return { content };
           });
         }) satisfies ExtensionFactory] : []),
+        ...(options.turnProgressFact ? [turnProgressFactExtension(options.turnProgressFact)] : []),
       ],
       extensionsOverride: (result) => filterMemoryExtensions(result, provider),
     });

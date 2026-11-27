@@ -96,7 +96,7 @@ docker compose up -d
 
 Hob 是单个 Node 进程，数据全在 `HOB_HOME`（默认 `~/.hob`）。
 
-- **长期运行**：用任意进程管理器跑，比如 `pm2 start hob --name hob`（源码目录里先 `npm run build`，再 `pm2 start deploy/pm2.config.cjs`）。前面加一层带 TLS 的反向代理；推送通知和添加到主屏幕都需要 HTTPS。
+- **长期运行**：用任意进程管理器跑，比如 `pm2 start hob --name hob`（源码目录里先 `npm run build`，再 `pm2 start deploy/pm2.config.cjs`）。前面加一层带 TLS 的反向代理；推送通知和添加到主屏幕都需要 HTTPS。建议在反代里为 `/api/events/ws`（以及启用云桌面时的 `/api/desktop/vnc`）开启 WebSocket 升级；未开启时实时事件会自动退回 SSE。
 - **Docker**：镜像是 `ghcr.io/ffattiger/hob`（amd64、arm64），数据在 `hob-data` 卷里；源码目录里加 `--build` 就用本地源码构建镜像。端口默认只绑本机，要局域网直连，把 `compose.yaml` 里的端口改成 `"30148:30148"`。任务和本地命令类的插件服务都在容器里运行，镜像里有 git、curl、python3、ripgrep、fd、node 和 npx。要让任务处理宿主机上的项目，先建好 `workspace/` 目录（容器以 uid 1000 运行），再打开 `compose.yaml` 里 `./workspace:/workspace` 那行挂载。
 - **云桌面**：`docker compose --profile desktop up -d` 同时启动 Hob 和云桌面，令牌自动对上。单独部署、反向代理和资源占用见[云桌面说明](desktop/README.md)。
 - **Claude 订阅**：npm 或源码安装时，先在本机装好 Claude Code 并执行 `claude auth login`，再到 **设置 → 服务商** 启用 Claude 订阅。用量算在你的订阅额度里；Hob 不读取、不保存 Claude 凭证，Claude Code 自己的会话记录会写在 `~/.claude/projects/`。Docker 镜像不支持。

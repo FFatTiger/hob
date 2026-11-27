@@ -1192,6 +1192,7 @@ export async function login(password: string) {
 export async function logout() {
   stopEvents?.();
   stopEvents = null;
+  lastReportedVisibility = null;
   emitConnection("down");
   try {
     await api.logout();
@@ -1246,7 +1247,10 @@ async function loadBootstrap(reconnect = false) {
       stopEvents = api.events(
         {
           onEvent: applyEvent,
-          onOpen: () => emitConnection("open"),
+          onOpen: () => {
+            emitConnection("open");
+            reportVisibility({ force: true });
+          },
           onReconnect: () => {
             set({ offline: null });
             emitConnection("reconnect");

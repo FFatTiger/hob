@@ -106,12 +106,13 @@ export class RfbClientFilter {
   }
 }
 
-export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime: HobRuntime): () => void {
+export function createDesktopUpgrade(runtime: HobRuntime): { handle: (req: IncomingMessage, socket: Duplex, head: Buffer) => void; close: () => void } {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 1_048_576 });
-  const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
-    const requestUrl = new URL(req.url ?? "/", "http://localhost");
-    if (requestUrl.pathname !== "/api/desktop/vnc") return;
+  const handle = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    const pendingError = () => undefined;
+    socket.on("error", pendingError);
     const reject = (status: string) => { socket.write(`HTTP/1.1 ${status}\r\nConnection: close\r\n\r\n`); socket.destroy(); };
+    const requestUrl = new URL(req.url ?? "/", "http://localhost");
     const cookie = req.headers.cookie?.split(";").map((s) => s.trim()).find((s) => s.startsWith("hob="))?.slice(4);
     if (!validCookie(runtime.config, cookie)) return reject("401 Unauthorized");
     const origin = req.headers.origin;
@@ -141,11 +142,9 @@ export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime
     deadline.unref();
     // 一直挂着：settled 之后它什么都不做，只是不让上游的错误变成未处理异常
     upstream.on("error", failed);
-    // 升级完成前没人读浏览器这一侧：它发 RST 时的错误在这里接住（否则整个进程崩掉），
+    // 升级完成前没人读浏览器这一侧：它发 RST 时的错误已由 pendingError 接住（否则整个进程崩掉），
     // 它一关（包括 handleUpgrade 因请求不合法自己拒掉），还没交给浏览器的上游就跟着关。
     // 浏览器只发 FIN 走掉时这里察觉不到，靠上面的总时限收尾。
-    const pendingError = () => {};
-    socket.on("error", pendingError);
     socket.once("close", () => {
       clearTimeout(deadline);
       settled = true;
@@ -174,6 +173,20 @@ export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime
       });
     });
   };
+  return {
+    handle,
+    close: () => { for (const client of wss.clients) client.terminate(); wss.close(); },
+  };
+}
+
+export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime: HobRuntime): () => void {
+  const endpoint = createDesktopUpgrade(runtime);
+  const upgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    let pathname = "";
+    try { pathname = new URL(req.url ?? "/", "http://localhost").pathname; } catch { return; }
+    if (pathname !== "/api/desktop/vnc") return;
+    endpoint.handle(req, socket, head);
+  };
   server.on("upgrade", upgrade);
-  return () => { server.off("upgrade", upgrade); for (const client of wss.clients) client.terminate(); wss.close(); };
+  return () => { server.off("upgrade", upgrade); endpoint.close(); };
 }

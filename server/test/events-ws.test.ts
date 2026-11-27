@@ -1,6 +1,6 @@
 import { once } from "node:events";
 import { mkdtempSync, rmSync } from "node:fs";
-import type { AddressInfo } from "node:net";
+import { connect, type AddressInfo } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { serve } from "@hono/node-server";
@@ -9,6 +9,7 @@ import { WebSocket } from "ws";
 import { describe, expect, it } from "vitest";
 import { createApp } from "../src/http.ts";
 import { attachEventsWebSocket } from "../src/events-ws.ts";
+import { attachWebSockets } from "../src/main.ts";
 import { makeHob } from "./helpers.ts";
 
 async function expectUpgradeStatus(url: string, headers: Record<string, string> = {}): Promise<number> {
@@ -136,6 +137,58 @@ describe("实时事件 WebSocket (/api/events/ws)", () => {
       if (previousPort === undefined) delete process.env.HOB_PORT;
       else process.env.HOB_PORT = previousPort;
       rmSync(cacheDir, { recursive: true, force: true });
+      detach();
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+      hob.close();
+    }
+  });
+
+  it("统一 upgrade 分发器拒绝未知路径并返回 404，不泄漏连接也不因 RST 崩溃", async () => {
+    const hob = makeHob();
+    const app = createApp(hob.runtime, { home: hob.home });
+    const server = serve({ fetch: app.fetch, port: 0, hostname: "127.0.0.1" });
+    const detach = attachWebSockets(server, hob.runtime);
+    await once(server, "listening");
+    const port = (server.address() as AddressInfo).port;
+    const wsBase = `ws://127.0.0.1:${port}`;
+    const uncaught: unknown[] = [];
+    const onUncaught = (err: unknown) => { uncaught.push(err); };
+    process.on("uncaughtException", onUncaught);
+
+    try {
+      // 未知路径直接回 404 且关闭连接（连续发多个也不泄漏）
+      for (let i = 0; i < 10; i++) {
+        expect(await expectUpgradeStatus(`${wsBase}/api/nope-${i}`)).toBe(404);
+      }
+
+      // 合法路径照常分发：未登录仍回 401
+      expect(await expectUpgradeStatus(`${wsBase}/api/events/ws`)).toBe(401);
+      expect(await expectUpgradeStatus(`${wsBase}/api/desktop/vnc`)).toBe(401);
+
+      // 未登录对未知路径发 upgrade 后立即 RST，不抛出未捕获异常
+      const raw = connect(port, "127.0.0.1");
+      await once(raw, "connect");
+      raw.write(
+        "GET /api/unknown-rst HTTP/1.1\r\n" +
+        `Host: 127.0.0.1:${port}\r\n` +
+        "Upgrade: websocket\r\n" +
+        "Connection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n" +
+        "Sec-WebSocket-Version: 13\r\n\r\n",
+      );
+      raw.resetAndDestroy();
+      await new Promise((r) => setTimeout(r, 80));
+
+      // 服务仍然存活、没有残留 upgrade socket，server.close 能立即完成
+      const activeConnections = await new Promise<number>((resolve, reject) =>
+        server.getConnections((err, count) => (err ? reject(err) : resolve(count))),
+      );
+      expect(activeConnections).toBe(0);
+      const me = await fetch(`http://127.0.0.1:${port}/api/me`, { headers: { connection: "close" } });
+      expect(me.status).toBe(401);
+      expect(uncaught).toEqual([]);
+    } finally {
+      process.off("uncaughtException", onUncaught);
       detach();
       await new Promise<void>((resolve) => server.close(() => resolve()));
       hob.close();

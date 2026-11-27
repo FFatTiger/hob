@@ -404,6 +404,37 @@ describe("全局实时连接（WebSocket 优先，不支持时退回 SSE）", ()
     unsub();
     await store.logout();
   });
+
+  it("正看着某个对话时断线重连，强制重新上报可见性和当前查看目标", async () => {
+    const { visibility } = mockStoreApi();
+    await store.login("pw");
+    FakeWebSocket.instances[0].open();
+    await store.select("a-fjl7");
+    expect(visibility).toHaveBeenLastCalledWith(expect.any(String), true, "assistant:a-fjl7", undefined);
+
+    // 断线后再连上：即使前端本地的 visible 和 target 都没变，也必须强制重报（服务端断线时已清掉）
+    vi.useFakeTimers();
+    visibility.mockClear();
+    FakeWebSocket.instances[0].drop();
+    await vi.advanceTimersByTimeAsync(1000);
+    FakeWebSocket.instances[1].open();
+    expect(visibility).toHaveBeenCalledWith(expect.any(String), true, "assistant:a-fjl7", undefined);
+
+    // 推送 desktop-screens 带 users 时保留并在断线时清空
+    let snap: DesktopScreensSnapshot = { screens: [], profiles: {}, users: {} };
+    const unsub = desktopScreens.subscribeDesktopScreens((next) => { snap = next; });
+    FakeWebSocket.instances[1].receive(JSON.stringify({
+      type: "desktop-screens",
+      screens: mocks.screens,
+      users: { "a-fjl7": [{ assistantId: "a-fjl7", place: { topicId: "tp-1" } }] },
+    }));
+    expect(snap.users["a-fjl7"]).toEqual([{ assistantId: "a-fjl7", place: { topicId: "tp-1" } }]);
+    FakeWebSocket.instances[1].drop();
+    expect(snap.users).toEqual({});
+
+    unsub();
+    await store.logout();
+  });
 });
 
 /** store 走真实的 realApi.events（假 WebSocket），其余接口打桩。 */

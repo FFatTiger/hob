@@ -1,11 +1,12 @@
-import { join } from "node:path";
+import type { IncomingMessage } from "node:http";
+import type { Duplex } from "node:stream";
 import { fileURLToPath } from "node:url";
 import { serve } from "@hono/node-server";
 import { engineDir, loadConfig, resolveHome } from "./config.ts";
 import { createApp } from "./http.ts";
 import { prepareHome } from "./layout.ts";
-import { attachDesktopWebSocket } from "./desktop-control.ts";
-import { attachEventsWebSocket } from "./events-ws.ts";
+import { createDesktopUpgrade } from "./desktop-control.ts";
+import { createEventsUpgrade } from "./events-ws.ts";
 import { PiHost } from "./pi.ts";
 import { createRuntime, type HobRuntime } from "./runtime.ts";
 import { generalSkillsDir, syncGeneralIndex } from "./skills.ts";
@@ -25,6 +26,27 @@ export interface HobServer {
   runtime: HobRuntime;
   port: number;
   close: () => Promise<void>;
+}
+
+/** 统一分发 WebSocket 升级：未知路径一律回 404 并销毁 socket，避免泄漏或客户端 RST 拖垮进程。 */
+export function attachWebSockets(server: ReturnType<typeof serve>, runtime: HobRuntime): () => void {
+  const desktop = createDesktopUpgrade(runtime);
+  const events = createEventsUpgrade(runtime);
+  const onUpgrade = (req: IncomingMessage, socket: Duplex, head: Buffer) => {
+    let pathname = "";
+    try { pathname = new URL(req.url ?? "/", "http://localhost").pathname; } catch { /* 非法 URL 当未匹配处理 */ }
+    if (pathname === "/api/events/ws") { events.handle(req, socket, head); return; }
+    if (pathname === "/api/desktop/vnc") { desktop.handle(req, socket, head); return; }
+    socket.on("error", () => undefined);
+    socket.write("HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n");
+    socket.destroy();
+  };
+  server.on("upgrade", onUpgrade);
+  return () => {
+    server.off("upgrade", onUpgrade);
+    events.close();
+    desktop.close();
+  };
 }
 
 /** 起一个 Hob 进程内全部服务（HTTP + Router + 任务 + 定时）。试跑和测试都走这里。 */
@@ -67,15 +89,13 @@ export async function startHob(options: StartOptions = {}): Promise<HobServer> {
   const app = createApp(runtime, { webDir: fileURLToPath(new URL("../../dist/web", import.meta.url)), home });
   const port = options.port ?? Number(env.HOB_PORT ?? config.port);
   const server = serve({ fetch: app.fetch, port, hostname: config.host });
-  const detachDesktop = attachDesktopWebSocket(server, runtime);
-  const detachEvents = attachEventsWebSocket(server, runtime);
+  const detachWebSockets = attachWebSockets(server, runtime);
 
   return {
     runtime,
     port,
     close: async () => {
-      detachEvents();
-      detachDesktop();
+      detachWebSockets();
       runtime.update.stop();
       runtime.desktopEvents.stop();
       runtime.desktopControl.dispose();

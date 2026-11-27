@@ -349,7 +349,7 @@ describe("全局实时连接（WebSocket 优先，不支持时退回 SSE）", ()
     expect(statuses).toEqual(["open", "down", "reconnect"]);
     expect(store.liveConnected()).toBe(true);
     expect(store.getState().offline).toBeNull();
-    expect(visibility).toHaveBeenCalledWith(expect.any(String), true);
+    expect(visibility).toHaveBeenCalledWith(expect.any(String), true, null, undefined);
     await vi.waitFor(() => expect(bootstrap.mock.calls.length).toBe(bootstraps + 1));
     expect(consoleError).toHaveBeenCalled();
 
@@ -359,11 +359,11 @@ describe("全局实时连接（WebSocket 优先，不支持时退回 SSE）", ()
 
   it("快照请求晚回来：先发的不覆盖后发的，断线前发出的不把屏幕填回去", async () => {
     mockStoreApi();
-    const pending: Array<(value: { screens: DesktopScreen[]; profiles: Record<string, string> }) => void> = [];
+    const pending: Array<(value: { screens: DesktopScreen[]; profiles: Record<string, string>; users?: Record<string, never[]> }) => void> = [];
     vi.spyOn(apiMod.realApi, "desktopScreens").mockImplementation(() => new Promise((resolve) => { pending.push(resolve); }));
     const running: DesktopScreen[] = [{ id: "a-fjl7", running: true, browserRunning: true, viewers: 1, lastActiveAt: null }];
     const idle: DesktopScreen[] = [{ id: "a-fjl7", running: false, browserRunning: false, viewers: 0, lastActiveAt: null }];
-    let snap: DesktopScreensSnapshot = { screens: [], profiles: {} };
+    let snap: DesktopScreensSnapshot = { screens: [], profiles: {}, users: {} };
     const unsub = desktopScreens.subscribeDesktopScreens((next) => { snap = next; });
 
     await store.login("pw");
@@ -425,7 +425,7 @@ function mockStoreApi() {
   const visibility = vi.spyOn(apiMod.realApi, "visibility").mockResolvedValue(undefined);
   vi.spyOn(apiMod.realApi, "desktopScreens").mockImplementation(async () => {
     mocks.desktopScreensCount++;
-    return { screens: mocks.screens, profiles: mocks.profiles };
+    return { screens: mocks.screens, profiles: mocks.profiles, users: {} };
   });
   return { bootstrap, visibility };
 }

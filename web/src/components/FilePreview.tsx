@@ -295,7 +295,7 @@ function TextBody({ meta, find }: { meta: FileMeta; find?: string }) {
     return (
       <>
         {notice}
-        <HighlightText find={find} text={text} mathVersion={mathVersion}><Markdown className="fp-md markdown-body" text={text} onMathRendered={mathRendered} /></HighlightText>
+        <HighlightText find={find} text={text} mathVersion={mathVersion}><Markdown className="fp-md markdown-body" text={text} onMathRendered={mathRendered} onCodeHighlighted={mathRendered} /></HighlightText>
       </>
     );
   }

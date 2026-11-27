@@ -1896,15 +1896,80 @@ svg.i {
   line-height: 1.45;
 }
 /* 代码块：右上角复制，有语言标记时左上角小字 */
-.code-block { position: relative; margin-top: 6px; border-radius: 10px; background: color-mix(in srgb, var(--text) 5%, transparent); }
+.code-block { position: relative; margin-top: 6px; border-radius: 10px; background: color-mix(in srgb, var(--text) 5%, transparent); overflow: hidden; }
 .code-block + p { margin-top: 6px; }
-.code-head { padding: 7px 44px 0 11px; font: 11px/16px "JetBrains Mono", monospace; color: var(--text3); }
-.b .code-block pre, .fp-md .code-block pre { margin: 0; background: none; padding-right: 40px; }
-.b .code-head + pre, .fp-md .code-head + pre { padding-top: 3px; }
+.code-head { padding: 7px 44px 0 11px; font: 11px/16px "JetBrains Mono", "Noto Sans Mono CJK SC", monospace; color: var(--text2); }
+:is(.b, .md, .fp-md, .jd-text, .jd-report, .hc-md) .code-block pre { margin: 0; background: none; padding: 9px 40px 9px 11px; overflow-x: auto; }
+:is(.b, .md, .fp-md, .jd-text, .jd-report, .hc-md) .code-block pre code { background: none; padding: 0; font-family: "JetBrains Mono", "Noto Sans Mono CJK SC", monospace; font-size: 12.5px; line-height: 1.6; }
+:is(.b, .md, .fp-md, .jd-text, .jd-report, .hc-md) .code-head ~ pre { padding-top: 4px; }
 .code-copy { position: absolute; top: 3px; right: 3px; width: 30px; height: 30px; display: grid; place-items: center; border: 0; border-radius: 8px; background: none; color: var(--text2); cursor: pointer; opacity: 0; transition: opacity 0.15s; }
 .code-copy:hover { color: var(--text); }
+.code-copy.copied { opacity: 1; color: var(--ok); }
 .code-block:hover .code-copy, .code-copy:focus-visible { opacity: 1; }
 @media (hover: none) { .code-copy { opacity: 1; } }
+
+/* 代码块语法高亮：浅色与深色各一套，从设计稿色板与 Hob 界面变量衍生 */
+.hljs { color: var(--text); }
+.hljs-comment,
+.hljs-quote { color: var(--text2); font-style: italic; }
+.hljs-punctuation,
+.hljs-meta { color: var(--text2); }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst { color: color-mix(in srgb, var(--accent) 72%, var(--text)); font-weight: 500; }
+.hljs-string,
+.hljs-doctag,
+.hljs-regexp,
+.hljs-addition { color: color-mix(in srgb, var(--ok) 76%, var(--text)); }
+.hljs-deletion { color: var(--danger); }
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-symbol,
+.hljs-bullet { color: #9a6a07; }
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-attr,
+.hljs-attribute,
+.hljs-property,
+.hljs-selector-id,
+.hljs-selector-class { color: #2a5f9e; }
+.hljs-title,
+.hljs-section,
+.hljs-selector-id,
+.hljs-selector-class { font-weight: 500; }
+.hljs-type,
+.hljs-built_in,
+.hljs-title.class_ { color: #5a44a3; }
+.hljs-emphasis { font-style: italic; }
+.hljs-strong { font-weight: 600; }
+
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-subst { color: color-mix(in srgb, var(--accent) 80%, var(--text)); }
+.dark .hljs-string,
+.dark .hljs-doctag,
+.dark .hljs-regexp,
+.dark .hljs-addition { color: color-mix(in srgb, var(--ok) 76%, var(--text)); }
+.dark .hljs-number,
+.dark .hljs-literal,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-symbol,
+.dark .hljs-bullet { color: #f0b429; }
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-name,
+.dark .hljs-attr,
+.dark .hljs-attribute,
+.dark .hljs-property,
+.dark .hljs-selector-id,
+.dark .hljs-selector-class { color: #8dc0ff; }
+.dark .hljs-type,
+.dark .hljs-built_in,
+.dark .hljs-title.class_ { color: #c0adff; }
 .math-display { overflow-x: auto; overflow-y: hidden; margin: 6px 0; }
 /* 行内公式单个不换行段超宽时在自身内横向滚动，保留基线对齐且不撑出气泡 */
 .katex .katex-html > .katex-base {

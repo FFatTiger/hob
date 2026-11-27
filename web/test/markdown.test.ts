@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { hasMath, loadMath, renderInlineMarkdown, renderMarkdown, splitTables } from "../src/markdown.ts";
+import { hasCode, hasMath, isHighlightLoaded, loadHighlight, loadMath, renderInlineMarkdown, renderMarkdown, splitTables } from "../src/markdown.ts";
 
 describe("renderMarkdown", () => {
   it("公式异步加载后渲染，代码和钱数不受影响", async () => {
@@ -155,5 +155,59 @@ describe("renderMarkdown", () => {
     expect(html).toBe('重点看 <strong>体积变化</strong>、<code>v4.0</code> 和 <a target="_blank" rel="noreferrer" href="https://example.org/guide">指南</a> &lt;b&gt;raw&lt;/b&gt;');
     expect(html).not.toContain("<p>");
     expect(renderInlineMarkdown("1. 不把序号当成有序列表")).toBe("1. 不把序号当成有序列表");
+  });
+
+  it("代码块按需加载高亮：带语言的出高亮标记，不带语言的保持原样，未知语言不报错", async () => {
+    expect(hasCode("```\nls\n```")).toBe(false);
+    expect(hasCode("行内 `const x = 1` 不算")).toBe(false);
+    expect(hasCode("```ts\nconst x = 1;\n```")).toBe(true);
+    expect(hasCode("  ~~~bash\necho ok\n  ~~~")).toBe(true);
+
+    // 加载前同步渲染不带 hljs 高亮
+    expect(isHighlightLoaded()).toBe(false);
+    expect(renderMarkdown("```ts\nconst x = 1;\n```")).not.toContain('class="hljs"');
+
+    await loadHighlight();
+    expect(isHighlightLoaded()).toBe(true);
+
+    const tsHtml = renderMarkdown('```ts\n// note\nexport const n: number = 42;\n```');
+    expect(tsHtml).toContain('<div class="code-head">ts</div>');
+    expect(tsHtml).toContain('<code class="hljs">');
+    expect(tsHtml).toContain('class="hljs-keyword"');
+    expect(tsHtml).toContain('class="hljs-comment"');
+    expect(tsHtml).toContain('class="hljs-number"');
+
+    const jsonHtml = renderMarkdown('```json\n{"ok": true, "port": 8080}\n```');
+    expect(jsonHtml).toContain('<code class="hljs">');
+    expect(jsonHtml).toContain('class="hljs-attr"');
+
+    const diffHtml = renderMarkdown("```diff\n-old\n+new\n```");
+    expect(diffHtml).toContain('<code class="hljs">');
+    expect(diffHtml).toContain('class="hljs-deletion"');
+    expect(diffHtml).toContain('class="hljs-addition"');
+
+    const bashHtml = renderMarkdown('```bash\nexport PORT=8080\necho "ok"\n```');
+    expect(bashHtml).toContain('<code class="hljs">');
+    expect(bashHtml).toContain('class="hljs-built_in"');
+
+    // 不带语言的代码块不猜语言，不变成 hljs
+    const bareHtml = renderMarkdown("```\nconst x = 1;\n```");
+    expect(bareHtml).not.toContain("code-head");
+    expect(bareHtml).not.toContain('class="hljs"');
+    expect(bareHtml).not.toContain("hljs-");
+    expect(bareHtml).toContain("<code>const x = 1;\n</code>");
+
+    // 未知语言不报错，保留头部标签与转义原文
+    const unknownHtml = renderMarkdown('```mysterylang\n<tag attr="v">\n```');
+    expect(unknownHtml).toContain('<div class="code-head">mysterylang</div>');
+    expect(unknownHtml).not.toContain('class="hljs"');
+    expect(unknownHtml).not.toContain("hljs-");
+    expect(unknownHtml).toContain("&lt;tag attr=&quot;v&quot;&gt;");
+
+    // 群聊 @点名不破坏高亮标签里的内容
+    const mentioned = renderMarkdown("看 @Alice 的片段：\n\n```ts\nconst user = '@Alice';\n```", ["Alice"]);
+    expect(mentioned).toContain('<span class="at">@Alice</span>');
+    expect(mentioned).toContain('<code class="hljs">');
+    expect(mentioned.split("<pre>")[1]).not.toContain('class="at"');
   });
 });

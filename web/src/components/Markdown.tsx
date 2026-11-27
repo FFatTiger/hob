@@ -2,7 +2,7 @@ import { t } from "../../../shared/i18n.ts";
 import { useEffect, useMemo, useState } from "react";
 import { copyText } from "../clipboard.ts";
 import { iconSvg } from "../icons.tsx";
-import { hasMath, loadMath, renderInlineMarkdown, renderMarkdown } from "../markdown.ts";
+import { hasCode, hasMath, isHighlightLoaded, loadHighlight, loadMath, renderInlineMarkdown, renderMarkdown } from "../markdown.ts";
 import { getKnowledgeEntry, openFilePreview, setNotice } from "../store.ts";
 import { ApiError } from "../api.ts";
 import { parseKnowledgeLink } from "../../../shared/knowledge.ts";
@@ -17,17 +17,22 @@ export async function openKnowledgeCitation(entryId: string, chunk?: number) {
   }
 }
 
-export function Markdown({ text, className, inline, streaming, mentions, onMathRendered }: { text: string; className?: string; inline?: boolean; streaming?: boolean; mentions?: string[]; onMathRendered?: () => void }) {
+export function Markdown({ text, className, inline, streaming, mentions, onMathRendered, onCodeHighlighted }: { text: string; className?: string; inline?: boolean; streaming?: boolean; mentions?: string[]; onMathRendered?: () => void; onCodeHighlighted?: () => void }) {
   const [mathVersion, refresh] = useState(0);
+  const [codeVersion, refreshCode] = useState(0);
   useEffect(() => {
     let active = true;
     if (hasMath(text)) void loadMath().then(() => { if (active) refresh((n) => n + 1); }).catch(() => {});
+    if (!inline && !isHighlightLoaded() && hasCode(text)) {
+      void loadHighlight().then(() => { if (active) refreshCode((n) => n + 1); }).catch(() => {});
+    }
     return () => { active = false; };
-  }, [text]);
+  }, [text, inline]);
   useEffect(() => { if (mathVersion) onMathRendered?.(); }, [mathVersion, onMathRendered]);
+  useEffect(() => { if (codeVersion) onCodeHighlighted?.(); }, [codeVersion, onCodeHighlighted]);
   // 整个界面跟着一份状态重画（回首页、任务进度推送），正文没变就不再解析一遍，长任务、长对话才不卡
   const mentionKey = mentions?.join("\n");
-  const html = useMemo(() => (inline ? renderInlineMarkdown(text) : renderMarkdown(text, mentions)), [text, inline, mentionKey, mathVersion]);
+  const html = useMemo(() => (inline ? renderInlineMarkdown(text) : renderMarkdown(text, mentions)), [text, inline, mentionKey, mathVersion, codeVersion]);
   return <div className={className} onClick={(event) => {
     const link = (event.target as Element).closest<HTMLAnchorElement>("a.knowledge-citation");
     const citation = link && parseKnowledgeLink(link.getAttribute("href") ?? "");
@@ -51,9 +56,10 @@ export function Markdown({ text, className, inline, streaming, mentions, onMathR
     const code = button.closest(".code-block")?.querySelector("code")?.textContent ?? "";
     void copyText(code.endsWith("\n") ? code.slice(0, -1) : code).then((ok) => {
       if (!ok) { setNotice(t("复制失败：浏览器不允许写入剪贴板")); return; }
+      button.classList.add("copied");
       button.innerHTML = iconSvg("check", 15);
       button.setAttribute("aria-label", t("已复制"));
-      window.setTimeout(() => { button.innerHTML = iconSvg("copy", 15); button.setAttribute("aria-label", t("复制代码")); }, 1500);
+      window.setTimeout(() => { button.classList.remove("copied"); button.innerHTML = iconSvg("copy", 15); button.setAttribute("aria-label", t("复制代码")); }, 1500);
     });
   }} dangerouslySetInnerHTML={{ __html: html + (streaming ? '<span class="cur"></span>' : "") }} />;
 }

@@ -78,7 +78,7 @@ import { DOC_REPORT_CARD, GALLERY, galleryRecords } from "./mock-cards-gallery.t
 
 const mockUpdate: UpdateCheck = { status: "available", latest: "1.20.0" };
 
-export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "cards-doc" | "cards-doc-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark" | "assistant-topics" | "assistant-topics-dark" | "assistant-topics-main" | "assistant-topics-new" | "assistant-topics-closed" | "assistant-topics-home" | "assistant-topics-rules" | "assistant-topics-models" | "assistant-topics-settings" | "assistant-topics-single-settings" | "assistant-topics-draft";
+export type SceneId = "cards-demo" | "cards-gallery" | "cards-gallery-dark" | "cards-doc" | "cards-doc-dark" | "ask-cards-single" | "ask-cards-multi" | "ask-cards-multi-answered" | "ask-cards-job" | "ask-cards-mobile" | "ask-cards-dark" | "login-cards" | "plugin-demo" | "tool-login-signed-out" | "tool-login-device" | "tool-login-signed-in" | "tool-login-optional" | "provider-demo" | "provider-install-progress" | "provider-install-done" | "provider-errors" | "provider-login-device" | "provider-login-web" | "provider-login-paste" | "provider-login-apikey" | "provider-login-cli" | "provider-update-confirm" | "vault" | "vault-empty" | "g-owns" | "g-owns-dark" | "topic-panel" | "readme-chat" | "readme-cards" | "readme-interactive-cards" | "readme-plugins" | "readme-desktop" | "readme-knowledge" | "readme-profile" | "readme-group-now" | "readme-mobile-list" | "readme-mobile-chat" | "readme-mobile-todos" | "image" | "act-demo" | "act-think" | "act-tool" | "act-dark" | "act-home" | "boot" | "bubbles" | "bubbles-dark" | "code-highlight" | "code-highlight-dark" | "card-130" | "card-130-dark" | "job-after" | "job-after-dark" | "routine-check-dark" | "routine-once" | "routine-once-dark" | "routine-once-list" | "ask-rounds" | "ask-rounds-answered" | "ask-rounds-group" | "ask-rounds-dark" | "ask-rounds-mobile" | "s1" | "home-attention" | "s2" | "s3" | "s4" | "s6" | "mlist" | "mchat" | "d-running" | "d-waiting" | "d-done" | "d-dark" | "d-source" | "d-mobile" | "h-hob" | "h-dark" | "h-source" | "h-settings" | "h-mobile" | "g-chat" | "g-mention" | "g-mobile" | "g-dark" | "g-team" | "todo-chat" | "todo-topic" | "todo-job" | "topics" | "topics-plain" | "read-receipt" | "read-receipt-hub" | "read-receipt-chat" | "workspace-cwd" | "workspace-cwd-dark" | "group-reply-all" | "group-reply-all-dark" | "assistant-topics" | "assistant-topics-dark" | "assistant-topics-main" | "assistant-topics-new" | "assistant-topics-closed" | "assistant-topics-home" | "assistant-topics-rules" | "assistant-topics-models" | "assistant-topics-settings" | "assistant-topics-single-settings" | "assistant-topics-draft";
 
 /** 每个截图场景对应的界面状态（选中哪个助手或群、右栏开什么）。 */
 export const SCENE_UI: Record<
@@ -134,6 +134,8 @@ export const SCENE_UI: Record<
   boot: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "list" },
   bubbles: { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "bubbles-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
+  "code-highlight": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
+  "code-highlight-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "card-130": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
   "card-130-dark": { sel: "hob", panel: "now", collapsed: false, dark: true, mobile: "chat" },
   "job-after": { sel: "hob", panel: "now", collapsed: false, dark: false, mobile: "chat" },
@@ -978,10 +980,55 @@ cp now.txt "$seen"`,
     ];
   }
 
+  const codeHighlightMsg = [
+    "已定位连接超时原因，配置与验证脚本如下：",
+    "",
+    "```ts",
+    "// 探测健康接口，超时自动取消",
+    "export async function probeHealth(url: string, ms = 3000): Promise<boolean> {",
+    "  const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(ms) });",
+    "  return res.ok;",
+    "}",
+    "```",
+    "",
+    "```json",
+    '{ "service": "gateway", "port": 8080, "timeoutMs": 3000, "retry": true }',
+    "```",
+    "",
+    "```diff",
+    "--- a/config.json",
+    "+++ b/config.json",
+    "@@ -2,2 +2,2 @@",
+    '-  "timeoutMs": 800,',
+    '+  "timeoutMs": 3000,',
+    "```",
+    "",
+    "```bash",
+    "# 重启后检查状态",
+    'curl -fsS http://127.0.0.1:8080/health && echo "ready"',
+    "```",
+    "",
+    "未标语言的输出保持原样：",
+    "",
+    "```",
+    "ready on :8080",
+    "```",
+  ].join("\n");
+
+  if (scene === "code-highlight" || scene === "code-highlight-dark") {
+    const hob = assistants.find((a) => a.id === "hob");
+    if (hob) { hob.busy = false; hob.activity = undefined; }
+    items.hob = [
+      { kind: "user", id: "code-hl-user", at: minsAgo(2), text: "把刚才排查超时的脚本、配置和补丁发我一份。" },
+      asst("code-hl-asst", minsAgo(1), codeHighlightMsg),
+    ];
+  }
+
   if (scene === "bubbles" || scene === "bubbles-dark") {
     items.hob = [
       { kind: "user", id: "bubble-user", at: minsAgo(3), text: "给我看看公式、代码和媒体。" },
       asst("bubble-text", minsAgo(2), "行内公式 $E=mc^2$，整行公式：\n\n$$\\sum_{i=1}^{n} i = \\frac{n(n+1)}{2}$$\n\n```js\nconst answer = 42;\n```\n\n```sh\necho hello\n```\n\n价格是 $5 和 $10。"),
+      asst("bubble-code-hl", minsAgo(2), codeHighlightMsg),
       asst("bubble-md", minsAgo(2), "我把刚才的示意图整理成 `.md` 文件，图用 Mermaid 写，方便你看源码或直接预览。"),
       { kind: "job", id: "bubble-job", at: minsAgo(2), jobId: "t-0927" },
       { kind: "file", id: "bubble-file", at: minsAgo(2), path: "/mock/火星日落示意图.md", name: "火星日落示意图.md", meta: "349 字" },

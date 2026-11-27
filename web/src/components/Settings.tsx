@@ -54,7 +54,7 @@ import { thinkingText } from "../../../shared/thinking.ts";
 import { Icon, type IconName } from "../icons.tsx";
 import { BrandIcon, brandForRef, modelBrand, providerBrand } from "../brand-icons.tsx";
 import { filterModels, fitThinking, groupByProvider, thinkingLevels } from "../model-list.ts";
-import { currentSubscription, pushSupported } from "../push.ts";
+import { currentSubscription, pushSupportIssue } from "../push.ts";
 import { fmtWhen } from "../util.ts";
 import { skillOriginText } from "../skill-origin.ts";
 import {
@@ -2264,7 +2264,8 @@ function PushSection() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
-  const supported = pushSupported();
+  const supportIssue = pushSupportIssue();
+  const supported = supportIssue === null;
 
   const refreshSubscribed = () =>
     void currentSubscription().then((subscription) => setEndpoint(subscription?.endpoint ?? null));
@@ -2349,8 +2350,12 @@ function PushSection() {
               disabled={busy}
             />
           </div>
-      ) : (
-          <div className="note">{t("这个浏览器不支持推送：请使用 Chrome、Edge、Safari 16.4+，或在 iPhone 上将 Hob 添加到主屏幕。")}</div>
+        ) : (
+          <div className="note">
+            {supportIssue === "insecure-context"
+              ? t("推送需要 HTTPS，请使用 HTTPS 访问 Hob。")
+              : t("这个浏览器不支持推送：请使用 Chrome、Edge、Safari 16.4+，或在 iPhone 上将 Hob 添加到主屏幕。")}
+          </div>
         )}
         {denied ? (
           <div className="note">

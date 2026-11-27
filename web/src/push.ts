@@ -37,18 +37,28 @@ export function base64ToBytes(value: string): Uint8Array {
 }
 
 /** 页面里能不能用推送（iOS 上要先把 Hob 加到主屏幕，从主屏幕打开才有 PushManager）。 */
-export function pushSupported(): boolean {
+export type PushSupportIssue = "insecure-context" | "unsupported" | "ios-standalone";
+
+export function pushSupportIssue(): PushSupportIssue | null {
   if (
     typeof navigator === "undefined" ||
     !("serviceWorker" in navigator) ||
     typeof window === "undefined" ||
+    !window.isSecureContext ||
     !("PushManager" in window) ||
     !("Notification" in window)
-  ) return false;
+  ) {
+    if (typeof window !== "undefined" && !window.isSecureContext) return "insecure-context";
+    return "unsupported";
+  }
   const ios = /iPhone|iPad|iPod/i.test(navigator.userAgent);
-  if (!ios) return true;
+  if (!ios) return null;
   const standalone = (navigator as Navigator & { standalone?: boolean }).standalone === true || window.matchMedia?.("(display-mode: standalone)").matches === true;
-  return standalone;
+  return standalone ? null : "ios-standalone";
+}
+
+export function pushSupported(): boolean {
+  return pushSupportIssue() === null;
 }
 
 /** 现有订阅用的是不是这把公钥（拿不到就当不是，重订一次没坏处） */

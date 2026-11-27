@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { base64ToBytes, canShowPushPrompt, deviceLabel, sameKey } from "../src/push.ts";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { base64ToBytes, canShowPushPrompt, deviceLabel, pushSupportIssue, pushSupported, sameKey } from "../src/push.ts";
 
 describe("首次通知提示", () => {
   const base = { supported: true, subscribed: false, permission: "default" as NotificationPermission, dismissed: false };
@@ -14,6 +14,26 @@ describe("首次通知提示", () => {
 
   it("权限已经允许但浏览器里还没有订阅时仍提示打开", () => {
     expect(canShowPushPrompt({ ...base, permission: "granted" })).toBe(true);
+  });
+});
+
+describe("推送环境", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("HTTP 页面即使暴露推送 API 也不判定为支持", () => {
+    vi.stubGlobal("navigator", { serviceWorker: {}, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("window", { isSecureContext: false, PushManager: {}, Notification: {} });
+
+    expect(pushSupportIssue()).toBe("insecure-context");
+    expect(pushSupported()).toBe(false);
+  });
+
+  it("HTTPS 页面具备浏览器 API 时判定为支持", () => {
+    vi.stubGlobal("navigator", { serviceWorker: {}, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("window", { isSecureContext: true, PushManager: {}, Notification: {} });
+
+    expect(pushSupportIssue()).toBeNull();
+    expect(pushSupported()).toBe(true);
   });
 });
 

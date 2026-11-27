@@ -703,7 +703,7 @@ function AssistantRules({ aid, group = false }: { aid: string; group?: boolean }
   useEffect(() => { if (group) void loadGroupProfile(aid); }, [aid, group]);
   if (group && s.groupProfiles[aid]?.error) return <div className="badline">{t("加载失败：{error}", { error: s.groupProfiles[aid].error })} <button onClick={() => void loadGroupProfile(aid)}>{t("重试")}</button></div>;
   return <>
-    <div className="note">{t("每条写清要怎么做、什么情况下先问你。")}{group ? ` ${t("本群默认，没单独改过的话题都会用。")}` : ""}</div>
+    <div className="note">{t("每条写清要怎么做、什么情况下先向你确认。")}{group ? ` ${t("本群默认，没单独改过的话题都会用。")}` : ""}</div>
     {!rules.length ? <Empty>{t("还没有规则")}</Empty> : null}
     <div className="group-card sidebar-card-group card-rows">{rules.map((rule) => <RuleRow key={rule.id} aid={aid} rule={rule} />)}<RuleCreator aid={aid} /></div>
   </>;
@@ -730,7 +730,7 @@ function TopicRules({ groupId, assistantId, topicId }: { groupId?: string; assis
   const onAdd = isGroup ? undefined : (text: string) => addAssistantTopicRule(assistantId!, topicId!, text);
   const onResetRule = (id: string) => isGroup ? void resetGroupRule(groupId!, id) : void resetAssistantTopicRule(assistantId!, topicId!, id);
   return <>
-    <div className="note">{t("每条写清要怎么做、什么情况下先问你。")} {t("只在本话题生效")}</div>
+    <div className="note">{t("每条写清要怎么做、什么情况下先向你确认。")} {t("只在本话题生效")}</div>
     {!rules.length ? <Empty>{t("还没有规则")}</Empty> : null}
     <div className="group-card sidebar-card-group card-rows">
       {rules.map((rule) => (

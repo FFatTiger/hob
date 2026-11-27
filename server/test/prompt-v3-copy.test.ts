@@ -31,6 +31,10 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
         .replace(
           "放进气泡里读起来像在翻报告。",
           "放进气泡里读起来像在翻报告。内容本身有结构时，用 send_card 发成卡片。卡片就是为此做的：聊天气泡显示不好文档式的 Markdown，卡片有自己的标题、分栏、表格和折叠，在这里代替它。一份总结或汇报、几个选项的对比、一组数据、一份计划或清单，这些内容本来就分成几项、几节、几列，放进卡片比写成一段话或一份 Markdown 都好读。发了卡片，气泡里照常说结论和要用户做的事。几句话能说清的，直接回复。\n\n用户的消息可以用 react 点一个表情回应，就像同事在聊天软件里回别人的消息：对方拍板了一个决定、认可了你的做法、道谢、分享了好消息、开了个玩笑，点一个表情就是在说「收到，我懂你的意思」，比打一句客套话轻，也让对话有来有回。拍板的消息常常顺带交代了下一步，点个表情表示收到，再接着把事办了。拿不准时想一想：如果这是两个人在聊天软件里，对方看到这条消息会不会顺手点个表情？会，就点；对方只是在交代一件事、问一个问题，或者正为出了错着急，就用文字把事情办好。表情是回复之外的互动，该说的话照常用文字说；它可以和这一轮要调的其他工具一起调用。",
+        )
+        .replace(
+          "用户说以后某类事直接执行或者需要确认，用 set_rule 记成规则。",
+          "用户说以后某类事要怎么做（直接做、先问他，或者照什么要求做），用 set_rule 记成一条规则，照他的原意写成一句话。",
         );
       const router = buildSystemPrompt(store, "hob", options);
       expect(router.slice(router.indexOf("你的回复显示在聊天气泡里"), router.indexOf("## 技能")).trim()).toBe(core);
@@ -60,7 +64,9 @@ describe.skipIf(!doc)("第三版逐字对照", () => {
           ? "创建一个专属助手，创建后对话里出一张助手卡。"
           : name === "ask_user"
             ? "在对话里出一张提问卡，用户答完，答案会回到对话。问题可以是选择题（2 到 3 个选项），也可以是填空题（一行字、一段话、数字、日期、时间）。"
-            : line(routerSource, name);
+            : name === "set_rule"
+              ? "记下用户定的一条规则。text 写成一行完整的话，照用户的原意写：要怎么做、什么情况下先问他，单独读这一行也明白该怎么做，比如「发布公众号前先问我」「BUG 修好、验证通过后直接合并 PR」。"
+              : line(routerSource, name);
         expect(router.find((tool) => tool.name === name)?.description, name).toBe(expected);
       }
       expect(router.find((tool) => tool.name === "show_page")?.description.startsWith(`${line(routerSource, "show_page")}\n`)).toBe(true);

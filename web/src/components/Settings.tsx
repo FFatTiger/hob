@@ -401,7 +401,7 @@ function RulesSection() {
 
   const change = (next: { id?: string; text: string }[]) => saveRules(next);
   return <>
-    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。每条写清要怎么做、什么情况下先问你。每个助手自己的规则在其档案中修改。")} />
+    <PageHead title={t("全局规则")} desc={t("所有助手和任务都遵守的规则。每条写清要怎么做、什么情况下先向你确认。每个助手自己的规则在其档案中修改。")} />
     {error ? <div className="badline" role="status">{error}</div> : null}
     {rules === null ? error ? <button className="hob-btn" onClick={() => void loadRules()}>{t("重试")}</button> : <Empty><DelayedText text={t("正在读取全局规则…")} /></Empty> :
       <Group>

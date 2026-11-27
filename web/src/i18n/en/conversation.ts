@@ -271,7 +271,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "发到话题「{name}」": "Post to topic “{name}”",
   "这个群还没有定时任务": "This group has no schedules yet",
   "这个助手还没有定时任务": "This assistant has no schedules yet",
-  "每条写清要怎么做、什么情况下先问你。": "Write each rule as a clear line covering what to do and when to ask first.",
+  "每条写清要怎么做、什么情况下先向你确认。": "Write each rule as a clear line covering what to do and when to ask first.",
   "还没有规则": "No rules yet",
   "每天": "Daily",
   "每周": "Weekly",

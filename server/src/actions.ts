@@ -590,33 +590,34 @@ export async function answerApproval(runtime: HobRuntime, approvalId: string, in
 
   if (option?.always) {
     const assistant = store.assistant(approval.assistantId);
-    const ruleText = approval.ruleText?.trim() || option.label;
+    const remember = approval.ruleText?.trim() || option.label;
+    const ruleText = `直接执行：${remember}`;
+    const matchesExisting = (text: string) =>
+      text === ruleText || text === `执行前确认：${remember}` || text === remember;
     const group = approval.groupId ? store.group(approval.groupId) : undefined;
     const assistantTopic = !group && approval.topicId
       ? store.assistantTopic(approval.assistantId, approval.topicId)
       : undefined;
     if (group?.parentId) {
-      const existing = store.groupRules(group.id).find((rule) => rule.text === ruleText);
+      const existing = store.groupRules(group.id).find((rule) => matchesExisting(rule.text));
       setTopicRule(store.groupTopicConfigHost(group.id), {
         ...(existing ? { id: existing.id } : {}),
         text: ruleText,
-        mode: "allow",
       });
     } else if (assistantTopic) {
-      const existing = store.topicRules(approval.assistantId, assistantTopic.id).find((rule) => rule.text === ruleText);
+      const existing = store.topicRules(approval.assistantId, assistantTopic.id).find((rule) => matchesExisting(rule.text));
       setTopicRule(store.assistantTopicConfigHost(approval.assistantId, assistantTopic.id), {
         ...(existing ? { id: existing.id } : {}),
         text: ruleText,
-        mode: "allow",
       });
     } else {
       const rules = group ? store.groupParentRules(group.id) : store.rules(approval.assistantId);
-      const existing = rules.find((rule) => rule.text === ruleText);
+      const existing = rules.find((rule) => matchesExisting(rule.text));
       if (existing) {
-        existing.mode = "allow";
+        existing.text = ruleText;
         existing.changedAt = new Date().toISOString();
       } else {
-        rules.push({ id: newId("r-"), text: ruleText, mode: "allow", changedAt: new Date().toISOString() });
+        rules.push({ id: newId("r-"), text: ruleText, changedAt: new Date().toISOString() });
       }
       if (group) store.saveGroupRules(group.id, rules);
       else store.saveRules(approval.assistantId, rules);
@@ -802,7 +803,11 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string, opti
 
   store.saveRules(
     assistant.id,
-    draft.askFirst.map((text) => ({ id: newId("r-"), text, mode: "ask" as const, changedAt: now })),
+    draft.askFirst.map((text) => ({
+      id: newId("r-"),
+      text: text.startsWith("执行前确认：") ? text : `执行前确认：${text}`,
+      changedAt: now,
+    })),
   );
   const createdRoutines: string[] = [];
   const savedRoutines: Draft["routines"] = [];

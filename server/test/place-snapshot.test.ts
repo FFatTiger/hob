@@ -33,10 +33,10 @@ describe("单聊与群的系统提示词和工具名单快照（Place 重构基�
         sprite: "server",
       });
       store.saveRules("hob", [
-        { id: "r-hob", text: "删除前先确认", mode: "ask", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-hob", text: "删除前先确认", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       store.saveRules("ops", [
-        { id: "r-ops", text: "发布前先跑测试", mode: "allow", changedAt: "2026-11-26T00:00:00Z" },
+        { id: "r-ops", text: "发布前先跑测试", changedAt: "2026-11-26T00:00:00Z" },
       ]);
       vi.advanceTimersByTime(1000);
       const group = hob.runtime.groups.create({

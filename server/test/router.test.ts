@@ -258,13 +258,13 @@ describe("Router", () => {
   it("set_rule 写规则并出 note 条目", async () => {
     const hob = makeHob();
     try {
-      hob.faux.setResponses([call("set_rule", { text: "发公众号", mode: "ask" }), text("好。")]);
+      hob.faux.setResponses([call("set_rule", { text: "发公众号之前先问我" }), text("好。")]);
       await hob.runtime.router.send("hob", { text: "发公众号之前要问我" });
       await hob.runtime.router.waitIdle("hob");
 
-      expect(hob.runtime.store.rules("hob")).toMatchObject([{ text: "发公众号", mode: "ask" }]);
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ text: "发公众号之前先问我" }]);
       const note = hob.runtime.router.items("hob").items.find((item) => item.kind === "note");
-      expect(note).toMatchObject({ icon: "rule", text: "已记入Hob的规则 · 发公众号" });
+      expect(note).toMatchObject({ icon: "rule", text: "已记入Hob的规则 · 发公众号之前先问我" });
     } finally {
       hob.close();
     }
@@ -300,9 +300,12 @@ describe("Router", () => {
     }
   });
 
-  it("ask_user 出审批卡，选 always 选项写 allow 规则", async () => {
+  it("ask_user 出审批卡，选 always 选项写「直接执行：…」规则并替换已有同类规则", async () => {
     const hob = makeHob();
     try {
+      hob.runtime.store.saveRules("hob", [
+        { id: "r-old", text: "执行前确认：发公众号", changedAt: "2026-01-01T00:00:00.000Z" },
+      ]);
       hob.faux.setResponses([
         call("ask_user", {
           title: "发到公众号吗？",
@@ -327,10 +330,34 @@ describe("Router", () => {
       expect(result.status).toBe(200);
       await hob.runtime.router.waitIdle("hob");
 
-      expect(hob.runtime.store.rules("hob")).toMatchObject([{ text: "发公众号", mode: "allow" }]);
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-old", text: "直接执行：发公众号" }]);
+      expect(hob.runtime.store.rules("hob")).toHaveLength(1);
       const items = hob.runtime.router.items("hob").items;
-      expect(items.some((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 发公众号")).toBe(true);
+      expect(items.some((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 直接执行：发公众号")).toBe(true);
       expect(hob.runtime.store.approval(approval.id)).toMatchObject({ status: "answered", chosen: "C" });
+
+      // 已有文字和 remember 相同的规则时，选 always 也原地替换不新加
+      hob.runtime.store.saveRules("hob", [
+        { id: "r-plain", text: "清理构建缓存", changedAt: "2026-01-01T00:00:00.000Z" },
+      ]);
+      hob.runtime.store.saveApproval({
+        id: "q-plain",
+        assistantId: "hob",
+        title: "清理吗？",
+        options: [
+          { key: "A", label: "清理" },
+          { key: "B", label: "以后「清理构建缓存」直接执行", always: true },
+        ],
+        ruleText: "清理构建缓存",
+        status: "pending",
+        source: "router",
+        createdAt: new Date().toISOString(),
+      });
+      hob.faux.setResponses([text("已清理。")]);
+      expect((await answerApproval(hob.runtime, "q-plain", { key: "B" })).status).toBe(200);
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.store.rules("hob")).toMatchObject([{ id: "r-plain", text: "直接执行：清理构建缓存" }]);
+      expect(hob.runtime.store.rules("hob")).toHaveLength(1);
 
       // 再答一次 409
       const again = await answerApproval(hob.runtime, approval.id, { key: "A" });
@@ -402,7 +429,7 @@ describe("Router", () => {
 
       // 答 always 时规则已经写好了；Router 收到答案事件后按模型的实际做法又调了一次 set_rule
       hob.faux.setResponses([
-        call("set_rule", { text: "升级 hapi 后重启 hapi-hub / hapi-runner", mode: "allow" }),
+        call("set_rule", { text: "直接执行：升级 hapi 后重启 hapi-hub / hapi-runner" }),
         text("好，以后两个都重启。"),
       ]);
       expect((await answerApproval(hob.runtime, approval.id, { key: "C" })).status).toBe(200);
@@ -410,10 +437,10 @@ describe("Router", () => {
 
       const notes = hob.runtime
         .router.items("hob")
-        .items.filter((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 升级 hapi 后重启 hapi-hub / hapi-runner");
+        .items.filter((item) => item.kind === "note" && item.text === "已记入Hob的规则 · 直接执行：升级 hapi 后重启 hapi-hub / hapi-runner");
       expect(notes).toHaveLength(1);
       expect(hob.runtime.store.rules("hob")).toMatchObject([
-        { text: "升级 hapi 后重启 hapi-hub / hapi-runner", mode: "allow" },
+        { text: "直接执行：升级 hapi 后重启 hapi-hub / hapi-runner" },
       ]);
     } finally {
       hob.close();
@@ -717,7 +744,7 @@ describe("Router", () => {
     try {
       const seen: string[] = [];
       hob.faux.setResponses([
-        call("set_rule", { text: "发公众号", mode: "ask" }),
+        call("set_rule", { text: "执行前确认：发公众号" }),
         text("记下了。"),
         (context) => {
           seen.push(systemText(context));

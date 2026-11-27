@@ -136,8 +136,8 @@ describe("提示词角色和内容", () => {
       assistant: (id: string) => id === "hob" ? primary : other,
       assistants: () => [primary, other],
       groups: () => [],
-      globalRules: () => [{ mode: "ask", text: "删除" }, { mode: "allow", text: "验证" }],
-      rules: (id: string) => id === "hob" ? [{ mode: "ask", text: "重启" }, { mode: "allow", text: "查看" }] : [{ mode: "ask", text: "发布" }],
+      globalRules: () => [{ text: "执行前确认：删除" }, { text: "验证" }],
+      rules: (id: string) => id === "hob" ? [{ text: "执行前确认：重启" }, { text: "直接执行：查看" }] : [{ text: "执行前确认：发布" }],
       routines: () => [{ id: "rt-daily", assistantId: "hob", name: "日报", schedules: ["0 9 * * *"], active: true, instruction: "写日报" }],
       job: (id: string) => id === "t-plain" ? { assistantId: "hob" } : { assistantId: "hob", cwd: "/work" },
       workDir: () => "/own",
@@ -152,7 +152,7 @@ describe("提示词角色和内容", () => {
     const worker = buildWorkerPrompt(store, "t", { ...settings, abilities: { exec: false, write: true, image: false } });
     expect(worker).toContain("你是「Hob」派出的后台任务，在自己的会话里完成交给你的任务。\n工作目录：/work：你的命令默认在这里运行，改动直接落在这里。任务自己的目录是 /own：要另拉一份代码隔离着执行，或者放临时文件和中间产物，用它。读取不限目录。");
     expect(worker).toContain("不能做：执行命令（bash）、生成图片（generate_image）。");
-    expect(worker).toContain("## 这些事执行前先用 ask_user 确认\n- 删除\n- 重启");
+    expect(worker).toContain("## 用户定的规则\n- 执行前确认：删除\n- 验证\n- 执行前确认：重启\n- 直接执行：查看\n规则里要求先问用户的事，执行前用 ask_user 询问。");
     // 没指定 cwd：任务就在自己的目录里做
     expect(buildWorkerPrompt(store, "t-plain", settings)).toContain(`工作目录：${homedir()}。产出放在这里；读取不限目录。`);
     const emptyStore = { ...store as object, assistant: () => ({ ...primary }), assistants: () => [primary], groups: () => [], globalRules: () => [], rules: () => [], routines: () => [] } as never;
@@ -249,7 +249,7 @@ describe("系统提示词", () => {
       store.saveDraft({ id: "d", assistantId: "hob", status: "created", createdAssistantId: "ops", name: "服务器", sprite: "server", duty: "机器", dutyLong: "维护服务器", routines: [], routinesText: "", askFirst: [], carry: { conversations: 0 }, createdAt: primary.createdAt });
       store.migrateAssistantDuties();
       expect(store.assistant("ops")?.dutyLong).toBe("维护服务器");
-      store.saveRules("ops", [{ id: "r", text: "重启服务", mode: "ask", changedAt: primary.createdAt }, { id: "r2", text: "查看日志", mode: "allow", changedAt: primary.createdAt }]);
+      store.saveRules("ops", [{ id: "r", text: "执行前确认：重启服务", changedAt: primary.createdAt }, { id: "r2", text: "查看日志", changedAt: primary.createdAt }]);
       expect(promptOf(hob)).toContain("服务器（ops）：机器");
       expect(promptOf(hob)).not.toContain("服务器（ops）：机器。维护服务器");
       expect(promptOf(hob)).not.toContain("执行前要确认：查看日志");

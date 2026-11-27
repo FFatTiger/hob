@@ -193,7 +193,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
     lines.push(`知识库：${bound.length ? bound.map((id) => { const found = collections.find((item) => item.id === id); return found ? `${found.name}（${id}）` : id; }).join("、") : "没有"}`);
     const rules = store.rules(target.id);
     lines.push(rules.length ? "规则：" : "规则：没有");
-    for (const rule of rules) lines.push(`- ${rule.id} · ${rule.mode === "ask" ? "执行前确认" : "直接执行"} · ${rule.text}`);
+    for (const rule of rules) lines.push(`- ${rule.id} · ${rule.text}`);
     const routines = store.routines().filter((routine) => routine.assistantId === target.id);
     lines.push(routines.length ? "定时任务：" : "定时任务：没有");
     for (const routine of routines) lines.push(`- ${routine.id} · ${routine.name} · ${routine.schedules.map((schedule) => cronToChinese(schedule)).join("、")} · ${routine.active ? "启用" : "已暂停"} · ${routine.instruction}`);

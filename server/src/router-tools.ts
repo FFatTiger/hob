@@ -831,10 +831,9 @@ export function buildRouterTools(
     {
       name: "set_rule",
       label: "记录规则",
-      description: `记下用户对某类事的处理方式：ask 是执行前确认，allow 是直接执行。${groupId ? (isGroupTopic ? "在话题里要填 scope：topic 只在这个话题生效，group 写到整个群。" : "在群里记的，只在这个群生效。") : isAssistantTopic ? "在话题里要填 scope：topic 只在这个话题生效，assistant 写到你的规则里。" : ""}`,
+      description: `记下用户定的一条规则。text 写成一行完整的话，照用户的原意写：要怎么做、什么情况下先问他，单独读这一行也明白该怎么做，比如「发布公众号前先问我」「BUG 修好、验证通过后直接合并 PR」。${groupId ? (isGroupTopic ? "在话题里要填 scope：topic 只在这个话题生效，group 写到整个群。" : "在群里记的，只在这个群生效。") : isAssistantTopic ? "在话题里要填 scope：topic 只在这个话题生效，assistant 写到你的规则里。" : ""}`,
       parameters: Type.Object({
-        text: Type.String({ description: "规则内容，如「发布公众号」" }),
-        mode: Type.Unsafe<"ask" | "allow">(Type.String({ description: "ask 或 allow" })),
+        text: Type.String({ description: "规则原文，一行完整的话" }),
         ...(scopeSchema ? { scope: scopeSchema } : {}),
         ...(assistant().primary && !groupId ? { assistantId: Type.Optional(Type.String({ description: "可选，改哪个助手的；不填是你自己的" })) } : {}),
       }),
@@ -845,15 +844,10 @@ export function buildRouterTools(
         if (scopeErr) return fail(scopeErr);
         const text = String(params.text).trim();
         if (!text) return fail("规则内容为空。");
-        const mode = params.mode === "allow" ? "allow" : "ask";
         if (topicScope && params.scope === "topic") {
           const existing = topicCurrentRules().find((rule) => rule.text === text);
-          if (existing?.mode === mode) return ok("这条规则已经记着了，没有改动。");
-          setTopicRule(topicConfigHost(), {
-            ...(existing ? { id: existing.id } : {}),
-            text,
-            mode,
-          });
+          if (existing) return ok("这条规则已经记着了，没有改动。");
+          setTopicRule(topicConfigHost(), { text });
           await note("rule", t("已记入{owner}的规则 · {rule}", { owner: t("这个话题"), rule: text }));
           profileChanged(target.id);
           return ok("已加到这个话题的规则，只在这个话题生效。");
@@ -870,16 +864,9 @@ export function buildRouterTools(
         };
         // 答 always 审批时规则已经写好了（Actions 那行提示也已经出过），这里没改动就不重复出：
         // 模型看到答案之后常会把同一句再记一遍，重复的提示行对用户没有信息量。
-        if (existing?.mode === mode) return ok(`这条规则已经记着了，没有改动。${topicOverrideNote(existing.id)}`);
-        let ruleId: string;
-        if (existing) {
-          existing.mode = mode;
-          existing.changedAt = new Date().toISOString();
-          ruleId = existing.id;
-        } else {
-          ruleId = newId("r-");
-          rules.push({ id: ruleId, text, mode, changedAt: new Date().toISOString() });
-        }
+        if (existing) return ok(`这条规则已经记着了，没有改动。${topicOverrideNote(existing.id)}`);
+        const ruleId = newId("r-");
+        rules.push({ id: ruleId, text, changedAt: new Date().toISOString() });
         if (targetGroupId) store.saveGroupRules(targetGroupId, rules);
         else store.saveRules(target.id, rules);
         await note("rule", t("已记入{owner}的规则 · {rule}", { owner: targetGroupId ? t("本群") : nameOf(target.id), rule: text }));

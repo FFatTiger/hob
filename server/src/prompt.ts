@@ -237,7 +237,7 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
     "", "任务运行多久也归你管。任务超过预计时间会先收到提醒；超过预计两倍时你也会收到提醒，这时用 check_job 查看它在执行什么：方向对就让它继续，偏离方向就纠正或者停止它。告不告诉用户，看会不会耽误用户：用户说过什么时候要用，照现在的进度赶不上，或者还要等很久、该让用户决定还等不等，就告诉用户还要多久、有什么办法；只是比预计慢一些，不耽误什么，任务卡上一直显示着用了多久，用户看得到。",
     "", group && group.ownerId === assistantId ? "" : group ? `定时任务到执行时间会交给${group.ownerId === assistantId ? "你" : "群主"}处理，每次都花一次模型调用。只是查看有没有新情况、而且能用固定办法判断的，配上检查脚本：没变化就什么都不做，有变化才提醒用户或交给${group.ownerId === assistantId ? "你" : "群主"}。要读懂内容才能判断有没有新情况的，不配脚本，每次都交给${group.ownerId === assistantId ? "你" : "群主"}。` : "定时任务到执行时间会交给你处理，每次都花一次模型调用。只是查看有没有新情况、而且能用固定办法判断的，配上检查脚本：没变化就什么都不做，有变化才提醒用户或交给你。要读懂内容才能判断有没有新情况的，不配脚本，每次都交给你。",
     "", "## 什么时候需要执行前确认",
-    "用户定的规则写了执行前确认的事，使用 ask_user 确认。规则没写到、但做了就撤不回的事，比如删除数据、对外发送、付钱，也先用 ask_user 确认，卡片里写清后果；用户定了直接执行的，就直接执行。其余的事按你对用户的了解办下去，把你的假设说出来，用户随时能纠正，询问太多反而耽误事。用户说以后某类事直接执行或者需要确认，用 set_rule 记成规则。",
+    "用户定的规则写了执行前确认的事，使用 ask_user 确认。规则没写到、但做了就撤不回的事，比如删除数据、对外发送、付钱，也先用 ask_user 确认，卡片里写清后果；用户定了直接执行的，就直接执行。其余的事按你对用户的了解办下去，把你的假设说出来，用户随时能纠正，询问太多反而耽误事。用户说以后某类事要怎么做（直接做、先问他，或者照什么要求做），用 set_rule 记成一条规则，照他的原意写成一句话。",
     "",
     "规则、记忆和技能记下的，都是以前的话、做法和情况。用户现在说的和它们对不上时，用户现在的话才是他这次要的，按新的执行。新的话是只管这一次，还是以后都这样，看用户怎么说；以后都这样的，顺手把旧的那份改对，免得下次又照旧的走。",
     "", "## 技能",
@@ -286,11 +286,11 @@ export function buildSystemPrompt(store: Store, assistantId: string, settings: P
   const groupRules = group ? store.groupRules(group.id) : [];
   if (globalRules.length || groupRules.length || rules.length) {
     lines.push("", "## 用户定的规则");
-    for (const rule of globalRules) lines.push(`- ${rule.mode === "ask" ? "执行前确认：" : ""}${rule.text}`);
+    for (const rule of globalRules) lines.push(`- ${rule.text}`);
     if (group && groupRules.length) lines.push(group.parentId ? "这个话题的规则：" : "本群的规则：");
-    for (const rule of groupRules) lines.push(`- ${rule.mode === "ask" ? "执行前确认" : "直接执行"}：${rule.text}`);
+    for (const rule of groupRules) lines.push(`- ${rule.text}`);
     if (group && rules.length) lines.push("你自己的规则：");
-    for (const rule of rules) lines.push(`- ${rule.mode === "ask" ? "执行前确认" : "直接执行"}：${rule.text}`);
+    for (const rule of rules) lines.push(`- ${rule.text}`);
     if (groupRules.length && rules.length) {
       lines.push(group?.parentId ? "这个话题的规则和你自己的规则说法不一样时，在这里按这个话题的规则执行。" : "本群的规则和你自己的规则说法不一样时，在这个群里按本群规则执行。");
     }
@@ -344,7 +344,7 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
   const hasTopic = Boolean(!hasGroup && job.topicId && store.assistantTopic(job.assistantId, job.topicId));
   const groupRules = hasGroup ? store.groupRules(job.groupId!) : [];
   const ownRules = hasTopic ? store.topicRules(job.assistantId, job.topicId!) : store.rules(job.assistantId);
-  const askFirst = [...globalRules, ...groupRules, ...ownRules].filter((rule) => rule.mode === "ask");
+  const allRules = [...globalRules, ...groupRules, ...ownRules];
   // 指定了 cwd 的任务另有一个自己的目录：放临时文件和隔离着的副本，命令默认在指定的目录里跑
   const ownDir = job.cwd ? store.workDir(job.id, job.assistantId) : undefined;
   const workingLine = job.cwd && ownDir !== job.cwd
@@ -370,9 +370,9 @@ export function buildWorkerPrompt(store: Store, jobId: string, settings: PromptS
     if (cannot.length) lines.push(`不能做：${cannot.join("、")}。`);
   }
   lines.push(...aboutSection(settings.aboutYou));
-  const always = [...globalRules, ...groupRules, ...(hasTopic ? ownRules : [])].filter((rule) => rule.mode === "allow");
-  if (always.length) lines.push("", "## 用户定的规则", ...always.map((rule) => `- ${rule.text}`));
-  if (askFirst.length) lines.push("", "## 这些事执行前先用 ask_user 确认", ...askFirst.map((rule) => `- ${rule.text}`));
+  if (allRules.length) {
+    lines.push("", "## 用户定的规则", ...allRules.map((rule) => `- ${rule.text}`), "规则里要求先问用户的事，执行前用 ask_user 询问。");
+  }
   const memory = memoryPromptLines(settings.memory);
   if (memory.length) lines.push("", ...memory);
   return lines.join("\n");

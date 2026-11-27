@@ -6,7 +6,7 @@ import { mkdirSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { newId } from "./ids.ts";
 import type { AgentSession, AgentSessionEvent, SessionEntry, SessionManager } from "@earendil-works/pi-coding-agent";
-import { SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
+import { resizeImage, SessionManager as SessionManagerImpl } from "@earendil-works/pi-coding-agent";
 import { t } from "../../shared/i18n.ts";
 import { readTodos, releaseIdleTodos, todosBusy } from "./todos.ts";
 import { assistantTodosPath, assistantWorkDir, engineDir } from "./config.ts";
@@ -73,6 +73,7 @@ export interface EventDetails {
   cont?: true;
   returnedDelegationId?: string;
   delegationId?: string;
+  files?: string[];
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
   /** 任务事件按真正投递时的任务状态改写；同一任务排队时只留最新一条 */
@@ -90,6 +91,19 @@ interface PendingEvent {
 }
 
 export type NewItem = Item extends infer T ? (T extends Item ? Omit<T, "id" | "at"> : never) : never;
+
+/** 自定义消息不会经过普通用户输入的图片缩放。无法内联的文件仍以路径交给接手助手。 */
+async function eventContent(text: string, files: string[] | undefined, model: AgentSession["model"]) {
+  if (!files?.length) return text;
+  const prompt = `${text}\n附件：${files.join("、")}`;
+  if (!model?.input.includes("image")) return prompt;
+  const images = [];
+  for (const file of imageContents(files)) {
+    const image = await resizeImage(Buffer.from(file.data, "base64"), file.mimeType, model.inputLimits?.images?.resize).catch(() => null);
+    if (image) images.push({ type: "image" as const, data: image.data, mimeType: image.mimeType });
+  }
+  return images.length ? [{ type: "text" as const, text: prompt }, ...images] : prompt;
+}
 
 /**
  * 群里给做事、沟通和管理本群规则、定时、技能的工具；页面按助手存，进群要另做。
@@ -745,11 +759,13 @@ export class RouterManager {
       this.flushEventTurn(state, assistantId);
       if (!state.groupId) state.eventTurn = { held: [] };
       const details = event.message.details as EventDetails | undefined;
-      state.turnDelegation ||= Boolean(details?.delegationId);
+      // 群可能在目标助手还忙时就交回结论。等消息实际入会话才重新打开原委派。
+      const delegationId = details?.handoverTopicId ? this.runtime.delegations.resumeForTopic(details.handoverTopicId) : details?.delegationId;
+      state.turnDelegation ||= Boolean(delegationId);
       state.turnWorkDone ||= Boolean(details?.workDone);
       state.turnRoutine = details?.routineTrigger;
-      if (details?.delegationId && details.delegationId !== state.currentDelegationId) {
-        state.currentDelegationId = details.delegationId;
+      if (delegationId && delegationId !== state.currentDelegationId) {
+        state.currentDelegationId = delegationId;
         state.delegationReply = [];
         state.terminatingTools = new Set();
       }
@@ -1374,9 +1390,11 @@ export class RouterManager {
       this.publishBusy(state);
       await this.waitForCompaction(state);
       const knowledge = knowledgeQuery === undefined ? "" : await this.automaticKnowledge(state, knowledgeQuery);
-      const message = { customType: EVENT_TYPE, content: `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`, display: false, details };
       await this.refreshTools(state);
       await this.applyConversationModel(state);
+      const prompt = `${nowBlock(this.runtime, assistantId)}\n\n[hob-event] ${this.eventText(text, details)}${knowledge}`;
+      const content = await eventContent(prompt, details?.files, session.model);
+      const message = { customType: EVENT_TYPE, content, display: false, details };
       if (session.isStreaming) {
         // 上面几步等待的空当里用户的话先开了一轮：排在它后面，不插进那一轮中间
         await session.sendCustomMessage(message, { deliverAs: "followUp" });
@@ -1400,11 +1418,11 @@ export class RouterManager {
       this.touch(state);
     }
   }
-  async delegationResult(assistantId: string, id: string, text: string): Promise<boolean> {
+  async delegationResult(assistantId: string, id: string, text: string, files?: string[]): Promise<boolean> {
     const state = await this.ensure(assistantId);
     const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.returnedDelegationId === id);
     if (received()) return true;
-    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true });
+    const success = await this.pushEvent(assistantId, text, { returnedDelegationId: id, workDone: true, ...(files?.length ? { files } : {}) });
     return success && received();
   }
 

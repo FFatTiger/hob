@@ -1554,7 +1554,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (!record) return c.json({ error: "委派不存在" }, 404);
     if (record.status !== "interrupted") return c.json({ error: "只有已中断的委派可以重新转交" }, 400);
     try {
-      return c.json({ delegation: await runtime.delegations.start(record.from, record.to, record.text) });
+      return c.json({ delegation: await runtime.delegations.retry(record) });
     } catch (error) {
       return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
     }

@@ -4,7 +4,7 @@ import { jobResultEvent } from "./jobs.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { publicDelegation, type StoredDelegation } from "./store.ts";
 
-/** 转交状态由目标回合、任务和审批共同决定。 */
+/** 转交状态由接手助手的回合、任务、群话题和审批共同决定。 */
 export class DelegationManager {
   recovering = false;
   private delivering = new Set<string>();
@@ -13,6 +13,7 @@ export class DelegationManager {
     runtime.bus.subscribe((event) => {
       if (this.recovering) return;
       if (event.type === "job" && event.job.delegationId) this.update(event.job.delegationId);
+      if (event.type === "group_removed") this.topicEnded(event.id, "群话题已归档，未收到结论。", true);
       if (event.type === "approval") {
         for (const delegation of runtime.store.delegations()) {
           if (delegation.approvalIds?.includes(event.approval.id) || (event.approval.jobId && delegation.jobIds.includes(event.approval.jobId))) this.update(delegation.id);
@@ -26,7 +27,7 @@ export class DelegationManager {
     const target = this.runtime.store.assistant(to);
     if (!source || !target || from === to) throw new Error("目标助手不存在或不能转交给自己。");
     signal?.throwIfAborted();
-    const delegation: Delegation = { id: newId("dg-"), from, to, text, createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
+    const delegation: Delegation = { id: newId("dg-"), from, to, text, ...(files.length ? { files } : {}), createdAt: new Date().toISOString(), status: "running", jobIds: [], approvalIds: [] };
     this.runtime.store.saveDelegation(delegation);
     try {
       await this.runtime.router.addItem(from, { kind: "delegation", delegationId: delegation.id });
@@ -38,10 +39,20 @@ export class DelegationManager {
       throw error;
     }
     this.runtime.bus.emit({ type: "delegation", delegation });
-    void this.runtime.router.relay(to, `转自「${source.name}」：${text}`, delegation.id, undefined, text).catch((error: unknown) => {
+    void this.runtime.router.relay(to, `转自「${source.name}」：${text}`, delegation.id, files.length ? { files } : undefined, text).catch((error: unknown) => {
       this.turnEnded(delegation.id, error instanceof Error ? error.message : String(error), true);
     });
     return delegation;
+  }
+
+  retry(record: Delegation): Promise<Delegation> {
+    let files = record.files;
+    if (!files) {
+      // 旧版只把附件记在接手助手的转来消息上。
+      const forwarded = this.runtime.router.messageHistory(record.to).find((item) => item.kind === "user" && item.from?.delegationId === record.id);
+      if (forwarded?.kind === "user") files = forwarded.files;
+    }
+    return this.start(record.from, record.to, record.text, files);
   }
 
   takeOver(to: string): void {
@@ -60,6 +71,35 @@ export class DelegationManager {
     const record = this.runtime.store.internalDelegation(id);
     if (!record || record.jobIds.includes(jobId)) return;
     this.runtime.store.saveDelegation({ ...record, jobIds: [...record.jobIds, jobId] });
+  }
+
+  addFile(id: string, path: string): void {
+    const record = this.runtime.store.internalDelegation(id);
+    if (!record || record.reportedAt || record.pendingResult || record.resultFiles?.includes(path)) return;
+    this.runtime.store.saveDelegation({ ...record, resultFiles: [...(record.resultFiles ?? []), path] });
+  }
+
+  addTopic(id: string, topicId: string): void {
+    const record = this.runtime.store.internalDelegation(id);
+    if (!record || record.reportedAt || record.pendingResult || record.topics?.[topicId]) return;
+    this.runtime.store.saveDelegation({ ...record, topics: { ...record.topics, [topicId]: "pending" } });
+  }
+
+  private forTopic(topicId: string): StoredDelegation | undefined {
+    return this.runtime.store.internalDelegations().find((record) => record.topics?.[topicId] === "pending" && !record.pendingResult && !record.reportedAt);
+  }
+
+  resumeForTopic(topicId: string): string | undefined {
+    const record = this.forTopic(topicId);
+    return record && this.resume(record.id) ? record.id : undefined;
+  }
+
+  topicEnded(topicId: string, result: string, failed = false): void {
+    const record = this.forTopic(topicId);
+    if (!record) return;
+    const reply = [record.reply, result].filter(Boolean).join("\n");
+    this.runtime.store.saveDelegation({ ...record, topics: { ...record.topics, [topicId]: failed ? "failed" : "done" }, reply });
+    this.update(record.id);
   }
 
   addApproval(id: string, approvalId: string): void {
@@ -106,13 +146,16 @@ export class DelegationManager {
     if (record.pendingResult) { this.deliverResult(record); return; }
     const jobs = record.jobIds.map((jobId) => store.job(jobId));
     const waiting = jobs.some((job) => job?.status === "waiting") || store.approvals().some((approval) => approval.status === "pending" && (record.approvalIds?.includes(approval.id) || (approval.jobId && record.jobIds.includes(approval.jobId))));
-    const active = jobs.some((job) => job && ["queued", "running", "waiting"].includes(job.status));
-    const failed = record.turnFailed || jobs.some((job) => !job || job.status === "stuck" || job.status === "failed");
+    const topics = Object.values(record.topics ?? {});
+    const active = topics.includes("pending") || jobs.some((job) => job && ["queued", "running", "waiting"].includes(job.status));
+    const failed = topics.includes("failed") || record.turnFailed || jobs.some((job) => !job || job.status === "stuck" || job.status === "failed");
     const status = record.status === "returned" ? "returned" : waiting ? "waiting" : !record.turnFinished || active ? "running" : failed ? "stuck" : "done";
     const complete = record.turnFinished && !active && !waiting;
     const now = new Date().toISOString();
     const next: StoredDelegation = { ...record, status, ...(complete ? { endedAt: now } : {}) };
     if (complete) {
+      const files = [...new Set([...(record.resultFiles ?? []), ...jobs.flatMap((job) => job?.files ?? [])])];
+      if (files.length) next.resultFiles = files;
       const reports = jobs.map((job) => {
         if (!job) return "任务记录丢失";
         return jobResultEvent(job);
@@ -131,14 +174,15 @@ export class DelegationManager {
   private deliverResult(record: StoredDelegation): void {
     if (!record.pendingResult || this.delivering.has(record.id)) return;
     this.delivering.add(record.id);
-    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult).then((received) => {
+    const files = record.status === "takenOver" ? undefined : record.resultFiles;
+    void this.runtime.router.delegationResult(record.from, record.id, record.pendingResult, files).then((received) => {
       if (!received) return;
       const current = this.runtime.store.internalDelegation(record.id);
       if (!current || current.reportedAt || current.pendingResult !== record.pendingResult) return;
       const { pendingResult: _pending, ...rest } = current;
       const next = { ...rest, reportedAt: new Date().toISOString() };
       this.runtime.store.saveDelegation(next);
-      this.runtime.bus.emit({ type: "delegation", delegation: next });
+      this.runtime.bus.emit({ type: "delegation", delegation: publicDelegation(next) });
     }).catch((error) => console.error("转交结果投递失败：", error)).finally(() => this.delivering.delete(record.id));
   }
 
@@ -147,13 +191,25 @@ export class DelegationManager {
     for (const record of this.runtime.store.internalDelegations()) {
       if (record.pendingResult && !record.reportedAt) { this.deliverResult(record); continue; }
       if (record.reportedAt || !["running", "waiting", "returned"].includes(record.status)) continue;
+      const pendingTopics = Object.entries(record.topics ?? {}).filter(([, status]) => status === "pending");
+      if (pendingTopics.length) {
+        // 进程里的旧回合已停止，话题仍能接着处理。已送到的结论可能还没从委派的等待清单上划掉。
+        this.runtime.store.saveDelegation({ ...record, turnFinished: true });
+        for (const [id] of pendingTopics) {
+          const handover = this.runtime.store.group(id)?.handover;
+          if (!handover) this.topicEnded(id, "群话题已归档，未收到结论。", true);
+          else if (handover.deliveredAt && handover.result) this.topicEnded(id, handover.result);
+        }
+        continue;
+      }
       if (record.jobIds.some((id) => { const job = this.runtime.store.job(id); return job && ["running", "queued", "waiting"].includes(job.status); })) continue;
       // 目标助手在等用户选：审批卡重启后还在，答了照常继续，不算中断
       if (record.approvalIds?.some((id) => this.runtime.store.approval(id)?.status === "pending")) continue;
+      if (record.topics && record.turnFinished) { this.update(record.id); continue; }
       const now = new Date().toISOString();
       const next: Delegation = { ...record, status: "interrupted", endedAt: now, reportedAt: now };
       this.runtime.store.saveDelegation(next);
-      this.runtime.bus.emit({ type: "delegation", delegation: next });
+      this.runtime.bus.emit({ type: "delegation", delegation: publicDelegation(next) });
       const name = this.runtime.store.assistant(record.to)?.name ?? record.to;
       void this.runtime.router.event(record.from, `转交给「${name}」的事因服务重启中断`).catch(() => undefined);
     }

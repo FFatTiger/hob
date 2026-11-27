@@ -31,10 +31,10 @@ export const RESTART_NOTE = "服务已重启，本轮已中断。";
 export const TOPIC_CLOSED = "这个话题已关闭，重新打开后才能发消息";
 /** 用户关闭话题时没写说明就记这句；助手关闭时由调用方给出说明。 */
 export const CLOSED_TOPIC_REASON = "你关闭了这个话题";
-/** 主助手交来的话题关的时候要写结论：结论会转给主助手。 */
-export const HANDOVER_NOTE_REQUIRED = "note 不能为空：这个话题是 Hob 交给这个群的，结论会转给 Hob，由它告诉用户；不做了的写明原因。";
-/** 群主在话题里收到的那条：这件事是主助手交来的。 */
-export const HANDOVER_EVENT = "这个话题是 Hob 交给这个群的，上面是 Hob 写的交接说明。完成后用 close_topic 写结论，结论会转给 Hob，由它告诉用户。";
+/** 群主在话题里收到的交接说明。 */
+export function handoverEvent(from: string): string {
+  return `这个话题是 ${from} 交给这个群的，上面是 ${from} 写的交接说明。完成后用 close_topic 写结论，结论会转给 ${from}，由它告诉用户。`;
+}
 
 /** 系统写的条目（停下、重启）的发言人。 */
 const SYSTEM = "system";
@@ -315,7 +315,10 @@ export class GroupManager {
   closeByOwner(tid: string, note: unknown): Group {
     const topic = this.topic(tid);
     const text = typeof note === "string" ? note.trim() : "";
-    if (topic.handover && !text) throw new Error(HANDOVER_NOTE_REQUIRED);
+    if (topic.handover && !text) {
+      const from = this.nameOf(topic.handover.by);
+      throw new Error(`note 不能为空：这个话题是 ${from} 交给这个群的，结论会转给 ${from}，由它告诉用户；不做了的写明原因。`);
+    }
     return this.closeTopic(topic, text, text);
   }
 
@@ -368,13 +371,15 @@ export class GroupManager {
   private deliverHandover(tid: string): void {
     const topic = this.store.group(tid);
     const handover = topic?.handover;
-    if (!topic || !handover?.result || handover.deliveredAt || this.delivering.has(tid)) return;
+    const result = handover?.result;
+    if (!handover || !result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
-    void this.runtime.router.handoverResult(handover.by, tid, handover.result).then((received) => {
+    void this.runtime.router.handoverResult(handover.by, tid, result).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
-      if (!current?.handover || current.handover.deliveredAt || current.handover.result !== handover.result) return;
+      if (!current?.handover || current.handover.deliveredAt || current.handover.result !== result) return;
       this.store.saveGroup({ ...current, handover: { ...current.handover, deliveredAt: new Date().toISOString() } });
+      this.runtime.delegations.topicEnded(tid, result);
     }).catch((error) => console.error("话题的结论没送到：", error)).finally(() => this.delivering.delete(tid));
   }
 
@@ -577,9 +582,13 @@ export class GroupManager {
   async send(gid: string, body: SendMessageBody): Promise<GroupItem> {
     const group = this.group(gid);
     if (group.closedAt) throw new Error(TOPIC_CLOSED);
-    // 和单聊一样：用户在这里又发了话，成员在这里出的、还没答的问题卡就过期了（显示「已结束」），这句话算什么由成员自己判断
+    const explicit = this.explicitTargetsOf(group, body.text, body.quote);
+    const targets = explicit.length ? explicit : [group.ownerId];
+    const allReply = !explicit.length && group.replyMode === "all";
+    const recipients = allReply ? group.members : targets;
+    // 被用户重新叫到的成员可以按新消息继续处理；其他成员仍在等自己问题卡的答复。
     for (const approval of this.store.approvals()) {
-      if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending") continue;
+      if (approval.groupId !== gid || approval.source !== "router" || approval.status !== "pending" || !recipients.includes(approval.assistantId)) continue;
       const expired = { ...approval, status: "expired" as const };
       this.store.saveApproval(expired);
       this.bus.emit({ type: "approval", approval: expired });
@@ -594,13 +603,11 @@ export class GroupManager {
     });
     this.bus.emit({ type: "group-item", groupId: gid, item });
     this.publish(gid);
-    const explicit = this.explicitTargetsOf(group, body.text, body.quote);
-    const targets = explicit.length ? explicit : [group.ownerId];
     const wave: Wave = {
       turns: 0,
       stopped: false,
       pending: 0,
-      ...(!explicit.length && group.replyMode === "all"
+      ...(allReply
         ? { allReply: { triggerId: item.id, epoch: this.epochs.get(gid) ?? 0, participated: new Set<string>() } }
         : {}),
     };
@@ -830,7 +837,11 @@ export class GroupManager {
   }
 
   private inputFiles(input: TurnInput): string[] {
-    return input.items.flatMap((item) => item.kind === "user" ? item.files ?? [] : []);
+    return [...new Set(input.items.flatMap((item) => {
+      if (item.kind === "user") return item.files ?? [];
+      if (item.kind === "file") return [item.path];
+      return item.kind === "image" && item.status === "done" && item.path ? [item.path] : [];
+    }))];
   }
 
   /** 给到哪一条了：下一轮从这里往后算（只调了工具没说话的回合也记得住）。 */
@@ -862,9 +873,11 @@ export class GroupManager {
         return `${who}：询问了用户${approval ? `「${approval.title}」` : "一个问题"}`;
       }
       case "file":
-        return `${who}：发送了文件「${item.name}」`;
+        return `${who}：发送了文件「${item.name}」（${item.path}）`;
       case "image":
-        return `${who}：生成了一张图片`;
+        if (item.status === "pending") return `${who}：正在生成图片`;
+        if (item.status === "failed") return `${who}：生成图片失败${item.error ? `（${item.error}）` : ""}`;
+        return `${who}：生成了一张图片${item.path ? `（${item.path}）` : ""}`;
       case "draft":
         return `${who}：提议创建一个助手`;
       case "delegation":

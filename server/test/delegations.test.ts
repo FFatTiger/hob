@@ -1,8 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import type { UserMessage } from "@earendil-works/pi-ai";
 import type { Delegation, Job } from "../../shared/types.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
 import { buildSystemPrompt } from "../src/prompt.ts";
 import { answerApproval } from "../src/actions.ts";
+import { createApp } from "../src/http.ts";
 import { call, makeHob, text, waitFor } from "./helpers.ts";
 
 function setup() {
@@ -23,6 +27,73 @@ function record(): Delegation {
 function job(id: string, status: Job["status"]): Job {
   return { id, assistantId: "ops", title: id, instruction: "检查", status, createdAt: new Date().toISOString(), stats: { reads: 0, commands: 0, edits: 0 }, activity: [], delegationId: "dg-test" };
 }
+
+describe("转交附件", () => {
+  it("接手助手用 send_file 交付，发起方能拿到本次委派的成品", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const primary = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...primary, id: "ops", name: "核对", primary: false });
+      const report = join(hob.runtime.store.assistantDir("ops"), "files", "核账结果.csv");
+      const unrelated = join(dirname(report), "上次结果.csv");
+      mkdirSync(dirname(report), { recursive: true });
+      for (const path of [report, unrelated]) writeFileSync(path, "合计\n128");
+      await hob.runtime.router.addItem("ops", { kind: "file", path: unrelated, name: "上次结果.csv" });
+      let received: UserMessage | undefined;
+      hob.faux.setResponses([call("send_file", { path: report }), text("核对完成，见附件"), (context) => {
+        received = context.messages.findLast((message) => message.role === "user");
+        return text("收到结果");
+      }]);
+      const delegation = await hob.runtime.delegations.start("hob", "ops", "把核账结果交回来");
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(JSON.stringify(received?.content)).toContain(report);
+      expect(JSON.stringify(received?.content)).not.toContain(unrelated);
+    } finally { hob.close(); }
+  });
+
+  it.each([true, false])("附件路径进入接手助手的模型输入，图片按模型能力传递（视觉 %s）", async (vision) => {
+    const hob = makeHob({}, { memory: "off", models: [{ id: "test", input: vision ? ["text", "image"] : ["text"] }] });
+    try {
+      const primary = hob.runtime.store.assistant("hob")!;
+      hob.runtime.store.saveAssistant({ ...primary, id: "ops", name: "核对", primary: false });
+      const files = [join(hob.home, "明细.csv"), join(hob.home, "票据.png")];
+      writeFileSync(files[0], "金额\n128\n");
+      const png = readFileSync(new URL("../../web/public/icons/favicon-32.png", import.meta.url));
+      writeFileSync(files[1], png);
+      let received: UserMessage | undefined;
+      hob.faux.setResponses([(context) => {
+        received = context.messages.findLast((message) => message.role === "user");
+        return text("已核对");
+      }, text("收到")]);
+      const delegation = await hob.runtime.delegations.start("hob", "ops", "请核对附件", files);
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      for (const file of files) expect(JSON.stringify(received?.content)).toContain(file);
+      const images = Array.isArray(received?.content) ? received.content.filter((part) => part.type === "image") : [];
+      expect(images).toEqual(vision ? [{ type: "image", mimeType: "image/png", data: png.toString("base64") }] : []);
+    } finally { hob.close(); }
+  });
+
+  it.each([true, false])("通过 HTTP 重试中断的委派时保留原附件（旧记录 %s）", async (legacy) => {
+    const hob = setup();
+    try {
+      const files = [join(hob.home, "清单.csv")];
+      const original = { ...record(), status: "interrupted" as const, ...(legacy ? {} : { files }) };
+      hob.runtime.store.saveDelegation(original);
+      if (legacy) await hob.runtime.router.addForwarded("ops", original.text, original.id, original.from, files);
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      hob.faux.setResponses([text("收到了"), text("已完成")]);
+      const response = await app.request(`/api/delegations/${original.id}/retry`, { method: "POST", headers: { cookie: login.headers.get("set-cookie")!.split(";")[0] } });
+      expect(response.status).toBe(200);
+      const { delegation } = await response.json();
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      await hob.runtime.router.waitIdle("hob");
+      expect(hob.runtime.router.items("ops").items).toContainEqual(expect.objectContaining({
+        kind: "user", files, from: expect.objectContaining({ delegationId: delegation.id }),
+      }));
+    } finally { hob.close(); }
+  });
+});
 
 describe("交回 Hob", () => {
   it("只有非主助手有工具；普通回合写入双向定位条目并触发 Hob", async () => {

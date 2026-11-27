@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "re
 import { t } from "../../shared/i18n.ts";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
+import { CommandPalette } from "./components/CommandPalette.tsx";
 import { DropFiles } from "./components/DropFiles.tsx";
 import { FilePreviewOverlay } from "./components/FilePreview.tsx";
 import { JobOverlay } from "./components/JobDetail.tsx";
@@ -198,6 +199,7 @@ export function App() {
   ) : null;
 
   const pushPrompt = <PushPrompt />;
+  const commandPalette = <CommandPalette />;
 
   // 拖文件进窗口：只在界面里接管，登录页/连不上时不管
   const drop = <DropFiles />;
@@ -212,12 +214,13 @@ export function App() {
         {toast}
         {pushPrompt}
         {loginOverlay}
+        {commandPalette}
       </>
     );
   }
 
-  if (s.page === "stars") return <><Stars narrow={narrow} />{toast}{pushPrompt}{loginOverlay}</>;
-  if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} />{toast}{pushPrompt}{loginOverlay}</>;
+  if (s.page === "stars") return <><Stars narrow={narrow} />{toast}{pushPrompt}{loginOverlay}{commandPalette}</>;
+  if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} />{toast}{pushPrompt}{loginOverlay}{commandPalette}</>;
 
   if (knowledge.mounted) {
     return (
@@ -228,6 +231,7 @@ export function App() {
         {toast}
         {pushPrompt}
         {loginOverlay}
+        {commandPalette}
       </>
     );
   }
@@ -275,6 +279,7 @@ export function App() {
         {toast}
         {pushPrompt}
         {loginOverlay}
+        {commandPalette}
       </>
     );
   }
@@ -313,6 +318,7 @@ export function App() {
       {toast}
       {pushPrompt}
       {loginOverlay}
+      {commandPalette}
     </div>
   );
 }

@@ -20,6 +20,7 @@ vi.mock("./store.ts", () => ({
 }));
 vi.mock("./components/Sidebar.tsx", () => ({ Sidebar: () => <aside className="side" /> }));
 vi.mock("./components/Chat.tsx", () => ({ Chat: () => <main className="chat"><input defaultValue="草稿" /></main>, ChatPage: () => null }));
+vi.mock("./components/CommandPalette.tsx", () => ({ CommandPalette: () => null }));
 vi.mock("./components/Panel.tsx", () => ({ Panel: () => <div>右栏</div> }));
 vi.mock("./components/JobDetail.tsx", () => ({ JobOverlay: () => <div className="jd-embedded">任务详情</div> }));
 vi.mock("./components/AssistantMenu.tsx", () => ({ AssistantMenu: () => null }));

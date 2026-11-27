@@ -725,7 +725,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
         document.body,
       ) : null}
       <div className="comp-main">
-        <ComposerPlus g={g} a={a} onFiles={attach} />
+        <ComposerPlus g={g} a={a} topic={topic} onFiles={attach} />
         <textarea
           ref={ta}
           className="ta"

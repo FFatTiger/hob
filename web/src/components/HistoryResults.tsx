@@ -30,7 +30,8 @@ export function HistoryResults() {
     {current?.error ? <p>{t("搜索失败：{error}", { error: current.error })}</p> : current && !rows.length ? <p>{t("没有找到包含「{query}」的消息", { query })}</p> : null}
     {rows.map((row) => {
       const group = row.conversation.kind === "group" ? s.groups.find((g) => g.id === row.conversation.id) : undefined;
-      const assistant = s.assistants.find((a) => a.id === (group?.ownerId ?? row.conversation.id));
+      const topic = row.conversation.kind === "topic" ? s.assistantTopics.find((item) => item.id === row.conversation.id) : undefined;
+      const assistant = s.assistants.find((a) => a.id === (group?.ownerId ?? topic?.assistantId ?? row.conversation.id));
       return <button className="history-row" key={`${row.conversation.kind}:${row.conversation.id}:${row.itemId}`} onClick={() => void jumpToHistory(row.conversation, row.itemId)}>
         {assistant ? <Avatar sprite={assistant.sprite} prop={assistant.prop} size={36} /> : null}
         <span className="history-content"><span className="history-title"><strong>{row.conversationName}</strong><span>{fmtWhen(row.at)}</span></span><span className="history-snippet">{row.starred ? "★ " : ""}<Highlight text={row.snippet} query={query} /></span></span>

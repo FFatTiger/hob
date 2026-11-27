@@ -1407,7 +1407,7 @@ export interface PushSubscriptionJson {
   keys: { p256dh: string; auth: string };
 }
 
-/** 客户端上报的可见状态：target 为正在查看的会话标识（"assistant:<id>" 或 "group:<id>"），未在看具体对话时为 null。 */
+/** 客户端上报的可见状态：target 为正在查看的会话标识（"assistant:<id>"、"assistant:<id>@<tid>" 或 "group:<id>"），未在看具体对话时为 null。 */
 export interface ClientVisibility {
   clientId: string;
   visible: boolean;

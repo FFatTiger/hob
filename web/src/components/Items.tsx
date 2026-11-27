@@ -104,6 +104,12 @@ function useNoHover(): boolean {
   return no;
 }
 
+export function starConversation(s: { gsel: string | null; sel: string | null; tsel: string | null }): { kind: "group" | "topic" | "assistant"; id: string } {
+  if (s.gsel) return { kind: "group", id: s.gsel };
+  if (s.tsel) return { kind: "topic", id: s.tsel };
+  return { kind: "assistant", id: s.sel ?? "" };
+}
+
 /** 气泡下方的一行工具：回复（引用摘要）/ 复制（原文）。 */
 function Tools({
   text,
@@ -117,7 +123,7 @@ function Tools({
   close?: () => void;
 }) {
   const s = useApp();
-  const conversation = s.gsel ? { kind: "group" as const, id: s.gsel } : { kind: "assistant" as const, id: s.sel ?? "" };
+  const conversation = starConversation(s);
   const starred = s.stars.some((star) => star.conversation.kind === conversation.kind && star.conversation.id === conversation.id && star.itemId === itemId);
   const [copied, setCopied] = useState(false);
   const timer = useRef(0);
@@ -167,7 +173,7 @@ type Popup = { anchor: HTMLElement; item: Item; text: string; right: boolean };
 
 function MessagePopup({ popup, close, selectText, closing }: { popup: Popup; close: () => void; selectText: () => void; closing: boolean }) {
   const s = useApp();
-  const conversation = s.gsel ? { kind: "group" as const, id: s.gsel } : { kind: "assistant" as const, id: s.sel ?? "" };
+  const conversation = starConversation(s);
   const starred = s.stars.some((star) => star.conversation.kind === conversation.kind && star.conversation.id === conversation.id && star.itemId === popup.item.id);
   const menu = useRef<HTMLDivElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number; above: boolean } | null>(null);

@@ -1,6 +1,7 @@
 // HOB_HOME/system/push.json：VAPID 密钥 + 订阅设备（0600、原子写）。推送走 web-push。
 import { t } from "../../shared/i18n.ts";
 import { plainText } from "../../shared/plain-text.ts";
+import { conversationTarget } from "../../shared/push-target.ts";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
@@ -399,11 +400,9 @@ function openUrl(assistantId: string, place?: Place): string {
   return `/?a=${encodeURIComponent(assistantId)}`;
 }
 
-/** 规范化会话目标标识，与前端上报的 ClientVisibility.target 保持一致。 */
+/** 规范化会话目标标识，与前端上报的 ClientVisibility.target 共用 shared/push-target.ts。 */
 export function pushTarget(assistantId: string, place?: Place): string {
-  if (place?.groupId) return `group:${place.groupId}`;
-  if (place?.topicId) return `topic:${place.topicId}`;
-  return `assistant:${assistantId}`;
+  return conversationTarget(assistantId, place);
 }
 
 function pushConversationTitle(store: Store, assistantId: string, assistantName: string, place?: Place): string {

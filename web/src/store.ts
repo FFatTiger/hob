@@ -3,6 +3,7 @@ import "./i18n/en/index.ts";
 import { parseRoute, type SettingsSection } from "./route.ts";
 import { useRef, useSyncExternalStore } from "react";
 import { currentLocale, localeFromBrowser, setLocale as setSharedLocale, t, type Locale } from "../../shared/i18n.ts";
+import { conversationTarget } from "../../shared/push-target.ts";
 import type {
   PluginModelOverridePatch,
   StarredMessage,
@@ -1574,13 +1575,13 @@ export function assistantSessionKey(assistantId: string, topicId?: string | null
   return topicId ? `${assistantId}@${topicId}` : assistantId;
 }
 
-/** 当前正在查看的会话标识（"assistant:<id>"、"assistant:<id>@<tid>" 或 "group:<id>"），未在看具体对话时为 null。 */
+/** 当前正在查看的会话标识（与服务端 pushTarget 共用 shared/push-target.ts），未在看具体对话时为 null。 */
 export function activeTarget(s: State, narrow = isNarrow()): string | null {
   if (s.page !== "main") return null;
   if (narrow && s.mobile !== "chat") return null;
-  if (s.gsel) return `group:${s.gsel}`;
+  if (s.gsel) return conversationTarget("", { groupId: s.gsel });
   if (s.newTopic) return null;
-  if (s.sel) return `assistant:${assistantSessionKey(s.sel, s.tsel)}`;
+  if (s.sel) return conversationTarget(s.sel, s.tsel ? { topicId: s.tsel } : undefined);
   return null;
 }
 
@@ -1937,7 +1938,10 @@ export async function openAssistantTopic(aid: string, tid: string, nav = true, k
 }
 
 /** 点「创建新话题」进入空白新话题页（此时不发创建请求；未发送离开不留空话题）。 */
+let newTopicSeq = 0;
+
 export function openNewAssistantTopic(aid: string) {
+  newTopicSeq += 1;
   const previous = state.gsel ?? (state.sel ? assistantSessionKey(state.sel, state.tsel) : null);
   const nextKey = `${aid}@new`;
   set((s) => ({
@@ -2296,6 +2300,7 @@ async function deliver(p: PendingMessage) {
 /** 空白新话题页发送第一条消息：调用 POST /api/assistants/:id/topics 建好并切进话题。 */
 async function sendNewAssistantTopic(aid: string, meta: { title: string; cwd: string }, text: string, draft: ComposerDraft) {
   if (state.newTopicBusy) return;
+  const startedSeq = newTopicSeq;
   const draftKey = `${aid}@new`;
   set({ newTopicBusy: true, newTopicError: null });
   try {
@@ -2313,22 +2318,30 @@ async function sendNewAssistantTopic(aid: string, meta: { title: string; cwd: st
     });
     const tid = created.topic.id;
     const key = assistantSessionKey(aid, tid);
-    set((s) => ({
-      assistantTopics: upsert(s.assistantTopics, created.topic),
-      tsel: tid,
-      newTopic: null,
-      newTopicBusy: false,
-      newTopicError: null,
-      sideHome: false,
-      composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, draftKey),
-      nonce: s.nonce + 1,
-      items: { ...s.items, [key]: created.item ? mergeItems(s.items[key] ?? [], created.item) : (s.items[key] ?? []) },
-      itemGen: { ...s.itemGen, [key]: (s.itemGen[key] ?? 0) + 1 },
-      itemPages: { ...s.itemPages, [key]: s.itemPages[key] ?? { hasMore: false, loading: false, error: null } },
-    }));
+    set((s) => {
+      const stillOnDraft = s.sel === aid && s.gsel === null && s.newTopic !== null && newTopicSeq === startedSeq;
+      return {
+        assistantTopics: upsert(s.assistantTopics, created.topic),
+        ...(stillOnDraft
+          ? { tsel: tid, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: false, nonce: s.nonce + 1 }
+          : newTopicSeq === startedSeq
+            ? { newTopicBusy: false, newTopicError: null }
+            : {}),
+        composerDrafts: updatedDrafts(s, EMPTY_COMPOSER, draftKey),
+        items: { ...s.items, [key]: created.item ? mergeItems(s.items[key] ?? [], created.item) : (s.items[key] ?? []) },
+        itemGen: { ...s.itemGen, [key]: (s.itemGen[key] ?? 0) + 1 },
+        itemPages: { ...s.itemPages, [key]: s.itemPages[key] ?? { hasMore: false, loading: false, error: null } },
+      };
+    });
   } catch (e) {
     const msg = errText(e);
-    set({ newTopicBusy: false, newTopicError: msg, notice: msg });
+    set((s) => {
+      const sameDraft = s.sel === aid && s.gsel === null && s.newTopic !== null && newTopicSeq === startedSeq;
+      return {
+        ...(sameDraft ? { newTopicBusy: false, newTopicError: msg } : newTopicSeq === startedSeq ? { newTopicBusy: false } : {}),
+        notice: msg,
+      };
+    });
   }
 }
 
@@ -3284,15 +3297,38 @@ export function searchHistory(query: string) { return api.searchHistory(query); 
 export function openStars() { set({ page: "stars", panelStack: [], sheet: false }); void loadStars(); }
 
 export async function jumpToHistory(conversation: ConversationRef, itemId: string) {
-  if (conversation.kind === "assistant" && !state.assistants.some((a) => a.id === conversation.id) || conversation.kind === "group" && !state.groups.some((g) => g.id === conversation.id)) { set({ notice: t("原消息已不在") }); return; }
+  const topic = conversation.kind === "topic"
+    ? state.assistantTopics.find((item) => item.id === conversation.id)
+    : undefined;
+  if (
+    (conversation.kind === "assistant" && !state.assistants.some((a) => a.id === conversation.id)) ||
+    (conversation.kind === "group" && !state.groups.some((g) => g.id === conversation.id)) ||
+    (conversation.kind === "topic" && (!topic || !state.assistants.some((a) => a.id === topic.assistantId)))
+  ) {
+    set({ notice: t("原消息已不在") });
+    return;
+  }
   set({ page: "main", panelStack: [] });
   try {
-    if (conversation.kind === "group") await selectGroup(conversation.id, true, false, true); else await select(conversation.id);
-    const found = conversation.kind === "group" ? await findGroupItem(conversation.id, (item) => item.id === itemId) : await findConversationItem(conversation.id, (item) => item.id === itemId);
+    if (conversation.kind === "group") await selectGroup(conversation.id, true, false, true);
+    else if (conversation.kind === "topic") await openAssistantTopic(topic!.assistantId, topic!.id, true);
+    else await select(conversation.id);
+    const found = conversation.kind === "group"
+      ? await findGroupItem(conversation.id, (item) => item.id === itemId)
+      : conversation.kind === "topic"
+        ? await findConversationItem(topic!.assistantId, (item) => item.id === itemId, topic!.id)
+        : await findConversationItem(conversation.id, (item) => item.id === itemId);
     if (!found) { set({ notice: t("原消息已不在") }); return; }
     const deadline = performance.now() + 1500;
     const locate = () => {
-      if (state.page !== "main" || (conversation.kind === "group" ? state.gsel : state.sel) !== conversation.id) return;
+      const stillHere = state.page === "main" && (
+        conversation.kind === "group"
+          ? state.gsel === conversation.id
+          : conversation.kind === "topic"
+            ? state.sel === topic!.assistantId && state.tsel === topic!.id
+            : state.sel === conversation.id && !state.tsel
+      );
+      if (!stillHere) return;
       const row = Array.from(document.querySelectorAll<HTMLElement>("[data-item-id]")).find((node) => node.dataset.itemId === itemId);
       if (row) flashItem(row); else if (performance.now() < deadline) requestAnimationFrame(locate); else set({ notice: t("未能定位到这条消息") });
     };

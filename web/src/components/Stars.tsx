@@ -20,8 +20,13 @@ function StarRow({ star }: { star: StarredMessage }) {
   const body = useRef<HTMLDivElement>(null);
   useEffect(() => { const el = body.current; if (el) setLong(el.scrollHeight > 144); }, [star.text]);
   const group = star.conversation.kind === "group" ? s.groups.find((g) => g.id === star.conversation.id) : undefined;
-  const assistant = s.assistants.find((a) => a.id === (star.speaker === "user" ? group?.ownerId ?? star.conversation.id : star.speaker));
-  const name = group?.name ?? s.assistants.find((a) => a.id === star.conversation.id)?.name ?? star.conversation.id;
+  const topic = star.conversation.kind === "topic" ? s.assistantTopics.find((item) => item.id === star.conversation.id) : undefined;
+  const topicOwner = topic ? s.assistants.find((a) => a.id === topic.assistantId) : undefined;
+  const assistant = s.assistants.find((a) => a.id === (star.speaker === "user" ? group?.ownerId ?? topic?.assistantId ?? star.conversation.id : star.speaker));
+  const name = group?.name
+    ?? (topic ? (topicOwner ? `${topicOwner.name} · ${topic.name}` : topic.name) : undefined)
+    ?? s.assistants.find((a) => a.id === star.conversation.id)?.name
+    ?? star.conversation.id;
   return <div className="star-row">
     <div className="star-meta">{assistant ? <Avatar sprite={assistant.sprite} prop={assistant.prop} size={28} /> : <Icon name="user" size={22} />}<strong>{name}</strong><span>{fmtWhen(star.at)}</span></div>
     <div className={`star-body md${open ? " open" : ""}`} ref={body}><Markdown text={star.text} /></div>
@@ -46,7 +51,18 @@ export function Stars({ narrow }: { narrow: boolean }) {
     return () => window.removeEventListener("keydown", onKey);
   }, []);
   const conversationKey = (star: StarredMessage) => `${star.conversation.kind}:${star.conversation.id}`;
-  const nameOf = (star: StarredMessage) => (star.conversation.kind === "group" ? s.groups.find((g) => g.id === star.conversation.id)?.name : s.assistants.find((a) => a.id === star.conversation.id)?.name) ?? star.conversation.id;
+  const nameOf = (star: StarredMessage) => {
+    if (star.conversation.kind === "group") return s.groups.find((g) => g.id === star.conversation.id)?.name ?? star.conversation.id;
+    if (star.conversation.kind === "topic") {
+      const topic = s.assistantTopics.find((item) => item.id === star.conversation.id);
+      if (topic) {
+        const owner = s.assistants.find((a) => a.id === topic.assistantId);
+        return owner ? `${owner.name} · ${topic.name}` : topic.name;
+      }
+      return star.conversation.id;
+    }
+    return s.assistants.find((a) => a.id === star.conversation.id)?.name ?? star.conversation.id;
+  };
   const conversations = [...new Map(s.stars.map((star) => [conversationKey(star), star])).values()];
   const count = (key: string) => s.stars.filter((star) => conversationKey(star) === key).length;
   const words = query.trim().toLocaleLowerCase();

@@ -680,11 +680,11 @@ describe("票 D 回流：nowBlock、sessionOrigin、待办收起与推送", () =
       });
       await Promise.resolve();
       const expectedUrl = `/#/chat/${aid}/topic/${topicA.id}`;
-      expect(pushTarget(aid, { topicId: topicA.id })).toBe(`topic:${topicA.id}`);
+      expect(pushTarget(aid, { topicId: topicA.id })).toBe(`assistant:${aid}@${topicA.id}`);
       expect(sent).toHaveLength(4);
       for (const entry of sent) {
         expect(entry.payload.url).toBe(expectedUrl);
-        expect(entry.target).toBe(`topic:${topicA.id}`);
+        expect(entry.target).toBe(`assistant:${aid}@${topicA.id}`);
       }
     } finally {
       hob.close();
@@ -949,7 +949,7 @@ describe("票 D 回流：关闭结论同步主对话与已关闭话题自动重�
       await hob.runtime.routines.runNow(rtNotify.id);
       await Promise.resolve();
       expect(hob.runtime.router.items(aid, {}, { topicId: topicA.id }).items.some((i) => i.kind === "assistant" && i.text === "有新提醒" && i.routine?.id === rtNotify.id)).toBe(true);
-      expect(sent.some((s) => s.payload.url === `/#/chat/${aid}/topic/${topicA.id}` && s.target === `topic:${topicA.id}`)).toBe(true);
+      expect(sent.some((s) => s.payload.url === `/#/chat/${aid}/topic/${topicA.id}` && s.target === `assistant:${aid}@${topicA.id}`)).toBe(true);
 
       // 4. 一次性定时关闭后跨过时间点再重开，按过期停止并把 note 落进话题 A（不补跑）
       const rtOnce = hob.runtime.routines.create({

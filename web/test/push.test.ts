@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { base64ToBytes, canShowPushPrompt, deviceLabel, pushSupportIssue, pushSupported, sameKey } from "../src/push.ts";
+import { base64ToBytes, canShowPushPrompt, deviceLabel, pushSupportIssue, pushSupported, sameKey, subscribePush } from "../src/push.ts";
 
 describe("首次通知提示", () => {
   const base = { supported: true, subscribed: false, permission: "default" as NotificationPermission, dismissed: false };
@@ -20,12 +20,58 @@ describe("首次通知提示", () => {
 describe("推送环境", () => {
   afterEach(() => vi.unstubAllGlobals());
 
-  it("HTTP 页面即使暴露推送 API 也不判定为支持", () => {
+  it("HTTP 页面即使暴露推送 API 也不判定为支持", async () => {
     vi.stubGlobal("navigator", { serviceWorker: {}, userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
     vi.stubGlobal("window", { isSecureContext: false, PushManager: {}, Notification: {} });
 
     expect(pushSupportIssue()).toBe("insecure-context");
     expect(pushSupported()).toBe(false);
+    expect(canShowPushPrompt({ supported: pushSupported(), subscribed: false, permission: "default", dismissed: false })).toBe(false);
+    expect(await subscribePush("APv_EA")).toEqual({ error: "推送需要 HTTPS，请使用 HTTPS 访问 Hob。" });
+  });
+
+  it("HTTP 页面未暴露推送 API 时仍判定为非安全上下文", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("window", { isSecureContext: false });
+
+    expect(pushSupportIssue()).toBe("insecure-context");
+    expect(pushSupported()).toBe(false);
+  });
+
+  it("安全上下文缺少浏览器推送能力时判定为不支持", () => {
+    vi.stubGlobal("navigator", { userAgent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" });
+    vi.stubGlobal("window", { isSecureContext: true, Notification: {} });
+
+    expect(pushSupportIssue()).toBe("unsupported");
+    expect(pushSupported()).toBe(false);
+  });
+
+  it("iOS 安全上下文未从主屏幕打开时判定为 ios-standalone", () => {
+    const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15";
+    vi.stubGlobal("navigator", { serviceWorker: {}, userAgent: ua, standalone: false });
+    vi.stubGlobal("window", {
+      isSecureContext: true,
+      PushManager: {},
+      Notification: {},
+      matchMedia: () => ({ matches: false }),
+    });
+
+    expect(pushSupportIssue()).toBe("ios-standalone");
+    expect(pushSupported()).toBe(false);
+  });
+
+  it("iOS 从主屏幕打开且为安全上下文时判定为支持", () => {
+    const ua = "Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15";
+    vi.stubGlobal("navigator", { serviceWorker: {}, userAgent: ua, standalone: true });
+    vi.stubGlobal("window", {
+      isSecureContext: true,
+      PushManager: {},
+      Notification: {},
+      matchMedia: () => ({ matches: false }),
+    });
+
+    expect(pushSupportIssue()).toBeNull();
+    expect(pushSupported()).toBe(true);
   });
 
   it("HTTPS 页面具备浏览器 API 时判定为支持", () => {

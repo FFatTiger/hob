@@ -85,7 +85,9 @@ export async function currentSubscription(): Promise<PushSubscription | null> {
 
 /** 申请权限并订阅；被拒绝时把原因交给调用方显示。 */
 export async function subscribePush(publicKey: string): Promise<{ subscription: PushSubscriptionJson } | { error: string }> {
-  if (!pushSupported()) return { error: t("这个浏览器不支持推送") };
+  const issue = pushSupportIssue();
+  if (issue === "insecure-context") return { error: t("推送需要 HTTPS，请使用 HTTPS 访问 Hob。") };
+  if (issue !== null) return { error: t("这个浏览器不支持推送") };
   let permission = Notification.permission;
   if (permission === "default") {
     try {

@@ -26,7 +26,7 @@ describe("locale-dependent defaults", () => {
 
     store.initializeDefaults("en");
     expect(store.globalRules()).toHaveLength(7);
-    expect(store.globalRules().every((rule) => /^(Deleting|Sending|Stopping|Changing|Past|Before|Read)/.test(rule.text))).toBe(true);
+    expect(store.globalRules().every((rule) => /^(Ask first:|Past|Before|Read)/.test(rule.text))).toBe(true);
     expect(store.assistant("hob")?.duty).toBe("Main assistant");
 
     store.initializeDefaults("zh-CN");

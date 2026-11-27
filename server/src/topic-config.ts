@@ -24,6 +24,88 @@ export interface OverridesPatch {
   replyMode?: GroupReplyMode | null;
 }
 
+const LEGACY_RULE_PREFIX = {
+  ask: "执行前确认：",
+  allow: "直接执行：",
+} as const;
+
+type LegacyRuleMode = keyof typeof LEGACY_RULE_PREFIX;
+
+function isLegacyRuleMode(value: unknown): value is LegacyRuleMode {
+  return value === "ask" || value === "allow";
+}
+
+function stripLegacyRulePrefix(text: string): string {
+  for (const prefix of Object.values(LEGACY_RULE_PREFIX)) {
+    if (text.startsWith(prefix)) return text.slice(prefix.length);
+  }
+  return text;
+}
+
+/** 旧格式带 mode 的规则就地拼成一行文字；新格式原样保留。 */
+export function spliceLegacyRuleText(text: string, mode: unknown): string {
+  return isLegacyRuleMode(mode) ? `${LEGACY_RULE_PREFIX[mode]}${text}` : text;
+}
+
+export function normalizeRule(raw: unknown): Rule {
+  const entry = (raw && typeof raw === "object" ? raw : {}) as Record<string, unknown>;
+  const rawText = typeof entry.text === "string" ? entry.text : "";
+  return {
+    id: typeof entry.id === "string" ? entry.id : "",
+    text: spliceLegacyRuleText(rawText, entry.mode),
+    changedAt: typeof entry.changedAt === "string" ? entry.changedAt : "",
+  };
+}
+
+export function normalizeRules(raw: unknown): Rule[] {
+  return Array.isArray(raw) ? raw.map((item) => normalizeRule(item)) : [];
+}
+
+/** 读话题规则覆盖层时兼容旧数据的 mode；changed 里只改了 mode 的，用上级原文配上改后的 mode 拼。 */
+export function normalizeRuleOverrides(raw: unknown, rawParent: unknown): RuleOverrides {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return emptyRuleOverrides();
+  const obj = raw as Record<string, unknown>;
+
+  const parentById = new Map<string, { rawText: string; hasLegacyMode: boolean }>();
+  if (Array.isArray(rawParent)) {
+    for (const item of rawParent) {
+      if (!item || typeof item !== "object") continue;
+      const entry = item as Record<string, unknown>;
+      if (typeof entry.id === "string" && typeof entry.text === "string") {
+        parentById.set(entry.id, { rawText: entry.text, hasLegacyMode: isLegacyRuleMode(entry.mode) });
+      }
+    }
+  }
+
+  const changed: RuleOverrides["changed"] = {};
+  if (obj.changed && typeof obj.changed === "object" && !Array.isArray(obj.changed)) {
+    for (const [id, value] of Object.entries(obj.changed as Record<string, unknown>)) {
+      if (!value || typeof value !== "object" || Array.isArray(value)) continue;
+      const entry = value as Record<string, unknown>;
+      const changedAt = typeof entry.changedAt === "string" ? entry.changedAt : "";
+      const hasText = typeof entry.text === "string";
+      const hasMode = isLegacyRuleMode(entry.mode);
+      if (hasText) {
+        changed[id] = { text: spliceLegacyRuleText(entry.text as string, entry.mode), changedAt };
+      } else if (hasMode) {
+        const parent = parentById.get(id);
+        if (!parent) continue;
+        const baseText = parent.hasLegacyMode ? parent.rawText : stripLegacyRulePrefix(parent.rawText);
+        changed[id] = { text: spliceLegacyRuleText(baseText, entry.mode), changedAt };
+      }
+    }
+  }
+
+  return {
+    own: normalizeRules(obj.own),
+    changed,
+    hidden:
+      obj.hidden && typeof obj.hidden === "object" && !Array.isArray(obj.hidden)
+        ? (obj.hidden as RuleOverrides["hidden"])
+        : {},
+  };
+}
+
 export function emptyRuleOverrides(): RuleOverrides {
   return { own: [], changed: {}, hidden: {} };
 }
@@ -47,8 +129,7 @@ export function effectiveRules(parent: Rule[], overrides: RuleOverrides): Effect
     if (changed) {
       out.push({
         id: rule.id,
-        text: changed.text ?? rule.text,
-        mode: changed.mode ?? rule.mode,
+        text: changed.text,
         changedAt: changed.changedAt,
         from: "parent",
         changed: true,
@@ -115,40 +196,33 @@ export function layerOverrides<T extends LayerableConfig>(parent: T, overrides: 
 /** 在话题层新增或修改一条规则：上级规则改写进 changed，新规则写进 own。 */
 export function setTopicRule(
   host: TopicConfigHost,
-  input: { id?: string; text?: string; mode?: Rule["mode"] },
+  input: { id?: string; text: string },
 ): EffectiveRule {
   const parent = host.parentRules();
   const next = pruneRuleOverrides(parent, host.readRuleOverrides());
   const now = new Date().toISOString();
+  const text = input.text.trim();
+  if (!text) throw new Error("规则无效。");
 
   if (input.id !== undefined) {
     const parentRule = parent.find((rule) => rule.id === input.id);
     if (parentRule) {
       delete next.hidden[parentRule.id];
-      const prev = next.changed[parentRule.id];
-      const text = input.text !== undefined ? input.text : (prev?.text ?? parentRule.text);
-      const mode = input.mode !== undefined ? input.mode : (prev?.mode ?? parentRule.mode);
-      if (text === parentRule.text && mode === parentRule.mode) {
+      if (text === parentRule.text) {
         delete next.changed[parentRule.id];
         host.writeRuleOverrides(next);
         return { ...parentRule, from: "parent" };
       }
-      const entry = {
-        ...(text !== parentRule.text ? { text } : {}),
-        ...(mode !== parentRule.mode ? { mode } : {}),
-        changedAt: now,
-      };
-      next.changed[parentRule.id] = entry;
+      next.changed[parentRule.id] = { text, changedAt: now };
       host.writeRuleOverrides(next);
-      return { id: parentRule.id, text, mode, changedAt: now, from: "parent", changed: true };
+      return { id: parentRule.id, text, changedAt: now, from: "parent", changed: true };
     }
     const ownIdx = next.own.findIndex((rule) => rule.id === input.id);
     if (ownIdx === -1) throw new Error("规则不存在。");
     const cur = next.own[ownIdx]!;
     const updated: Rule = {
       id: cur.id,
-      text: input.text !== undefined ? input.text : cur.text,
-      mode: input.mode !== undefined ? input.mode : cur.mode,
+      text,
       changedAt: now,
     };
     next.own[ownIdx] = updated;
@@ -156,21 +230,12 @@ export function setTopicRule(
     return { ...updated, from: "topic" };
   }
 
-  const text = input.text?.trim() ?? "";
-  const mode = input.mode;
-  if (!text || (mode !== "ask" && mode !== "allow")) throw new Error("规则无效。");
-
-  // 曾被本话题停用的同名上级规则：重新启用并按需要记录差异，避免恢复跟随时出现重复条
+  // 曾被本话题停用的同名上级规则：重新启用，避免恢复跟随时出现重复条
   const hiddenParent = parent.find(
     (rule) => rule.text === text && Object.prototype.hasOwnProperty.call(next.hidden, rule.id),
   );
   if (hiddenParent) {
     delete next.hidden[hiddenParent.id];
-    if (mode !== hiddenParent.mode) {
-      next.changed[hiddenParent.id] = { mode, changedAt: now };
-      host.writeRuleOverrides(next);
-      return { id: hiddenParent.id, text: hiddenParent.text, mode, changedAt: now, from: "parent", changed: true };
-    }
     delete next.changed[hiddenParent.id];
     host.writeRuleOverrides(next);
     return { ...hiddenParent, from: "parent" };
@@ -178,13 +243,13 @@ export function setTopicRule(
 
   const ownIdx = next.own.findIndex((rule) => rule.text === text);
   if (ownIdx !== -1) {
-    const updated: Rule = { id: next.own[ownIdx]!.id, text, mode, changedAt: now };
+    const updated: Rule = { id: next.own[ownIdx]!.id, text, changedAt: now };
     next.own[ownIdx] = updated;
     host.writeRuleOverrides(next);
     return { ...updated, from: "topic" };
   }
 
-  const created: Rule = { id: newId("r-"), text, mode, changedAt: now };
+  const created: Rule = { id: newId("r-"), text, changedAt: now };
   next.own.push(created);
   host.writeRuleOverrides(next);
   return { ...created, from: "topic" };

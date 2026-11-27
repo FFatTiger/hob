@@ -721,7 +721,7 @@ export interface TopicOverrides {
 /** 话题对规则的改动，存在话题目录的 rule-overrides.json。 */
 export interface RuleOverrides {
   own: Rule[]; // 只在本话题的规则
-  changed: Record<string, { text?: string; mode?: Rule["mode"]; changedAt: Iso }>; // 改了上级的某条，只在本话题生效
+  changed: Record<string, { text: string; changedAt: Iso }>; // 改了上级的某条，只在本话题生效
   hidden: Record<string, Iso>; // 本话题不用的上级规则：id → 停用时间
 }
 
@@ -781,8 +781,7 @@ export interface GroupItemsPage extends Omit<ItemsPage, "items" | "drafts" | "de
 
 export interface Rule {
   id: string;
-  text: string; // 规则内容，如 "发布公众号"
-  mode: "ask" | "allow"; // ask=执行前确认；allow=直接执行
+  text: string; // 规则内容，一行完整的话
   changedAt: Iso; // 24 小时内变过 → 设置页显示 "最近修改"
 }
 

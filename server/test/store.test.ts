@@ -383,6 +383,112 @@ describe("配置", () => {
       rmSync(home, { recursive: true, force: true });
     }
   });
+  it("旧格式规则读时就地拼接 mode，保存后不再写 mode（全局、助手、群、助手话题、群话题）", async () => {
+    const { assistantTopicRuleOverridesPath, groupDir } = await import("../src/config.ts");
+    const hob = makeHob();
+    try {
+      const store = hob.runtime.store;
+      const t0 = "2026-01-01T00:00:00.000Z";
+      const t1 = "2026-01-02T00:00:00.000Z";
+
+      // 1. 全局规则：ask / allow / 新格式共存
+      const globalPath = join(hob.home, "rules.json");
+      writeFileSync(
+        globalPath,
+        JSON.stringify([
+          { id: "g-1", text: "删除备份", mode: "ask", changedAt: t0 },
+          { id: "g-2", text: "自动清理缓存", mode: "allow", changedAt: t0 },
+          { id: "g-3", text: "日常翻译用便宜模型", changedAt: t0 },
+        ]),
+      );
+      expect(store.globalRules()).toEqual([
+        { id: "g-1", text: "执行前确认：删除备份", changedAt: t0 },
+        { id: "g-2", text: "直接执行：自动清理缓存", changedAt: t0 },
+        { id: "g-3", text: "日常翻译用便宜模型", changedAt: t0 },
+      ]);
+      store.saveGlobalRules(store.globalRules());
+      expect(readFileSync(globalPath, "utf8")).not.toContain('"mode"');
+
+      // 2. 助手规则 + 助手话题覆盖层（含 changed 只改 mode、changed 同时改 text/mode、own 带 mode）
+      const dev = { ...store.assistant("hob")!, id: "dev", name: "开发", primary: false, topics: { enabledAt: t0 } };
+      store.saveAssistant(dev);
+      const assistantRulesPath = join(hob.home, "assistants", "dev", "rules.json");
+      writeFileSync(
+        assistantRulesPath,
+        JSON.stringify([
+          { id: "a-1", text: "合并 PR", mode: "ask", changedAt: t0 },
+          { id: "a-2", text: "发周报", mode: "allow", changedAt: t0 },
+        ]),
+      );
+      expect(store.rules("dev")).toEqual([
+        { id: "a-1", text: "执行前确认：合并 PR", changedAt: t0 },
+        { id: "a-2", text: "直接执行：发周报", changedAt: t0 },
+      ]);
+
+      const { topic: aTopic } = await hob.runtime.assistantTopics.create("dev", { title: "话题一" });
+      const aOverridesPath = assistantTopicRuleOverridesPath(hob.home, "dev", aTopic.id);
+      writeFileSync(
+        aOverridesPath,
+        JSON.stringify({
+          own: [{ id: "o-1", text: "发测试版", mode: "allow", changedAt: t1 }],
+          changed: {
+            "a-1": { mode: "allow", changedAt: t1 },
+            "a-2": { text: "发月报", mode: "ask", changedAt: t1 },
+          },
+          hidden: {},
+        }),
+      );
+      expect(store.topicRules("dev", aTopic.id)).toEqual([
+        { id: "a-1", text: "直接执行：合并 PR", changedAt: t1, from: "parent", changed: true },
+        { id: "a-2", text: "执行前确认：发月报", changedAt: t1, from: "parent", changed: true },
+        { id: "o-1", text: "直接执行：发测试版", changedAt: t1, from: "topic" },
+      ]);
+      store.saveAssistantTopicRuleOverrides("dev", aTopic.id, store.assistantTopicRuleOverrides("dev", aTopic.id));
+      expect(readFileSync(aOverridesPath, "utf8")).not.toContain('"mode"');
+      // 覆盖层写回新格式后，即使上级文件仍是旧格式，再次读取不重复拼接前缀
+      expect(store.topicRules("dev", aTopic.id)[0]!.text).toBe("直接执行：合并 PR");
+      store.saveRules("dev", store.rules("dev"));
+      expect(readFileSync(assistantRulesPath, "utf8")).not.toContain('"mode"');
+
+      // 3. 群规则 + 群话题覆盖层（含上级已保存为新格式后，旧话题覆盖层只改了 mode 也能正确用上级原文拼）
+      const group = hob.runtime.groups.create({ name: "研发群", purpose: "开发", ownerId: "hob", members: ["hob", "dev"] });
+      const gTopic = hob.runtime.groups.createTopic(group.id, "发版");
+      const groupRulesPath = join(groupDir(hob.home, group.id), "rules.json");
+      writeFileSync(
+        groupRulesPath,
+        JSON.stringify([
+          { id: "gr-1", text: "推送生产环境", mode: "ask", changedAt: t0 },
+          { id: "gr-2", text: "更新变更日志", mode: "allow", changedAt: t0 },
+        ]),
+      );
+      const gOverridesPath = join(groupDir(hob.home, gTopic.id), "rule-overrides.json");
+      writeFileSync(
+        gOverridesPath,
+        JSON.stringify({
+          own: [{ id: "go-1", text: "回滚镜像", mode: "ask", changedAt: t1 }],
+          changed: { "gr-1": { mode: "allow", changedAt: t1 } },
+          hidden: {},
+        }),
+      );
+      expect(store.groupParentRules(group.id)).toEqual([
+        { id: "gr-1", text: "执行前确认：推送生产环境", changedAt: t0 },
+        { id: "gr-2", text: "直接执行：更新变更日志", changedAt: t0 },
+      ]);
+      expect(store.groupRules(gTopic.id)).toEqual([
+        { id: "gr-1", text: "直接执行：推送生产环境", changedAt: t1, from: "parent", changed: true },
+        { id: "gr-2", text: "直接执行：更新变更日志", changedAt: t0, from: "parent" },
+        { id: "go-1", text: "执行前确认：回滚镜像", changedAt: t1, from: "topic" },
+      ]);
+      // 上级先写回新格式后，旧话题覆盖层仍能用去掉旧前缀的上级原文拼出正确结果
+      store.saveGroupRules(group.id, store.groupParentRules(group.id));
+      expect(readFileSync(groupRulesPath, "utf8")).not.toContain('"mode"');
+      expect(store.groupRules(gTopic.id)[0]!.text).toBe("直接执行：推送生产环境");
+      store.saveGroupRuleOverrides(gTopic.id, store.groupRuleOverrides(gTopic.id));
+      expect(readFileSync(gOverridesPath, "utf8")).not.toContain('"mode"');
+    } finally {
+      hob.close();
+    }
+  });
 });
 
 describe("定时时区", () => {

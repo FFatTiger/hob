@@ -16,7 +16,14 @@ import {
 } from "./config.ts";
 import { newId } from "./ids.ts";
 import { isValidTopicId } from "./place.ts";
-import { effectiveRules, emptyRuleOverrides, layerOverrides, type TopicConfigHost } from "./topic-config.ts";
+import {
+  effectiveRules,
+  emptyRuleOverrides,
+  layerOverrides,
+  normalizeRuleOverrides,
+  normalizeRules,
+  type TopicConfigHost,
+} from "./topic-config.ts";
 import type { Locale } from "../../shared/i18n.ts";
 import { t } from "../../shared/i18n.ts";
 import type {
@@ -40,6 +47,20 @@ import type {
   StarredMessage,
   ConversationRef,
 } from "../../shared/types.ts";
+
+function cleanRule(rule: Rule): Rule {
+  return { id: rule.id, text: rule.text, changedAt: rule.changedAt };
+}
+
+function cleanRuleOverrides(overrides: RuleOverrides): RuleOverrides {
+  return {
+    own: overrides.own.map(cleanRule),
+    changed: Object.fromEntries(
+      Object.entries(overrides.changed).map(([id, entry]) => [id, { text: entry.text, changedAt: entry.changedAt }]),
+    ),
+    hidden: { ...overrides.hidden },
+  };
+}
 
 function writeJsonAtomic(path: string, value: unknown): void {
   mkdirSync(dirname(path), { recursive: true });
@@ -126,21 +147,16 @@ export class Store {
     mkdirSync(join(this.home, "assistants"), { recursive: true });
     if (!locale || existsSync(join(this.home, "rules.json"))) return;
     const changedAt = new Date().toISOString();
-    const ask = [
-      "删除或覆盖文件、数据和备份",
-      "对外发送（消息、邮件、发布）、付费、充值、改计费",
-      "停止或重启别人正在使用的服务和设备",
-      "修改可能让你失去远程访问的设置（网络、防火墙、登录方式）",
-    ];
-    const allow = [
+    const defaults = [
+      "执行前确认：删除或覆盖文件、数据和备份",
+      "执行前确认：对外发送（消息、邮件、发布）、付费、充值、改计费",
+      "执行前确认：停止或重启别人正在使用的服务和设备",
+      "执行前确认：修改可能让你失去远程访问的设置（网络、防火墙、登录方式）",
       "过去的记录是线索不是现状：动手前先核实实际状态。",
       "改配置、改数据前先留好退路（备份或记下原值）；改完用实际效果验证，不只看命令返回。",
       "凭据（密码、密钥、令牌、Cookie）只在用的时候读取，不回显，不写进文件和报告，也不存起来。",
     ];
-    this.saveGlobalRules([
-      ...ask.map((text) => ({ id: newId("r-"), text: t(text, {}, locale), mode: "ask" as const, changedAt })),
-      ...allow.map((text) => ({ id: newId("r-"), text: t(text, {}, locale), mode: "allow" as const, changedAt })),
-    ]);
+    this.saveGlobalRules(defaults.map((text) => ({ id: newId("r-"), text: t(text, {}, locale), changedAt })));
   }
 
   /** Apply the defaults that depend on the first interface language. */
@@ -210,11 +226,11 @@ export class Store {
     const path = join(this.home, "rules.json");
     const rules = readJson<unknown>(path, []);
     if (!Array.isArray(rules)) throw new Error(`全局规则文件格式无效：${path}`);
-    return rules as Rule[];
+    return normalizeRules(rules);
   }
 
   saveGlobalRules(rules: Rule[]): void {
-    writeJsonAtomic(join(this.home, "rules.json"), rules);
+    writeJsonAtomic(join(this.home, "rules.json"), rules.map(cleanRule));
   }
 
   // ---------- 助手 ----------
@@ -333,11 +349,11 @@ export class Store {
   }
 
   rules(id: string): Rule[] {
-    return readJson<Rule[]>(join(this.assistantDir(id), "rules.json"), []);
+    return normalizeRules(readJson<unknown>(join(this.assistantDir(id), "rules.json"), []));
   }
 
   saveRules(id: string, rules: Rule[]): void {
-    writeJsonAtomic(join(this.assistantDir(id), "rules.json"), rules);
+    writeJsonAtomic(join(this.assistantDir(id), "rules.json"), rules.map(cleanRule));
   }
 
   groupMatches(filter: string, groupId?: string, exact = false): boolean {
@@ -352,38 +368,28 @@ export class Store {
   groupParentRules(id: string): Rule[] {
     const group = this.group(id);
     if (!group) throw new Error("群不存在");
-    return readJson<Rule[]>(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), []);
+    return normalizeRules(readJson<unknown>(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), []));
   }
 
-  private parseRuleOverrides(path: string): RuleOverrides {
+  private parseRuleOverrides(path: string, rawParent: unknown): RuleOverrides {
     const raw = readJson<unknown>(path, null);
     if (raw === null) return emptyRuleOverrides();
     if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
       throw new Error(`话题规则覆盖文件格式无效：${path}`);
     }
-    const obj = raw as Record<string, unknown>;
-    return {
-      own: Array.isArray(obj.own) ? (obj.own as Rule[]) : [],
-      changed:
-        obj.changed && typeof obj.changed === "object" && !Array.isArray(obj.changed)
-          ? (obj.changed as RuleOverrides["changed"])
-          : {},
-      hidden:
-        obj.hidden && typeof obj.hidden === "object" && !Array.isArray(obj.hidden)
-          ? (obj.hidden as RuleOverrides["hidden"])
-          : {},
-    };
+    return normalizeRuleOverrides(raw, rawParent);
   }
 
   assistantTopicRuleOverrides(aid: string, tid: string): RuleOverrides {
     if (!isValidTopicId(tid)) throw new Error("话题不存在");
-    return this.parseRuleOverrides(assistantTopicRuleOverridesPath(this.home, aid, tid));
+    const rawParent = readJson<unknown>(join(this.assistantDir(aid), "rules.json"), []);
+    return this.parseRuleOverrides(assistantTopicRuleOverridesPath(this.home, aid, tid), rawParent);
   }
 
   saveAssistantTopicRuleOverrides(aid: string, tid: string, overrides: RuleOverrides): void {
     const topic = this.assistantTopic(aid, tid);
     if (!topic || topic.assistantId !== aid || topic.id !== tid) throw new Error("话题不存在");
-    writeJsonAtomic(assistantTopicRuleOverridesPath(this.home, aid, tid), overrides);
+    writeJsonAtomic(assistantTopicRuleOverridesPath(this.home, aid, tid), cleanRuleOverrides(overrides));
   }
 
   assistantTopicConfigHost(aid: string, tid: string): TopicConfigHost {
@@ -425,13 +431,17 @@ export class Store {
   }
 
   groupRuleOverrides(id: string): RuleOverrides {
-    return this.parseRuleOverrides(join(groupDir(this.home, id), "rule-overrides.json"));
+    const group = this.group(id);
+    const rawParent = group
+      ? readJson<unknown>(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), [])
+      : [];
+    return this.parseRuleOverrides(join(groupDir(this.home, id), "rule-overrides.json"), rawParent);
   }
 
   saveGroupRuleOverrides(id: string, overrides: RuleOverrides): void {
     const group = this.group(id);
     if (!group?.parentId) throw new Error("话题不存在");
-    writeJsonAtomic(join(groupDir(this.home, id), "rule-overrides.json"), overrides);
+    writeJsonAtomic(join(groupDir(this.home, id), "rule-overrides.json"), cleanRuleOverrides(overrides));
   }
 
   groupTopicConfigHost(tid: string): TopicConfigHost {
@@ -465,8 +475,7 @@ export class Store {
   saveGroupRules(id: string, rules: Rule[]): void {
     const group = this.group(id);
     if (!group) throw new Error("群不存在");
-    const clean = rules.map(({ id: ruleId, text, mode, changedAt }) => ({ id: ruleId, text, mode, changedAt }));
-    writeJsonAtomic(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), clean);
+    writeJsonAtomic(join(groupDir(this.home, group.parentId ?? group.id), "rules.json"), rules.map(cleanRule));
   }
 
   worklog(id: string, limit = 30): WorklogEntry[] {

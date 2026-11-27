@@ -328,7 +328,7 @@ describe("话题的接口", () => {
 
       expect(inputBody(memberFile(hob, topic.id, "hob")).split("\n\n")).toEqual([
         "用户：备份目录是 /vol/photo",
-        "[hob-event] 这个话题是你从综合创建的，上面是交接说明。",
+        "[hob-event] 这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。",
         "备份目录是 /vol/photo",
       ]);
     } finally {
@@ -354,7 +354,7 @@ describe("话题的接口", () => {
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
 
       // 事件只包含这次助手填写的交接说明
-      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n测试交接说明");
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n测试交接说明");
       expect(delivered.at(-1)).not.toContain("这周整理相册");
       expect(delivered.at(-1)).not.toContain("相册备份一直报错");
 
@@ -387,7 +387,7 @@ describe("话题的接口", () => {
       });
       await waitFor(() => userTexts(memberFile(hob, topic.id, "hob")).length > 0);
       const body = inputBody(memberFile(hob, topic.id, "hob"));
-      expect(body).toContain("[hob-event] 这个话题是你从综合创建的，上面是交接说明。\n\n继续处理打印机问题。");
+      expect(body).toContain("[hob-event] 这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n继续处理打印机问题。");
       expect(body).not.toContain("打印机又连不上了");
     } finally {
       hob.close();
@@ -602,7 +602,7 @@ describe("交接：来由只从 requestItem 取", () => {
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
       expect(hob.runtime.store.groupItems(topic.id).some((item) => item.kind === "user" && item.text === "请接着处理定时任务。")).toBe(true);
       await waitFor(() => userTexts(memberFile(hob, topic.id, "hob")).length > 0);
-      expect(inputBody(memberFile(hob, topic.id, "hob"))).toContain("这个话题是你从综合创建的，上面是交接说明。\n\n请接着处理定时任务。");
+      expect(inputBody(memberFile(hob, topic.id, "hob"))).toContain("这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n请接着处理定时任务。");
       expect(inputBody(memberFile(hob, topic.id, "hob"))).not.toContain("定时任务到点的记录");
       expect(inputBody(memberFile(hob, topic.id, "hob"))).not.toContain("昨天的旧消息");
     } finally { hob.close(); }
@@ -617,12 +617,12 @@ describe("交接：来由只从 requestItem 取", () => {
       const result = await toolOf(hob, "open_topic", group.id).execute("c", { title: "回 PR", note: "先看标题" });
       const topic = hob.runtime.groups.topicsOf(group.id)[0]!;
       expect(textOf(result)).toBe(`话题「回 PR」（${topic.id}）已创建，交接说明已转过去，接下来在话题里处理。`);
-      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n先看标题");
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n先看标题");
 
       // 转到已有话题：事件第一句换成「上面是…」
       await hob.runtime.routines.runNow(routine.id);
       await toolOf(hob, "open_topic", group.id).execute("c2", { topic: topic.id, note: "再看一次" });
-      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，上面是交接说明。\n\n再看一次");
+      expect(delivered.at(-1)).toBe("这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n再看一次");
     } finally { hob.close(); }
   });
 

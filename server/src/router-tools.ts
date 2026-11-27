@@ -1351,7 +1351,7 @@ export function buildRouterTools(
           const note = typeof params.note === "string" ? params.note.trim() : "";
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
           const files = Array.isArray(params.files) ? params.files.map((file: unknown) => resolve(cwd, String(file))) : [];
-          const event = `这个话题是你从综合创建的，上面是交接说明。\n\n${note}`;
+          const event = `这个话题是你从综合创建的，用户已经切到这里等你接着办，这件事还没开始做。上面是交接说明。\n\n${note}`;
 
           const origin = router.turnOrigin(assistantId, place);
           try {
@@ -1574,8 +1574,8 @@ export function buildRouterTools(
 
             const filesSuffix = files.length ? `（附件：${files.join("、")}）` : "";
             const eventText = createdNew
-              ? `这个话题是你从主对话创建的。交接说明：${noteText}${filesSuffix}`
-              : `你从主对话把一件事转到了这个话题。交接说明：${noteText}${filesSuffix}`;
+              ? `这个话题是你从主对话创建的，用户已经切到这里等你接着办，这件事还没开始做。交接说明：${noteText}${filesSuffix}`
+              : `你从主对话把一件事转到了这个话题，用户会在这里看你接着办。交接说明：${noteText}${filesSuffix}`;
             if (movedDelegation) {
               void router
                 .relay(assistantId, eventText, movedDelegation.id, { workDone: true, ...origin }, undefined, { topicId: targetTopic.id })

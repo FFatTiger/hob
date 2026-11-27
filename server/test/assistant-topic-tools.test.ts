@@ -186,7 +186,7 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
       );
       expect(eventSpy).toHaveBeenCalledWith(
         "multi",
-        `这个话题是你从主对话创建的。交接说明：整理下个月搬家的步骤和箱子数量。（附件：${attachPath}）`,
+        `这个话题是你从主对话创建的，用户已经切到这里等你接着办，这件事还没开始做。交接说明：整理下个月搬家的步骤和箱子数量。（附件：${attachPath}）`,
         expect.objectContaining({ workDone: true }),
         { topicId: created.id },
       );
@@ -247,7 +247,7 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
       const eventEntry = topicEntries.find((e) => e.type === "custom_message" && e.customType === "hob.event") as
         | { content?: string }
         | undefined;
-      expect(eventEntry?.content).toContain("[hob-event] 你从主对话把一件事转到了这个话题。交接说明：用户要求追加厨房电器预算。");
+      expect(eventEntry?.content).toContain("[hob-event] 你从主对话把一件事转到了这个话题，用户会在这里看你接着办。交接说明：用户要求追加厨房电器预算。");
     } finally {
       hob.close();
     }
@@ -541,7 +541,7 @@ describe("转交挪进话题完整状态机", () => {
       );
 
       expect(movedTopic.name).toBe("年度总结");
-      expect(topicTurnSeenPrompt).toContain("[hob-event] 这个话题是你从主对话创建的。交接说明：Hob 转来的要求：整理年度工作总结。");
+      expect(topicTurnSeenPrompt).toContain("[hob-event] 这个话题是你从主对话创建的，用户已经切到这里等你接着办，这件事还没开始做。交接说明：Hob 转来的要求：整理年度工作总结。");
 
       // Delegation 记录了 toTopicId 并推过包含 toTopicId 的 delegation SSE 事件
       const stored = hob.runtime.store.delegation(delegation.id)!;

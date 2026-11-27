@@ -2075,13 +2075,15 @@ svg.i {
 }
 .quote-flash { animation: quote-flash 1s ease-out; }
 @keyframes quote-flash {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  25% { background-color: color-mix(in srgb, var(--accent) 25%, var(--bubble)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); }
+  20% { background-color: color-mix(in srgb, var(--accent) 13%, var(--bubble)); }
+}
+.dark .quote-flash { animation: quote-flash-dark 1s ease-out; }
+@keyframes quote-flash-dark {
+  20% { background-color: color-mix(in srgb, var(--accent) 18%, var(--bubble)); }
 }
 .u.quote-flash { animation: quote-flash-user 1s ease-out; }
 @keyframes quote-flash-user {
-  0%, 100% { box-shadow: 0 0 0 0 transparent; }
-  25% { background-color: color-mix(in srgb, var(--accent) 30%, var(--user)); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); }
+  20% { background-color: color-mix(in srgb, var(--accent) 18%, var(--user)); }
 }
 .message-row { position: relative; width: 100%; display: flex; justify-content: flex-start; }
 .message-row.right { justify-content: flex-end; }
@@ -8515,13 +8517,8 @@ button.screen,
   align-items: start;
   justify-items: center;
   padding: min(12vh, 108px) 20px 24px;
-  background: rgb(0 0 0 / 0.24);
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
+  background: rgb(0 0 0 / 0.28);
   animation: enter-fade var(--t-mid) var(--ease-in);
-}
-.dark .cmdk-mask {
-  background: rgb(0 0 0 / 0.48);
 }
 .cmdk-mask.leaving {
   opacity: 0;
@@ -8534,9 +8531,7 @@ button.screen,
   flex-direction: column;
   overflow: hidden;
   border-radius: 18px;
-  background: color-mix(in srgb, var(--card) 92%, transparent);
-  -webkit-backdrop-filter: blur(24px) saturate(1.5);
-  backdrop-filter: blur(24px) saturate(1.5);
+  background: var(--card);
   box-shadow: 0 0 0 0.5px var(--line), 0 20px 56px var(--composer-shadow);
   animation: popup-in var(--t-mid) var(--ease-in);
 }
@@ -8584,9 +8579,11 @@ button.screen,
 .cmdk-cancel {
   display: none;
   flex: none;
+  height: 32px;
+  padding: 0 6px;
+  border-radius: 8px;
   font-size: 14px;
-  color: var(--accent);
-  padding: 4px 2px;
+  color: var(--text);
 }
 .cmdk-list {
   flex: 1;

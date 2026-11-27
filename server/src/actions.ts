@@ -12,7 +12,7 @@ import { validate } from "./routines.ts";
 import { cardTitle, validateCard } from "./cards.ts";
 import { candidateId, fillCandidate, fillLoginPage, hideSecrets, rememberAutoLogin } from "./login.ts";
 import { generateSaveAndFill, newPasswordModeText, passwordCharactersText, NewPasswordError } from "./new-password.ts";
-import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
 import { setTopicRule } from "./topic-config.ts";
 
 export interface ActionResult {
@@ -673,7 +673,7 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
   const { store, bus, router } = runtime;
   const assistant = store.assistant(id);
   if (!assistant) return { status: 404, body: { error: "助手不存在" } };
-  if (body.cwd !== undefined) {
+  if (isWorkspaceCwdChanged(body.cwd, assistant.primary ? undefined : assistant.cwd)) {
     return { status: 400, body: { error: assistant.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE } };
   }
   if (body.instructions !== undefined && typeof body.instructions !== "string") return { status: 400, body: { error: "说明必须是文字。" } };

@@ -15,6 +15,10 @@ export const topicCwdLockedByGroup = (path: string) =>
   `所属群已绑定工作目录（${path}），话题自动沿用群目录，不支持单独指定。`;
 export const topicCwdLockedByAssistant = (path: string) =>
   `助手绑定了工作目录 ${path}，话题沿用它，不能另外绑定`;
+export const existingTopicCwdImmutable = (name: string, cwd?: string) =>
+  cwd
+    ? `「${name}」的工作目录是 ${cwd}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`
+    : `「${name}」创建时没有绑定工作目录，以后也不能再绑。转到已有话题时不用填 cwd，去掉它再调用一次。`;
 
 export type WorkspaceSource = "topic" | "group" | "assistant" | "default";
 
@@ -58,6 +62,29 @@ export function normalizeWorkspaceCwdInput(raw: unknown): string | undefined {
   const trimmed = raw.trim();
   if (!trimmed) return undefined;
   return expandHome(trimmed);
+}
+
+/**
+ * 判断传入的 cwd 是否试图修改已有工作目录：
+ * - 规范化后为空（undefined / null / 空串 / 空白），视为未填写，返回 false；
+ * - 已有工作目录且与传入路径相同（支持去尾斜杠、~ 展开及等价软链），视为未修改，返回 false；
+ * - 其余（试图新绑目录、换成别的目录，或传入非文字）返回 true。
+ */
+export function isWorkspaceCwdChanged(raw: unknown, currentCwd: string | undefined): boolean {
+  if (raw === undefined || raw === null) return false;
+  if (typeof raw !== "string") return true;
+  const normalized = normalizeWorkspaceCwdInput(raw);
+  if (!normalized) return false;
+  if (!currentCwd) return true;
+  if (!isAbsolute(normalized)) return true;
+  const target = resolve(normalized);
+  const current = resolve(currentCwd);
+  if (target === current) return false;
+  try {
+    return realpathSync(target) !== realpathSync(current);
+  } catch {
+    return true;
+  }
 }
 
 /** 校验并返回规范化后的工作目录绝对路径（安全判定一律基于 realpathSync）。 */

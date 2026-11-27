@@ -24,7 +24,7 @@ import type { HobRuntime } from "./runtime.ts";
 import type { Store } from "./store.ts";
 import { clampDuty } from "./text.ts";
 import { monthDayTimeText } from "./time.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, validateWorkspaceCwd } from "./workspace.ts";
 
 type Tool = ToolDefinition<any, any>;
 
@@ -477,6 +477,9 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
         const id = primary ? String(params.assistantId ?? "").trim() : assistantId;
         const target = store.assistant(id);
         if (!target) return fail(`没有这个助手：${id}`);
+        if (isWorkspaceCwdChanged(params.cwd, target.primary ? undefined : target.cwd)) {
+          return fail(target.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE);
+        }
         if (!primary) {
           const patch: AssistantPatch = {};
           const changes: string[] = [];
@@ -586,6 +589,7 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
         const group = store.group(id);
         if (!group) return fail(`没有这个群：${id}`);
         if (group.parentId) return fail(`${id} 是话题，不是群；改话题名用 manage_topic。`);
+        if (isWorkspaceCwdChanged(params.cwd, group.cwd)) return fail(CWD_IMMUTABLE);
         const patch: { name?: unknown; purpose?: unknown; members?: string[]; ownerId?: unknown; replyMode?: unknown } = {};
         const changes: string[] = [];
         const name = filled(params.name);
@@ -664,11 +668,12 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
             return fail(error instanceof Error ? error.message : String(error));
           }
         }
-        if (params.cwd !== undefined) return fail(CWD_IMMUTABLE);
         const topicId = String(params.topicId ?? "").trim();
         const topic = store.group(topicId);
         if (!topic) return fail(`没有这个话题：${topicId}`);
         const host = topic.parentId ?? topic.id;
+        const currentCwd = store.group(host)?.cwd ?? topic.cwd;
+        if (isWorkspaceCwdChanged(params.cwd, currentCwd)) return fail(CWD_IMMUTABLE);
         // 在别的对话里说：带上群名，读的人才知道是哪个群的话题
         const hostName = store.group(host)?.name ?? host;
         try {

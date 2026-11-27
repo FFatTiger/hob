@@ -7,7 +7,7 @@ import type { Approval, Assistant, Delegation, HobEvent, Item, Job } from "../..
 import { answerApproval } from "../src/actions.ts";
 import { buildRouterTools, HANDOFF_NOTE_DESCRIPTION } from "../src/router-tools.ts";
 import { createRuntime } from "../src/runtime.ts";
-import { CWD_IMMUTABLE, topicCwdLockedByAssistant } from "../src/workspace.ts";
+import { existingTopicCwdImmutable, topicCwdLockedByAssistant } from "../src/workspace.ts";
 import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 const extraDirs: string[] = [];
@@ -294,7 +294,7 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
 
       const cwdWithExisting = await openTool.execute("e6", { topic: activeTopic.id, note: "说明", cwd: otherDir });
       expect(cwdWithExisting.isError).toBe(true);
-      expect(textOf(cwdWithExisting)).toContain(CWD_IMMUTABLE);
+      expect(textOf(cwdWithExisting)).toBe(existingTopicCwdImmutable(activeTopic.name, undefined));
 
       const missingCwd = await openTool.execute("e7", { title: "目录不存在", note: "说明", cwd: join(otherDir, "missing") });
       expect(missingCwd.isError).toBe(true);
@@ -305,6 +305,80 @@ describe("open_topic：创建话题、转到已有话题与参数校验", () => 
       expect(forcedCwd.isError).toBe(true);
       expect(textOf(forcedCwd)).toBe(topicCwdLockedByAssistant(boundDir));
       expect(hob.runtime.assistantTopics.list("bound")).toHaveLength(0);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("open_topic 转到已有助手话题：cwd 填空或填原值照常转过去，换目录报新文案且不转不重开", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const topicDir = tempDir("hob-topic-same-");
+      const boundDir = tempDir("hob-assistant-bound-");
+      const otherDir = tempDir("hob-topic-other-");
+      addAssistant(hob, "multi", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+      addAssistant(hob, "bound", { cwd: boundDir, topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+
+      const eventSpy = vi.spyOn(hob.runtime.router, "event").mockResolvedValue(true);
+      const { topic: boundTopic } = await hob.runtime.assistantTopics.create("multi", { title: "项目甲", cwd: topicDir });
+      const { topic: unboundTopic } = await hob.runtime.assistantTopics.create("multi", { title: "杂项乙" });
+      const { topic: inheritedTopic } = await hob.runtime.assistantTopics.create("bound", { title: "沿用目录丙" });
+
+      const openFree = findTool(hob, "multi", "open_topic")!;
+      const openBound = findTool(hob, "bound", "open_topic")!;
+
+      // 1. 有目录话题：cwd 为空串或等于现有目录（含尾斜杠）照常转过去
+      const resEmpty = await openFree.execute("a1", { topic: boundTopic.id, note: "空串转入", cwd: "" });
+      expect(resEmpty.isError).not.toBe(true);
+      const resSame = await openFree.execute("a2", { topic: boundTopic.id, note: "同值转入", cwd: `${topicDir}/` });
+      expect(resSame.isError).not.toBe(true);
+      const topicItems = hob.runtime.router.items("multi", undefined, { topicId: boundTopic.id }).items;
+      expect(topicItems.some((item) => item.kind === "user" && item.text === "空串转入")).toBe(true);
+      expect(topicItems.some((item) => item.kind === "user" && item.text === "同值转入")).toBe(true);
+
+      // 2. 已关闭的有目录话题换目录：报含原目录和改法的错误，且既不转入也不重开
+      await hob.runtime.assistantTopics.close("multi", boundTopic.id, "已完成");
+      const beforeBoundItems = hob.runtime.router.items("multi", undefined, { topicId: boundTopic.id }).items.length;
+      const beforeMainItems = hob.runtime.router.items("multi").items.length;
+      eventSpy.mockClear();
+      const resDiff = await openFree.execute("a3", { topic: boundTopic.id, note: "换目录不应转入", cwd: otherDir });
+      expect(resDiff.isError).toBe(true);
+      expect(textOf(resDiff)).toBe(
+        `「${boundTopic.name}」的工作目录是 ${topicDir}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.assistantTopic("multi", boundTopic.id)?.closedAt).toBeTruthy();
+      expect(hob.runtime.router.items("multi", undefined, { topicId: boundTopic.id }).items).toHaveLength(beforeBoundItems);
+      expect(hob.runtime.router.items("multi").items).toHaveLength(beforeMainItems);
+      expect(eventSpy).not.toHaveBeenCalled();
+
+      // 3. 已关闭的无目录话题换目录：报无目录版本文案且不转不重开；传空串照常转过去并重开
+      await hob.runtime.assistantTopics.close("multi", unboundTopic.id, "先关");
+      const resUnboundDiff = await openFree.execute("a4", { topic: unboundTopic.id, note: "不应转入", cwd: otherDir });
+      expect(resUnboundDiff.isError).toBe(true);
+      expect(textOf(resUnboundDiff)).toBe(
+        `「${unboundTopic.name}」创建时没有绑定工作目录，以后也不能再绑。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.assistantTopic("multi", unboundTopic.id)?.closedAt).toBeTruthy();
+      expect(eventSpy).not.toHaveBeenCalled();
+
+      const resUnboundEmpty = await openFree.execute("a5", { topic: unboundTopic.id, note: "空串重开", cwd: "" });
+      expect(resUnboundEmpty.isError).not.toBe(true);
+      expect(hob.runtime.store.assistantTopic("multi", unboundTopic.id)?.closedAt).toBeUndefined();
+
+      // 4. 助手已绑目录时转到已有话题：传空串或助手目录照常转过去，传别的目录报错且不转不重开
+      const resInheritedSame = await openBound.execute("b1", { topic: inheritedTopic.id, note: "带助手目录", cwd: boundDir });
+      expect(resInheritedSame.isError).not.toBe(true);
+      const resInheritedEmpty = await openBound.execute("b2", { topic: inheritedTopic.id, note: "空串", cwd: "" });
+      expect(resInheritedEmpty.isError).not.toBe(true);
+      await hob.runtime.assistantTopics.close("bound", inheritedTopic.id, "先关");
+      eventSpy.mockClear();
+      const resInheritedDiff = await openBound.execute("b3", { topic: inheritedTopic.id, note: "错误目录", cwd: otherDir });
+      expect(resInheritedDiff.isError).toBe(true);
+      expect(textOf(resInheritedDiff)).toBe(
+        `「${inheritedTopic.name}」的工作目录是 ${boundDir}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.assistantTopic("bound", inheritedTopic.id)?.closedAt).toBeTruthy();
+      expect(eventSpy).not.toHaveBeenCalled();
     } finally {
       hob.close();
     }

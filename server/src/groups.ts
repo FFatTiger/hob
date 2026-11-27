@@ -24,7 +24,7 @@ import { checkAssistantModels } from "./models.ts";
 import type { EventText, NewItem, TurnOutcome } from "./router.ts";
 import { pushAssistantTurnEnd } from "./push.ts";
 import type { HobRuntime } from "./runtime.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, topicCwdLockedByGroup, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, topicCwdLockedByGroup, validateWorkspaceCwd } from "./workspace.ts";
 
 /** 一条用户消息引出的助手回合上限：挡来回 @ 的死循环，不是限制正常协作。 */
 export const MAX_WAVE_TURNS = 20;
@@ -440,7 +440,8 @@ export class GroupManager {
   /** 话题不再依赖工作方式字段。旧群文件里的 workflow 由存储层原样保留。 */
   update(gid: string, patch: UpdateGroupInput): Group {
     const group = this.group(gid);
-    if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
+    const currentCwd = group.parentId ? (this.store.group(group.parentId)?.cwd ?? group.cwd) : group.cwd;
+    if (isWorkspaceCwdChanged(patch.cwd, currentCwd)) throw new Error(CWD_IMMUTABLE);
     if (group.parentId) {
       return this.updateTopic(group, patch);
     }
@@ -573,7 +574,8 @@ export class GroupManager {
 
   /** 话题只能改名、回应方式、覆盖层模型和置顶：成员、群主、负责什么跟着所属的群。 */
   private updateTopic(topic: Group, patch: UpdateGroupInput): Group {
-    if (patch.cwd !== undefined) throw new Error(CWD_IMMUTABLE);
+    const currentCwd = (topic.parentId ? this.store.group(topic.parentId)?.cwd : undefined) ?? topic.cwd;
+    if (isWorkspaceCwdChanged(patch.cwd, currentCwd)) throw new Error(CWD_IMMUTABLE);
     if (patch.members !== undefined || patch.ownerId !== undefined || patch.purpose !== undefined) {
       throw new Error("话题的成员、群主与职责随所属的群，请在群设置中修改。");
     }

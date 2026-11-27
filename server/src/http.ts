@@ -37,7 +37,7 @@ import { claudeStatus } from "./claude-status.ts";
 import { checkDesktopUrl } from "./desktop.ts";
 import { desktopProfile, desktopScreenUsers, openDesktopBrowser } from "./desktop-tools.ts";
 import { listJobFiles, lookupFile, MAX_TEXT_BYTES } from "./files.ts";
-import { allowedWorkspaceDirs, CWD_IMMUTABLE, PRIMARY_CWD_FORBIDDEN } from "./workspace.ts";
+import { allowedWorkspaceDirs, CWD_IMMUTABLE, isWorkspaceCwdChanged, PRIMARY_CWD_FORBIDDEN } from "./workspace.ts";
 import { thumbnail } from "./thumbs.ts";
 import { localLoreHome, readLocalLore, readLocalLoreConnection } from "./imports.ts";
 import { pluginToolName } from "./plugin-host.ts";
@@ -1316,7 +1316,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const assistant = store.assistant(id);
     if (!assistant) return c.json({ error: "助手不存在" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as Partial<Assistant> & { rule?: { id?: unknown; text?: unknown } };
-    if (body.cwd !== undefined) {
+    if (isWorkspaceCwdChanged(body.cwd, assistant.primary ? undefined : assistant.cwd)) {
       return c.json({ error: assistant.primary ? PRIMARY_CWD_FORBIDDEN : CWD_IMMUTABLE }, 400);
     }
     if (body.rule !== undefined) {
@@ -1378,8 +1378,10 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const tid = c.req.param("tid");
     const body = (await c.req.json().catch(() => ({}))) as { title?: unknown; cwd?: unknown };
     try {
-      runtime.assistantTopics.requireTopic(id, tid);
-      if (body.cwd !== undefined) return c.json({ error: CWD_IMMUTABLE }, 400);
+      const assistant = runtime.assistantTopics.requireAssistant(id);
+      const topic = runtime.assistantTopics.requireTopic(id, tid);
+      const currentCwd = (!assistant.primary ? assistant.cwd : undefined) ?? topic.cwd;
+      if (isWorkspaceCwdChanged(body.cwd, currentCwd)) return c.json({ error: CWD_IMMUTABLE }, 400);
       return c.json(runtime.assistantTopics.rename(id, tid, body.title));
     } catch (error) {
       return topicErr(c, error);
@@ -1698,7 +1700,8 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const group = store.group(id);
     if (!group) return c.json({ error: "群不存在" }, 404);
     const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
-    if (body.cwd !== undefined) {
+    const currentCwd = group.parentId ? (store.group(group.parentId)?.cwd ?? group.cwd) : group.cwd;
+    if (isWorkspaceCwdChanged(body.cwd, currentCwd)) {
       return c.json({ error: CWD_IMMUTABLE }, 400);
     }
     if (body.rule !== undefined) {

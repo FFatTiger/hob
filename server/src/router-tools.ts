@@ -49,7 +49,7 @@ import { searchHistory } from "./history.ts";
 import { saveSkillTool } from "./save-skill.ts";
 import { validateCard } from "./cards.ts";
 import { markdownToCard } from "./card-markdown.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant } from "./workspace.ts";
+import { existingTopicCwdImmutable, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant } from "./workspace.ts";
 import { deleteTopicRule, setTopicRule } from "./topic-config.ts";
 
 type Tool = ToolDefinition<any, any>;
@@ -1356,9 +1356,10 @@ export function buildRouterTools(
           const origin = router.turnOrigin(assistantId, place);
           try {
             if (topicId) {
-              if (!groupHasBoundCwd && params.cwd !== undefined) return fail(CWD_IMMUTABLE);
               const target = store.group(topicId);
               if (!target || target.parentId !== gid) return fail(`「${topicId}」不是这个群的话题。这个群进行中的话题：${topicList()}`);
+              const currentCwd = resolveWorkspaceCwd(store, runtime.home, assistantId, { groupId: target.id }).bound;
+              if (isWorkspaceCwdChanged(params.cwd, currentCwd)) return fail(existingTopicCwdImmutable(target.name, currentCwd));
               // 交接写入成功后再重新打开已关闭的话题，避免写失败留下已重开的半成品
               runtime.groups.appendItem(topicId, "user", { kind: "user", text: note, ...(files.length ? { files } : {}), forwardedFrom: { assistantId } });
               runtime.groups.note(gid, assistantId, `转到了话题「${target.name}」`, "info", undefined, topicId);
@@ -1474,17 +1475,6 @@ export function buildRouterTools(
           const noteText = typeof params.note === "string" ? params.note.trim() : "";
           if (!noteText) return fail("note 不能为空：写清交接说明后再调用一次。");
 
-          let normalizedCwd: string | undefined;
-          if (params.cwd !== undefined) {
-            try {
-              normalizedCwd = normalizeWorkspaceCwdInput(params.cwd);
-            } catch (error) {
-              return fail(error instanceof Error ? error.message : String(error));
-            }
-          }
-          if (topicId && normalizedCwd) return fail(CWD_IMMUTABLE);
-          if (liveAssistant.cwd && normalizedCwd) return fail(topicCwdLockedByAssistant(liveAssistant.cwd));
-
           const files = Array.isArray(params.files)
             ? params.files.flatMap((file: unknown) => {
                 const trimmed = typeof file === "string" ? file.trim() : "";
@@ -1528,9 +1518,13 @@ export function buildRouterTools(
             if (topicId) {
               const resolved = resolveAssistantTopic(topicId, "");
               if ("error" in resolved) return fail(resolved.error);
+              const currentCwd = resolveWorkspaceCwd(store, runtime.home, assistantId, { topicId: resolved.id }).bound;
+              if (isWorkspaceCwdChanged(params.cwd, currentCwd)) return fail(existingTopicCwdImmutable(resolved.name, currentCwd));
               targetTopic = resolved;
               shouldReopen = Boolean(resolved.closedAt);
             } else {
+              const normalizedCwd = params.cwd !== undefined ? normalizeWorkspaceCwdInput(params.cwd) : undefined;
+              if (liveAssistant.cwd && normalizedCwd) return fail(topicCwdLockedByAssistant(liveAssistant.cwd));
               const created = await runtime.assistantTopics.create(assistantId, {
                 title,
                 createdBy: "assistant",

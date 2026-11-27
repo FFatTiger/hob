@@ -14,8 +14,12 @@ import { saveSkillDirectory } from "../src/save-skill.ts";
 import { writablePath } from "../src/write-protection.ts";
 import {
   CWD_BOUND_LOCKED,
+  CWD_IMMUTABLE,
+  PRIMARY_CWD_FORBIDDEN,
   WORKSPACE_AGENTS_MAX_CHARS,
   allowedWorkspaceDirs,
+  existingTopicCwdImmutable,
+  isWorkspaceCwdChanged,
   loadWorkspaceAgentsFile,
   normalizeWorkspaceCwdInput,
   resolveWorkspaceCwd,
@@ -118,6 +122,29 @@ describe("工作目录路径校验与规范化", () => {
       expect(normalizeWorkspaceCwdInput("~")).toBe(homedir());
       expect(normalizeWorkspaceCwdInput("~/demo-repo")).toBe(join(homedir(), "demo-repo"));
 
+      // isWorkspaceCwdChanged 统一规则：空值/同值/尾斜杠/等价软链视为未修改，换目录/新绑/非文字视为修改
+      expect(isWorkspaceCwdChanged(undefined, project)).toBe(false);
+      expect(isWorkspaceCwdChanged(null, project)).toBe(false);
+      expect(isWorkspaceCwdChanged("", project)).toBe(false);
+      expect(isWorkspaceCwdChanged("   ", project)).toBe(false);
+      expect(isWorkspaceCwdChanged(project, project)).toBe(false);
+      expect(isWorkspaceCwdChanged(`${project}/`, project)).toBe(false);
+      expect(isWorkspaceCwdChanged(linkToProject, project)).toBe(false);
+      expect(isWorkspaceCwdChanged(linkParent, project)).toBe(true);
+      expect(isWorkspaceCwdChanged("relative/path", project)).toBe(true);
+      expect(isWorkspaceCwdChanged(123, project)).toBe(true);
+      expect(isWorkspaceCwdChanged("", undefined)).toBe(false);
+      expect(isWorkspaceCwdChanged(null, undefined)).toBe(false);
+      expect(isWorkspaceCwdChanged(project, undefined)).toBe(true);
+
+      // open_topic 转到已有话题的报错文案（有目录 vs 无目录）
+      expect(existingTopicCwdImmutable("相册整理", project)).toBe(
+        `「相册整理」的工作目录是 ${project}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(existingTopicCwdImmutable("相册整理", undefined)).toBe(
+        "「相册整理」创建时没有绑定工作目录，以后也不能再绑。转到已有话题时不用填 cwd，去掉它再调用一次。",
+      );
+
       // 合法目录与去尾斜杠、合法外部软链保留逻辑路径
       expect(validateWorkspaceCwd(`${project}/`, hob.home)).toBe(resolve(project));
       expect(validateWorkspaceCwd(linkToProject, hob.home)).toBe(resolve(linkToProject));
@@ -179,10 +206,18 @@ describe("继承链与不可变边界", () => {
       const resEn = await app.request("/api/assistants/hob", {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ cwd: "" }),
+        body: JSON.stringify({ cwd: dir }),
       });
       expect(resEn.status).toBe(400);
       expect(await resEn.json()).toEqual({ error: "The primary assistant does not support a work directory." });
+
+      // 空串视为未填写，不报错
+      const resEmpty = await app.request("/api/assistants/hob", {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ cwd: "" }),
+      });
+      expect(resEmpty.status).toBe(200);
     } finally {
       hob.close();
     }
@@ -227,17 +262,24 @@ describe("继承链与不可变边界", () => {
         sessionCwd: dirA,
       });
 
-      // PATCH 改值、空串、null 全部 400 拦截
+      // PATCH 传空串、null 或同值不报错且保留原目录；传不同目录 400 拦截
       const { app, cookie } = await loginCookie(hob);
-      for (const value of [dirB, dirA, "", null]) {
+      for (const value of [dirA, `${dirA}/`, "", "   ", null]) {
         const res = await app.request(`/api/assistants/${created.id}`, {
           method: "PATCH",
           headers: { cookie, "content-type": "application/json" },
           body: JSON.stringify({ cwd: value }),
         });
-        expect(res.status).toBe(400);
-        expect(await res.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+        expect(res.status, String(value)).toBe(200);
+        expect(hob.runtime.store.assistant(created.id)?.cwd).toBe(dirA);
       }
+      const patchOtherDir = await app.request(`/api/assistants/${created.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ cwd: dirB }),
+      });
+      expect(patchOtherDir.status).toBe(400);
+      expect(await patchOtherDir.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
       // PATCH 同时携带 rule 与 cwd 也返回 400 且不落规则
       const patchRuleAndCwd = await app.request(`/api/assistants/${created.id}`, {
         method: "PATCH",
@@ -311,7 +353,17 @@ describe("继承链与不可变边界", () => {
       const lockedGroup = await createGroupRes.json() as { id: string; cwd?: string };
       expect(lockedGroup.cwd).toBe(groupDirPath);
 
-      // PATCH 群 cwd 返回 400（单独传或连同 rule 传均拦截且不落规则）
+      // PATCH 群 cwd：空串或同值不报错，换目录返回 400（单独传或连同 rule 传均拦截且不落规则）
+      for (const sameOrEmpty of ["", "   ", groupDirPath, `${groupDirPath}/`]) {
+        const okRes = await app.request(`/api/groups/${lockedGroup.id}`, {
+          method: "PATCH",
+          headers: { cookie, "content-type": "application/json" },
+          body: JSON.stringify({ cwd: sameOrEmpty }),
+        });
+        expect(okRes.status, String(sameOrEmpty)).toBe(200);
+        expect(hob.runtime.store.group(lockedGroup.id)?.cwd).toBe(groupDirPath);
+      }
+
       const patchGroup = await app.request(`/api/groups/${lockedGroup.id}`, {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
@@ -414,15 +466,39 @@ describe("继承链与不可变边界", () => {
         sessionCwd: topicDir,
       });
 
-      // PATCH 话题仍可改名，但传 cwd 返回 400
+      // PATCH 话题仍可改名，传空串或同值不报错，传不同 cwd 返回 400
       const renameOk = await app.request(`/api/groups/${boundTopic.id}`, {
         method: "PATCH",
         headers: { cookie, "content-type": "application/json" },
-        body: JSON.stringify({ name: "升级报表服务 v2" }),
+        body: JSON.stringify({ name: "升级报表服务 v2", cwd: topicDir }),
       });
       expect(renameOk.status).toBe(200);
       expect(hob.runtime.store.group(boundTopic.id)?.name).toBe("升级报表服务 v2");
       expect(hob.runtime.store.group(boundTopic.id)?.cwd).toBe(topicDir);
+
+      const renameEmptyCwd = await app.request(`/api/groups/${boundTopic.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "升级报表服务 v3", cwd: "" }),
+      });
+      expect(renameEmptyCwd.status).toBe(200);
+      expect(hob.runtime.store.group(boundTopic.id)?.name).toBe("升级报表服务 v3");
+      expect(hob.runtime.store.group(boundTopic.id)?.cwd).toBe(topicDir);
+
+      // 跟随父群目录的话题：传群目录或空串不报错，传别的目录 400
+      const followSameCwd = await app.request(`/api/groups/${topicFollow.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ name: "排查慢查询 v2", cwd: groupDirPath }),
+      });
+      expect(followSameCwd.status).toBe(200);
+      const followDiffCwd = await app.request(`/api/groups/${topicFollow.id}`, {
+        method: "PATCH",
+        headers: { cookie, "content-type": "application/json" },
+        body: JSON.stringify({ cwd: otherDir }),
+      });
+      expect(followDiffCwd.status).toBe(400);
+      expect(await followDiffCwd.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
 
       const patchTopicCwd = await app.request(`/api/groups/${boundTopic.id}`, {
         method: "PATCH",
@@ -932,6 +1008,32 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
         expect(bad.isError, action).toBe(true);
         expect((bad.content[0] as { text: string }).text).toContain("工作目录仅支持在创建时绑定，创建后不可修改。");
       }
+      // manage_topic 对已有话题传空串或同值 cwd 不报错
+      const mtRenameSame = await manageTopic.execute("mt-same", { action: "rename", topicId: freeTopic.id, title: "独立目录话题 v2", cwd: topicDir });
+      expect(mtRenameSame.isError).not.toBe(true);
+      const mtRenameEmpty = await manageTopic.execute("mt-empty", { action: "rename", topicId: freeTopic.id, title: "独立目录话题", cwd: "" });
+      expect(mtRenameEmpty.isError).not.toBe(true);
+
+      // update_assistant / update_group：传空串或同值不报错，换目录报 CWD_IMMUTABLE / PRIMARY_CWD_FORBIDDEN
+      const updateAssistantTool = findTool(hobTools, "update_assistant");
+      const uaSame = await updateAssistantTool.execute("ua1", { assistantId: dev.id, duty: "开发维护", cwd: astDir });
+      expect(uaSame.isError).not.toBe(true);
+      const uaEmpty = await updateAssistantTool.execute("ua2", { assistantId: dev.id, duty: "协助处理任务", cwd: "" });
+      expect(uaEmpty.isError).not.toBe(true);
+      const uaDiff = await updateAssistantTool.execute("ua3", { assistantId: dev.id, duty: "换目录", cwd: grpDir });
+      expect(uaDiff.isError).toBe(true);
+      expect((uaDiff.content[0] as { text: string }).text).toContain(CWD_IMMUTABLE);
+      const uaPrimaryDiff = await updateAssistantTool.execute("ua4", { assistantId: "hob", duty: "主助手", cwd: grpDir });
+      expect(uaPrimaryDiff.isError).toBe(true);
+      expect((uaPrimaryDiff.content[0] as { text: string }).text).toContain(PRIMARY_CWD_FORBIDDEN);
+
+      const ugSame = await updateGroup.execute("ug1", { groupId: lockedGroup.id, purpose: "负责前端开发与构建", cwd: grpDir });
+      expect(ugSame.isError).not.toBe(true);
+      const ugEmpty = await updateGroup.execute("ug2", { groupId: lockedGroup.id, purpose: "负责前端开发", cwd: "" });
+      expect(ugEmpty.isError).not.toBe(true);
+      const ugDiff = await updateGroup.execute("ug3", { groupId: lockedGroup.id, purpose: "换目录", cwd: topicDir });
+      expect(ugDiff.isError).toBe(true);
+      expect((ugDiff.content[0] as { text: string }).text).toContain(CWD_IMMUTABLE);
 
       // show_group：展示群和话题（跟随群 vs 本话题）的工作目录
       const showGroup = findTool(hobTools, "show_group");
@@ -942,8 +1044,8 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const freeTopicView = (await showGroup.execute("sg3", { groupId: freeTopic.id })).content[0] as { text: string };
       expect(freeTopicView.text).toContain(`工作目录：${topicDir}`);
 
-      // open_topic：群未绑时暴露 cwd 且创建新话题可带 cwd、转到已有话题传 cwd 拒；群已绑时隐藏 cwd 且忽略强传 cwd
-      vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
+      // open_topic：群未绑时暴露 cwd 且创建新话题可带 cwd；转到已有话题时 cwd 为空或等于原值照常转过去，换目录报含原目录和改法的错误且不转不重开
+      const deliverSpy = vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
       const devFreeTools = buildRouterTools(hob.runtime, dev.id, { groupId: freeGroup.id });
       const openFree = findTool(devFreeTools, "open_topic");
       expect("cwd" in openFree.parameters.properties).toBe(true);
@@ -953,13 +1055,60 @@ describe("工具集成：show_assistant / show_group / create_group / manage_top
       const topic2 = hob.runtime.groups.topicsOf(freeGroup.id).find((t) => t.name === "话题二")!;
       expect(topic2.cwd).toBe(topicDir);
 
+      // 1) 转到已有绑定目录话题：cwd 为空串或等于现有目录均照常转过去
+      const openExistingEmpty = await openFree.execute("ot2-empty", { topic: topic2.id, note: "空 cwd 补充", cwd: "" });
+      expect(openExistingEmpty.isError).not.toBe(true);
+      const openExistingSame = await openFree.execute("ot2-same", { topic: topic2.id, note: "同目录补充", cwd: `${topicDir}/` });
+      expect(openExistingSame.isError).not.toBe(true);
+      expect(hob.runtime.store.groupItems(topic2.id).some((item) => item.kind === "user" && item.text === "空 cwd 补充")).toBe(true);
+      expect(hob.runtime.store.groupItems(topic2.id).some((item) => item.kind === "user" && item.text === "同目录补充")).toBe(true);
+
+      // 2) 转到已关闭的有目录话题且 cwd 不同：返回新文案，不转消息、不记综合 note、不重开、不推事件
+      hob.runtime.groups.closeByOwner(topic2.id, "先关掉");
+      const beforeTopic2Items = hob.runtime.store.groupItems(topic2.id).length;
+      const beforeFreeItems = hob.runtime.store.groupItems(freeGroup.id).length;
+      deliverSpy.mockClear();
       const openExistingWithCwd = await openFree.execute("ot2", { topic: topic2.id, note: "转过去", cwd: grpDir });
       expect(openExistingWithCwd.isError).toBe(true);
-      expect((openExistingWithCwd.content[0] as { text: string }).text).toContain("工作目录仅支持在创建时绑定，创建后不可修改。");
+      expect((openExistingWithCwd.content[0] as { text: string }).text).toBe(
+        `「${topic2.name}」的工作目录是 ${topicDir}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.group(topic2.id)?.closedAt).toBeTruthy();
+      expect(hob.runtime.store.groupItems(topic2.id)).toHaveLength(beforeTopic2Items);
+      expect(hob.runtime.store.groupItems(freeGroup.id)).toHaveLength(beforeFreeItems);
+      expect(deliverSpy).not.toHaveBeenCalled();
 
+      // 3) 转到已关闭的无目录话题：换目录报无目录版本文案且不转不重开，空串照常转过去并重开
+      const unboundTopic = hob.runtime.groups.createTopic(freeGroup.id, "无目录话题", dev.id);
+      hob.runtime.groups.closeByOwner(unboundTopic.id, "已结");
+      const openUnboundDiff = await openFree.execute("ot2-unbound-diff", { topic: unboundTopic.id, note: "不应转入", cwd: grpDir });
+      expect(openUnboundDiff.isError).toBe(true);
+      expect((openUnboundDiff.content[0] as { text: string }).text).toBe(
+        `「${unboundTopic.name}」创建时没有绑定工作目录，以后也不能再绑。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.group(unboundTopic.id)?.closedAt).toBeTruthy();
+      expect(hob.runtime.store.groupItems(unboundTopic.id).some((item) => item.kind === "user" && item.text === "不应转入")).toBe(false);
+
+      const openUnboundEmpty = await openFree.execute("ot2-unbound-empty", { topic: unboundTopic.id, note: "空串重开", cwd: "" });
+      expect(openUnboundEmpty.isError).not.toBe(true);
+      expect(hob.runtime.store.group(unboundTopic.id)?.closedAt).toBeUndefined();
+
+      // 4) 群已绑目录时：转到已有话题传群目录或空串照常转过去，传别的目录报新文案且不转不重开
       const devLockedTools = buildRouterTools(hob.runtime, dev.id, { groupId: lockedGroup.id }, grpDir);
       const openLocked = findTool(devLockedTools, "open_topic");
       expect("cwd" in openLocked.parameters.properties).toBe(false);
+      const openLockedSame = await openLocked.execute("ot3-same", { topic: followTopic.id, note: "带群目录转入", cwd: grpDir });
+      expect(openLockedSame.isError).not.toBe(true);
+      const openLockedEmpty = await openLocked.execute("ot3-empty", { topic: followTopic.id, note: "空串转入", cwd: "" });
+      expect(openLockedEmpty.isError).not.toBe(true);
+      hob.runtime.groups.closeByOwner(followTopic.id, "先关");
+      const openLockedDiff = await openLocked.execute("ot3-diff", { topic: followTopic.id, note: "错误目录", cwd: topicDir });
+      expect(openLockedDiff.isError).toBe(true);
+      expect((openLockedDiff.content[0] as { text: string }).text).toBe(
+        `「${followTopic.name}」的工作目录是 ${grpDir}，创建时就定了，不能改。转到已有话题时不用填 cwd，去掉它再调用一次。`,
+      );
+      expect(hob.runtime.store.group(followTopic.id)?.closedAt).toBeTruthy();
+
       const openLockedForced = await openLocked.execute("ot3", { title: "忽略强传目录", note: "说明", cwd: topicDir });
       expect(openLockedForced.isError).not.toBe(true);
       const lockedTopic2 = hob.runtime.groups.topicsOf(lockedGroup.id).find((t) => t.name === "忽略强传目录")!;

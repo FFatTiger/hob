@@ -11,7 +11,7 @@ import type { Store } from "./store.ts";
 import { clearTodos, readTodos } from "./todos.ts";
 import { hiddenRules as topicHiddenRules, patchOverrides } from "./topic-config.ts";
 import { textOfContent } from "./transcript.ts";
-import { CWD_IMMUTABLE, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant, validateWorkspaceCwd } from "./workspace.ts";
+import { CWD_IMMUTABLE, isWorkspaceCwdChanged, normalizeWorkspaceCwdInput, resolveWorkspaceCwd, topicCwdLockedByAssistant, validateWorkspaceCwd } from "./workspace.ts";
 
 export const MAX_ASSISTANT_TOPIC_TITLE = 40;
 const AUTO_FALLBACK_TITLE_CHARS = 20;
@@ -331,12 +331,13 @@ export class AssistantTopicManager {
 
   async updateConfig(aid: string, tid: string, body: unknown): Promise<TopicConfigView> {
     const assistant = this.requireAssistant(aid);
-    this.requireTopic(aid, tid);
+    const topic = this.requireTopic(aid, tid);
     if (!body || typeof body !== "object" || Array.isArray(body)) {
       throw new TopicError("模型设置无效", 400);
     }
     const input = body as Record<string, unknown>;
-    if (input.cwd !== undefined) throw new TopicError(CWD_IMMUTABLE, 400);
+    const currentCwd = (!assistant.primary ? assistant.cwd : undefined) ?? topic.cwd;
+    if (isWorkspaceCwdChanged(input.cwd, currentCwd)) throw new TopicError(CWD_IMMUTABLE, 400);
     if (input.models !== undefined) {
       if (!input.models || typeof input.models !== "object" || Array.isArray(input.models)) {
         throw new TopicError("模型设置无效", 400);

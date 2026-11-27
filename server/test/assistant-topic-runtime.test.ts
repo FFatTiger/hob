@@ -648,7 +648,7 @@ describe("助手多话题：工作目录", () => {
 
       addAssistant(hob, "bound-a", { cwd: boundDir, topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
       addAssistant(hob, "free-a", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
-      const { post } = await loggedIn(hob.runtime, hob.home);
+      const { post, patch } = await loggedIn(hob.runtime, hob.home);
 
       // 1. 助手已绑目录时建话题传 cwd 报 400
       const lockedRes = await post("/api/assistants/bound-a/topics", { title: "测试", cwd: otherDir });
@@ -691,6 +691,25 @@ describe("助手多话题：工作目录", () => {
       await hob.runtime.router.waitIdle("free-a", 10_000, { topicId: freeTopic.id });
       const state = await hob.runtime.router.ensure("free-a", { topicId: freeTopic.id });
       expect(state.session!.systemPrompt).toContain(`当前工作目录：${topicDir}（来源：本话题）`);
+
+      // 3. HTTP 修改话题名与话题配置：cwd 传空串或同值不报错，传不同目录报 400
+      expect((await patch(`/api/assistants/free-a/topics/${freeTopic.id}`, { title: "话题目录 v2", cwd: "" })).status).toBe(200);
+      expect((await patch(`/api/assistants/free-a/topics/${freeTopic.id}`, { title: "话题目录 v3", cwd: `${topicDir}/` })).status).toBe(200);
+      const renameDiff = await patch(`/api/assistants/free-a/topics/${freeTopic.id}`, { title: "改不动", cwd: otherDir });
+      expect(renameDiff.status).toBe(400);
+      expect(await renameDiff.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+
+      expect((await patch(`/api/assistants/free-a/topics/${freeTopic.id}/config`, { cwd: "" })).status).toBe(200);
+      expect((await patch(`/api/assistants/free-a/topics/${freeTopic.id}/config`, { cwd: topicDir })).status).toBe(200);
+      const cfgDiff = await patch(`/api/assistants/free-a/topics/${freeTopic.id}/config`, { cwd: otherDir });
+      expect(cfgDiff.status).toBe(400);
+      expect(await cfgDiff.json()).toEqual({ error: "工作目录仅支持在创建时绑定，创建后不可修改。" });
+
+      // 助手已绑目录的话题：PATCH 传空串或助手目录不报错，传不同目录报 400
+      expect((await patch(`/api/assistants/bound-a/topics/${boundTopic.id}`, { title: "沿用目录 v2", cwd: boundDir })).status).toBe(200);
+      expect((await patch(`/api/assistants/bound-a/topics/${boundTopic.id}/config`, { cwd: boundDir })).status).toBe(200);
+      expect((await patch(`/api/assistants/bound-a/topics/${boundTopic.id}/config`, { cwd: "" })).status).toBe(200);
+      expect((await patch(`/api/assistants/bound-a/topics/${boundTopic.id}/config`, { cwd: otherDir })).status).toBe(400);
     } finally {
       hob.close();
     }

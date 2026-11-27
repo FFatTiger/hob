@@ -102,40 +102,40 @@ describe("issue 269 step 2 server review fixes", () => {
       // 1. 群话题
       const group = hob.runtime.groups.create({ name: "发布群", purpose: "发版", ownerId: "hob", members: ["hob"] });
       hob.runtime.store.saveGroupRules(group.id, [
-        { id: "r-chg", text: "推送标签", mode: "ask", changedAt: "2026-11-26T00:00:00.000Z" },
-        { id: "r-hid", text: "清理日志", mode: "ask", changedAt: "2026-11-26T00:00:00.000Z" },
-        { id: "r-plain", text: "同步文档", mode: "ask", changedAt: "2026-11-26T00:00:00.000Z" },
+        { id: "r-chg", text: "推送标签", changedAt: "2026-11-26T00:00:00.000Z" },
+        { id: "r-hid", text: "清理日志", changedAt: "2026-11-26T00:00:00.000Z" },
+        { id: "r-plain", text: "同步文档", changedAt: "2026-11-26T00:00:00.000Z" },
       ]);
       const gTopic = hob.runtime.groups.createTopic(group.id, "热修", "user");
       const gHost = hob.runtime.store.groupTopicConfigHost(gTopic.id);
-      setTopicRule(gHost, { id: "r-chg", mode: "allow" });
+      setTopicRule(gHost, { id: "r-chg", text: "推送标签前不用问，直接推" });
       deleteTopicRule(gHost, "r-hid");
 
       const gSetRule = findTool(hob, "hob", "set_rule", { groupId: gTopic.id })!;
-      const resChanged = toolText(await gSetRule.execute("c1", { text: "推送标签", mode: "allow", scope: "group" }));
+      const resChanged = toolText(await gSetRule.execute("c1", { text: "推送标签", scope: "group" }));
       expect(resChanged).toContain("这个话题对这一条单独改过，这里不受影响");
 
-      const resHidden = toolText(await gSetRule.execute("c2", { text: "清理日志", mode: "allow", scope: "group" }));
+      const resHidden = toolText(await gSetRule.execute("c2", { text: "清理日志", scope: "group" }));
       expect(resHidden).toContain("这个话题停用了这一条，这里不受影响");
 
-      const resPlain = toolText(await gSetRule.execute("c3", { text: "同步文档", mode: "allow", scope: "group" }));
+      const resPlain = toolText(await gSetRule.execute("c3", { text: "同步文档", scope: "group" }));
       expect(resPlain).not.toContain("这里不受影响");
 
       // 2. 助手话题
       const aid = "writer";
       addAssistant(hob, aid, { name: "写作助手", topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
       hob.runtime.store.saveRules(aid, [
-        { id: "ar-1", text: "自动配图", mode: "ask", changedAt: "2026-11-26T00:00:00.000Z" },
-        { id: "ar-2", text: "发送草稿", mode: "ask", changedAt: "2026-11-26T00:00:00.000Z" },
+        { id: "ar-1", text: "自动配图", changedAt: "2026-11-26T00:00:00.000Z" },
+        { id: "ar-2", text: "发送草稿", changedAt: "2026-11-26T00:00:00.000Z" },
       ]);
       const { topic: aTopic } = await hob.runtime.assistantTopics.create(aid, { title: "专题稿" });
       const aHost = hob.runtime.store.assistantTopicConfigHost(aid, aTopic.id);
-      setTopicRule(aHost, { id: "ar-1", mode: "allow" });
+      setTopicRule(aHost, { id: "ar-1", text: "自动配图，不用先问" });
       deleteTopicRule(aHost, "ar-2");
 
       const aSetRule = findTool(hob, aid, "set_rule", { topicId: aTopic.id })!;
-      expect(toolText(await aSetRule.execute("a1", { text: "自动配图", mode: "allow", scope: "assistant" }))).toContain("这个话题对这一条单独改过，这里不受影响");
-      expect(toolText(await aSetRule.execute("a2", { text: "发送草稿", mode: "allow", scope: "assistant" }))).toContain("这个话题停用了这一条，这里不受影响");
+      expect(toolText(await aSetRule.execute("a1", { text: "自动配图", scope: "assistant" }))).toContain("这个话题对这一条单独改过，这里不受影响");
+      expect(toolText(await aSetRule.execute("a2", { text: "发送草稿", scope: "assistant" }))).toContain("这个话题停用了这一条，这里不受影响");
     } finally {
       hob.close();
     }

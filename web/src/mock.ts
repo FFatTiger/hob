@@ -2342,6 +2342,7 @@ cp now.txt "$seen"`,
         general: {
           theme: scene.endsWith("-dark") || (typeof location !== "undefined" && new URLSearchParams(location.search).get("dark") === "1") ? "dark" : "system",
           timezone: "Asia/Tokyo",
+          loginUriMatch: 0,
           proxy: scene === "s1" || scene === "h-settings" ? "http://demo-user:demo-pass@proxy.example.test:8080" : "",
           noProxy: "localhost,127.0.0.1,::1",
           aboutYou: { name: L("小林", "Sam"), language: L("中文", "English"), notes: "" },

@@ -9,6 +9,7 @@ import type {
   AboutInfo,
   ClaudeCodeSettings,
   ClaudeCodeView,
+  DefaultUriMatchMode,
   DesktopView,
   EmbeddingSettings,
   ImageKeyView,
@@ -561,6 +562,16 @@ function DesktopSection() {
   );
 }
 
+function loginUriMatchOptions(): { value: string; label: string; meta: string }[] {
+  return [
+    { value: "0", label: t("基础域名"), meta: t("同域名或子域名") },
+    { value: "1", label: t("主机"), meta: t("主机名和端口都相同") },
+    { value: "2", label: t("开始于"), meta: t("页面网址以此开头") },
+    { value: "3", label: t("精确"), meta: t("完整网址相同") },
+    { value: "5", label: t("从不"), meta: t("不自动匹配") },
+  ];
+}
+
 function GeneralSection() {
   const s = useApp();
   const themes = themeItems();
@@ -568,9 +579,11 @@ function GeneralSection() {
   const feedback = useSaveFeedback();
   const timezoneFeedback = useSaveFeedback();
   const proxyFeedback = useSaveFeedback();
+  const matchFeedback = useSaveFeedback();
   const aboutFeedback = useSaveFeedback();
   const proxyValue = s.settings.settings.general.proxy;
   const noProxyValue = s.settings.settings.general.noProxy;
+  const loginUriMatch: DefaultUriMatchMode = s.settings.settings.general.loginUriMatch ?? 0;
   const [proxyInput, setProxyInput] = useState(proxyValue);
   const [proxyFocused, setProxyFocused] = useState(false);
   useEffect(() => setProxyInput(proxyValue), [proxyValue]);
@@ -642,6 +655,21 @@ function GeneralSection() {
         <button className={`tog${s.settings.settings.general.showPage === false ? " off" : ""}`} aria-label={t("展示页面")} aria-pressed={s.settings.settings.general.showPage !== false} disabled={feedback.busy} onClick={() => void feedback.save({ general: { showPage: s.settings.settings.general.showPage === false } })} />
         <SaveFeedback message={feedback.message} />
         <div className="note">{t("允许助手把适合可视化的内容展示为页面。")}</div>
+      </Group>
+
+      <Group>
+        <div className="lbl">{t("登录网址默认匹配方式")}</div>
+        <div className="ctl">
+          <Select
+            aria-label={t("登录网址默认匹配方式")}
+            value={String(loginUriMatch)}
+            disabled={matchFeedback.busy}
+            onChange={(value) => void matchFeedback.save({ general: { loginUriMatch: Number(value) as DefaultUriMatchMode } })}
+            options={loginUriMatchOptions()}
+          />
+        </div>
+        <SaveFeedback message={matchFeedback.message} />
+        <div className="note">{t("填写登录时，用哪种规则把当前页面和密码管理器里保存的网址对上。保存的网址在密码管理器里单独设过匹配方式的，以那里为准。")}</div>
       </Group>
 
       <Group>

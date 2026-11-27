@@ -108,7 +108,7 @@ export type SettingsSub =
   | { kind: "searchProvider"; name: SearchProviderName; title: string };
 
 const EMPTY_SETTINGS: Settings = {
-  general: { theme: "system", timezone: "UTC", proxy: "", noProxy: "localhost,127.0.0.1,::1", aboutYou: { name: "", language: "", notes: "" } },
+  general: { theme: "system", timezone: "UTC", loginUriMatch: 0, proxy: "", noProxy: "localhost,127.0.0.1,::1", aboutYou: { name: "", language: "", notes: "" } },
   providers: [],
   models: {
     roster: [],

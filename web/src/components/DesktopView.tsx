@@ -4,7 +4,7 @@ import { createPortal } from "react-dom";
 import RFB from "@novnc/novnc";
 import { Icon } from "../icons.tsx";
 import { desktopMockScene } from "../mock.ts";
-import { MOCK, useApp } from "../store.ts";
+import { MOCK, subscribeConnection, subscribeEvents, useApp } from "../store.ts";
 import { characterKeysym, compositionInput, isPasteShortcut, keyboardKeysym, textInputMethod } from "../desktop-input.ts";
 import { startDesktopScreen, useDesktopScreens } from "../desktop-screens.ts";
 import { t } from "../../../shared/i18n.ts";
@@ -178,13 +178,12 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", 
       if (active) setControl(next);
       return next;
     };
-    const events = new EventSource("/api/events");
-    events.onmessage = (event) => {
-      try {
-        const value = JSON.parse(event.data);
-        if (value.type === "desktop-control" && value.screen === screen) void refresh().catch((e: Error) => { if (active) setError(e.message); });
-      } catch { /* 忽略无效事件 */ }
-    };
+    const unsubEvents = subscribeEvents((value) => {
+      if (value.type === "desktop-control" && value.screen === screen) void refresh().catch((e: Error) => { if (active) setError(e.message); });
+    });
+    const unsubConn = subscribeConnection((status) => {
+      if (status === "reconnect" && active) void refresh().catch((e: Error) => { if (active) setError(e.message); });
+    });
     void (async () => {
       try {
         await startDesktopScreen(screen);
@@ -231,7 +230,8 @@ export function DesktopView({ onClose, takeOver = false, initialScreen = "hob", 
     return () => {
       active = false;
       viewActive.current = false;
-      events.close();
+      unsubEvents();
+      unsubConn();
       if (owned || mine.current) void release();
       mine.current = false;
       if (rfb.current === client) rfb.current = null;

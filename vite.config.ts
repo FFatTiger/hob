@@ -10,6 +10,6 @@ export default defineConfig({
   build: { outDir: "../dist/web", emptyOutDir: true, target: "es2022" },
   server: {
     port: Number(process.env.HOB_WEB_PORT ?? 5173),
-    proxy: { "/api": { target: `http://127.0.0.1:${process.env.HOB_PORT ?? 30148}`, changeOrigin: true } },
+    proxy: { "/api": { target: `http://127.0.0.1:${process.env.HOB_PORT ?? 30148}`, changeOrigin: true, ws: true } },
   },
 });

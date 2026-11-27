@@ -397,7 +397,6 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "{name}在主对话创建了话题": "{name} created this topic from the main conversation",
   "无法连接 Hob：{error}": "Can't connect to Hob: {error}",
   "上传响应缺少文件路径": "Upload response did not include a file path",
-  "实时连接已断开": "Live connection closed",
   "实时连接中断，正在重连": "Live connection interrupted, reconnecting",
   "这个浏览器不支持推送": "This browser does not support push notifications",
   "浏览器拒绝授予通知权限": "The browser denied notification permission",

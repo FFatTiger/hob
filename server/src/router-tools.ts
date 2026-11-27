@@ -1210,10 +1210,11 @@ export function buildRouterTools(
       {
         name: "message_group",
         label: "交给群",
-        description: "把一件事交给一个群处理：在群里创建一个话题，你写的 note 是话题的第一条，由群主接手。群主关闭话题时写的结论会回到这里。",
+        description: "把一件事交给一个群处理：在群里创建一个话题，你写的 note 是话题的第一条，由群主接手。群主关闭话题时写的结论会回到这里。topic 填你交给过这个群的话题 id，就转到那个话题，由群主接着办（已关闭的会重新打开）。",
         parameters: Type.Object({
           groupId: Type.String({ description: "群 id（见「群」一节）。" }),
-          title: Type.String({ description: "话题名，写这件事，如「相册备份出错」，最多 40 字。" }),
+          title: Type.Optional(Type.String({ description: "话题名，写这件事，如「相册备份出错」，最多 40 字。转到已有话题时不填。" })),
+          topic: Type.Optional(Type.String({ description: "可选。你交给过这个群的话题 id。创建新话题时不填。" })),
           note: Type.String({ description: HANDOFF_NOTE_DESCRIPTION }),
           files: Type.Optional(Type.Array(Type.String({ description: "要交给群的文件路径" }))),
           cwd: Type.Optional(Type.String({ description: "可选，仅目标群未绑定工作目录时可用，为新话题指定工作目录（绝对路径，创建后不可修改）。" })),
@@ -1228,8 +1229,10 @@ export function buildRouterTools(
           if (group.parentId) return fail(`${id} 是话题，不是群：groupId 填群 id，会在群里创建一个新话题。`);
           if (groupId && sameGroup(groupId, group.id)) return fail(`你就在群「${group.name}」里，不用交给它。`);
           const title = typeof params.title === "string" ? params.title.trim() : "";
-          if (!title) return fail("title 不能为空：写这件事，如「相册备份出错」。");
-          if ([...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
+          const targetTopicId = typeof params.topic === "string" ? params.topic.trim() : "";
+          if (!title && !targetTopicId) return fail("title 和 topic 要填一个：创建新话题填 title，转到已有话题填 topic。");
+          if (title && targetTopicId) return fail("title 和 topic 只能填一个：创建新话题填 title，转到已有话题填 topic。");
+          if (title && [...title].length > 40) return fail(`title 最多 40 字，现在 ${[...title].length} 字：写成一句话，如「相册备份出错」。`);
           const note = String(params.note ?? "").trim();
           if (!note) return fail("note 不能为空：写清交接说明后再调用一次。");
           const resolvedFiles = resolveHandoffFiles(params.files);
@@ -1237,6 +1240,30 @@ export function buildRouterTools(
           const { files } = resolvedFiles;
           try {
             signal?.throwIfAborted();
+            if (targetTopicId) {
+              const target = store.group(targetTopicId);
+              if (!target || target.parentId !== group.id || target.handover?.by !== assistantId) {
+                const mine = store
+                  .groups()
+                  .filter((item) => item.parentId === group.id && item.handover?.by === assistantId)
+                  .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+                const list = mine.length ? mine.map((item) => `${item.name}（${item.id}）`).join("、") : "还没有";
+                return fail(`「${targetTopicId}」不是你交给这个群的话题。你交给这个群的话题：${list}`);
+              }
+              const currentCwd = resolveWorkspaceCwd(store, runtime.home, assistantId, { groupId: target.id }).bound;
+              if (isWorkspaceCwdChanged(params.cwd, currentCwd)) return fail(existingTopicCwdImmutable(target.name, currentCwd));
+              const { topic, item } = runtime.groups.handOverExisting(target.id, assistantId, {
+                text: note,
+                files,
+                ...(place?.topicId ? { fromTopicId: place.topicId } : {}),
+              });
+              const delegationId = router.currentDelegation(assistantId, place);
+              if (delegationId) runtime.delegations.addTopic(delegationId, topic.id);
+              void runtime.groups
+                .deliverEvent(topic.id, topic.ownerId, handoverEvent(nameOf(assistantId)), item.id, { workDone: true, userInitiated: false, bypassBusy: false })
+                .catch((error) => console.error("交给群的事件没送到：", error));
+              return endTurn(`已转到群「${group.name}」的话题「${topic.name}」（${topic.id}），群主「${nameOf(topic.ownerId)}」接着办。有了结论会回到这里。`);
+            }
             const { topic, item } = runtime.groups.handOver(group.id, title, assistantId, {
               text: note,
               files,

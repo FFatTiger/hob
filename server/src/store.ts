@@ -39,6 +39,7 @@ import type {
   GroupReplyMode,
   Job,
   ModelPick,
+  Place,
   Routine,
   Rule,
   RuleOverrides,
@@ -521,6 +522,21 @@ export class Store {
    * 读一个群。话题带 parentId，读出来时补上所属群的成员、群主和负责什么，
    * 再把话题的 overrides 叠上去；视图另外保留 overrides 原值。旧 workflow 字段保留在文件里但不进入视图。
    */
+  /** 从指定会话（单聊主对话或助手话题）交给群、尚未关闭的话题，供 nowBlock / hasPendingWork / todosBusy 共用。 */
+  openHandedOverTopics(assistantId: string, place?: Place): Group[] {
+    if (place?.groupId) return [];
+    const topicId = place?.topicId || undefined;
+    return this.groups()
+      .filter(
+        (group) =>
+          group.parentId !== undefined &&
+          !group.closedAt &&
+          group.handover?.by === assistantId &&
+          (group.handover.fromTopicId || undefined) === topicId,
+      )
+      .sort((a, b) => (a.handover?.at ?? a.createdAt).localeCompare(b.handover?.at ?? b.createdAt));
+  }
+
   group(id: string): Group | undefined {
     const own = readJson<Group | null>(join(groupDir(this.home, id), "group.json"), null);
     if (!own) return undefined;

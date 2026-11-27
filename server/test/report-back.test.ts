@@ -1,20 +1,31 @@
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fauxAssistantMessage } from "@earendil-works/pi-ai";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { setLocale } from "../../shared/i18n.ts";
+import { nowBlock } from "../src/now.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
+import { todosBusy } from "../src/todos.ts";
 import { makeHob, type TestHob } from "./helpers.ts";
 
 const hobs: TestHob[] = [];
+const tempDirs: string[] = [];
 function createHob(): TestHob {
   const hob = makeHob({}, { memory: "off" });
   hobs.push(hob);
   return hob;
 }
+function createTempDir(): string {
+  const dir = mkdtempSync(join(tmpdir(), "hob-ws-"));
+  tempDirs.push(dir);
+  return dir;
+}
 
 afterEach(() => {
   setLocale("zh-CN");
   while (hobs.length) hobs.pop()!.close();
+  while (tempDirs.length) rmSync(tempDirs.pop()!, { recursive: true, force: true });
 });
 
 function addAssistant(hob: TestHob, id: string, name: string, duty: string, extra: Record<string, unknown> = {}) {
@@ -370,5 +381,180 @@ describe("report_back tool", () => {
     const goneRes = await tool.execute("e4", { text: "补充结果" }, undefined, undefined, undefined as never);
     expect((goneRes as { isError?: boolean }).isError).toBe(true);
     expect(resultText(goneRes)).toBe("「生活管家」已经不在了，交不回去：结果直接告诉用户。");
+  });
+});
+
+describe("message_group topic follow-up", () => {
+  it("forwards into an existing handed-over topic and wakes the group owner", async () => {
+    const hob = createHob();
+    addAssistant(hob, "ops", "运维助手", "运维");
+    const group = hob.runtime.groups.create({ name: "数据迁移小组", purpose: "数据迁移", members: ["ops"], ownerId: "ops" });
+    const { topic } = hob.runtime.groups.handOver(group.id, "备份迁移", "hob", { text: "开始迁移", files: [] });
+
+    const deliverSpy = vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
+    const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "message_group")!;
+    const res = await tool.execute("mg-1", { groupId: group.id, topic: topic.id, note: "存储已经扩容 4 TB，可以继续迁移。" }, undefined, undefined, undefined as never);
+
+    expect((res as { terminate?: boolean }).terminate).toBe(true);
+    expect(resultText(res)).toBe(`已转到群「数据迁移小组」的话题「备份迁移」（${topic.id}），群主「运维助手」接着办。有了结论会回到这里。`);
+    const last = hob.runtime.store.groupItems(topic.id).at(-1);
+    expect(last).toMatchObject({ kind: "user", text: "存储已经扩容 4 TB，可以继续迁移。", forwardedFrom: { assistantId: "hob" } });
+    expect(deliverSpy).toHaveBeenCalledWith(
+      topic.id,
+      "ops",
+      expect.stringContaining("Hob"),
+      last!.id,
+      { workDone: true, userInitiated: false, bypassBusy: false },
+    );
+  });
+
+  it("reopens a closed handed-over topic without resuming paused routines and re-delivers conclusion on next close", async () => {
+    const hob = createHob();
+    addAssistant(hob, "ops", "运维助手", "运维");
+    const group = hob.runtime.groups.create({ name: "数据迁移小组", purpose: "数据迁移", members: ["ops"], ownerId: "ops" });
+    const { topic } = hob.runtime.groups.handOver(group.id, "备份迁移", "hob", { text: "开始迁移", files: [] });
+
+    // 给话题建一个定时任务
+    const routine = hob.runtime.routines.create({
+      assistantId: "ops",
+      groupId: topic.id,
+      name: "巡检迁移进度",
+      instruction: "检查同步速率",
+      schedules: ["0 9 * * *"],
+    });
+    expect(routine.active).toBe(true);
+
+    // 第一次关闭：暂停定时任务并向 hob 送一次结论
+    hob.faux.setResponses([fauxAssistantMessage("收到第一次结论。"), fauxAssistantMessage("收到第二次结论。")]);
+    const pushSpy = vi.spyOn(hob.runtime.router, "handoverResult");
+    hob.runtime.groups.closeByOwner(topic.id, "第一阶段迁移完成");
+    await vi.waitFor(() => {
+      expect(hob.runtime.store.group(topic.id)?.handover?.deliveredAt).toBeTruthy();
+    });
+    expect(hob.runtime.store.routine(routine.id)?.active).toBe(false);
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+
+    // 用 message_group(topic) 重开：不恢复定时任务，清空上次 result / deliveredAt
+    const deliverSpy = vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
+    const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "message_group")!;
+    const res = await tool.execute("mg-reopen", { groupId: group.id, topic: topic.id, note: "请再补跑一次增量校验。" }, undefined, undefined, undefined as never);
+    expect(resultText(res)).toContain(`已转到群「数据迁移小组」的话题「备份迁移」（${topic.id}）`);
+    expect(deliverSpy).toHaveBeenCalledTimes(1);
+
+    const reopened = hob.runtime.store.group(topic.id)!;
+    expect(reopened.closedAt).toBeUndefined();
+    expect(reopened.handover?.result).toBeUndefined();
+    expect(reopened.handover?.deliveredAt).toBeUndefined();
+    expect(hob.runtime.store.routine(routine.id)?.active).toBe(false);
+
+    // 第二次关闭：结论重新送回 hob（不被第一次的 handoverTopicId 去重拦截）
+    hob.runtime.groups.closeByOwner(topic.id, "增量校验全部通过");
+    await vi.waitFor(() => {
+      expect(hob.runtime.store.group(topic.id)?.handover?.deliveredAt).toBeTruthy();
+    });
+    expect(pushSpy).toHaveBeenCalledTimes(2);
+    expect(hob.runtime.store.group(topic.id)?.handover?.result).toContain("增量校验全部通过");
+  });
+
+  it("rejects non-handed-over topics with list, validates title/topic exclusivity, and enforces cwd immutability", async () => {
+    const hob = createHob();
+    addAssistant(hob, "ops", "运维助手", "运维");
+    addAssistant(hob, "other", "协作助手", "协作");
+    const group = hob.runtime.groups.create({ name: "数据迁移小组", purpose: "数据迁移", members: ["ops"], ownerId: "ops" });
+    const generalTopic = hob.runtime.groups.createTopic(group.id, "综合开的话题", "ops");
+    const dirA = createTempDir();
+    const dirB = createTempDir();
+    const { topic: myTopic } = hob.runtime.groups.handOver(group.id, "备份迁移", "hob", { text: "迁移", files: [], cwd: dirA });
+    const { topic: otherTopic } = hob.runtime.groups.handOver(group.id, "别人交的话题", "other", { text: "别的事", files: [] });
+
+    vi.spyOn(hob.runtime.groups, "deliverEvent").mockResolvedValue();
+    const tool = buildRouterTools(hob.runtime, "hob").find((item) => item.name === "message_group")!;
+
+    // title 和 topic 都不填
+    const neither = await tool.execute("mg-none", { groupId: group.id, note: "补充说明" }, undefined, undefined, undefined as never);
+    expect((neither as { isError?: boolean }).isError).toBe(true);
+    expect(resultText(neither)).toBe("title 和 topic 要填一个：创建新话题填 title，转到已有话题填 topic。");
+
+    // title 和 topic 都填
+    const both = await tool.execute("mg-both", { groupId: group.id, title: "新名", topic: myTopic.id, note: "补充说明" }, undefined, undefined, undefined as never);
+    expect((both as { isError?: boolean }).isError).toBe(true);
+    expect(resultText(both)).toBe("title 和 topic 只能填一个：创建新话题填 title，转到已有话题填 topic。");
+
+    // 不是自己交出去的话题（综合开的 / 别人交的）
+    const notMine1 = await tool.execute("mg-nm1", { groupId: group.id, topic: generalTopic.id, note: "补一句" }, undefined, undefined, undefined as never);
+    expect((notMine1 as { isError?: boolean }).isError).toBe(true);
+    expect(resultText(notMine1)).toBe(`「${generalTopic.id}」不是你交给这个群的话题。你交给这个群的话题：备份迁移（${myTopic.id}）`);
+
+    const notMine2 = await tool.execute("mg-nm2", { groupId: group.id, topic: otherTopic.id, note: "补一句" }, undefined, undefined, undefined as never);
+    expect((notMine2 as { isError?: boolean }).isError).toBe(true);
+    expect(resultText(notMine2)).toBe(`「${otherTopic.id}」不是你交给这个群的话题。你交给这个群的话题：备份迁移（${myTopic.id}）`);
+
+    // cwd 空串放行
+    const cwdEmpty = await tool.execute("mg-c1", { groupId: group.id, topic: myTopic.id, note: "空 cwd", cwd: "" }, undefined, undefined, undefined as never);
+    expect((cwdEmpty as { isError?: boolean }).isError).toBeUndefined();
+
+    // cwd 同值放行
+    const cwdSame = await tool.execute("mg-c2", { groupId: group.id, topic: myTopic.id, note: "同 cwd", cwd: dirA }, undefined, undefined, undefined as never);
+    expect((cwdSame as { isError?: boolean }).isError).toBeUndefined();
+
+    // cwd 换成别的目录报错
+    const cwdDiff = await tool.execute("mg-c3", { groupId: group.id, topic: myTopic.id, note: "改 cwd", cwd: dirB }, undefined, undefined, undefined as never);
+    expect((cwdDiff as { isError?: boolean }).isError).toBe(true);
+    expect(resultText(cwdDiff)).toContain("创建时就定了，不能改");
+  });
+});
+
+describe("nowBlock handed-over topics and shared pending work check", () => {
+  it("lists only open topics handed over from the current session in nowBlock, hasPendingWork, and todosBusy", async () => {
+    const hob = createHob();
+    addAssistant(hob, "coord", "统筹助手", "统筹", { topics: { enabledAt: "2026-11-26T00:00:00.000Z" } });
+    addAssistant(hob, "ops", "运维助手", "运维");
+    const { topic: topicA } = await hob.runtime.assistantTopics.create("coord", { title: "项目甲", createdBy: "user" });
+    const { topic: topicB } = await hob.runtime.assistantTopics.create("coord", { title: "项目乙", createdBy: "user" });
+    const group = hob.runtime.groups.create({ name: "数据迁移小组", purpose: "迁移", members: ["ops"], ownerId: "ops" });
+
+    // 主对话交出去的（未关）
+    const { topic: mainHanded } = hob.runtime.groups.handOver(group.id, "主线迁移", "coord", { text: "办主线", files: [] });
+    // 主对话交出去的（已关）
+    const { topic: mainClosed } = hob.runtime.groups.handOver(group.id, "已完成迁移", "coord", { text: "旧事", files: [] });
+    hob.runtime.groups.closeByOwner(mainClosed.id, "完成了");
+    // 话题 A 交出去的（未关）
+    const { topic: topicAHanded } = hob.runtime.groups.handOver(group.id, "甲项子迁移", "coord", { text: "办甲", files: [], fromTopicId: topicA.id });
+    // 别的助手交出去的（未关）
+    hob.runtime.groups.handOver(group.id, "主助手的事", "hob", { text: "办别的事", files: [] });
+
+    // coord 主对话：只列 mainHanded，不列 mainClosed / topicAHanded / hob 的
+    const mainNow = nowBlock(hob.runtime, "coord");
+    expect(mainNow).toMatch(/交给群的：群「数据迁移小组」话题「主线迁移」，\d{2}:\d{2} 起/);
+    expect(mainNow).not.toContain("已完成迁移");
+    expect(mainNow).not.toContain("甲项子迁移");
+    expect(mainNow).not.toContain("主助手的事");
+    expect(hob.runtime.router.hasPendingWork("coord")).toBe(true);
+    expect(todosBusy(hob.runtime, "coord")).toBe(true);
+
+    // coord 话题 A：只列 topicAHanded
+    const topicANow = nowBlock(hob.runtime, "coord", { topicId: topicA.id });
+    expect(topicANow).toMatch(/交给群的：群「数据迁移小组」话题「甲项子迁移」，\d{2}:\d{2} 起/);
+    expect(topicANow).not.toContain("主线迁移");
+    expect(hob.runtime.router.hasPendingWork("coord", { topicId: topicA.id })).toBe(true);
+    expect(todosBusy(hob.runtime, "coord", { topicId: topicA.id })).toBe(true);
+
+    // coord 话题 B：没有交出去的话题
+    const topicBNow = nowBlock(hob.runtime, "coord", { topicId: topicB.id });
+    expect(topicBNow).not.toContain("交给群的：");
+    expect(hob.runtime.router.hasPendingWork("coord", { topicId: topicB.id })).toBe(false);
+    expect(todosBusy(hob.runtime, "coord", { topicId: topicB.id })).toBe(false);
+
+    // 关闭 mainHanded 后，主对话不再列出也不再 busy
+    hob.runtime.groups.closeByOwner(mainHanded.id, "主线办完");
+    expect(nowBlock(hob.runtime, "coord")).not.toContain("交给群的：");
+    expect(hob.runtime.router.hasPendingWork("coord")).toBe(false);
+    expect(todosBusy(hob.runtime, "coord")).toBe(false);
+
+    // 关闭 topicAHanded 后，话题 A 也不再列出
+    hob.runtime.groups.closeByOwner(topicAHanded.id, "甲项办完");
+    expect(nowBlock(hob.runtime, "coord", { topicId: topicA.id })).not.toContain("交给群的：");
+    expect(hob.runtime.router.hasPendingWork("coord", { topicId: topicA.id })).toBe(false);
+    expect(todosBusy(hob.runtime, "coord", { topicId: topicA.id })).toBe(false);
   });
 });

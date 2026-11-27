@@ -50,6 +50,12 @@ export function nowBlock(runtime: HobRuntime, assistantId: string, current?: Pla
   const delegations = runtime.store.delegations().filter((item) => item.from === assistantId && (item.status === "running" || item.status === "waiting") && samePlace(item.fromTopicId ? { topicId: item.fromTopicId } : undefined, current))
     .map((item) => `${runtime.store.assistant(item.to)?.name ?? item.to}「${short(item.text)}」，${clock(item.createdAt)} 起`);
   if (delegations.length) lines.push(`转交中：${delegations.join("；")}`);
+  const handedOver = runtime.store.openHandedOverTopics(assistantId, current)
+    .map((topic) => {
+      const hostName = runtime.store.group(topic.parentId!)?.name ?? topic.parentId!;
+      return `群「${hostName}」话题「${short(topic.name)}」，${clock(topic.handover!.at)} 起`;
+    });
+  if (handedOver.length) lines.push(`交给群的：${handedOver.join("；")}`);
   const pending = runtime.store.approvals().filter((item) => item.assistantId === assistantId && item.status === "pending" && item.source !== "job");
   const approvals = pending.filter((item) => mine(placeOf(item))).map((item) => item.title);
   if (approvals.length) lines.push(`等用户选：${approvals.join("；")}`);

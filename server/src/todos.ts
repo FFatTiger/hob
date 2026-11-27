@@ -195,8 +195,7 @@ export function todosBusy(runtime: HobRuntime, assistantId: string, place?: Plac
     .delegations()
     .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
   if (delegating) return true;
-  const handedOver = !place?.groupId && runtime.store.groups().some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId && (group.handover.fromTopicId || undefined) === topicId);
-  if (handedOver) return true;
+  if (runtime.store.openHandedOverTopics(assistantId, place).length > 0) return true;
   const asking = runtime.store.approvals().some((approval) => approval.status === "pending" && samePlace(placeOf(approval), place) && (place?.groupId !== undefined || approval.assistantId === assistantId));
   if (asking) return true;
   return place?.groupId !== undefined && runtime.router.busyMembers(place.groupId).some((id) => id !== assistantId);

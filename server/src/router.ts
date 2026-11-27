@@ -97,6 +97,7 @@ export interface EventDetails {
   files?: string[];
   /** 主助手交来的话题关了：送结论的会话条目按这个 id 去重 */
   handoverTopicId?: string;
+  handoverAt?: string;
   /** 任务事件按真正投递时的任务状态改写；同一任务排队时只留最新一条 */
   job?: { id: string; round: number; kind?: "result" | "question" | "timeout" };
   /** 本轮是否面向用户推送（默认 true；仅任务提问/超时提醒等纯后台维护事件显式传 false） */
@@ -1654,10 +1655,15 @@ export class RouterManager {
   }
 
   /** 将交给群的话题的结论送回发起助手的会话（主对话或话题）；会话条目是去重依据。 */
-  async handoverResult(assistantId: string, topicId: string, text: string, place?: Place): Promise<boolean> {
+  async handoverResult(assistantId: string, topicId: string, text: string, place?: Place, handoverAt?: string): Promise<boolean> {
     const target = placeOf(place);
     const state = await this.ensure(assistantId, target);
-    const received = () => state.manager!.getEntries().some((entry) => entry.type === "custom_message" && entry.customType === EVENT_TYPE && (entry.details as EventDetails | undefined)?.handoverTopicId === topicId);
+    const received = () => state.manager!.getEntries().some((entry) => {
+      if (entry.type !== "custom_message" || entry.customType !== EVENT_TYPE) return false;
+      const details = entry.details as EventDetails | undefined;
+      if (details?.handoverTopicId !== topicId) return false;
+      return handoverAt ? details.handoverAt === handoverAt : true;
+    });
     if (received()) return true;
     if (target.topicId) {
       const groupTopic = this.store.group(topicId);
@@ -1669,7 +1675,13 @@ export class RouterManager {
         t("群「{name}」的话题有了结论，话题已重新打开", { name }),
       );
     }
-    const success = await this.pushEvent(assistantId, text, { handoverTopicId: topicId, workDone: true }, undefined, target);
+    const success = await this.pushEvent(
+      assistantId,
+      text,
+      { handoverTopicId: topicId, ...(handoverAt ? { handoverAt } : {}), workDone: true },
+      undefined,
+      target,
+    );
     const resumedId = this.runtime.delegations.pendingDelegationForTopic(topicId);
     if (resumedId) {
       const latest = this.store.delegation(resumedId);
@@ -1695,9 +1707,7 @@ export class RouterManager {
       .delegations()
       .some((record) => record.from === assistantId && (record.fromTopicId || undefined) === topicId && !record.reportedAt && (record.status === "running" || record.status === "waiting"));
     if (openDelegations) return true;
-    return this.store
-      .groups()
-      .some((group) => group.parentId !== undefined && !group.closedAt && group.handover?.by === assistantId && (group.handover.fromTopicId || undefined) === topicId);
+    return this.store.openHandedOverTopics(assistantId, normalized).length > 0;
   }
 
   /** 读取当前正在进行的轮次来源（open_topic 转入话题时沿用）。 */

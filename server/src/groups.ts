@@ -342,6 +342,42 @@ export class GroupManager {
     return { topic: this.group(topic.id), item };
   }
 
+  /**
+   * 往自己交给这个群的已有话题里继续转交：追加交接说明、已关闭的重新打开（不恢复定时任务），
+   * 清掉上次的 result / deliveredAt 并刷新 handover.at，下次关闭话题时再次把结论送回。
+   */
+  handOverExisting(
+    tid: string,
+    by: string,
+    original: { text: string; files: string[]; fromTopicId?: string },
+  ): { topic: Group; item: GroupItem } {
+    const existing = this.topic(tid);
+    const item = this.appendItem(tid, "user", {
+      kind: "user",
+      text: original.text,
+      ...(original.files.length ? { files: original.files } : {}),
+      forwardedFrom: { assistantId: by },
+    });
+    if (existing.closedAt) this.reopen(tid, { resumeRoutines: false });
+    const live = this.group(tid);
+    const prev = live.handover ?? { by, at: new Date().toISOString() };
+    const { result: _result, deliveredAt: _deliveredAt, fromTopicId: _fromTopicId, ...restHandover } = prev;
+    const nowIso = new Date().toISOString();
+    const at = nowIso === prev.at ? new Date(Date.now() + 1).toISOString() : nowIso;
+    this.store.saveGroup({
+      ...live,
+      handover: {
+        ...restHandover,
+        by,
+        at,
+        ...(original.fromTopicId ? { fromTopicId: original.fromTopicId } : {}),
+      },
+    });
+    this.publish(tid);
+    if (live.parentId) this.publish(live.parentId);
+    return { topic: this.group(tid), item };
+  }
+
   /** 用户或助手关闭话题：写上时间和说明；用户本人没填时用固定的关闭说明。正在跑的回合和任务不停。 */
   closeByUser(tid: string, note: unknown, by: "user" | "assistant" = "user"): Group {
     const topic = this.topic(tid);
@@ -427,7 +463,7 @@ export class GroupManager {
     if (!handover || !result || handover.deliveredAt || this.delivering.has(tid)) return;
     this.delivering.add(tid);
     const targetPlace = handover.fromTopicId ? { topicId: handover.fromTopicId } : undefined;
-    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace).then((received) => {
+    void this.runtime.router.handoverResult(handover.by, tid, result, targetPlace, handover.at).then((received) => {
       if (!received) return;
       const current = this.store.group(tid);
       if (!current?.handover || current.handover.deliveredAt || current.handover.result !== result) return;

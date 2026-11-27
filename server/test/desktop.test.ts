@@ -1,6 +1,6 @@
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
-import { createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
+import { connect, createServer as createTcpServer, type AddressInfo, type Socket } from "node:net";
 import { once } from "node:events";
 import { WebSocket, WebSocketServer } from "ws";
 import { pointerEventLength } from "../../desktop/desktopd/pointer-event.mjs";
@@ -22,6 +22,30 @@ function setup(env: NodeJS.ProcessEnv = {}) {
   homes.push(home);
   const settings = new SettingsStore(home);
   return { home, settings, desktop: new DesktopService(home, settings, env) };
+}
+
+async function loginCookie(hob: ReturnType<typeof makeHob>): Promise<string> {
+  const app = createApp(hob.runtime, { home: hob.home });
+  const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+  return login.headers.get("set-cookie")!.split(";")[0];
+}
+
+function connections(server: { getConnections(cb: (error: Error | null, count: number) => void): void }): Promise<number> {
+  return new Promise<number>((resolve) => server.getConnections((_error, count) => resolve(count)));
+}
+
+function upgradeRequest(client: string, cookie: string, withKey: boolean): string {
+  return [
+    `GET /api/desktop/vnc?screen=hob&client=${client} HTTP/1.1`,
+    "Host: 127.0.0.1",
+    "Connection: Upgrade",
+    "Upgrade: websocket",
+    "Sec-WebSocket-Version: 13",
+    ...(withKey ? ["Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ=="] : []),
+    `Cookie: ${cookie}`,
+    "",
+    "",
+  ].join("\r\n");
 }
 
 describe("云桌面配置", () => {
@@ -224,12 +248,24 @@ describe("云桌面配置", () => {
       hob.close();
     }
   });
-  it("云桌面接受连接却不回应升级：按握手超时回 502，两端连接和接管登记都清掉", async () => {
+  // 云桌面接受了连接却迟迟不完成升级：一种是一声不吭，一种是每隔一会儿滴一个字节、永远凑不齐响应头
+  it.each(["silent", "trickle"] as const)("云桌面升级卡住（%s）：到总时限回 502，两端连接和接管登记都清掉", async (mode) => {
     // 浏览器对同一 host:port 的 WebSocket 握手是排队的：VNC 握手一直挂着，/api/events/ws 也连不上
     const hob = makeHob();
     const held = new Set<Socket>();
-    // 读走请求但永不回应；要读着才察觉得到对端关闭
-    const upstream = createTcpServer((socket) => { held.add(socket); socket.on("error", () => {}); socket.on("close", () => held.delete(socket)); socket.resume(); });
+    // 读走请求但不完成升级；要读着才察觉得到对端关闭
+    const upstream = createTcpServer((socket) => {
+      held.add(socket);
+      socket.on("error", () => {});
+      socket.resume();
+      if (mode === "trickle") {
+        const partial = Buffer.from(`HTTP/1.1 101 Switching Protocols\r\nX-Slow: ${"a".repeat(200)}`);
+        let index = 0;
+        const tick = setInterval(() => { if (!socket.destroyed) socket.write(partial.subarray(index, ++index)); }, 200);
+        socket.on("close", () => clearInterval(tick));
+      }
+      socket.on("close", () => held.delete(socket));
+    });
     upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
     hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, enabled: true });
     writeSecret(hob.home, "desktop:token", "test-token");
@@ -239,16 +275,12 @@ describe("云桌面配置", () => {
     const waiting = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
     const gaveUp = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
     const url = (client: string) => `ws://127.0.0.1:${(proxy.address() as AddressInfo).port}/api/desktop/vnc?screen=hob&client=${client}`;
-    const connections = (server: { getConnections(cb: (error: Error | null, count: number) => void): void }) =>
-      new Promise<number>((resolve) => server.getConnections((_error, count) => resolve(count)));
     try {
-      const app = createApp(hob.runtime, { home: hob.home });
-      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
-      const cookie = login.headers.get("set-cookie")!.split(";")[0];
+      const cookie = await loginCookie(hob);
       const started = Date.now();
       const client = new WebSocket(url(waiting), { headers: { cookie } });
       client.on("error", () => {});
-      // 另一个浏览器等不及先走了：它那一侧的断开代理察觉不到，也要在超时时一起清掉
+      // 另一个浏览器等不及先走了：它那一侧的断开代理察觉不到，也要在总时限时一起清掉
       const quitter = new WebSocket(url(gaveUp), { headers: { cookie } });
       quitter.on("error", () => {});
       setTimeout(() => quitter.terminate(), 200);
@@ -274,6 +306,72 @@ describe("云桌面配置", () => {
       detach(); hob.runtime.desktopControl.dispose();
       for (const socket of held) socket.destroy();
       await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      hob.close();
+    }
+  });
+
+  it("等云桌面时浏览器发 RST：进程不崩，到云桌面的连接马上关掉", async () => {
+    const hob = makeHob();
+    const held = new Set<Socket>();
+    const upstream = createTcpServer((socket) => { held.add(socket); socket.on("error", () => {}); socket.on("close", () => held.delete(socket)); socket.resume(); });
+    upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
+    hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, enabled: true });
+    writeSecret(hob.home, "desktop:token", "test-token");
+    const proxy = createServer();
+    const detach = attachDesktopWebSocket(proxy, hob.runtime);
+    proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
+    try {
+      const cookie = await loginCookie(hob);
+      const raw = connect((proxy.address() as AddressInfo).port, "127.0.0.1");
+      raw.on("error", () => {});
+      await once(raw, "connect");
+      raw.write(upgradeRequest("cccccccc-cccc-cccc-cccc-cccccccccccc", cookie, true));
+      await vi.waitFor(() => expect(held.size).toBe(1));
+      const reset = Date.now();
+      raw.resetAndDestroy();
+      // 不等总时限：RST 一到就收掉上游
+      await vi.waitFor(() => expect(held.size).toBe(0), { timeout: 2_000 });
+      expect(Date.now() - reset).toBeLessThan(VNC_HANDSHAKE_TIMEOUT_MS);
+      await vi.waitFor(async () => expect(await connections(proxy)).toBe(0), { timeout: 2_000 });
+      expect(hob.runtime.desktopControl.state("cccccccc-cccc-cccc-cccc-cccccccccccc")).toEqual({ taken: false, mine: false });
+    } finally {
+      detach(); hob.runtime.desktopControl.dispose();
+      for (const socket of held) socket.destroy();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => upstream.close(() => resolve()));
+      hob.close();
+    }
+  });
+
+  it("升级请求不合法被拒（400）时，已经连上的云桌面连接也关掉", async () => {
+    const hob = makeHob();
+    const upstream = createServer();
+    const sockets = new WebSocketServer({ server: upstream });
+    upstream.listen(0, "127.0.0.1"); await once(upstream, "listening");
+    hob.runtime.settings.setDesktop(1, { url: `http://127.0.0.1:${(upstream.address() as AddressInfo).port}`, enabled: true });
+    writeSecret(hob.home, "desktop:token", "test-token");
+    const proxy = createServer();
+    const detach = attachDesktopWebSocket(proxy, hob.runtime);
+    proxy.listen(0, "127.0.0.1"); await once(proxy, "listening");
+    try {
+      const cookie = await loginCookie(hob);
+      const raw = connect((proxy.address() as AddressInfo).port, "127.0.0.1");
+      raw.on("error", () => {});
+      await once(raw, "connect");
+      let response = "";
+      raw.on("data", (chunk) => { response += chunk.toString(); });
+      // 缺 Sec-WebSocket-Key：Hob 先连上了云桌面，再由 handleUpgrade 拒掉浏览器
+      raw.write(upgradeRequest("dddddddd-dddd-dddd-dddd-dddddddddddd", cookie, false));
+      await vi.waitFor(() => expect(response).toMatch(/^HTTP\/1\.1 400 /));
+      await vi.waitFor(() => expect(sockets.clients.size).toBe(0), { timeout: 2_000 });
+      expect(hob.runtime.desktopControl.state("dddddddd-dddd-dddd-dddd-dddddddddddd")).toEqual({ taken: false, mine: false });
+      raw.destroy();
+    } finally {
+      detach(); hob.runtime.desktopControl.dispose();
+      for (const socket of sockets.clients) socket.terminate();
+      await new Promise<void>((resolve) => proxy.close(() => resolve()));
+      await new Promise<void>((resolve) => sockets.close(() => resolve()));
       await new Promise<void>((resolve) => upstream.close(() => resolve()));
       hob.close();
     }

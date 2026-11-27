@@ -7,7 +7,8 @@ import { validCookie } from "./http.ts";
 import { desktopProfile } from "./desktop-tools.ts";
 
 const CLIENT = /^[a-f0-9-]{36}$/;
-// 云桌面已启动的屏幕升级是毫秒级的。浏览器对同一 host:port 的 WebSocket 握手排队，这里挂着就会挡住 /api/events/ws，所以给个短上限。
+// 云桌面已启动的屏幕升级是毫秒级的。浏览器对同一 host:port 的 WebSocket 握手排队，这里挂着就会挡住 /api/events/ws，
+// 所以从连上游到把连接交给浏览器，总共给这么久。不用 ws 的 handshakeTimeout：那是空闲超时，上游慢慢滴数据就永远不到。
 export const VNC_HANDSHAKE_TIMEOUT_MS = 5_000;
 
 export class DesktopControl {
@@ -126,15 +127,37 @@ export function attachDesktopWebSocket(server: ReturnType<typeof serve>, runtime
     try { connection = runtime.desktop.connection(); } catch { return reject("503 Service Unavailable"); }
     const target = new URL(`/vnc/${screen}`, connection.url);
     target.protocol = target.protocol === "https:" ? "wss:" : "ws:";
-    // 超时时 ws 会关掉上游连接并发 error，走下面的 502：浏览器那一侧的 socket 也在这时关掉。
-    // 在升级完成前没人读它，浏览器先走了这里察觉不到，靠这个上限收尾。
-    const upstream = new WebSocket(target, { headers: { Authorization: `Bearer ${connection.token}` }, perMessageDeflate: false, handshakeTimeout: VNC_HANDSHAKE_TIMEOUT_MS });
-    const failed = () => reject("502 Bad Gateway");
-    upstream.once("error", failed);
-    socket.once("close", () => { if (upstream.readyState === WebSocket.CONNECTING) upstream.terminate(); });
+    const upstream = new WebSocket(target, { headers: { Authorization: `Bearer ${connection.token}` }, perMessageDeflate: false });
+    let settled = false;
+    let upgraded = false;
+    const failed = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      upstream.terminate();
+      reject("502 Bad Gateway");
+    };
+    const deadline = setTimeout(failed, VNC_HANDSHAKE_TIMEOUT_MS);
+    deadline.unref();
+    // 一直挂着：settled 之后它什么都不做，只是不让上游的错误变成未处理异常
+    upstream.on("error", failed);
+    // 升级完成前没人读浏览器这一侧：它发 RST 时的错误在这里接住（否则整个进程崩掉），
+    // 它一关（包括 handleUpgrade 因请求不合法自己拒掉），还没交给浏览器的上游就跟着关。
+    // 浏览器只发 FIN 走掉时这里察觉不到，靠上面的总时限收尾。
+    const pendingError = () => {};
+    socket.on("error", pendingError);
+    socket.once("close", () => {
+      clearTimeout(deadline);
+      settled = true;
+      if (!upgraded) upstream.terminate();
+    });
     upstream.once("open", () => {
-      upstream.off("error", failed);
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
       wss.handleUpgrade(req, socket, head, (ws) => {
+        upgraded = true;
+        socket.off("error", pendingError);
         runtime.desktopControl.connected(client, screen);
         const filter = new RfbClientFilter(() => runtime.desktopControl.state(client, screen).mine);
         upstream.on("message", (data, binary) => { if (ws.readyState === WebSocket.OPEN) ws.send(data, { binary }); });

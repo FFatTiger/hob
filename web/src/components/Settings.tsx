@@ -2278,7 +2278,7 @@ function PushSection() {
   if (loadError) return <div className="note">{loadError}</div>;
   if (!view) return <Empty>{t("正在读取推送设置…")}</Empty>;
 
-  const denied = typeof Notification !== "undefined" && Notification.permission === "denied";
+  const denied = supported && typeof Notification !== "undefined" && Notification.permission === "denied";
   const on = Boolean(endpoint && view.devices.some((device) => device.endpoint === endpoint));
 
   const toggle = async () => {
@@ -2351,7 +2351,7 @@ function PushSection() {
             />
           </div>
         ) : (
-          <div className="note">
+          <div className="sline">
             {supportIssue === "insecure-context"
               ? t("推送需要 HTTPS，请使用 HTTPS 访问 Hob。")
               : t("这个浏览器不支持推送：请使用 Chrome、Edge、Safari 16.4+，或在 iPhone 上将 Hob 添加到主屏幕。")}

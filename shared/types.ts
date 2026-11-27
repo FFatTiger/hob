@@ -1008,6 +1008,18 @@ export interface ApprovalAnswer {
   text?: string;
 }
 
+/**
+ * 凭据条目的网址匹配方式（沿用 Bitwarden 取值）：
+ * 0 基础域名、1 主机（主机名加端口）、2 开始于、3 精确、4 正则、5 从不。
+ */
+export type UriMatchMode = 0 | 1 | 2 | 3 | 4 | 5;
+
+/** 全局默认匹配方式：不含正则（正则只认每条网址自己设的）。 */
+export type DefaultUriMatchMode = 0 | 1 | 2 | 3 | 5;
+
+/** 凭据服务商返回的网址条目：可以是字符串（老插件），也可以带按条匹配方式。 */
+export type CredentialUri = string | { uri: string; match?: UriMatchMode | null };
+
 export interface FillLoginCandidate {
   provider: string;
   providerName: string;
@@ -1015,7 +1027,7 @@ export interface FillLoginCandidate {
   name: string;
   username: string;
   folder?: string;
-  uris: string[];
+  uris: CredentialUri[];
 }
 
 export type PasswordCharacter = "lowercase" | "uppercase" | "numbers" | "symbols";
@@ -1039,6 +1051,7 @@ export interface FillNewPasswordApproval {
 }
 export interface FillLoginApproval {
   host: string;
+  pageUrl?: string;
   currentHost?: string;
   candidates: FillLoginCandidate[];
   chosenId?: string;
@@ -1053,6 +1066,7 @@ export interface LoginEntryProvider {
 /** 登录录入卡：密码管理器里没有这个网站的账号，用户在卡上填一次，Hob 存进密码管理器再填进页面。密码不进这张记录。 */
 export interface LoginEntryApproval {
   host: string;
+  pageUrl?: string;
   account?: string; // 预填的用户名（助手给的 account）
   providers: LoginEntryProvider[]; // 带 save 角色的提供者，第一个是默认（自带密码库）
   provider?: string; // 用户选的提供者 id
@@ -1223,6 +1237,8 @@ export interface GeneralSettings {
   showPage?: boolean;
   /** 头像带不带彩色圆底；旧设置缺省为带。 */
   avatarBackground?: boolean;
+  /** 登录网址的全局默认匹配方式（0 基础域名、1 主机、2 开始于、3 精确、5 从不）；旧设置缺省为 0。 */
+  loginUriMatch?: DefaultUriMatchMode;
   theme: Theme;
   locale?: Locale;
   timezone: string; // IANA 时区名，默认系统时区

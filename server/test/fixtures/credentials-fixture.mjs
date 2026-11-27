@@ -34,7 +34,7 @@ function generate({ length, lowercase, uppercase, numbers, symbols }) {
 function call(name, args) {
   const vault = load();
   if (name === "credentials_list") {
-    return empty({ logins: vault.items.filter((item) => item.type === 1).map((item) => ({ id: String(item.id), name: item.name, username: item.login.username, uris: (item.login.uris ?? []).map((entry) => (typeof entry === "string" ? entry : entry.uri)), ...(item.folderId ? { folder: vault.folders.find((folder) => folder.id === item.folderId)?.name } : {}) })) });
+    return empty({ logins: vault.items.filter((item) => item.type === 1).map((item) => ({ id: String(item.id), name: item.name, username: item.login.username, uris: (item.login.uris ?? []).map((entry) => (typeof entry === "string" ? entry : entry.match !== undefined && entry.match !== null ? { uri: entry.uri, match: entry.match } : entry.uri)), ...(item.folderId ? { folder: vault.folders.find((folder) => folder.id === item.folderId)?.name } : {}) })) });
   }
   if (name === "credentials_secret") {
     if (failAt() === "secret") return { content: [{ type: "text", text: "密码库锁着" }], isError: true };

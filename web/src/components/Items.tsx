@@ -563,7 +563,10 @@ function FillLoginCard({ approval, fresh }: { approval: Approval; fresh: boolean
   const pending = approval.status === "pending" && fill.state !== "mismatch";
   const status = fill.state === "failed" ? fill.result : fill.state === "rejected" ? t("已拒绝") : fill.state === "self" ? t("已选择自己登录") : fill.state === "filled" ? fill.result : undefined;
   const providerNames = [...new Set(fill.candidates.map((candidate) => candidate.providerName))].join(t("、"));
-  const savedHosts = [...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((uri) => { try { return new URL(uri).hostname; } catch { return uri; } })))];
+  const savedHosts = [...new Set(fill.candidates.flatMap((candidate) => candidate.uris.map((entry) => {
+    const uri = typeof entry === "string" ? entry : entry.uri;
+    try { return new URL(uri).host || uri; } catch { return uri; }
+  })))];
   return (
     <div className={`b q qfill${fresh ? " enter" : ""}`}>
       <div className="qfill-source"><Icon name="key" size={16} />{t("Hob · 填写登录")}</div>

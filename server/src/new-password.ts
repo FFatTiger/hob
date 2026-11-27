@@ -1,7 +1,8 @@
-import type { FillLoginCandidate, FillNewPasswordApproval, PasswordCharacter } from "../../shared/types.ts";
+import type { DefaultUriMatchMode, FillLoginCandidate, FillNewPasswordApproval, PasswordCharacter } from "../../shared/types.ts";
 import type { HobRuntime } from "./runtime.ts";
-import { credentialCandidates, hostsMatch, inspectCurrentPage, pageInfo, type PageInfo } from "./login.ts";
+import { credentialCandidates, defaultUriMatch, inspectCurrentPage, pageInfo, type PageInfo } from "./login.ts";
 import { DesktopToolSession, rememberFilledSecret } from "./desktop-tools.ts";
+import { displayHostOf, parseUrl, portOfUrl, urisMatchUrl } from "./uri-match.ts";
 import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 
@@ -75,16 +76,9 @@ function originOf(url: string): string {
   }
 }
 
-function matching(candidates: FillLoginCandidate[], host: string, username: string): FillLoginCandidate | undefined {
+function matching(candidates: FillLoginCandidate[], pageUrl: string, username: string, defaultMatch: DefaultUriMatchMode): FillLoginCandidate | undefined {
   const wanted = username.trim().toLowerCase();
-  return candidates.find((candidate) => candidate.username.trim().toLowerCase() === wanted && candidate.uris.some((uri) => {
-    try {
-      const saved = new URL(uri).hostname.toLowerCase().replace(/\.$/, "");
-      return hostsMatch(host, saved);
-    } catch {
-      return false;
-    }
-  }));
+  return candidates.find((candidate) => candidate.username.trim().toLowerCase() === wanted && urisMatchUrl(candidate.uris, pageUrl, defaultMatch));
 }
 
 function providerFor(runtime: HobRuntime, assistantId: string, role: "generate" | "save" | "secret", pluginId?: string) {
@@ -114,9 +108,11 @@ export async function prepareFillNewPassword(
   if (!chosenCharacters.length) return { kind: "message", text: "characters 至少选一种字符。" };
   const invalid = chosenCharacters.find((character) => !["lowercase", "uppercase", "numbers", "symbols"].includes(character));
   if (invalid) return { kind: "message", text: `characters 里没有这种字符种类：${invalid}。` };
+  const defaultMatch = defaultUriMatch(runtime);
+  const siteHost = displayHostOf(info.url) ?? info.host;
   const allCandidates = await credentialCandidates(runtime, assistantId, "");
-  const listed = matching(allCandidates, info.host, username);
-  const recent = recentForAny(runtime.home, info.host, username, runtime.plugins.credentialProviders(assistantId, "generate").map((provider) => provider.pluginId));
+  const listed = matching(allCandidates, info.url, username, defaultMatch);
+  const recent = recentForAny(runtime.home, siteHost, username, runtime.plugins.credentialProviders(assistantId, "generate").map((provider) => provider.pluginId));
   // 30 分钟内刚由 fill_new_password 存进去的那一条（网站拒收后的重试）：还是注册，只是更新它，不多存
   const retry = listed && recent && recent.itemId === listed.id;
   const candidate = listed ?? (recent ? { provider: recent.provider, providerName: runtime.plugins.displayName(recent.provider), id: recent.itemId, name: recent.name, username: recent.username, ...(recent.folder ? { folder: recent.folder } : {}), uris: [pageOrigin] } : undefined);
@@ -129,7 +125,7 @@ export async function prepareFillNewPassword(
   const defaultFolder = candidate?.folder ?? recent?.folder;
   const selectedFolder = defaultFolder && folders.includes(defaultFolder) ? defaultFolder : undefined;
   const approval: FillNewPasswordApproval = {
-    host: info.host,
+    host: siteHost,
     pageUrl: info.url,
     username: username.trim(),
     mode,
@@ -137,7 +133,7 @@ export async function prepareFillNewPassword(
     providerName: baseProvider.providerName,
     length: chosenLength,
     characters: chosenCharacters,
-    name: name?.trim() || candidate?.name || info.host,
+    name: name?.trim() || candidate?.name || siteHost,
     origin: pageOrigin,
     folders,
     ...(selectedFolder ? { folder: selectedFolder } : {}),
@@ -146,7 +142,7 @@ export async function prepareFillNewPassword(
   };
   const pageWord = mode === "register" ? "注册页" : "页面";
   const detail = `密码由 ${baseProvider.providerName} 生成，Hob 填进${pageWord}并存进 ${baseProvider.providerName}，助手看不到。`;
-  return { kind: "approval", approval, title: `在 ${info.host} ${mode === "register" ? "注册" : "修改密码"}`, detail };
+  return { kind: "approval", approval, title: `在 ${siteHost} ${mode === "register" ? "注册" : "修改密码"}`, detail };
 }
 
 export class NewPasswordError extends Error {
@@ -210,7 +206,13 @@ export async function generateSaveAndFill(runtime: HobRuntime, assistantId: stri
     try {
       await session.withCurrentPage(async (page) => {
         const current = await pageInfo(page);
-        if (current.host !== approval.host) throw new Error(`当前页面是 ${current.host}，和刚才核对的页面对不上，已保存新密码但没有填写。`);
+        const currentSite = displayHostOf(current.url) ?? current.host;
+        const expectedParsed = parseUrl(approval.pageUrl || approval.origin || approval.host);
+        const expectedHost = expectedParsed ? expectedParsed.hostname.toLowerCase().replace(/\.$/, "") : approval.host;
+        const expectedPort = expectedParsed ? portOfUrl(expectedParsed) : undefined;
+        if (current.host !== expectedHost || (expectedPort !== undefined && current.port !== expectedPort)) {
+          throw new Error(`当前页面是 ${currentSite}，和刚才核对的页面对不上，已保存新密码但没有填写。`);
+        }
         const targets = passwordTargets(current, approval.mode);
         if (!targets.length) throw new Error(`当前页面（${current.url}）上没有找到密码框，已保存新密码但没有填写。`);
         const usernameField = current.usernameIndex === undefined ? undefined : current.inputs.find((input) => input.index === current.usernameIndex);

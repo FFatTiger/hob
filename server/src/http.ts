@@ -61,6 +61,7 @@ import type { SkillImportSource } from "../../shared/skills.ts";
 import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 import { readLoginAuto, removeLoginAuto } from "./login-auto.ts";
+import { credentialUriText, normalizeCredentialUris } from "./uri-match.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -395,7 +396,12 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       const provider = runtime.plugins.credentialProvidersForPlugin(id, "list").find(item => !service || item.service === service);
       if (!provider) throw new Error("这个插件没有可用的密码库列表工具");
       const result = await runtime.plugins.callCredential(provider, {});
-      const logins = Array.isArray(result.logins) ? result.logins : [];
+      const rawLogins = Array.isArray(result.logins) ? result.logins : [];
+      const logins = rawLogins.map((login) => {
+        if (!login || typeof login !== "object") return login;
+        const item = login as Record<string, unknown>;
+        return { ...item, uris: normalizeCredentialUris(item.uris).map(credentialUriText) };
+      });
       const folders = [...new Set(logins.map(login => login && typeof login === "object" && typeof login.folder === "string" ? login.folder : "").filter(Boolean))].sort();
       return c.json({ service: provider.service, logins, folders });
     } catch (error) { return c.json({ error: pluginError(error) }, 400); }

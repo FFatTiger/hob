@@ -13,7 +13,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../src/login.ts", () => ({
   credentialCandidates: mocks.candidates,
-  hostsMatch: (page: string, saved: string) => page === saved || page.endsWith(`.${saved}`),
+  defaultUriMatch: (runtime: { settings?: { settings?: { general?: { loginUriMatch?: 0 | 1 | 2 | 3 | 5 } } } }) => runtime?.settings?.settings?.general?.loginUriMatch ?? 0,
   inspectCurrentPage: mocks.inspect,
   pageInfo: mocks.pageInfo,
 }));
@@ -44,6 +44,7 @@ describe("fill_new_password", () => {
     const info = {
       url: "https://example.test/account/password",
       host: "example.test",
+      port: "443",
       inputs: [
         { index: 0, type: "password", autocomplete: "current-password", name: "old", value: "", beforePassword: true },
         { index: 1, type: "password", autocomplete: "new-password", name: "new", value: "", beforePassword: false },
@@ -62,7 +63,7 @@ describe("fill_new_password", () => {
       const saved = { id: "login-new", name: "shop.example.com", username: "lin@example.com", uris: ["http://shop.example.com"] };
       mkdirSync(join(home, "system"), { recursive: true });
       writeFileSync(join(home, "system", "new-password.json"), JSON.stringify([{ provider: "bitwarden", itemId: saved.id, host: "shop.example.com", username: "lin@example.com", name: saved.name, at: new Date().toISOString() }]));
-      mocks.inspect.mockResolvedValue({ url: "http://shop.example.com/register", host: "shop.example.com", inputs: [{ index: 0, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
+      mocks.inspect.mockResolvedValue({ url: "http://shop.example.com/register", host: "shop.example.com", port: "80", inputs: [{ index: 0, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
       // list 里现在有刚存的那一条
       mocks.candidates.mockResolvedValue([{ provider: "bitwarden", providerName: "Bitwarden", ...saved }]);
       const runtime = { home, plugins: { hasPasswordGenerator: () => true, displayName: () => "Bitwarden", credentialProviders: (_assistant: string, role: string) => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: role, role }] } } as any;
@@ -92,7 +93,7 @@ describe("fill_new_password", () => {
   it("classifies an existing same-user item as a change and carries only metadata in the approval", async () => {
     const home = mkdtempSync(join(tmpdir(), "hob-new-password-"));
     try {
-      mocks.inspect.mockResolvedValue({ url: "https://shop.example.test/register", host: "shop.example.test", inputs: [{ index: 1, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
+      mocks.inspect.mockResolvedValue({ url: "https://shop.example.test/register", host: "shop.example.test", port: "443", inputs: [{ index: 1, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
       mocks.candidates.mockResolvedValue([{ provider: "bitwarden", providerName: "Bitwarden", id: "item-1", name: "Example 商城", username: "lin@example.com", folder: "购物", uris: ["https://shop.example.test"] }]);
       const runtime = { home, plugins: { hasPasswordGenerator: () => true, credentialProviders: () => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: "tool", role: "generate" }] } } as any;
       const result = await prepareFillNewPassword(runtime, "hob", "lin@example.com", 16, ["lowercase", "uppercase", "numbers"]);
@@ -109,7 +110,7 @@ describe("fill_new_password", () => {
     const generated = "generated-secret-never-persisted";
     try {
       mocks.fills.length = 0;
-      mocks.pageInfo.mockResolvedValue({ url: "https://shop.example.test/register", host: "shop.example.test", inputs: [
+      mocks.pageInfo.mockResolvedValue({ url: "https://shop.example.test/register", host: "shop.example.test", port: "443", inputs: [
         { index: 0, type: "email", autocomplete: "username", name: "email", value: "", beforePassword: true },
         { index: 1, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: false },
         { index: 2, type: "password", autocomplete: "new-password", name: "confirm", value: "", beforePassword: false },
@@ -132,6 +133,21 @@ describe("fill_new_password", () => {
       expect(calls[1]!.args.password).toBe(generated);
       expect(mocks.fills).toEqual([{ index: 0, value: "lin@example.com" }, { index: 1, value: generated }, { index: 2, value: generated }]);
       expect(readFileSync(join(home, "system", "new-password.json"), "utf8")).not.toContain(generated);
+    } finally { rmSync(home, { recursive: true, force: true }); }
+  });
+
+  it("uses URI match mode so same-IP different-port items stay separate registrations under Host mode", async () => {
+    const home = mkdtempSync(join(tmpdir(), "hob-new-password-"));
+    try {
+      mocks.inspect.mockResolvedValue({ url: "http://10.0.0.5:8080/register", host: "10.0.0.5", port: "8080", inputs: [{ index: 0, type: "password", autocomplete: "new-password", name: "password", value: "", beforePassword: true }] });
+      mocks.candidates.mockResolvedValue([{ provider: "bitwarden", providerName: "Bitwarden", id: "item-9090", name: "内网服务 9090", username: "admin", uris: [{ uri: "http://10.0.0.5:9090", match: 1 }] }]);
+      const runtime = { home, settings: { settings: { general: { loginUriMatch: 1 } } }, plugins: { hasPasswordGenerator: () => true, credentialProviders: () => [{ pluginId: "bitwarden", providerName: "Bitwarden", service: "bw", tool: "tool", role: "generate" }] } } as any;
+      const result = await prepareFillNewPassword(runtime, "hob", "admin", 16);
+      assert.equal(result.kind, "approval");
+      if (result.kind !== "approval") return;
+      expect(result.approval.mode).toBe("register");
+      expect(result.approval.candidate).toBeUndefined();
+      expect(result.approval.host).toBe("10.0.0.5:8080");
     } finally { rmSync(home, { recursive: true, force: true }); }
   });
 });

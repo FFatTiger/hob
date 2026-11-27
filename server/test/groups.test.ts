@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import type { Assistant, Group, GroupItem } from "../../shared/types.ts";
 import { archiveAssistant } from "../src/actions.ts";
@@ -8,7 +8,7 @@ import { GroupManager, MAX_WAVE_TURNS, RELAY_NOTE, RESTART_NOTE } from "../src/g
 import { buildSystemPrompt, GROUP_OWNER_LINE, groupPromptLine } from "../src/prompt.ts";
 import { lookupFile } from "../src/files.ts";
 import { fauxAssistantMessage, fauxText, fauxToolCall } from "@earendil-works/pi-ai";
-import { makeHob, text, waitFor, type TestHob } from "./helpers.ts";
+import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 /** 会话文件里的用户消息正文（群会话的输入就是它）。 */
 function userTexts(file: string): string[] {
@@ -95,6 +95,33 @@ describe("群", () => {
       const session = await hob.runtime.router.ensure("hob", { groupId: group.id });
       const user = session.session!.messages.find((message) => message.role === "user");
       expect(user?.content).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: expect.stringMatching(/^image\//) })]));
+    } finally { hob.close(); }
+  });
+
+  it("成员发文件后点名同事复核，对方能读到交付路径和已生成的图片", async () => {
+    const hob = makeHob({}, { memory: "off", models: [{ id: "vision", input: ["text", "image"] }] });
+    try {
+      addAssistant(hob, "review", "复核", "核对文件");
+      const group = hob.runtime.groups.create({ name: "核账", purpose: "交叉核对", ownerId: "hob", members: ["hob", "review"] });
+      const invoice = join(hob.runtime.store.assistantDir("hob"), "files", "明细.csv");
+      const chart = join(hob.home, "小计.png");
+      mkdirSync(dirname(invoice), { recursive: true });
+      writeFileSync(invoice, "金额\n128\n");
+      writeFileSync(chart, readFileSync(new URL("../../web/public/icons/favicon-32.png", import.meta.url)));
+      hob.runtime.groups.appendItem(group.id, "hob", { kind: "image", prompt: "画小计", status: "done", path: chart });
+      hob.runtime.groups.appendItem(group.id, "hob", { kind: "image", prompt: "画全图", status: "failed", error: "生成超时" });
+      let received: unknown;
+      hob.faux.setResponses([call("send_file", { path: invoice }), text("@复核 请按明细和小计图核对"), (context) => {
+        received = context.messages.findLast((message) => message.role === "user")?.content;
+        return text("已核对");
+      }]);
+      await hob.runtime.groups.send(group.id, { text: "把明细发给同事复核" });
+      await settled(hob, group.id, 2);
+      const content = JSON.stringify(received);
+      expect(content).toContain(invoice);
+      expect(content).toContain(chart);
+      expect(content).toContain("生成超时");
+      expect(received).toEqual(expect.arrayContaining([expect.objectContaining({ type: "image", mimeType: "image/png" })]));
     } finally { hob.close(); }
   });
   it("会话启动预检成功但消息未接收时不推进游标", async () => {
@@ -468,6 +495,24 @@ describe("群", () => {
     } finally {
       hob.close();
     }
+  });
+
+  it.each(["mention", "quote", "owner", "all"])("群消息只结束本次收件人的问题卡（%s）", async (mode) => {
+    const { hob, group } = setup();
+    try {
+      if (mode === "all") hob.runtime.groups.update(group.id, { replyMode: "all" });
+      const quote = hob.runtime.groups.appendItem(group.id, "ops", { kind: "assistant", text: "我来核对" });
+      const base = { title: "是否继续", options: [], status: "pending" as const, source: "router" as const, groupId: group.id, createdAt: new Date().toISOString() };
+      for (const id of group.members) hob.runtime.store.saveApproval({ ...base, id: `q-${id}`, assistantId: id });
+      hob.faux.setResponses(group.members.map(() => text("收到")));
+      await hob.runtime.groups.send(group.id, {
+        text: mode === "mention" ? "@服务器 查一下进展" : "查一下进展",
+        ...(mode === "quote" ? { quote: { itemId: quote.id, text: "我来核对" } } : {}),
+      });
+      await settled(hob, group.id, mode === "all" ? 4 : 2);
+      const recipients = mode === "all" ? group.members : [mode === "owner" ? "hob" : "ops"];
+      for (const id of group.members) expect(hob.runtime.store.approval(`q-${id}`)?.status).toBe(recipients.includes(id) ? "expired" : "pending");
+    } finally { hob.close(); }
   });
 
   it("群会话和单聊互不影响：群里说话不让单聊的提问过期，单聊里也看不到群消息", async () => {

@@ -40,7 +40,7 @@ import type { HobRuntime } from "./runtime.ts";
 import { assistantSkillsDir, groupSkillsDir, listSkills } from "./assistant-skills.ts";
 import { bundledPlaywrightSkillDir, generalSkillsDir, notEditable, skillDirOf, visibleSkills } from "./skills.ts";
 import { jobView, reviewedSkillsText } from "./job-view.ts";
-import { HANDOVER_EVENT } from "./groups.ts";
+import { handoverEvent } from "./groups.ts";
 import { sessionOrigin } from "./origin.ts";
 import { deleteSkill } from "./delete-skill.ts";
 import { askOptions, cleanRecommended, unnumber } from "./worker-tools.ts";
@@ -1023,6 +1023,7 @@ export function buildRouterTools(
       parameters: Type.Object({ path: Type.String({ description: "文件路径；相对路径以你的工作目录为准" }) }),
       execute: async (_id, params: any) => {
         const requested = resolve(cwd, String(params.path));
+        const delegationId = router.currentDelegation(assistantId, place);
         // 迁移后的老路径直接换到新位置（不给模型提示），卡片里存新路径
         let path = existsSync(requested) ? requested : resolveMovedPath(runtime.home, requested);
         if (!existsSync(path)) return fail(`文件不存在：${requested}`);
@@ -1050,6 +1051,7 @@ export function buildRouterTools(
           if (title !== undefined && summary !== undefined) { name = unescape(title); meta = unescape(summary); }
         }
         await router.addItem(assistantId, { kind: "file", path, name, ...(meta ? { meta } : {}) }, place);
+        if (delegationId) runtime.delegations.addFile(delegationId, path);
         return ok("已发送。");
       },
     },
@@ -1121,6 +1123,7 @@ export function buildRouterTools(
       }),
       execute: async (_id, params: any, signal) => {
         const config = runtime.settings.settings.image;
+        const delegationId = router.currentDelegation(assistantId, place);
         const prompt = String(params.prompt ?? "");
         const size = params.size ? String(params.size) : config.source === "openai" ? config.size : undefined;
         const item = await router.addItem(assistantId, { kind: "image", status: "pending", prompt, ...(size ? { size } : {}), startedAt: new Date().toISOString() }, place);
@@ -1131,6 +1134,7 @@ export function buildRouterTools(
             ...(Array.isArray(params.refs) && params.refs.length ? { refs: params.refs.map(String) } : {}),
           });
           await router.updateImage(assistantId, item.id, { status: "done", path }, place);
+          if (delegationId) runtime.delegations.addFile(delegationId, path);
           return ok(`图片已经显示在对话里。路径：${path}，之后修改图片可以作为参考图。`);
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
@@ -1221,6 +1225,8 @@ export function buildRouterTools(
               ...(params.cwd !== undefined ? { cwd: params.cwd } : {}),
               ...(place?.topicId ? { fromTopicId: place.topicId } : {}),
             });
+            const delegationId = router.currentDelegation(assistantId, place);
+            if (delegationId) runtime.delegations.addTopic(delegationId, topic.id);
             const cancel = () => {
               const current = store.group(topic.id);
               if (current && !current.closedAt && !runtime.groups.summary(topic.id).busy?.length) {
@@ -1236,7 +1242,7 @@ export function buildRouterTools(
               signal?.removeEventListener("abort", cancel);
             }
             void runtime.groups
-              .deliverEvent(topic.id, topic.ownerId, HANDOVER_EVENT, item.id, { workDone: true, userInitiated: false, bypassBusy: false })
+              .deliverEvent(topic.id, topic.ownerId, handoverEvent(nameOf(assistantId)), item.id, { workDone: true, userInitiated: false, bypassBusy: false })
               .catch((error) => console.error("交给群的事件没送到：", error));
             return endTurn(`已交给群「${group.name}」：创建了话题「${topic.name}」（${topic.id}），群主「${nameOf(topic.ownerId)}」接手。有了结论会回到这里。`);
           } catch (error) {

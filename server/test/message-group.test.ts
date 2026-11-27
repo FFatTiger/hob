@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import type { Assistant, Group, GroupItem } from "../../shared/types.ts";
+import { answerApproval } from "../src/actions.ts";
 import { buildSystemPrompt } from "../src/prompt.ts";
 import { buildRouterTools } from "../src/router-tools.ts";
+import { createRuntime, type HobRuntime } from "../src/runtime.ts";
 import { call, makeHob, text, waitFor, type TestHob } from "./helpers.ts";
 
 const ISO = "2026-11-08T02:00:00.000Z";
@@ -100,6 +102,115 @@ async function seedChat(hob: TestHob, lines: string[]): Promise<void> {
 }
 
 describe("message_group", () => {
+  it("非主助手交给群，群主看到实际交接人，结论回到该助手", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([text("我来核账"), text("收到结论")]);
+      const handoff = buildRouterTools(hob.runtime, "write").find((tool) => tool.name === "message_group")!;
+      await handoff.execute("handoff", { groupId: group.id, title: "核账", note: "核对两张票据" });
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
+      const instructions = inputBody(hob, topic.id, "ops").split("[hob-event]")[1];
+      expect(instructions).toContain("写作");
+      expect(instructions).not.toContain("Hob");
+      expect(() => hob.runtime.groups.closeByOwner(topic.id, "")).toThrow(/写作/);
+      hob.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+      await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      expect(await events(hob, "write")).toEqual([expect.stringContaining("合计 128 元")]);
+      expect(await events(hob, "hob")).toEqual([]);
+    } finally { hob.close(); }
+  });
+
+  it("助手接到委派再交给群，等群给出结论后才向最初的发起者汇报一次", async () => {
+    const { hob, group } = setup();
+    let restarted: HobRuntime | undefined;
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "请核对两张票据" }),
+        text("已开始核账"),
+        text("核对完成，合计 128 元"),
+        text("收到，合计 128 元"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "请协调小组核对票据");
+      await waitFor(() => hob.runtime.groups.topicsOf(group.id).length === 1);
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => hob.runtime.groups.timeline(topic.id).some((item) => item.kind === "assistant" && item.text === "已开始核账"));
+      await hob.runtime.router.waitIdle("write");
+      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe("running");
+      expect(await events(hob, "hob")).toEqual([]);
+      hob.runtime.router.disposeAll();
+      restarted = createRuntime({ home: hob.home, config: hob.runtime.config, pi: hob.runtime.pi });
+      const after = { ...hob, runtime: restarted };
+      after.runtime.delegations.recover();
+      after.runtime.groups.recoverHandovers();
+      expect(after.runtime.store.delegation(delegation.id)?.status).toBe("running");
+      after.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+      await waitFor(() => Boolean(after.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(after.runtime.store.delegation(delegation.id)?.status).toBe("done");
+      expect(await events(after, "hob")).toEqual([expect.stringContaining("合计 128 元")]);
+      after.runtime.groups.reopen(topic.id);
+      after.runtime.groups.closeByOwner(topic.id, "第二次关闭");
+      after.runtime.groups.recoverHandovers();
+      after.runtime.delegations.recover();
+      expect(await events(after, "hob")).toHaveLength(1);
+    } finally {
+      restarted?.router.disposeAll();
+      restarted?.jobs.disposeAll();
+      restarted?.desktopEvents.stop();
+      restarted?.desktopControl.dispose();
+      hob.close();
+    }
+  });
+
+  it("群交回后接手助手还要确认，原委派等用户答完才收尾", async () => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "核对票据" }),
+        call("close_topic", { note: "合计 128 元" }),
+        call("ask_user", { title: "合计 128 元，记入本月吗？", options: [{ label: "本月" }, { label: "下月" }] }),
+        text("已记入本月"),
+        text("本月入账 128 元"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "核对后问我记入哪个月");
+      await waitFor(() => hob.runtime.store.delegation(delegation.id)?.status === "waiting");
+      const [approvalId] = hob.runtime.store.delegation(delegation.id)!.approvalIds!;
+      expect(hob.runtime.store.approval(approvalId)?.assistantId).toBe("write");
+      expect(await events(hob, "hob")).toEqual([]);
+      await answerApproval(hob.runtime, approvalId, { key: "A" });
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      const lines = await events(hob, "hob");
+      expect(lines).toEqual([expect.stringContaining("已记入本月")]);
+      expect(lines[0]).toContain("合计 128 元");
+    } finally { hob.close(); }
+  });
+
+  it.each(["archive", "takeover"])("群仍在处理时归档或由用户接手，发起人只收到一次结果（%s）", async (action) => {
+    const { hob, group } = setup();
+    try {
+      hob.faux.setResponses([
+        call("message_group", { groupId: group.id, title: "核账", note: "核对票据" }),
+        text("已接单"), text("收到"), text("收到"), text("收到"),
+      ]);
+      const delegation = await hob.runtime.delegations.start("hob", "write", "请协调核账");
+      await waitFor(() => hob.runtime.groups.topicsOf(group.id).length === 1);
+      const [topic] = hob.runtime.groups.topicsOf(group.id);
+      await waitFor(() => inputBody(hob, topic.id, "ops").includes("[hob-event]"));
+      await hob.runtime.router.waitIdle("write");
+      if (action === "archive") {
+        await hob.runtime.groups.archive(group.id);
+      } else {
+        await hob.runtime.router.send("write", { text: "我来跟进这件事" });
+        await hob.runtime.router.waitIdle("write");
+        hob.runtime.groups.closeByOwner(topic.id, "合计 128 元");
+        await waitFor(() => Boolean(hob.runtime.store.group(topic.id)?.handover?.deliveredAt));
+      }
+      await waitFor(() => Boolean(hob.runtime.store.delegation(delegation.id)?.reportedAt));
+      expect(hob.runtime.store.delegation(delegation.id)?.status).toBe(action === "archive" ? "stuck" : "takenOver");
+      expect(await events(hob, "hob")).toEqual([expect.stringContaining(action === "archive" ? "归档" : "用户接手")]);
+    } finally { hob.close(); }
+  });
+
   it("非主助手交接时，综合提示使用交接方的名字", () => {
     const { hob, group } = setup();
     try {

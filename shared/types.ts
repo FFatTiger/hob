@@ -846,6 +846,7 @@ export interface Delegation {
   from: string;
   to: string;
   text: string;
+  files?: string[];
   createdAt: Iso;
   status: "running" | "waiting" | "done" | "stuck" | "interrupted" | "returned" | "takenOver";
   jobIds: string[];

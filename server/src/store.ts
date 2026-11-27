@@ -103,9 +103,13 @@ function readJsonl<T>(path: string): T[] {
   return out;
 }
 
-export type StoredDelegation = Delegation & { pendingResult?: string };
+export type StoredDelegation = Delegation & {
+  pendingResult?: string;
+  resultFiles?: string[];
+  topics?: Record<string, "pending" | "done" | "failed">;
+};
 export function publicDelegation(record: StoredDelegation): Delegation {
-  const { pendingResult: _pending, ...visible } = record;
+  const { pendingResult: _pending, resultFiles: _files, topics: _topics, ...visible } = record;
   return visible;
 }
 

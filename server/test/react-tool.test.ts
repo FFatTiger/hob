@@ -316,8 +316,8 @@ describe("react 工具", () => {
       const baseOpts = { timezone: "Asia/Shanghai", aboutYou: { name: "", language: "", notes: "" }, memory: "off" as const };
       const singlePrompt = buildSystemPrompt(hob.runtime.store, "hob", baseOpts);
       const memberPrompt = buildSystemPrompt(hob.runtime.store, "analyst", { ...baseOpts, group });
-      expect(singlePrompt).toContain(`几句话能说清的，直接回复。\n\n${expected}`);
-      expect(memberPrompt).toContain(`几句话能说清的，直接回复。\n\n${expected}`);
+      expect(singlePrompt).toContain(`没有这样的话就不写，直接结束这一轮。\n\n${expected}`);
+      expect(memberPrompt).toContain(`没有这样的话就不写，直接结束这一轮。\n\n${expected}`);
     } finally {
       hob.close();
     }

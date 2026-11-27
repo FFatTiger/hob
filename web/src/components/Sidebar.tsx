@@ -4,8 +4,8 @@ import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useRows } from "../motion.ts";
-import { goHome, openKnowledge, openPlugins, openSettings, openStars, setQuery, toggleSideCollapsed, useApp } from "../store.ts";
-import { HistoryResults } from "./HistoryResults.tsx";
+import { goHome, openKnowledge, openPlugins, openSettings, openStars, toggleSideCollapsed, useApp } from "../store.ts";
+import { cmdkShortcut, triggerCommandPalette } from "./CommandPalette.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -16,18 +16,25 @@ export function Sidebar() {
   const s = useApp();
   const updateVersion = availableVersion(s.update);
   const pluginUpdateCount = (s.pluginUpdates ?? []).length;
-  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
-  const drag = usePinDrag(pins, s.query.trim().length > 0);
+  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), "");
+  const drag = usePinDrag(pins, false);
   const pinRows = useRows(drag.order, (row) => row.id);
   const layout = pinLayout(pins.length);
 
   return (
     <aside className="side">
       <div className="side-top">
-        <div className="search">
+        <button
+          type="button"
+          className="search"
+          title={t("搜索对话和消息")}
+          aria-label={t("搜索对话和消息")}
+          onClick={triggerCommandPalette}
+        >
           <Icon name="search" size={15} />
-          <input value={s.query} placeholder={t("搜索对话和消息")} onChange={(e) => setQuery(e.target.value)} />
-        </div>
+          <span className="search-text">{t("搜索")}</span>
+          <kbd className="search-kbd">{cmdkShortcut()}</kbd>
+        </button>
         {s.sel || s.gsel ? <button className="hob-icon-btn" title={t("收起左栏")} aria-label={t("收起左栏")} onClick={toggleSideCollapsed}><Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} /></button> : null}
         <button className={`hob-icon-btn side-home${!s.sel && !s.gsel ? " on" : ""}`} title={t("首页")} onClick={goHome}>
           <Icon name="home" size={18} />
@@ -53,7 +60,6 @@ export function Sidebar() {
           ))}
         </div>
         <HomeSections size={42} markSel />
-        <HistoryResults />
       </div>
       <div className="side-foot">
         <button className="frow" onClick={openStars}><Icon name="star" size={18} /><span className="sp">{t("收藏")}</span></button>

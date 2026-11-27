@@ -42,15 +42,13 @@ vi.mock("../store.ts", () => ({
   openPlugins: vi.fn(),
   openSettings: vi.fn(),
   openStars: vi.fn(),
-  setQuery: vi.fn(),
-  setSearch: vi.fn(),
   toggleSideCollapsed: vi.fn(),
   closeSettings: vi.fn(),
   closeSub: vi.fn(),
   setSection: vi.fn(),
   loadAbout: vi.fn().mockResolvedValue(null),
 }));
-vi.mock("./HistoryResults.tsx", () => ({ HistoryResults: () => null }));
+vi.mock("./CommandPalette.tsx", () => ({ cmdkShortcut: () => "⌘K", triggerCommandPalette: vi.fn() }));
 vi.mock("./HomeSections.tsx", () => ({ HomeSections: () => null, pinLayout: () => ({ cls: "", size: 42 }), Pin: () => null }));
 vi.mock("./Groups.tsx", () => ({ GroupPin: () => null }));
 vi.mock("./GroupCreate.tsx", () => ({ PlusButton: () => null }));

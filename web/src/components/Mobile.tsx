@@ -3,8 +3,8 @@ import { memo } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { openKnowledge, openPlugins, openSettings, openStars, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
-import { HistoryResults } from "./HistoryResults.tsx";
+import { openKnowledge, openPlugins, openSettings, openStars, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
+import { triggerCommandPalette } from "./CommandPalette.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
@@ -19,8 +19,6 @@ const pickList = (s: State) => ({
   groups: s.groups,
   groupPrefs: s.groupPrefs,
   approvals: s.approvals,
-  query: s.query,
-  search: s.search,
   update: s.update,
   pluginUpdates: s.pluginUpdates,
 });
@@ -29,8 +27,8 @@ export const MobileList = memo(function MobileList() {
   const s = useAppSelect(pickList, shallow);
   const updateVersion = availableVersion(s.update);
   const pluginUpdateCount = (s.pluginUpdates ?? []).length;
-  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), s.query);
-  const drag = usePinDrag(pins, s.query.trim().length > 0);
+  const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), "");
+  const drag = usePinDrag(pins, false);
   const layout = pinLayout(pins.length);
 
   return (
@@ -45,34 +43,22 @@ export const MobileList = memo(function MobileList() {
           {updateVersion ? <UpdateDot version={updateVersion} /> : null}
         </button>
         <span className="sp" />
-        {s.search ? (
-          <div className="msearch">
-            <Icon name="search" size={15} />
-            <input autoFocus value={s.query} placeholder={t("搜索对话和消息")} onChange={(e) => setQuery(e.target.value)} />
-            <button onClick={() => setSearch(false)} title={t("关闭搜索")}>
-              <Icon name="close" size={14} />
-            </button>
-          </div>
-        ) : (
-          <>
-            <button className="hob-icon-btn" title={t("收藏")} onClick={openStars}><Icon name="star" size={19} /></button>
-            <button
-              className={`hob-icon-btn${pluginUpdateCount ? " has-update" : ""}`}
-              title={pluginUpdateCount ? `${t("插件")} · ${t("{n} 个插件有新版本", { n: pluginUpdateCount })}` : t("插件")}
-              onClick={() => openPlugins()}
-            >
-              <Icon name="plugin" size={19} />
-              {pluginUpdateCount ? <UpdateDot label={t("{n} 个插件有新版本", { n: pluginUpdateCount })} /> : null}
-            </button>
-            <button className="hob-icon-btn" title={t("知识库")} onClick={openKnowledge}>
-              <Icon name="archive" size={19} />
-            </button>
-            <button className="hob-icon-btn" title={t("搜索对话和消息")} onClick={() => setSearch(true)}>
-              <Icon name="search" size={19} />
-            </button>
-            <PlusButton size={21} />
-          </>
-        )}
+        <button className="hob-icon-btn" title={t("收藏")} onClick={openStars}><Icon name="star" size={19} /></button>
+        <button
+          className={`hob-icon-btn${pluginUpdateCount ? " has-update" : ""}`}
+          title={pluginUpdateCount ? `${t("插件")} · ${t("{n} 个插件有新版本", { n: pluginUpdateCount })}` : t("插件")}
+          onClick={() => openPlugins()}
+        >
+          <Icon name="plugin" size={19} />
+          {pluginUpdateCount ? <UpdateDot label={t("{n} 个插件有新版本", { n: pluginUpdateCount })} /> : null}
+        </button>
+        <button className="hob-icon-btn" title={t("知识库")} onClick={openKnowledge}>
+          <Icon name="archive" size={19} />
+        </button>
+        <button className="hob-icon-btn" title={t("搜索对话和消息")} aria-label={t("搜索对话和消息")} onClick={triggerCommandPalette}>
+          <Icon name="search" size={19} />
+        </button>
+        <PlusButton size={21} />
       </div>
       <div className={`mpins${layout.cls}${drag.locked ? " locked" : ""}`} ref={drag.grid}>
         {drag.order.map((row) => (
@@ -87,7 +73,6 @@ export const MobileList = memo(function MobileList() {
       </div>
       <div className="mlist">
         <HomeSections size={36} />
-        <HistoryResults />
       </div>
     </>
   );

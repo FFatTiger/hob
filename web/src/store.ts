@@ -219,7 +219,6 @@ export interface State {
   nonce: number; // 让输入框重新聚焦／重新量高度
   mobile: MobilePage;
   sheet: boolean; // 手机上右栏内容的全屏页
-  search: boolean; // 手机上的搜索框
   menu: { id: string; x: number; y: number } | null; // 助手右键 / 长按菜单（视口坐标）
   tick: number; // 定时刷新“进行中 · N 分钟”
   update: UpdateCheck | null; // 服务端 npm 版本检查结果
@@ -397,7 +396,6 @@ function initial(): State {
     nonce: 0,
     mobile: "list",
     sheet: false,
-    search: false,
     menu: null,
     tick: 0,
     update: null,
@@ -1947,7 +1945,7 @@ export async function selectGroup(id: string, nav = true, keepStack = false, for
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
     ...(s.scrollTarget && s.scrollTarget.key !== `group:${id}` ? { scrollTarget: null } : {}),
     ...(s.gsel !== id && !keepStack ? { worklog: null } : {}),
-    ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
+    ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}) } : {}),
   }));
   if (group && group.unread > 0 && !opensTopics) {
     set((s) => ({ groups: s.groups.map((x) => (x.id === id ? { ...x, unread: 0 } : x)) }));
@@ -1983,7 +1981,7 @@ export async function openNoteGroup(id: string) {
 /** 回首页：对话、右栏的页、弹层、设置和知识库一次全收起（左栏二级页的返回、设置和知识库的返回、左栏的首页键都走这里）。 */
 export function goHome() {
   for (const page of state.panelStack) if (page.kind === "file" && page.liveId) closedLivePages.add(page.liveId);
-  set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, search: false, viewer: null, mobile: "list", scrollTarget: null });
+  set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, viewer: null, mobile: "list", scrollTarget: null });
 }
 
 export async function select(id: string, nav = true, keepStack = false, forceChat = false) {
@@ -2003,7 +2001,7 @@ export async function select(id: string, nav = true, keepStack = false, forceCha
     panelStack: selectPanelStack(s.panelStack, previous, id, keepStack),
     ...(s.scrollTarget && s.scrollTarget.key !== id ? { scrollTarget: null } : {}),
     ...(previous !== id && !keepStack ? { worklog: null } : {}),
-    ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
+    ...(nav ? { mobile: (opensTopics ? "topics" : "chat") as MobilePage, ...(!keepStack ? { sheet: false } : {}) } : {}),
   }));
   if (a && a.unread > 0 && !opensTopics) {
     markAssistantRead(id);
@@ -2032,7 +2030,7 @@ export async function openAssistantTopic(aid: string, tid: string, nav = true, k
     panelStack: selectPanelStack(s.panelStack, previous, nextKey, keepStack),
     ...(s.scrollTarget && s.scrollTarget.key !== nextKey ? { scrollTarget: null } : {}),
     ...(previous !== nextKey && !keepStack ? { worklog: null } : {}),
-    ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}), search: false } : {}),
+    ...(nav ? { mobile: "chat" as const, ...(!keepStack ? { sheet: false } : {}) } : {}),
   }));
   if (topic && topic.unread > 0) {
     markAssistantTopicRead(aid, tid);
@@ -2059,7 +2057,6 @@ export function openNewAssistantTopic(aid: string) {
     ...(previous !== nextKey ? { worklog: null } : {}),
     mobile: "chat" as const,
     sheet: false,
-    search: false,
     scrollTarget: null,
   }));
   void loadProfile(aid);
@@ -2674,7 +2671,7 @@ async function jumpToConversationTarget(options: {
     scrollTarget: { key, ...(itemId ? { itemId } : {}), ...(domId ? { domId } : {}), ready: false, nonce },
     page: "main",
     ...(clearPanels ? { panelStack: [] } : {}),
-    ...(sameConv && loaded ? { mobile: "chat" as MobilePage, ...(clearPanels ? { sheet: false } : {}), search: false } : {}),
+    ...(sameConv && loaded ? { mobile: "chat" as MobilePage, ...(clearPanels ? { sheet: false } : {}) } : {}),
     ...(sameConv && loaded && s.gsel && s.groups.find((g) => g.id === s.gsel)?.unread ? {} : {}),
   }));
 
@@ -3489,7 +3486,7 @@ export async function jumpToCurrentItem(itemId: string) {
 }
 
 export function openPlugins(pluginId: string | null = null, pluginPage: PluginPage = "installed") {
-  set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, search: false, scrollTarget: null });
+  set({ page: "plugins", pluginId, pluginPage: pluginId ? "installed" : pluginPage, panelStack: [], sheet: false, scrollTarget: null });
 }
 export function closePlugins() { goHome(); }
 export function openKnowledge() {
@@ -3507,7 +3504,7 @@ export async function jumpToItem(assistantId: string, itemId: string) {
 }
 
 export function openSettings() {
-  set({ page: "settings", section: null, sub: null, sheet: false, search: false, panelStack: [], scrollTarget: null });
+  set({ page: "settings", section: null, sub: null, sheet: false, panelStack: [], scrollTarget: null });
 }
 
 export function closeSettings() {
@@ -3569,7 +3566,7 @@ export function setHomeOrder(homeOrder: State["homeOrder"]) {
 }
 
 export function setMobile(page: MobilePage) {
-  set({ mobile: page, sheet: false, search: false });
+  set({ mobile: page, sheet: false });
 }
 
 /** 手机上从对话返回：群和开启多话题的助手先回话题列表，单聊回首页。 */
@@ -3589,10 +3586,6 @@ export function openSheet() {
 
 export function closeSheet() {
   set({ sheet: false });
-}
-
-export function setSearch(on: boolean) {
-  set({ search: on, query: on ? state.query : "" });
 }
 
 export function clearNotice() {

@@ -267,23 +267,6 @@ export function buildLocalPaletteItems(
         run: () => togglePanel(),
       },
     ] : []),
-    ...(pins.length > 0 ? [
-      {
-        id: "cmd:pins",
-        label: t("切换置顶对话"),
-        detail: t("跳转到第 1–9 个置顶对话"),
-        meta: "Alt 1–9",
-        keywords: "pin pinned switch jump alt",
-        icon: <span className="cmdk-ico"><Icon name="pin" size={15} /></span>,
-        run: () => {
-          ensureMain();
-          const first = pins[0];
-          if (!first) return;
-          if (first.kind === "assistant") void openAssistant(first.id);
-          else void openGroup(first.id);
-        },
-      },
-    ] : []),
     {
       id: "cmd:new-assistant",
       label: t("新建助手"),

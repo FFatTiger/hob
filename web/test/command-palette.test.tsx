@@ -170,13 +170,12 @@ describe("命令面板本地过滤与分组", () => {
     const home = items.find((i) => i.id === "cmd:home");
     const side = items.find((i) => i.id === "cmd:toggle-side");
     const panel = items.find((i) => i.id === "cmd:toggle-panel");
-    const pins = items.find((i) => i.id === "cmd:pins");
     const pinnedHob = items.find((i) => i.id === "a:hob");
 
     expect(home?.meta).toMatch(/⇧⌘H|Ctrl Shift H/);
     expect(side?.meta).toMatch(/⌘\\|Ctrl \\/);
     expect(panel?.meta).toMatch(/⌘\.|Ctrl \./);
-    expect(pins?.meta).toBe("Alt 1–9");
+    expect(items.find((i) => i.id === "cmd:pins")).toBeUndefined();
     expect(pinnedHob?.meta).toBe("Alt 1");
 
     home!.run();

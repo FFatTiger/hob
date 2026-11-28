@@ -1,6 +1,7 @@
 import { ImapFlow } from 'imapflow';
 import nodemailer from 'nodemailer';
 import { simpleParser } from 'mailparser';
+import { existsSync, realpathSync } from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import { basename, join, resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -366,4 +367,6 @@ export function run() {
   };
   createInterface({ input: process.stdin }).on('line', line => { pending = pending.then(() => handle(JSON.parse(line))).catch(error => console.error(error.message)); });
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) run();
+// Node 22 before 22.18 lacks import.meta.main. npm may launch the file through a symlink.
+const selfPath = import.meta.filename ?? fileURLToPath(import.meta.url);
+if (import.meta.main ?? (process.argv[1] && existsSync(process.argv[1]) && realpathSync(process.argv[1]) === realpathSync(selfPath))) run();

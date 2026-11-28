@@ -3601,6 +3601,11 @@ export function expandPanel() {
   set({ collapsed: false, panelStack: [] });
 }
 
+export function togglePanel() {
+  if (state.collapsed) expandPanel();
+  else collapsePanel();
+}
+
 export function setQuery(query: string) {
   set({ query });
 }

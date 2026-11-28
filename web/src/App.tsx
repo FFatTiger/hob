@@ -21,7 +21,9 @@ import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, panelAssistant, panelDesk, type GonePage } from "./panel-stack.ts";
-import { backPanel, answer, clearNotice, closeLoginDesktop, loadDesktopWidth, saveDesktopWidth, start, tick, useApp, type PanelPage } from "./store.ts";
+import { backPanel, answer, clearNotice, closeLoginDesktop, goHome, loadDesktopWidth, openAssistant, saveDesktopWidth, selectGroup, start, tick, togglePanel, toggleSideCollapsed, useApp, type PanelPage } from "./store.ts";
+import { conversations, pinList } from "./home.ts";
+import { isEditableElement, resolveDesktopShortcut } from "./shortcuts.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
 import { useDesktopScreens } from "./desktop-screens.ts";
 import { Avatar } from "./sprites.tsx";
@@ -143,6 +145,38 @@ export function App() {
     const timer = setTimeout(() => clearNotice(), 6000);
     return () => clearTimeout(timer);
   }, [s.notice]);
+
+  // 桌面全局快捷键：⌘\ 切左栏、⌘. 切右栏、⇧⌘H 回首页、Alt+1~9 切置顶对话
+  useEffect(() => {
+    if (s.phase !== "ready" || narrow) return;
+    const onKey = (event: KeyboardEvent) => {
+      const action = resolveDesktopShortcut(event, {
+        inChat: s.page === "main" && Boolean(s.sel || s.gsel),
+        inEditable: isEditableElement(event.target),
+        hasModal: Boolean(document.querySelector('[aria-modal="true"]')),
+      });
+      if (!action) return;
+      if (action.kind === "toggle-side") {
+        event.preventDefault();
+        toggleSideCollapsed();
+      } else if (action.kind === "toggle-panel") {
+        event.preventDefault();
+        togglePanel();
+      } else if (action.kind === "go-home") {
+        event.preventDefault();
+        goHome();
+      } else if (action.kind === "pin") {
+        const pins = pinList(conversations(s.assistants, s.groups, s.groupPrefs, s.approvals, s.assistantTopics), "");
+        const picked = pins[action.index];
+        if (!picked) return;
+        event.preventDefault();
+        if (picked.kind === "assistant") void openAssistant(picked.id);
+        else void selectGroup(picked.id);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [s.phase, s.page, s.sel, s.gsel, s.assistants, s.assistantTopics, s.groups, s.groupPrefs, s.approvals, narrow]);
 
   // 云桌面展开时右栏的宽度可以拖：往左拖变宽，最宽到样式里算出的上限（对话区留 420px、画面放得下高度）
   const panelwrap = useRef<HTMLDivElement>(null);

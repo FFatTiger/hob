@@ -112,7 +112,7 @@ function loreRoots(runtime: HobRuntime): string[] {
  * 同名的只留先出现的那一份。停用的通用技能不出现；本群和自己的停用技能仍在清单里（带 enabled），
  * 只是不加载、不进提示词，能改、能删、能重新开。
  */
-export function visibleSkills(runtime: HobRuntime, assistantId: string, group?: Group, userHome = homedir()): VisibleSkill[] {
+export function visibleSkills(runtime: HobRuntime, assistantId: string, group?: Group, userHome = runtime.userHome ?? homedir()): VisibleSkill[] {
   const disabled = runtime.settings.settings.skills?.disabled ?? [];
   const all: VisibleSkill[] = [];
   const add = (skill: VisibleSkill) => {

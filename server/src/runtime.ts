@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { PluginHost } from "./plugin-host.ts";
 import { ProviderPluginManager, type ProviderPluginManagerOptions } from "./provider-plugins.ts";
 import { ScriptToolCredentials } from "./script-tools.ts";
@@ -46,6 +47,8 @@ import { applyNetworkProxy } from "./network-proxy.ts";
  * （它们互相需要：任务结束要推 Router 事件，Router 工具要开任务，定时要开任务）。
  */
 export interface HobRuntime {
+  /** 本机技能与导入来源的用户主目录（生产默认 homedir()，测试可注入隔离目录）。 */
+  userHome: string;
   scriptTools: ScriptToolCredentials;
   home: string;
   config: HobConfig;
@@ -87,6 +90,8 @@ export interface HobRuntime {
 
 export interface CreateRuntimeOptions {
   home: string;
+  /** 测试注入的用户主目录，避免扫描本机真实的 ~/.agents/skills。 */
+  userHome?: string;
   config: HobConfig;
   pi: PiHost;
   /** config.json 里还没搬走的模型设置 */
@@ -150,6 +155,7 @@ export function createRuntime(options: CreateRuntimeOptions): HobRuntime {
   });
   providers.setProviderPlugins(providerPlugins);
   const runtime = {
+    userHome: options.userHome ?? homedir(),
     scriptTools: new ScriptToolCredentials(),
     home: options.home,
     config: options.config,

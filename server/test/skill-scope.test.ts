@@ -1,5 +1,4 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadSkillsFromDir } from "@earendil-works/pi-coding-agent";
@@ -67,7 +66,6 @@ describe("谁能用哪些技能", () => {
 
   it("Lore 和本机 ~/.agents 的只读，带来源；同名时排在通用技能后面", () => {
     const hob = makeHob({}, { memory: "lore" });
-    const previous = process.env.HOME;
     const temp = join(hob.home, "fake-home");
     try {
       const local = join(temp, ".agents", "skills", "local-only");
@@ -76,17 +74,43 @@ describe("谁能用哪些技能", () => {
       const lore = join(hob.home, "lore-skills");
       mkdirSync(join(lore, "shared"), { recursive: true });
       writeFileSync(join(lore, "shared", "SKILL.md"), "---\nname: shared\ndescription: Lore 里的同名技能\n---\n正文\n");
-      process.env.HOME = temp;
-      expect(homedir()).toBe(temp);
       saveSkill(generalSkillsDir(hob.home), { name: "shared", title: "通用的", description: "Hob 的", content: "步骤" });
       hob.runtime.pi.loreSkillPaths = [lore];
-      const skills = visibleSkills(hob.runtime, "hob");
+      const skills = visibleSkills(hob.runtime, "hob", undefined, temp);
       expect(skills.map((skill) => `${skill.name}:${skill.scope}:${skill.source ?? "hob"}`)).toEqual(["shared:general:hob", "local-only:general:local"]);
       expect(skills.find((skill) => skill.name === "local-only")?.editable).toBe(false);
       // Lore 的同名那份被 Hob 的盖住，不出现
       expect(skills.filter((skill) => skill.name === "shared")).toHaveLength(1);
     } finally {
-      if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
+      hob.close();
+    }
+  });
+
+  it("isolates HTTP skill listing and import sources to runtime.userHome instead of the host homedir", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const fixtureLocal = join(hob.runtime.userHome, ".agents", "skills", "fixture-local");
+      mkdirSync(fixtureLocal, { recursive: true });
+      writeFileSync(join(fixtureLocal, "SKILL.md"), "---\nname: fixture-local\ndescription: Isolated test skill\n---\nBody\n");
+      const fixtureClaude = join(hob.runtime.userHome, ".claude", "skills", "fixture-claude");
+      mkdirSync(fixtureClaude, { recursive: true });
+      writeFileSync(join(fixtureClaude, "SKILL.md"), "---\nname: fixture-claude\ndescription: Isolated import skill\n---\nBody\n");
+
+      const app = createApp(hob.runtime, { home: hob.home });
+      const login = await app.request("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password: "test" }) });
+      const cookie = login.headers.get("set-cookie")?.split(";")[0] ?? "";
+
+      const listRes = await app.request("/api/skills", { headers: { cookie } });
+      expect(listRes.status).toBe(200);
+      const listJson = await listRes.json() as { skills: { name: string; source: string }[] };
+      expect(listJson.skills.filter((s) => s.source === "common").map((s) => s.name)).toEqual(["fixture-local"]);
+
+      const importRes = await app.request("/api/skills/import/claude", { headers: { cookie } });
+      expect(importRes.status).toBe(200);
+      const importJson = await importRes.json() as { found: boolean; skills: { name: string }[] };
+      expect(importJson.found).toBe(true);
+      expect(importJson.skills.map((s) => s.name)).toEqual(["fixture-claude"]);
+    } finally {
       hob.close();
     }
   });
@@ -173,13 +197,10 @@ describe("通用技能和别的两档一样能改", () => {
 
   it("只读的两类：改、删、into 填了它都照实说是哪来的", async () => {
     const hob = makeHob({}, { memory: "lore" });
-    const previous = process.env.HOME;
-    const temp = join(hob.home, "fake-home");
     try {
-      const local = join(temp, ".agents", "skills", "local-only");
+      const local = join(hob.runtime.userHome, ".agents", "skills", "local-only");
       mkdirSync(local, { recursive: true });
       writeFileSync(join(local, "SKILL.md"), "---\nname: local-only\ndescription: 本机别的工具也用\n---\n正文\n");
-      process.env.HOME = temp;
       const tools = buildRouterTools(hob.runtime, "hob");
       const edit = tools.find((tool) => tool.name === "save_skill")!;
       const remove = tools.find((tool) => tool.name === "delete_skill")!;
@@ -195,7 +216,6 @@ describe("通用技能和别的两档一样能改", () => {
       const loreResult = await edit.execute("e2", { name: "lore-only", edits: [{ old: "正文", new: "新" }] });
       expect(loreResult.content[0].text).toBe("lore-only 是只读的技能，不能改；换个名字另存一份。");
     } finally {
-      if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
       hob.close();
     }
   });

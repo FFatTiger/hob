@@ -1984,6 +1984,56 @@ export function goHome() {
   set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, viewer: null, mobile: "list", scrollTarget: null });
 }
 
+/** 桌面浏览器后退 / 前进时按地址 hash 还原页面状态。 */
+export function applyRoute(hash: string) {
+  const route = parseRoute(hash);
+  if (route.plugins) {
+    set({
+      page: "plugins",
+      pluginId: route.pluginId ?? null,
+      pluginPage: route.pluginId ? "installed" : (route.pluginPage ?? "installed"),
+      panelStack: [],
+      sheet: false,
+      search: false,
+      viewer: null,
+    });
+    return;
+  }
+  if (route.stars) {
+    openStars();
+    return;
+  }
+  if (route.knowledge) {
+    openKnowledge();
+    return;
+  }
+  if (route.settings) {
+    set({ page: "settings", section: route.section, sub: null, sheet: false, search: false, panelStack: [], viewer: null });
+    return;
+  }
+  if (route.group && state.groups.some((g) => g.id === route.group)) {
+    const panelStack = route.panel ? [route.panel] : [];
+    set({ page: "main", viewer: null, panelStack });
+    void selectGroup(route.group, true, true, true);
+    if (route.panel?.kind === "job") void loadTranscript(route.panel.id);
+    if (route.panel?.kind === "jobs" && !state.worklog) void loadWorklog();
+    return;
+  }
+  if (route.sel && state.assistants.some((a) => a.id === route.sel)) {
+    const panelStack = route.panel ? [route.panel] : [];
+    set({ page: "main", viewer: null, panelStack });
+    if (route.topic && state.assistantTopics.some((item) => item.id === route.topic && item.assistantId === route.sel)) {
+      void openAssistantTopic(route.sel, route.topic, true, true);
+    } else {
+      void select(route.sel, true, true, true);
+    }
+    if (route.panel?.kind === "job") void loadTranscript(route.panel.id);
+    if (route.panel?.kind === "jobs" && !state.worklog) void loadWorklog();
+    return;
+  }
+  goHome();
+}
+
 export async function select(id: string, nav = true, keepStack = false, forceChat = false) {
   const a = state.assistants.find((x) => x.id === id);
   const multiTopic = Boolean(a?.topics);

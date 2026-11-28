@@ -20,7 +20,7 @@ import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, panelAssistant, panelDesk, type GonePage } from "./panel-stack.ts";
-import { backPanel, answer, clearNotice, closeLoginDesktop, loadDesktopWidth, saveDesktopWidth, start, tick, useApp, type PanelPage } from "./store.ts";
+import { backPanel, answer, clearNotice, closeLoginDesktop, leaveChat, leaveTopicList, loadDesktopWidth, saveDesktopWidth, start, tick, useApp, type PanelPage } from "./store.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
 import { useDesktopScreens } from "./desktop-screens.ts";
 import { Avatar } from "./sprites.tsx";
@@ -146,6 +146,43 @@ export function App() {
   // 云桌面展开时右栏的宽度可以拖：往左拖变宽，最宽到样式里算出的上限（对话区留 420px、画面放得下高度）
   const panelwrap = useRef<HTMLDivElement>(null);
   const [desktopWidth, setDesktopWidth] = useState(loadDesktopWidth);
+  // 手机左边缘跟手右滑返回（必须位于所有条件 return 之前，遵守 React Hooks 规则）
+  const [edgeDrag, setEdgeDrag] = useState<{ target: "chat" | "topics"; dx: number } | null>(null);
+  const edgeRef = useRef<{ target: "chat" | "topics"; startX: number; startY: number; dx: number; active: boolean; locked: "h" | "v" | null } | null>(null);
+  const edgeHandlers = (target: "chat" | "topics", commit: () => void) => ({
+    onPointerDown: (event: React.PointerEvent<HTMLDivElement>) => {
+      if (event.pointerType !== "touch" || event.clientX > 28) return;
+      edgeRef.current = { target, startX: event.clientX, startY: event.clientY, dx: 0, active: true, locked: null };
+      event.currentTarget.setPointerCapture?.(event.pointerId);
+    },
+    onPointerMove: (event: React.PointerEvent<HTMLDivElement>) => {
+      const st = edgeRef.current;
+      if (!st?.active || st.target !== target) return;
+      const dx = event.clientX - st.startX;
+      const dy = event.clientY - st.startY;
+      if (!st.locked && (Math.abs(dx) > 8 || Math.abs(dy) > 8)) {
+        st.locked = dx > 0 && Math.abs(dx) > Math.abs(dy) ? "h" : "v";
+      }
+      if (st.locked === "h") {
+        st.dx = Math.max(0, dx);
+        setEdgeDrag({ target, dx: st.dx });
+      }
+    },
+    onPointerUp: (event: React.PointerEvent<HTMLDivElement>) => {
+      const st = edgeRef.current;
+      if (!st?.active || st.target !== target) return;
+      const finalDx = st.dx;
+      edgeRef.current = null;
+      setEdgeDrag(null);
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      if (finalDx > Math.min(120, window.innerWidth * 0.32)) commit();
+    },
+    onPointerCancel: (event: React.PointerEvent<HTMLDivElement>) => {
+      edgeRef.current = null;
+      setEdgeDrag(null);
+      if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+    },
+  });
   const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
     const wrap = panelwrap.current;
     if (!wrap || event.button !== 0) return;
@@ -249,21 +286,39 @@ export function App() {
   ).running;
 
   if (narrow) {
+    const vw = typeof window !== "undefined" ? window.innerWidth || 390 : 390;
+    const chatDrag = edgeDrag?.target === "chat" ? edgeDrag.dx : 0;
+    const topicsDrag = edgeDrag?.target === "topics" ? edgeDrag.dx : 0;
+    const chatProgress = Math.min(1, chatDrag / vw);
+    const topicsProgress = Math.min(1, topicsDrag / vw);
     return (
       <>
         <div className="mapp">
-          <div className={`mpane list${s.mobile === "list" ? "" : " back"}`}>
+          <div
+            className={`mpane list${s.mobile === "list" ? "" : " back"}${topicsDrag > 0 || (chatDrag > 0 && !topicsPane.mounted) ? " dragging" : ""}`}
+            style={topicsDrag > 0 ? { transform: `translateX(${-30 * (1 - topicsProgress)}%)` } : chatDrag > 0 && !topicsPane.mounted ? { transform: `translateX(${-30 * (1 - chatProgress)}%)` } : undefined}
+            inert={s.mobile !== "list"}
+          >
             <MobileList />
           </div>
           {topicsPane.mounted && topicsTarget.current ? (
-            <div className={`mpane topics${topicsPane.leaving ? " out" : s.mobile === "chat" ? " back" : ""}`}>
+            <div
+              className={`mpane topics${topicsPane.leaving ? " out" : s.mobile === "chat" ? " back" : ""}${topicsDrag > 0 || chatDrag > 0 ? " dragging" : ""}`}
+              style={topicsDrag > 0 ? { transform: `translateX(${topicsDrag}px)` } : chatDrag > 0 ? { transform: `translateX(${-30 * (1 - chatProgress)}%)` } : undefined}
+              inert={s.mobile === "chat" || topicsPane.leaving}
+              {...edgeHandlers("topics", leaveTopicList)}
+            >
               {topicsTarget.current.kind === "group"
                 ? <MobileTopics groupId={topicsTarget.current.id} />
                 : <MobileAssistantTopics assistantId={topicsTarget.current.id} />}
             </div>
           ) : null}
           {chat.mounted ? (
-            <div className={`mpane chat${chat.leaving ? " out" : ""}`}>
+            <div
+              className={`mpane chat${chat.leaving ? " out" : ""}${chatDrag > 0 ? " dragging" : ""}`}
+              style={chatDrag > 0 ? { transform: `translateX(${chatDrag}px)` } : undefined}
+              {...edgeHandlers("chat", leaveChat)}
+            >
               <ChatPage />
             </div>
           ) : null}

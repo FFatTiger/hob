@@ -1,9 +1,9 @@
 // 手机（宽 < 768px）：列表页 + 右栏内容的整页。
-import { memo } from "react";
+import { memo, useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
-import { openKnowledge, openPlugins, openSettings, openStars, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
+import { closeSheet, openKnowledge, openPlugins, openSettings, openStars, setQuery, setSearch, shallow, useAppSelect, type PanelPage, type State } from "../store.ts";
 import { HistoryResults } from "./HistoryResults.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
@@ -85,9 +85,49 @@ export const MobileList = memo(function MobileList() {
 });
 
 export function Sheet({ leaving, page }: { leaving: boolean; page?: PanelPage | null }) {
+  const [dragY, setDragY] = useState(0);
+  const [dragging, setDragging] = useState(false);
+  const start = useRef<{ y: number; dy: number; active: boolean } | null>(null);
+  const canDrag = page === null;
+
+  const onDown = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!canDrag || (event.pointerType === "mouse" && event.button !== 0)) return;
+    start.current = { y: event.clientY, dy: 0, active: true };
+    setDragging(true);
+    event.currentTarget.setPointerCapture?.(event.pointerId);
+  };
+  const onMove = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (!start.current?.active) return;
+    const dy = Math.max(0, event.clientY - start.current.y);
+    start.current.dy = dy;
+    setDragY(dy);
+  };
+  const onEnd = () => {
+    if (!start.current?.active) return;
+    const dy = start.current.dy;
+    start.current = null;
+    setDragging(false);
+    if (dy > 96) {
+      closeSheet();
+    } else {
+      setDragY(0);
+    }
+  };
+
   return (
-    <div className={`mfull${leaving ? " leaving" : ""}`}>
-      <Panel mobile page={page} />
-    </div>
+    <>
+      {canDrag ? <div className={`sheet-scrim${leaving ? " leaving" : ""}`} aria-hidden="true" onClick={closeSheet} /> : null}
+      <div
+        className={`mfull${canDrag ? " sheet-drawer" : ""}${leaving ? " leaving" : ""}${dragging ? " dragging" : ""}`}
+        style={dragY > 0 ? { transform: `translateY(${dragY}px)` } : undefined}
+      >
+        {canDrag ? (
+          <div className="sheet-grab-bar" onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onEnd} onPointerCancel={onEnd}>
+            <span className="sheet-grab" aria-hidden="true" />
+          </div>
+        ) : null}
+        <Panel mobile page={page} />
+      </div>
+    </>
   );
 }

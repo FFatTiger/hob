@@ -13,6 +13,7 @@ import { Avatar } from "../sprites.tsx";
 import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
   assistantSessionKey,
+  collapsePanel,
   expandPanel,
   toggleSideCollapsed,
   focusComposer,
@@ -323,7 +324,7 @@ function ChatHead({
   mobile?: boolean;
 }) {
   const s = useApp();
-  const size = mobile ? 56 : 48;
+  const size = mobile ? 30 : 28;
   const owner = g && parent ? s.assistants.find((x) => x.id === g.ownerId) : undefined;
   const face = owner ? <Avatar sprite={owner.sprite} prop={owner.prop} size={size} /> : g ? <GroupCluster g={g} assistants={s.assistants} size={size} /> : a ? <Avatar sprite={a.sprite} prop={a.prop} size={size} /> : null;
   const sub = g && !parent
@@ -334,12 +335,50 @@ function ChatHead({
         ? <span className="ccap-sub">{t("主对话")}</span>
         : null;
   const name = g?.name ?? topic?.name ?? a?.name ?? "";
-  return (
-    <div className={`ccap${sub ? "" : " solo"}${g && !owner ? " cluster" : ""}`} title={name}>
+  const toggleInfo = () => {
+    if (mobile) openSheet();
+    else if (s.collapsed) expandPanel();
+    else collapsePanel();
+  };
+  const cls = `ccap ccap-pill${sub ? "" : " solo"}${g && !owner ? " cluster" : ""}`;
+  const title = mobile ? (g ? t("群信息") : t("助手信息")) : s.collapsed ? t("展开右栏") : t("收起右栏");
+  const inner = (
+    <>
       <span className="ccap-face">{face}</span>
-      {topic ? <TopicTitle topic={topic} /> : <span className="ccap-nm">{name}</span>}
-      {sub}
-    </div>
+      <span className="ccap-text">
+        {topic ? <TopicTitle topic={topic} /> : <span className="ccap-nm">{name}</span>}
+        {sub}
+      </span>
+      <Icon name="chev" size={13} className="ccap-chev" />
+    </>
+  );
+  // 话题名本身可点击改名，避免 button 嵌套 button
+  if (topic) {
+    return (
+      <div
+        role="button"
+        tabIndex={0}
+        className={cls}
+        title={title}
+        onClick={(event) => {
+          if ((event.target as Element).closest(".ccap-nm-btn, .ccap-nm-edit")) return;
+          toggleInfo();
+        }}
+        onKeyDown={(event) => {
+          if (event.target === event.currentTarget && (event.key === "Enter" || event.key === " ")) {
+            event.preventDefault();
+            toggleInfo();
+          }
+        }}
+      >
+        {inner}
+      </div>
+    );
+  }
+  return (
+    <button type="button" className={cls} title={title} onClick={toggleInfo}>
+      {inner}
+    </button>
   );
 }
 

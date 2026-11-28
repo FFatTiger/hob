@@ -34,6 +34,8 @@ import {
   deleteRule,
   deleteRoutine,
   enableAssistantTopics,
+  exportAssistantMarkdown,
+  exportGroupMarkdown,
   jumpToJob,
   jumpToDelegation,
   loadPlugins,
@@ -80,6 +82,7 @@ import { DELEGATION_STATUS, JOB_STATUS, StatusTag, jobStatusIcon } from "./statu
 import { GroupCluster, membersOf } from "./Groups.tsx";
 import { PlaceJobs, TopicClose } from "./Topics.tsx";
 import { topicsOf } from "../topics.ts";
+import { downloadMarkdownFile } from "../download.ts";
 
 // noVNC 要顶层 await，单独分包按需加载
 const DesktopMini = lazy(() => import("./DesktopView.tsx").then((m) => ({ default: m.DesktopMini })));
@@ -114,14 +117,34 @@ export function Panel({ mobile = false, page }: { mobile?: boolean; page?: Panel
     ? (("topicId" in panel ? panel.topicId : undefined) ?? (!group && !memberOpen ? s.tsel ?? undefined : undefined))
     : undefined;
   const [rootScrolled, setRootScrolled] = useState(false);
+  const [exporting, setExporting] = useState(false);
   const selectedAssistant = s.profiles[panelAssistant(s.panelStack, s.sel)]?.assistant ?? s.assistants.find((a) => a.id === (panelAssistant(s.panelStack, s.sel)));
   const desktop = useDesktopScreens();
   const focus = !mobile && kind === "now" && s.nowWide && panelDesk(s.panelStack, s.sel, s.gsel, s.groups, desktop, s.tsel ? { topicId: s.tsel } : undefined, Boolean(!s.gsel && !s.tsel && selectedAssistant?.topics)).running;
   useEffect(() => setRootScrolled(false), [s.sel, s.gsel, s.tsel]);
+  const canExport = kind === "now" && !member && Boolean(group || s.sel);
+  const handleExport = async () => {
+    if (exporting || !canExport) return;
+    setExporting(true);
+    try {
+      const result = group
+        ? await exportGroupMarkdown(group.id)
+        : await exportAssistantMarkdown(s.sel!, assistantTopic?.id);
+      if (!result.ok) {
+        setNotice(t("导出失败：{error}", { error: result.error }));
+        return;
+      }
+      downloadMarkdownFile(result.data.filename, result.data.content);
+      setNotice(t("已导出「{name}」", { name: result.data.filename }));
+    } finally {
+      setExporting(false);
+    }
+  };
   const title = panel.kind === "routine" ? s.routines.find((r) => r.id === panel.id)?.name ?? t("定时任务") : kind === "newRoutine" ? t("新建定时任务") : kind === "routines" ? t("定时任务") : kind === "skills" ? t("技能") : kind === "knowledge" ? t("知识库") : kind === "rules" || kind === "topicRules" ? t("规则") : kind === "topicModels" ? t("模型") : kind === "now" ? "" : kind === "groupSettings" ? t("编辑群") : t("编辑助手");
   return (
     <aside className={`panel${focus ? " desktop-focus" : ""}`} onScroll={(event) => { if (kind === "now") { const card = event.currentTarget.querySelector(".sidebar-card"); const head = event.currentTarget.querySelector(".phead"); setRootScrolled(!!card && !!head && card.getBoundingClientRect().bottom <= head.getBoundingClientRect().bottom); } }}>
       {!focus ? <PanelHead className="phead" root={kind === "now" && !member} close={false} title={<span className="t">{kind === "now" && !group && !focus && rootScrolled && selectedAssistant ? <span className="sidebar-head-identity"><Avatar sprite={selectedAssistant.sprite} prop={selectedAssistant.prop} size={24} />{selectedAssistant.name}</span> : title}</span>}>
+        {canExport ? <button className="hob-icon-btn" title={t("导出对话为 Markdown")} aria-label={t("导出对话为 Markdown")} disabled={exporting} onClick={() => void handleExport()}><Icon name={exporting ? "spin" : "dl"} size={17} className={exporting ? "spin" : undefined} /></button> : null}
         {kind === "now" && !group && !assistantTopic ? <button className="hob-icon-btn" title={t("编辑助手")} onClick={openAssistantPanel}><Icon name="edit" size={17} /></button> : null}
         {kind === "now" && group ? <button className="hob-icon-btn" title={t("编辑群")} onClick={() => openGroupSettings(group.parentId ?? group.id)}><Icon name="edit" size={17} /></button> : null}
         {kind === "routines" ? <button className="hob-icon-btn" title={t("新建定时任务")} onClick={openNewRoutine}><Icon name="plus" size={17} /></button> : null}

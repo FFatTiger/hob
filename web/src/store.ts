@@ -19,6 +19,7 @@ import type {
   ClaudeCodeSettings,
   Delegation,
   Draft,
+  ExportedMarkdown,
   FileMeta,
   Group,
   GroupItem,
@@ -3717,6 +3718,27 @@ export function tick() {
 
 export function fileUrl(path: string, opts?: { inline?: boolean; truncate?: boolean; thumb?: boolean }): string {
   return api.fileUrl(path, opts);
+}
+
+export async function exportAssistantMarkdown(
+  assistantId: string,
+  topicId?: string,
+): Promise<{ ok: true; data: ExportedMarkdown } | { ok: false; error: string }> {
+  try {
+    return { ok: true, data: await api.exportAssistant(assistantId, topicId) };
+  } catch (e) {
+    return { ok: false, error: errText(e) };
+  }
+}
+
+export async function exportGroupMarkdown(
+  groupId: string,
+): Promise<{ ok: true; data: ExportedMarkdown } | { ok: false; error: string }> {
+  try {
+    return { ok: true, data: await api.exportGroup(groupId) };
+  } catch (e) {
+    return { ok: false, error: errText(e) };
+  }
 }
 
 /* ---------------- 文件预览 ---------------- */

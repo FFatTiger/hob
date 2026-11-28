@@ -756,6 +756,11 @@ export class RouterManager {
     return readEntries(this.sessionFile(assistantId, place));
   }
 
+  /** 读取某个助手（或助手话题）的完整派生日记条目，不分页。 */
+  allItems(assistantId: string, place?: Place): Item[] {
+    return this.derived(assistantId, place).result.items;
+  }
+
   private derived(assistantId: string, place?: Place) {
     const key = sessionKey(assistantId, place);
     const manager = this.routers.get(key)?.manager;

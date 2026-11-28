@@ -61,6 +61,13 @@ import type { SkillImportSource } from "../../shared/skills.ts";
 import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 import { readLoginAuto, removeLoginAuto } from "./login-auto.ts";
+import { cardHistoryLine } from "./cards.ts";
+import {
+  formatConversationMarkdown,
+  safeExportFilename,
+  type ExportConversationMessage,
+} from "../../shared/export-markdown.ts";
+import { attachmentName } from "../../shared/media.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -1268,12 +1275,158 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     } catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
 
+  const formatExportTime = (iso: string): string => {
+    const date = new Date(iso);
+    if (Number.isNaN(date.getTime())) return iso;
+    const timeZone = runtime.settings.settings.general.timezone;
+    try {
+      return new Intl.DateTimeFormat("sv-SE", {
+        timeZone,
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+        hour: "2-digit",
+        minute: "2-digit",
+        second: "2-digit",
+        hour12: false,
+      }).format(date);
+    } catch {
+      return iso;
+    }
+  };
+
+  const formatExportDate = (date: Date): string => {
+    const timeZone = runtime.settings.settings.general.timezone;
+    try {
+      return new Intl.DateTimeFormat("sv-SE", { timeZone, year: "numeric", month: "2-digit", day: "2-digit" }).format(date);
+    } catch {
+      return date.toISOString().slice(0, 10);
+    }
+  };
+
+  const formatApprovalExport = (approvalId: string): string | null => {
+    const approval = store.approval(approvalId);
+    if (!approval) return null;
+    const parts = [approval.title, approval.detail].filter(Boolean);
+    if (approval.status === "answered") {
+      const answer = approval.answerText
+        || approval.options.find((opt) => opt.key === approval.chosen)?.label
+        || approval.answers?.map((ans, idx) => {
+          const q = approval.questions?.[idx];
+          const picked = ans.text || q?.options.find((opt) => opt.key === ans.key)?.label || ans.key;
+          return q ? `${q.title}：${picked}` : picked;
+        }).filter(Boolean).join("\n");
+      if (answer) parts.push(`${t("已回答")}：${answer}`);
+    }
+    return parts.join("\n\n") || null;
+  };
+
+  const toExportMessages = (
+    items: (import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem)[],
+    defaultAssistantName: string,
+  ): ExportConversationMessage[] => {
+    const speakerName = (item: import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem, fallback: string) => {
+      if (!("speaker" in item) || !item.speaker) return fallback;
+      return item.speaker === "user" ? t("用户") : (store.assistant(item.speaker)?.name ?? item.speaker);
+    };
+    return items.flatMap((item): ExportConversationMessage[] => {
+      if (item.kind === "job") {
+        const job = store.job(item.jobId);
+        if (!job) return [];
+        const owner = store.assistant(job.assistantId)?.name ?? defaultAssistantName;
+        const body = [job.title, job.summary || job.statusReason].filter(Boolean).join("\n\n");
+        if (!body) return [];
+        return [{ speaker: `${owner} · ${t("任务")}`, at: formatExportTime(item.at), text: body }];
+      }
+      if (item.kind === "card") {
+        const card = store.card(item.cardId);
+        if (!card) return [];
+        return [{
+          speaker: speakerName(item, defaultAssistantName),
+          at: formatExportTime(item.at),
+          text: cardHistoryLine(card.card),
+        }];
+      }
+      if (item.kind === "file") {
+        return [{
+          speaker: speakerName(item, defaultAssistantName),
+          at: formatExportTime(item.at),
+          text: item.meta ?? "",
+          files: [item.name],
+        }];
+      }
+      if (item.kind === "image") {
+        if (item.status === "pending") return [];
+        const files = item.status === "done" && item.path ? [attachmentName(item.path)] : undefined;
+        const text = item.status === "failed"
+          ? (item.error ? `${t("图片生成失败")}：${item.error}` : t("图片生成失败"))
+          : (item.prompt ? `${t("图片")}：${item.prompt}` : t("图片"));
+        return [{
+          speaker: speakerName(item, defaultAssistantName),
+          at: formatExportTime(item.at),
+          text,
+          ...(files ? { files } : {}),
+        }];
+      }
+      if (item.kind === "question") {
+        const text = formatApprovalExport(item.approvalId);
+        if (!text) return [];
+        return [{
+          speaker: speakerName(item, defaultAssistantName),
+          at: formatExportTime(item.at),
+          text,
+        }];
+      }
+      if (item.kind !== "user" && item.kind !== "assistant") return [];
+      const files = item.kind === "user" && item.files?.length ? item.files.map(attachmentName) : undefined;
+      if (!item.text.trim() && !files?.length) return [];
+      const fallbackSpeaker = item.kind === "user"
+        ? (item.from ? item.from.name : t("用户"))
+        : defaultAssistantName;
+      return [{
+        speaker: speakerName(item, fallbackSpeaker),
+        at: formatExportTime(item.at),
+        text: item.text,
+        ...(item.quote?.text ? { quote: item.quote.text } : {}),
+        ...(files ? { files } : {}),
+      }];
+    });
+  };
+
   app.get("/api/assistants/:id/items", (c) => {
     const id = c.req.param("id");
     if (!store.assistant(id)) return c.json({ error: "助手不存在" }, 404);
     const limit = Number(c.req.query("limit") ?? 50);
     const before = c.req.query("before") ?? undefined;
     return c.json(router.items(id, { ...(before ? { before } : {}), limit }));
+  });
+
+  app.get("/api/assistants/:id/export", (c) => {
+    const id = c.req.param("id");
+    const assistant = store.assistant(id);
+    if (!assistant) return c.json({ error: "助手不存在" }, 404);
+    const topicId = c.req.query("topicId") || undefined;
+    let topic: import("../../shared/types.ts").AssistantTopic | undefined;
+    if (topicId) {
+      try {
+        topic = runtime.assistantTopics.requireTopic(id, topicId);
+      } catch (error) {
+        return topicErr(c, error);
+      }
+    }
+    const allItems = router.allItems(id, topic ? { topicId: topic.id } : undefined);
+    const messages = toExportMessages(allItems, assistant.name);
+    const title = topic ? `${assistant.name} · ${topic.name}` : assistant.name;
+    const subtitle = topic ? (topic.closeNote || assistant.duty || undefined) : (assistant.duty || undefined);
+    const now = new Date();
+    const content = formatConversationMarkdown({
+      title,
+      ...(subtitle ? { subtitle } : {}),
+      exportedAt: formatExportTime(now.toISOString()),
+      messages,
+    });
+    const filename = safeExportFilename(title, formatExportDate(now));
+    return c.json({ filename, content });
   });
 
   app.get("/api/assistants/:id/profile", (c) => {
@@ -1803,6 +1956,26 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     const limit = Number(c.req.query("limit") ?? 50);
     const before = c.req.query("before") ?? undefined;
     return c.json(runtime.groups.items(id, { ...(before ? { before } : {}), limit }));
+  });
+
+  app.get("/api/groups/:id/export", (c) => {
+    const id = c.req.param("id");
+    const group = store.group(id);
+    if (!group) return c.json({ error: "群不存在" }, 404);
+    const parent = group.parentId ? store.group(group.parentId) : undefined;
+    const ownerName = store.assistant(group.ownerId)?.name ?? group.ownerId;
+    const messages = toExportMessages(runtime.groups.timeline(id), ownerName);
+    const title = parent ? `${parent.name} · ${group.name}` : group.name;
+    const subtitle = parent ? (group.closeNote || parent.purpose || undefined) : (group.purpose || undefined);
+    const now = new Date();
+    const content = formatConversationMarkdown({
+      title,
+      ...(subtitle ? { subtitle } : {}),
+      exportedAt: formatExportTime(now.toISOString()),
+      messages,
+    });
+    const filename = safeExportFilename(title, formatExportDate(now));
+    return c.json({ filename, content });
   });
 
   app.post("/api/groups/:id/messages", async (c) => {

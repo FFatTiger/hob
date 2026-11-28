@@ -1173,6 +1173,12 @@ export interface HistorySearchResult { results: HistoryMatch[]; total: number }
 
 export interface StarRequest { conversation: ConversationRef; itemId: string }
 
+/** 对话导出为 Markdown 的接口响应。 */
+export interface ExportedMarkdown {
+  filename: string;
+  content: string;
+}
+
 export interface ItemsPage {
   pageLive?: PageLive[];
   items: Item[]; // 旧 → 新

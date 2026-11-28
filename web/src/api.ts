@@ -23,6 +23,7 @@ import type {
   EmbeddingKeyView,
   EmbeddingSettingsSaved,
   EmbeddingTestResult,
+  ExportedMarkdown,
   Group,
   GroupItemsPage,
   GroupProfile,
@@ -238,6 +239,7 @@ export interface HobApi {
   loreImport(): Promise<LoreImportView>;
   importLore(): Promise<MemoryConfig>;
   items(assistantId: string, before?: string): Promise<ItemsPage>;
+  exportAssistant(assistantId: string, topicId?: string): Promise<ExportedMarkdown>;
   profile(assistantId: string): Promise<Profile>;
   sendMessage(assistantId: string, body: SendMessageBody): Promise<{ item: Item }>;
   stopAssistant(assistantId: string): Promise<void>;
@@ -309,6 +311,7 @@ export interface HobApi {
   closeTopic(topicId: string, body?: { note?: string }): Promise<Group>;
   reopenTopic(topicId: string): Promise<Group>;
   groupItems(groupId: string, before?: string): Promise<GroupItemsPage>;
+  exportGroup(groupId: string): Promise<ExportedMarkdown>;
   sendGroupMessage(groupId: string, body: SendMessageBody): Promise<{ item: GroupItem }>;
   markGroupRead(groupId: string): Promise<void>;
   stopGroup(groupId: string): Promise<void>;
@@ -455,6 +458,12 @@ export const realApi: HobApi = {
     req<ItemsPage>(
       `/api/assistants/${encodeURIComponent(assistantId)}/items?limit=60${
         before ? `&before=${encodeURIComponent(before)}` : ""
+      }`,
+    ),
+  exportAssistant: (assistantId, topicId) =>
+    req<ExportedMarkdown>(
+      `/api/assistants/${encodeURIComponent(assistantId)}/export${
+        topicId ? `?topicId=${encodeURIComponent(topicId)}` : ""
       }`,
     ),
   profile: (assistantId) => req<Profile>(`/api/assistants/${encodeURIComponent(assistantId)}/profile`),
@@ -612,6 +621,7 @@ export const realApi: HobApi = {
     req<GroupItemsPage>(
       `/api/groups/${encodeURIComponent(groupId)}/items?limit=60${before ? `&before=${encodeURIComponent(before)}` : ""}`,
     ),
+  exportGroup: (groupId) => req<ExportedMarkdown>(`/api/groups/${encodeURIComponent(groupId)}/export`),
   sendGroupMessage: (groupId, body) =>
     req<{ item: GroupItem }>(`/api/groups/${encodeURIComponent(groupId)}/messages`, json(body)),
   markGroupRead: (groupId) => req<void>(`/api/groups/${encodeURIComponent(groupId)}/read`, { method: "POST" }),

@@ -1,5 +1,6 @@
 // 群里 @ 点名：认出输入框里正在写的 @，按名字筛成员，选中后把 @名字 填回去。
 // 纯函数，界面在 components/Chat.tsx 的输入框里用。
+import type { GroupReplyMode } from "../../shared/types.ts";
 
 export interface MentionAt {
   start: number; // @ 在文本里的位置
@@ -47,4 +48,17 @@ export function applyMention(text: string, at: MentionAt, name: string): { text:
   const head = text.slice(0, at.start);
   const tail = text.slice(at.start + 1 + at.query.length);
   return { text: head + inserted + tail, caret: head.length + inserted.length };
+}
+
+/** 群里点推荐提问时要不要自动补 @成员名：全员回应模式不补，否则会退化成只点名最后一位发言的成员。 */
+export function groupSuggestionPrefix(
+  g: { ownerId: string; replyMode?: GroupReplyMode } | undefined,
+  items: readonly { kind: string; speaker?: string }[],
+  assistants: readonly { id: string; name: string }[],
+): string {
+  if (!g || g.replyMode === "all") return "";
+  const last = [...items].reverse().find((item) => item.kind === "assistant");
+  if (!last?.speaker || last.speaker === g.ownerId) return "";
+  const member = assistants.find((assistant) => assistant.id === last.speaker);
+  return member ? `@${member.name} ` : "";
 }

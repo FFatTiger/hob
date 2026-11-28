@@ -10,7 +10,7 @@ import { fileIcon } from "../file-icons.ts";
 import { Icon } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { Avatar } from "../sprites.tsx";
-import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
+import { applyMention, filterMembers, groupSuggestionPrefix, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
   assistantSessionKey,
   clearScrollTarget,
@@ -658,14 +658,6 @@ function FollowUpStrip({ items, group, prefix, onPick }: { items?: string[]; gro
       {(items ?? []).map((item) => <button className="followup-chip" key={item} role="listitem" onClick={() => onPick(`${prefix ?? ""}${item}`)}>{item}</button>)}
     </div>
   );
-}
-
-function groupSuggestionPrefix(g: GroupSummary | undefined, items: Item[], assistants: AssistantSummary[]): string {
-  if (!g) return "";
-  const last = [...items].reverse().find((item) => item.kind === "assistant") as GroupItem | undefined;
-  if (!last || last.speaker === g.ownerId) return "";
-  const member = assistants.find((assistant) => assistant.id === last.speaker);
-  return member ? `@${member.name} ` : "";
 }
 
 /** 输入框上方的待办和附件都在这里排成一列。 */

@@ -224,6 +224,33 @@ describe("show_assistant", () => {
 });
 
 describe("show_group", () => {
+  it("非主助手群主在群和话题会话中获得 show_group，仅能查看本群与所属话题", async () => {
+    const { hob, group } = setup();
+    try {
+      const { groups } = hob.runtime;
+      groups.update(group.id, { ownerId: "ops" });
+      const current = groups.createTopic(group.id, "当前话题", "user");
+      const previous = groups.createTopic(group.id, "上次交付", "user");
+      say(hob, previous.id, "第一版已交付");
+
+      // 群主会话里包含 show_group，普通成员不包含
+      const ownerSession = await hob.runtime.router.ensure("ops", { groupId: current.id });
+      expect(ownerSession.session!.getActiveToolNames()).toContain("show_group");
+      const memberSession = await hob.runtime.router.ensure("write", { groupId: current.id });
+      expect(memberSession.session!.getActiveToolNames()).not.toContain("show_group");
+
+      const show = (args: Record<string, unknown>) => run(hob, "ops", "show_group", args, current.id);
+      const listed = said(await show({})).split("\n");
+      expect(listed).toEqual([expect.stringContaining(group.name), "共 1 个"]);
+      expect(said(await show({ groupId: previous.id }))).toContain("第一版已交付");
+      const other = groups.create({ name: "另一组", purpose: "独立工作", ownerId: "hob", members: ["hob"] });
+      expect((await show({ groupId: other.id })).isError).toBe(true);
+      expect((await show({ groupId: groups.createTopic(other.id, "另一话题", "user").id, query: "交付" })).isError).toBe(true);
+      // 非群主成员即使直接调用也被拒绝
+      expect((await run(hob, "write", "show_group", {}, current.id)).isError).toBe(true);
+    } finally { hob.close(); }
+  });
+
   it("列出全部群，带群主、成员和进行中的话题数；query 按群名、成员和话题名找", async () => {
     const { hob, group } = setup();
     try {

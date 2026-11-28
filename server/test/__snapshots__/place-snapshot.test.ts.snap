@@ -961,7 +961,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看群。不填 groupId，列出全部群，每个一行：名字、id、群主、成员、进行中的话题数；填了，查看这个群的详情：职责、话题（进行中的和已关闭的）和消息。填话题 id 就查看这个话题。",
+      "description": "查看本群及其话题的历史。不填 groupId 时列出本群；填本群或所属话题的 id 时查看详情和消息。",
       "name": "show_group",
       "params": [
         "groupId",
@@ -2383,7 +2383,7 @@ html 只写正文的 HTML 片段（不含 <html>、<head>、<body>），标题�
       ],
     },
     {
-      "description": "查看群。不填 groupId，列出全部群，每个一行：名字、id、群主、成员、进行中的话题数；填了，查看这个群的详情：职责、话题（进行中的和已关闭的）和消息。填话题 id 就查看这个话题。",
+      "description": "查看本群及其话题的历史。不填 groupId 时列出本群；填本群或所属话题的 id 时查看详情和消息。",
       "name": "show_group",
       "params": [
         "groupId",

@@ -284,8 +284,9 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
     {
       name: "show_group",
       label: "查看群",
-      description:
-        "查看群。不填 groupId，列出全部群，每个一行：名字、id、群主、成员、进行中的话题数；填了，查看这个群的详情：职责、话题（进行中的和已关闭的）和消息。填话题 id 就查看这个话题。",
+      description: groupId && !primary
+        ? "查看本群及其话题的历史。不填 groupId 时列出本群；填本群或所属话题的 id 时查看详情和消息。"
+        : "查看群。不填 groupId，列出全部群，每个一行：名字、id、群主、成员、进行中的话题数；填了，查看这个群的详情：职责、话题（进行中的和已关闭的）和消息。填话题 id 就查看这个话题。",
       parameters: Type.Object({
         groupId: Type.Optional(Type.String({ description: "可选，群或话题的 id" })),
         query: Type.Optional(Type.String({ description: "可选，关键词。不填 groupId 时按群名、职责、成员和话题名找群；填了 groupId 时在这个群和它的话题的消息里找" })),
@@ -294,9 +295,12 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
       execute: async (_id, params: any) => {
         const query = String(params.query ?? "").trim();
         const id = String(params.groupId ?? "").trim();
+        const current = groupId && !primary ? store.group(groupId) : undefined;
+        const host = current?.parentId ? store.group(current.parentId) : current;
+        if (groupId && !primary && (!host || host.ownerId !== assistantId)) return fail("只有群主可以查看本群历史。");
         if (!id) {
           const needle = query.toLowerCase();
-          const all = store.groups().filter((group) => !group.parentId);
+          const all = host ? [host] : store.groups().filter((group) => !group.parentId);
           const listed = all.filter((group) => {
             if (!needle) return true;
             const topics = runtime.groups.topicsOf(group.id).map((topic) => topic.name);
@@ -311,7 +315,9 @@ export function buildAdminTools(runtime: HobRuntime, assistantId: string, place?
           });
           return ok([...rows, pageHint(page, listed.length, pages, "个")].join("\n"));
         }
-        const group = store.group(id);
+        const group = host && id !== host.id
+          ? runtime.groups.topicsOf(host.id).find((topic) => topic.id === id)
+          : store.group(id);
         if (!group) return fail(`没有这个群：${id}`);
         const timezoneText = timezone;
         // 给了关键词：在这个群和它的话题的消息里找，新的在前

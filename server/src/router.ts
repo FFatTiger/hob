@@ -191,8 +191,11 @@ const GROUP_PRIMARY_TOOL_NAMES = new Set([
   "show_assistant", "show_group", "create_assistant", "update_assistant", "create_group", "update_group", "manage_topic",
 ]);
 
-function groupTool(name: string, primary: boolean): boolean {
-  return GROUP_TOOL_NAMES.has(name) || (primary && GROUP_PRIMARY_TOOL_NAMES.has(name)) ||
+/** 群里另外给群主的只读工具：非主助手当群主时也需要查本群历史话题。 */
+const GROUP_OWNER_TOOL_NAMES = new Set(["show_group"]);
+
+function groupTool(name: string, primary: boolean, groupOwner = false): boolean {
+  return GROUP_TOOL_NAMES.has(name) || (primary && GROUP_PRIMARY_TOOL_NAMES.has(name)) || (groupOwner && GROUP_OWNER_TOOL_NAMES.has(name)) ||
     Object.values(MEMORY_TOOL_PATTERNS).flat().some((pattern) => pattern.endsWith("*") ? name.startsWith(pattern.slice(0, -1)) : name === pattern);
 }
 
@@ -911,7 +914,8 @@ export class RouterManager {
       onCardError: (pluginId, message) => this.addPluginCardError(assistant.id, place, message),
     });
     const availableToolNames = [...new Set([...directToolNames, ...customTools.map((tool) => tool.name)])];
-    const allowedTools = place.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary)) : availableToolNames;
+    const isGroupOwner = this.isGroupOwner(place.groupId, assistant.id);
+    const allowedTools = place.groupId ? availableToolNames.filter((name) => groupTool(name, assistant.primary, isGroupOwner)) : availableToolNames;
     const tools = [...customTools.filter((tool) => allowedTools.includes(tool.name)), ...pluginTools];
     allowedTools.push(...pluginTools.map(tool => tool.name));
     const toolSearch = pluginTools.some(tool => tool.exposure === "deferred");
@@ -995,10 +999,18 @@ export class RouterManager {
     this.touch(state);
   }
 
+  private isGroupOwner(groupId: string | undefined, assistantId: string): boolean {
+    if (!groupId) return false;
+    const current = this.store.group(groupId);
+    const host = current?.parentId ? this.store.group(current.parentId) : current;
+    return host?.ownerId === assistantId;
+  }
+
   private async refreshTools(state: RouterState): Promise<void> {
     state.knowledgeNames = (await boundKnowledge(this.runtime, state.assistantId)).map((collection) => collection.name);
     const primary = this.store.assistant(state.assistantId)?.primary === true;
-    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.place.groupId || name === "tool_search" || state.toolLabels?.has(name) || groupTool(name, primary)));
+    const isGroupOwner = this.isGroupOwner(state.place.groupId, state.assistantId);
+    const names = state.session!.getActiveToolNames().filter((name) => name !== "search_knowledge" && (!state.place.groupId || name === "tool_search" || state.toolLabels?.has(name) || groupTool(name, primary, isGroupOwner)));
     if (state.knowledgeNames.length) names.push("search_knowledge");
     refreshSystemPrompt(state.session!, names);
   }

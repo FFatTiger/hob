@@ -11,6 +11,7 @@ import { Icon } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { Avatar } from "../sprites.tsx";
 import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
+import { groupThinkingText } from "../group-thinking.ts";
 import {
   assistantSessionKey,
   expandPanel,
@@ -410,11 +411,12 @@ function GroupThinking({ g }: { g: GroupSummary }) {
       {speaking.map((id) => {
         const m = s.assistants.find((a) => a.id === id);
         if (!m) return null;
+        const activity = s.groupActivity[g.id]?.[id];
         return (
           <div className="hov think" key={id}>
             <div className="activity-line" role="status">
-              <Avatar sprite={m.sprite} prop={m.prop} size={40} free motion={s.groupActivity[g.id]?.[id]?.state === "tool" ? "work" : "think"} />
-              <span className="activity-shimmer">{t("{name} 正在思考…", { name: sendName(m.name) })}</span>
+              <Avatar sprite={m.sprite} prop={m.prop} size={40} free motion={activity?.state === "tool" ? "work" : "think"} />
+              <span className="activity-shimmer">{groupThinkingText(sendName(m.name), activity)}</span>
             </div>
           </div>
         );

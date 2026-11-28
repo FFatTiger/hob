@@ -64,7 +64,7 @@ Install tool plugins from the marketplace—starting with GitHub, Cloudflare, Gm
 - **Passwords**: a built-in local vault, or Bitwarden. When a site needs a login, Hob checks the address and, once you approve, fills the username and password into the cloud desktop page itself, so the password never passes through the assistant. A site you have not saved yet takes one entry on a card.
 - **Cloud desktop** (optional): a browser for each assistant; a site you sign in to in one is signed in for all of them. You can watch or take over.
 - **Project folders**: give a group, topic or assistant a project folder when you create it. Work there starts in that folder and reads the project's `AGENTS.md`; jobs run in it, or in a subfolder such as a worktree so several can work in parallel.
-- **Favorites and chat search**: favorite a message to keep a result or an address at hand, search every conversation from the sidebar, and let assistants look up past chats themselves.
+- **Favorites, search and export**: favorite a message to keep a result or an address at hand; press ⌘K (Ctrl K) to jump to any assistant, group, topic or job and search every conversation; export a conversation as Markdown; assistants can look up past chats themselves.
 - **Usage**: requests, tokens and estimated cost by model and by assistant.
 
 ## Quick start

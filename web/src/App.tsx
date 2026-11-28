@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "re
 import { t } from "../../shared/i18n.ts";
 import { AssistantMenu } from "./components/AssistantMenu.tsx";
 import { Chat, ChatPage } from "./components/Chat.tsx";
+import { CommandPalette } from "./components/CommandPalette.tsx";
 import { DropFiles } from "./components/DropFiles.tsx";
 import { FilePreviewOverlay } from "./components/FilePreview.tsx";
 import { JobOverlay } from "./components/JobDetail.tsx";
@@ -208,6 +209,7 @@ export function App() {
         <SettingsPage narrow={narrow} leaving={settings.leaving} />
         {/* 设置 → 工作 → 查看全部任务：任务记录直接盖在设置页上 */}
         {narrow ? mobileLayers : <><JobOverlay /><FilePreviewOverlay /></>}
+        <CommandPalette />
         {drop}
         {toast}
         {pushPrompt}
@@ -216,8 +218,8 @@ export function App() {
     );
   }
 
-  if (s.page === "stars") return <><Stars narrow={narrow} />{toast}{pushPrompt}{loginOverlay}</>;
-  if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} />{toast}{pushPrompt}{loginOverlay}</>;
+  if (s.page === "stars") return <><Stars narrow={narrow} /><CommandPalette />{toast}{pushPrompt}{loginOverlay}</>;
+  if (plugins.mounted) return <><Plugins narrow={narrow} leaving={plugins.leaving} /><CommandPalette />{toast}{pushPrompt}{loginOverlay}</>;
 
   if (knowledge.mounted) {
     return (
@@ -225,6 +227,7 @@ export function App() {
         {/* 知识库自己能拖文件进分类，这里不接管，免得一次拖放传两份 */}
         <Knowledge narrow={narrow} leaving={knowledge.leaving} />
         {narrow ? mobileLayers : null}
+        <CommandPalette />
         {toast}
         {pushPrompt}
         {loginOverlay}
@@ -308,6 +311,7 @@ export function App() {
         ))}
       </div>
       <AssistantMenu />
+      <CommandPalette />
       {s.offline ? <div className="toast">{s.offline}</div> : null}
       {drop}
       {toast}

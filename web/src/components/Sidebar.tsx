@@ -9,6 +9,7 @@ import { HistoryResults } from "./HistoryResults.tsx";
 import { HomeSections, pinLayout, Pin } from "./HomeSections.tsx";
 import { GroupPin } from "./Groups.tsx";
 import { PlusButton } from "./GroupCreate.tsx";
+import { CMDK_SHORTCUT, triggerCommandPalette } from "./CommandPalette.tsx";
 import { usePinDrag } from "./PinDrag.ts";
 import { UpdateDot, availableVersion } from "./SettingsParts.tsx";
 
@@ -26,6 +27,17 @@ export function Sidebar() {
         <div className="search">
           <Icon name="search" size={15} />
           <input value={s.query} placeholder={t("搜索对话和消息")} onChange={(e) => setQuery(e.target.value)} />
+          {!s.query ? (
+            <button
+              type="button"
+              className="search-kbd"
+              title={t("快速跳转")}
+              aria-label={t("快速跳转")}
+              onClick={triggerCommandPalette}
+            >
+              {CMDK_SHORTCUT}
+            </button>
+          ) : null}
         </div>
         {s.sel || s.gsel ? <button className="hob-icon-btn" title={t("收起左栏")} aria-label={t("收起左栏")} onClick={toggleSideCollapsed}><Icon name="panel" size={18} style={{ transform: "scaleX(-1)" }} /></button> : null}
         <button className={`hob-icon-btn side-home${!s.sel && !s.gsel ? " on" : ""}`} title={t("首页")} onClick={goHome}>

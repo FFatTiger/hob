@@ -537,4 +537,9 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "跟随助手（{name}）": "Follows assistant ({name})",
   "前往话题": "Open topic",
   "{source} 交回：{text}": "{source} reported back: {text}",
+  "快速跳转": "Quick jump",
+  "导航": "Navigation",
+  "主题": "Theme",
+  "搜索助手、群、话题、任务或切换主题…": "Search assistants, groups, topics, jobs, or switch theme…",
+  "没有匹配的结果": "No matching results",
 };

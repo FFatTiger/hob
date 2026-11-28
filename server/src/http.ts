@@ -62,13 +62,11 @@ import { searchHistory } from "./history.ts";
 import { applyNetworkProxy } from "./network-proxy.ts";
 import { readLoginAuto, removeLoginAuto } from "./login-auto.ts";
 import { credentialUriText, normalizeCredentialUris } from "./uri-match.ts";
-import { cardHistoryLine } from "./cards.ts";
 import {
   formatConversationMarkdown,
+  itemsToExportMessages,
   safeExportFilename,
-  type ExportConversationMessage,
 } from "../../shared/export-markdown.ts";
-import { attachmentName } from "../../shared/media.ts";
 
 const COOKIE = "hob";
 const THIRTY_DAYS = 30 * 24 * 3600;
@@ -1310,94 +1308,17 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     }
   };
 
-  const formatApprovalExport = (approvalId: string): string | null => {
-    const approval = store.approval(approvalId);
-    if (!approval) return null;
-    const parts = [approval.title, approval.detail].filter(Boolean);
-    if (approval.status === "answered") {
-      const answer = approval.answerText
-        || approval.options.find((opt) => opt.key === approval.chosen)?.label
-        || approval.answers?.map((ans, idx) => {
-          const q = approval.questions?.[idx];
-          const picked = ans.text || q?.options.find((opt) => opt.key === ans.key)?.label || ans.key;
-          return q ? `${q.title}：${picked}` : picked;
-        }).filter(Boolean).join("\n");
-      if (answer) parts.push(`${t("已回答")}：${answer}`);
-    }
-    return parts.join("\n\n") || null;
-  };
-
-  const toExportMessages = (
-    items: (import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem)[],
-    defaultAssistantName: string,
-  ): ExportConversationMessage[] => {
-    const speakerName = (item: import("../../shared/types.ts").Item | import("../../shared/types.ts").GroupItem, fallback: string) => {
-      if (!("speaker" in item) || !item.speaker) return fallback;
-      return item.speaker === "user" ? t("用户") : (store.assistant(item.speaker)?.name ?? item.speaker);
-    };
-    return items.flatMap((item): ExportConversationMessage[] => {
-      if (item.kind === "job") {
-        const job = store.job(item.jobId);
-        if (!job) return [];
-        const owner = store.assistant(job.assistantId)?.name ?? defaultAssistantName;
-        const body = [job.title, job.summary || job.statusReason].filter(Boolean).join("\n\n");
-        if (!body) return [];
-        return [{ speaker: `${owner} · ${t("任务")}`, at: formatExportTime(item.at), text: body }];
-      }
-      if (item.kind === "card") {
-        const card = store.card(item.cardId);
-        if (!card) return [];
-        return [{
-          speaker: speakerName(item, defaultAssistantName),
-          at: formatExportTime(item.at),
-          text: cardHistoryLine(card.card),
-        }];
-      }
-      if (item.kind === "file") {
-        return [{
-          speaker: speakerName(item, defaultAssistantName),
-          at: formatExportTime(item.at),
-          text: item.meta ?? "",
-          files: [item.name],
-        }];
-      }
-      if (item.kind === "image") {
-        if (item.status === "pending") return [];
-        const files = item.status === "done" && item.path ? [attachmentName(item.path)] : undefined;
-        const text = item.status === "failed"
-          ? (item.error ? `${t("图片生成失败")}：${item.error}` : t("图片生成失败"))
-          : (item.prompt ? `${t("图片")}：${item.prompt}` : t("图片"));
-        return [{
-          speaker: speakerName(item, defaultAssistantName),
-          at: formatExportTime(item.at),
-          text,
-          ...(files ? { files } : {}),
-        }];
-      }
-      if (item.kind === "question") {
-        const text = formatApprovalExport(item.approvalId);
-        if (!text) return [];
-        return [{
-          speaker: speakerName(item, defaultAssistantName),
-          at: formatExportTime(item.at),
-          text,
-        }];
-      }
-      if (item.kind !== "user" && item.kind !== "assistant") return [];
-      const files = item.kind === "user" && item.files?.length ? item.files.map(attachmentName) : undefined;
-      if (!item.text.trim() && !files?.length) return [];
-      const fallbackSpeaker = item.kind === "user"
-        ? (item.from ? item.from.name : t("用户"))
-        : defaultAssistantName;
-      return [{
-        speaker: speakerName(item, fallbackSpeaker),
-        at: formatExportTime(item.at),
-        text: item.text,
-        ...(item.quote?.text ? { quote: item.quote.text } : {}),
-        ...(files ? { files } : {}),
-      }];
-    });
-  };
+  const exportContext = (defaultAssistantName: string) => ({
+    defaultAssistantName,
+    assistantName: (id: string) => store.assistant(id)?.name,
+    formatTime: formatExportTime,
+    job: (id: string) => store.job(id),
+    approval: (id: string) => store.approval(id),
+    card: (id: string) => store.card(id),
+    delegation: (id: string) => store.delegation(id),
+    draft: (id: string) => store.draft(id),
+    topic: (id: string) => store.group(id) ?? store.assistantTopicById(id),
+  });
 
   app.get("/api/assistants/:id/items", (c) => {
     const id = c.req.param("id");
@@ -1421,7 +1342,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
       }
     }
     const allItems = router.allItems(id, topic ? { topicId: topic.id } : undefined);
-    const messages = toExportMessages(allItems, assistant.name);
+    const messages = itemsToExportMessages(allItems, exportContext(assistant.name));
     const title = topic ? `${assistant.name} · ${topic.name}` : assistant.name;
     const subtitle = topic ? (topic.closeNote || assistant.duty || undefined) : (assistant.duty || undefined);
     const now = new Date();
@@ -1970,7 +1891,7 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     if (!group) return c.json({ error: "群不存在" }, 404);
     const parent = group.parentId ? store.group(group.parentId) : undefined;
     const ownerName = store.assistant(group.ownerId)?.name ?? group.ownerId;
-    const messages = toExportMessages(runtime.groups.timeline(id), ownerName);
+    const messages = itemsToExportMessages(runtime.groups.timeline(id), exportContext(ownerName));
     const title = parent ? `${parent.name} · ${group.name}` : group.name;
     const subtitle = parent ? (group.closeNote || parent.purpose || undefined) : (group.purpose || undefined);
     const now = new Date();

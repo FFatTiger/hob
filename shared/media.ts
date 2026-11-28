@@ -19,6 +19,6 @@ export function isImagePath(path: string | null | undefined): boolean {
 
 /** 上传的附件存成 u-xxxxxx-原名（server 的 /api/uploads），给人看时去掉前面的编号。 */
 export function attachmentName(path: string): string {
-  const base = path.split("/").pop() ?? path;
+  const base = path.split(/[/\\]/).pop() ?? path;
   return base.replace(/^u-[a-z0-9]{6}-/, "");
 }

@@ -9,11 +9,12 @@ import { jobStatusIcon } from "./status-meta.tsx";
 import { DetailRow } from "./DetailRow.tsx";
 import { groupSidebarFiles, routineSummary, sidebarInfoValues } from "../sidebar-data.ts";
 import { assistantSessionKey, loadAssistantSkills, loadAssistantTopicConfig, loadGroupProfile, loadSidebarCollections, loadSidebarFiles, loadSidebarJobs, openFilePreview, openJob, openPlugins, openSidebarPage, useApp } from "../store.ts";
+import { exportConversationMarkdown } from "../download.ts";
 import { fmtBytes, fmtDuration, fmtElapsed, fmtWhen } from "../util.ts";
 
 function LoadingRow() { return <div className="sidebar-loading" role="status"><DelayedText text={t("正在读取…")} /></div>; }
 
-export function PanelRootDetails({ groupId, topicId, part, desktopRow, modelsRow, replyModeRow }: { groupId?: string; topicId?: string; part?: "info" | "tabs"; desktopRow?: ReactNode; modelsRow?: ReactNode; replyModeRow?: ReactNode } = {}) {
+export function PanelRootDetails({ groupId, topicId, part, desktopRow, modelsRow, replyModeRow, exportable = false }: { groupId?: string; topicId?: string; part?: "info" | "tabs"; desktopRow?: ReactNode; modelsRow?: ReactNode; replyModeRow?: ReactNode; exportable?: boolean } = {}) {
   const s = useApp();
   const aid = groupId ?? panelAssistant(s.panelStack, s.sel);
   const currentGroup = groupId ? s.groups.find((item) => item.id === groupId) : undefined;
@@ -29,6 +30,7 @@ export function PanelRootDetails({ groupId, topicId, part, desktopRow, modelsRow
   const skills = s.assistantSkills[skillsId];
   // 页签的键不跟语言走，显示的标签渲染时再翻
   const [tab, setTab] = useState<"jobs" | "files">("jobs");
+  const [exporting, setExporting] = useState(false);
   const [collectionsError, setCollectionsError] = useState("");
   const [collectionsLoading, setCollectionsLoading] = useState(!s.knowledge.collectionsLoaded);
   const jobsPage = s.sidebarJobs?.[cacheKey];
@@ -79,6 +81,24 @@ export function PanelRootDetails({ groupId, topicId, part, desktopRow, modelsRow
       <button onClick={() => openSidebarPage(isTopic || isAssistantTopic ? "topicRules" : "rules", groupId, topicId)}><Icon name="rule" size={15} /><span>{t("规则")}</span><small>{groupId && groupProfile?.error ? t("加载失败") : groupId && !groupProfile?.value ? <DelayedText text={t("正在加载…")} /> : isAssistantTopic && topicConfig?.error ? t("加载失败") : isAssistantTopic && !topicConfig?.value ? <DelayedText text={t("正在加载…")} /> : values.rules}</small><b>›</b></button>
       {modelsRow}
       {replyModeRow}
+      {exportable ? (
+        <button
+          type="button"
+          disabled={exporting}
+          onClick={() => {
+            if (exporting) return;
+            setExporting(true);
+            const target = groupId
+              ? { kind: "group" as const, id: groupId }
+              : { kind: "assistant" as const, id: aid, ...(topicId ? { topicId } : {}) };
+            void exportConversationMarkdown(target).finally(() => setExporting(false));
+          }}
+        >
+          <Icon name={exporting ? "spin" : "dl"} size={15} className={exporting ? "spin" : undefined} />
+          <span>{t("导出 Markdown")}</span>
+          {exporting ? <small>{t("正在导出…")}</small> : null}
+        </button>
+      ) : null}
     </div> : null}
     {part !== "info" ? <>
     <div className="sidebar-tabs"><div className="seg" style={{ "--seg-count": 2, "--seg-index": tab === "jobs" ? 0 : 1 } as React.CSSProperties}>{([{ key: "jobs", label: t("任务") }, { key: "files", label: t("文件") }] as const).map(({ key, label }) => <button key={key} className={tab === key ? "on" : ""} onClick={() => setTab(key)}>{label}</button>)}</div></div>

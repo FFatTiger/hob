@@ -34,6 +34,7 @@ import {
 import { cronText, fmtWhen } from "../util.ts";
 import { GroupCluster } from "./Groups.tsx";
 import { JOB_STATUS } from "./status-meta.tsx";
+import { exportConversationMarkdown } from "../download.ts";
 
 export const CMDK_EVENT = "hob:open-cmdk";
 
@@ -84,7 +85,7 @@ function matchesWords(words: string[], label: string, keywords: string): boolean
 
 export function buildLocalPaletteItems(
   s: Pick<State, "assistants" | "assistantTopics" | "groups" | "jobs" | "routines" | "theme" | "page">
-    & Partial<Pick<State, "sel" | "gsel" | "groupPrefs" | "approvals" | "sideCollapsed" | "collapsed">>,
+    & Partial<Pick<State, "sel" | "gsel" | "tsel" | "groupPrefs" | "approvals" | "sideCollapsed" | "collapsed">>,
   rawQuery: string,
 ): PaletteItem[] {
   const q = rawQuery.trim().toLocaleLowerCase();
@@ -239,8 +240,32 @@ export function buildLocalPaletteItems(
   }
 
   const inChat = s.page === "main" && Boolean(s.sel || s.gsel);
+  const activeGroup = s.page === "main" && s.gsel ? groups.find((g) => g.id === s.gsel) : undefined;
+  const activeAssistant = s.page === "main" && !activeGroup && s.sel ? assistants.find((a) => a.id === s.sel) : undefined;
+  const activeTopic = activeAssistant && s.tsel ? assistantTopics.find((item) => item.id === s.tsel && item.assistantId === activeAssistant.id) : undefined;
+  const activeParent = activeGroup?.parentId ? groups.find((item) => item.id === activeGroup.parentId) : undefined;
+  const activeLabel = activeGroup
+    ? (activeParent ? `${activeParent.name} · ${activeGroup.name}` : activeGroup.name)
+    : activeAssistant
+      ? (activeTopic ? `${activeAssistant.name} · ${activeTopic.name}` : activeAssistant.name)
+      : undefined;
+
   const commandGroup = t("命令");
   const commands: Omit<PaletteItem, "group">[] = [
+    ...(activeGroup || activeAssistant ? [{
+      id: "cmd:export-markdown",
+      label: t("导出当前对话"),
+      detail: activeLabel,
+      keywords: `export markdown ${activeLabel ?? ""}`,
+      icon: <span className="cmdk-ico"><Icon name="dl" size={15} /></span>,
+      run: () => {
+        void exportConversationMarkdown(
+          activeGroup
+            ? { kind: "group", id: activeGroup.id }
+            : { kind: "assistant", id: activeAssistant!.id, ...(activeTopic ? { topicId: activeTopic.id } : {}) },
+        );
+      },
+    }] : []),
     {
       id: "cmd:home",
       label: t("返回首页"),

@@ -70,10 +70,9 @@ import { knowledgeGroup, type KnowledgeCollection, type KnowledgeEntry } from ".
 import type { PluginLoginView, PluginUpdate, PluginView } from "../../shared/types.ts";
 import type { AssistantSkill } from "../../shared/skills.ts";
 import { ApiError, type HobApi } from "./api.ts";
-import { currentLocale, t } from "../../shared/i18n.ts";
+import { currentLocale } from "../../shared/i18n.ts";
 import { allowAlwaysRuleText, matchesRememberRule } from "../../shared/rules.ts";
-import { formatConversationMarkdown, safeExportFilename } from "../../shared/export-markdown.ts";
-import { attachmentName } from "../../shared/media.ts";
+import { formatConversationMarkdown, itemsToExportMessages, safeExportFilename } from "../../shared/export-markdown.ts";
 import { normalizeThinkingMap, thinkingPlan } from "../../shared/thinking.ts";
 import { newerPluginVersion } from "../../shared/plugin-version.ts";
 import { DOC_REPORT_CARD, GALLERY, galleryRecords } from "./mock-cards-gallery.ts";
@@ -4372,25 +4371,25 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const topic = topicId ? db.assistantTopics.find((item) => item.id === topicId && item.assistantId === assistantId) : undefined;
       if (topicId && !topic) throw new ApiError(404, "话题不存在");
       const key = topic ? `${assistantId}@${topic.id}` : assistantId;
-      const messages = (db.items[key] ?? []).flatMap((item) => {
-        if (item.kind !== "user" && item.kind !== "assistant") return [];
-        const files = item.kind === "user" && item.files?.length ? item.files.map(attachmentName) : undefined;
-        if (!item.text.trim() && !files?.length) return [];
-        return [{
-          speaker: item.kind === "user" ? (item.from ? item.from.name : t("用户")) : a.name,
-          at: item.at.slice(0, 19).replace("T", " "),
-          text: item.text,
-          ...(item.quote?.text ? { quote: item.quote.text } : {}),
-          ...(files ? { files } : {}),
-        }];
+      const messages = itemsToExportMessages(db.items[key] ?? [], {
+        defaultAssistantName: a.name,
+        assistantName: (id) => db.assistants.find((item) => item.id === id)?.name,
+        formatTime: (iso) => iso.slice(0, 19).replace("T", " "),
+        job: (id) => db.jobs[id],
+        approval: (id) => db.approvals[id],
+        card: (id) => db.cards[id],
+        delegation: (id) => db.delegations[id],
+        draft: (id) => db.drafts[id],
+        topic: (id) => db.groups.find((item) => item.id === id) ?? db.assistantTopics.find((item) => item.id === id),
       });
       const title = topic ? `${a.name} · ${topic.name}` : a.name;
+      const subtitle = topic ? (topic.closeNote || a.duty || undefined) : (a.duty || undefined);
       const now = new Date().toISOString();
       return {
         filename: safeExportFilename(title, now.slice(0, 10)),
         content: formatConversationMarkdown({
           title,
-          ...(a.duty ? { subtitle: a.duty } : {}),
+          ...(subtitle ? { subtitle } : {}),
           exportedAt: now.slice(0, 19).replace("T", " "),
           messages,
         }),
@@ -5074,26 +5073,26 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       const g = db.groups.find((item) => item.id === groupId);
       if (!g) throw new ApiError(404, "群不存在");
       const parent = g.parentId ? db.groups.find((item) => item.id === g.parentId) : undefined;
-      const messages = (db.groupItems[groupId] ?? []).flatMap((item) => {
-        if (item.kind !== "user" && item.kind !== "assistant") return [];
-        const files = item.kind === "user" && item.files?.length ? item.files.map(attachmentName) : undefined;
-        if (!item.text.trim() && !files?.length) return [];
-        const speaker = item.speaker === "user" ? t("用户") : (db.assistants.find((a) => a.id === item.speaker)?.name ?? item.speaker);
-        return [{
-          speaker,
-          at: item.at.slice(0, 19).replace("T", " "),
-          text: item.text,
-          ...(item.quote?.text ? { quote: item.quote.text } : {}),
-          ...(files ? { files } : {}),
-        }];
+      const ownerName = db.assistants.find((a) => a.id === g.ownerId)?.name ?? g.ownerId;
+      const messages = itemsToExportMessages(db.groupItems[groupId] ?? [], {
+        defaultAssistantName: ownerName,
+        assistantName: (id) => db.assistants.find((item) => item.id === id)?.name,
+        formatTime: (iso) => iso.slice(0, 19).replace("T", " "),
+        job: (id) => db.jobs[id],
+        approval: (id) => db.approvals[id],
+        card: (id) => db.cards[id],
+        delegation: (id) => db.delegations[id],
+        draft: (id) => db.drafts[id],
+        topic: (id) => db.groups.find((item) => item.id === id) ?? db.assistantTopics.find((item) => item.id === id),
       });
       const title = parent ? `${parent.name} · ${g.name}` : g.name;
+      const subtitle = parent ? (g.closeNote || parent.purpose || undefined) : (g.purpose || undefined);
       const now = new Date().toISOString();
       return {
         filename: safeExportFilename(title, now.slice(0, 10)),
         content: formatConversationMarkdown({
           title,
-          ...(parent?.purpose || g.purpose ? { subtitle: parent?.purpose || g.purpose } : {}),
+          ...(subtitle ? { subtitle } : {}),
           exportedAt: now.slice(0, 19).replace("T", " "),
           messages,
         }),

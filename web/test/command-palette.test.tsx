@@ -18,6 +18,8 @@ const mocks = vi.hoisted(() => ({
   openSettings: vi.fn(),
   setTheme: vi.fn(),
   goHome: vi.fn(),
+  toggleSideCollapsed: vi.fn(),
+  togglePanel: vi.fn(),
   jumpToHistory: vi.fn(),
   searchHistory: vi.fn(),
 }));
@@ -25,9 +27,15 @@ const mocks = vi.hoisted(() => ({
 const state = vi.hoisted(() => ({
   page: "main" as "main" | "settings" | "knowledge" | "plugins" | "stars",
   theme: "system" as const,
+  sel: undefined as string | undefined,
+  gsel: undefined as string | undefined,
+  sideCollapsed: false,
+  collapsed: false,
   assistants: [] as AssistantSummary[],
   assistantTopics: [] as AssistantTopicSummary[],
   groups: [] as GroupSummary[],
+  groupPrefs: {},
+  approvals: {},
   jobs: {} as Record<string, Job>,
   routines: [] as Routine[],
 }));
@@ -71,6 +79,10 @@ describe("命令面板本地过滤与分组", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     state.page = "main";
+    state.sel = undefined;
+    state.gsel = undefined;
+    state.sideCollapsed = false;
+    state.collapsed = false;
     state.assistants = [
       assistant("hob", "Hob", { primary: true }),
       assistant("book", "读书"),
@@ -146,6 +158,33 @@ describe("命令面板本地过滤与分组", () => {
 
     items.find((i) => i.id === "cmd:theme:dark")!.run();
     expect(mocks.setTheme).toHaveBeenCalledWith("dark");
+  });
+
+  it("命令区列出桌面快捷键提示，并在对话中显示左右栏开关与置顶快捷键", () => {
+    state.sel = "hob";
+    state.assistants = [
+      assistant("hob", "Hob", { primary: true, pinned: true, pinOrder: 0 }),
+      assistant("book", "读书"),
+    ];
+    const items = buildLocalPaletteItems(state, "");
+    const home = items.find((i) => i.id === "cmd:home");
+    const side = items.find((i) => i.id === "cmd:toggle-side");
+    const panel = items.find((i) => i.id === "cmd:toggle-panel");
+    const pins = items.find((i) => i.id === "cmd:pins");
+    const pinnedHob = items.find((i) => i.id === "a:hob");
+
+    expect(home?.meta).toMatch(/⇧⌘H|Ctrl Shift H/);
+    expect(side?.meta).toMatch(/⌘\\|Ctrl \\/);
+    expect(panel?.meta).toMatch(/⌘\.|Ctrl \./);
+    expect(pins?.meta).toBe("Alt 1–9");
+    expect(pinnedHob?.meta).toBe("Alt 1");
+
+    home!.run();
+    expect(mocks.goHome).toHaveBeenCalled();
+    side!.run();
+    expect(mocks.toggleSideCollapsed).toHaveBeenCalled();
+    panel!.run();
+    expect(mocks.togglePanel).toHaveBeenCalled();
   });
 
   it("命中片段组件把关键词包进 mark 高亮", () => {

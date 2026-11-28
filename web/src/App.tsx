@@ -21,7 +21,7 @@ import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, panelAssistant, panelDesk, type GonePage } from "./panel-stack.ts";
-import { backPanel, answer, clearNotice, closeLoginDesktop, goHome, loadDesktopWidth, loadSideWidth, openAssistant, saveDesktopWidth, saveSideWidth, selectGroup, start, tick, togglePanel, toggleSideCollapsed, useApp, type PanelPage } from "./store.ts";
+import { backPanel, answer, clearNotice, closeLoginDesktop, goHome, loadDesktopWidth, loadSideWidth, openAssistant, openGroup, saveDesktopWidth, saveSideWidth, start, tick, togglePanel, toggleSideCollapsed, useApp, type PanelPage } from "./store.ts";
 import { conversations, pinList } from "./home.ts";
 import { isEditableElement, resolveDesktopShortcut } from "./shortcuts.ts";
 import { clampSideWidth, SIDE_WIDTH_DEFAULT, SIDE_WIDTH_MAX, SIDE_WIDTH_MIN, sideWidthForKey } from "./sidebar-resize.ts";
@@ -154,7 +154,7 @@ export function App() {
       const action = resolveDesktopShortcut(event, {
         inChat: s.page === "main" && Boolean(s.sel || s.gsel),
         inEditable: isEditableElement(event.target),
-        hasModal: Boolean(document.querySelector('[aria-modal="true"]')),
+        hasModal: Boolean(document.querySelector('[aria-modal="true"], [role="dialog"]')) || Boolean(s.viewer) || Boolean(s.desktopLogin),
       });
       if (!action) return;
       if (action.kind === "toggle-side") {
@@ -171,13 +171,14 @@ export function App() {
         const picked = pins[action.index];
         if (!picked) return;
         event.preventDefault();
+        if (s.page !== "main") goHome();
         if (picked.kind === "assistant") void openAssistant(picked.id);
-        else void selectGroup(picked.id);
+        else void openGroup(picked.id);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [s.phase, s.page, s.sel, s.gsel, s.assistants, s.assistantTopics, s.groups, s.groupPrefs, s.approvals, narrow]);
+  }, [s.phase, s.page, s.sel, s.gsel, s.viewer, s.desktopLogin, s.assistants, s.assistantTopics, s.groups, s.groupPrefs, s.approvals, narrow]);
 
   // 桌面左栏与云桌面右栏都支持拖拽调宽，双击拖拽线恢复默认
   const sidestack = useRef<HTMLDivElement>(null);
@@ -384,6 +385,7 @@ export function App() {
             onPointerDown={startSideResize}
             onKeyDown={onSideResizeKeyDown}
             onDoubleClick={() => {
+              sidestack.current?.parentElement?.style.removeProperty("--side-width");
               setSideWidth(undefined);
               saveSideWidth(null);
             }}

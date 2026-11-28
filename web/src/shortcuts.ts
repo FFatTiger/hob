@@ -7,6 +7,7 @@ export type DesktopShortcutAction =
 export interface ShortcutEventLike {
   key: string;
   code?: string;
+  keyCode?: number;
   metaKey: boolean;
   ctrlKey: boolean;
   altKey: boolean;
@@ -33,7 +34,7 @@ export function resolveDesktopShortcut(
   event: ShortcutEventLike,
   ctx: ShortcutContext,
 ): DesktopShortcutAction | null {
-  if (event.defaultPrevented || event.isComposing || ctx.hasModal) return null;
+  if (event.defaultPrevented || event.isComposing || event.keyCode === 229 || ctx.hasModal) return null;
   const mod = event.metaKey || event.ctrlKey;
   const key = event.key.toLowerCase();
 

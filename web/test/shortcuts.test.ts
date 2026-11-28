@@ -47,6 +47,16 @@ describe("桌面全局快捷键解析", () => {
   it("弹窗打开、输入法组合态或事件已阻止时全部跳过", () => {
     expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, shiftKey: true, key: "H", code: "KeyH" }, { ...baseCtx, hasModal: true })).toBeNull();
     expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, key: "\\", code: "Backslash", isComposing: true }, baseCtx)).toBeNull();
+    expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, key: "\\", code: "Backslash", keyCode: 229 }, baseCtx)).toBeNull();
     expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, key: ".", code: "Period", defaultPrevented: true }, baseCtx)).toBeNull();
+  });
+
+  it("命令面板打开时快捷键不触发", () => {
+    // 命令面板以 aria-modal="true" 弹窗打开时 hasModal 为 true，所有全局快捷键均应跳过
+    const modalCtx: ShortcutContext = { ...baseCtx, hasModal: true };
+    expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, key: "\\", code: "Backslash" }, modalCtx)).toBeNull();
+    expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, key: ".", code: "Period" }, modalCtx)).toBeNull();
+    expect(resolveDesktopShortcut({ ...baseEvent, metaKey: true, shiftKey: true, key: "H", code: "KeyH" }, modalCtx)).toBeNull();
+    expect(resolveDesktopShortcut({ ...baseEvent, altKey: true, key: "1", code: "Digit1" }, modalCtx)).toBeNull();
   });
 });

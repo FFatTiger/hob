@@ -87,4 +87,22 @@ describe("地址 hash", () => {
     expect(parseRoute("#/chat/planner/topic")).toEqual({ sel: "planner", settings: false, section: null });
     expect(parseRoute("#/chat/planner/topic/%E0")).toEqual({ sel: "planner", settings: false, section: null });
   });
+
+  it("群设置、成员面板、首页任务与设置内任务面板可以往返还原", () => {
+    const gs = routeHash({ page: "main", section: null, sel: null, gsel: "g-1", mobile: "chat", panelStack: [{ kind: "groupSettings", id: "g-1" }] }, false);
+    expect(gs).toBe("#/group/g-1/groupSettings/g-1");
+    expect(parseRoute(gs)).toEqual({ sel: null, group: "g-1", settings: false, section: null, panel: { kind: "groupSettings", id: "g-1" } });
+
+    const mb = routeHash({ page: "main", section: null, sel: null, gsel: "g-1", mobile: "chat", panelStack: [{ kind: "member", id: "writer" }] }, false);
+    expect(mb).toBe("#/group/g-1/member/writer");
+    expect(parseRoute(mb)).toEqual({ sel: null, group: "g-1", settings: false, section: null, panel: { kind: "member", id: "writer" } });
+
+    const rootJobs = routeHash({ page: "main", section: null, sel: null, mobile: "list", panelStack: [{ kind: "jobs" }] }, false);
+    expect(rootJobs).toBe("#/jobs");
+    expect(parseRoute(rootJobs)).toEqual({ sel: null, settings: false, section: null, panel: { kind: "jobs" } });
+
+    const settingsJobs = routeHash({ page: "settings", section: "work", sel: null, mobile: "list", panelStack: [{ kind: "jobs" }] }, false);
+    expect(settingsJobs).toBe("#/settings/work/jobs");
+    expect(parseRoute(settingsJobs)).toEqual({ sel: null, settings: true, section: "work", panel: { kind: "jobs" } });
+  });
 });

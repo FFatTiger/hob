@@ -14,6 +14,7 @@ const { app, listeners, applied } = vi.hoisted(() => ({
     sheet: false,
     panelStack: [] as { kind: string; id?: string }[],
     viewer: null,
+    scrollTarget: null as { key: string; itemId?: string; ready: boolean; nonce: number } | null,
   },
   listeners: [] as (() => void)[],
   applied: [] as string[],
@@ -33,14 +34,20 @@ vi.mock("../src/store.ts", () => ({
   applyRoute: (hash: string) => {
     applied.push(hash);
     const route = parseRoute(hash);
-    if (route.settings) {
-      change({ page: "settings", section: route.section, sel: null, gsel: null, tsel: null, panelStack: [] });
+    if (route.plugins) {
+      change({ page: "plugins", sel: null, gsel: null, tsel: null, panelStack: [], scrollTarget: null });
+    } else if (route.stars) {
+      change({ page: "stars", sel: null, gsel: null, tsel: null, panelStack: [], scrollTarget: null });
+    } else if (route.knowledge) {
+      change({ page: "knowledge", sel: null, gsel: null, tsel: null, panelStack: [], scrollTarget: null });
+    } else if (route.settings) {
+      change({ page: "settings", section: route.section, sel: null, gsel: null, tsel: null, panelStack: route.panel ? [route.panel] : [], scrollTarget: null });
     } else if (route.group) {
-      change({ page: "main", gsel: route.group, sel: null, tsel: null, panelStack: route.panel ? [route.panel] : [] });
+      change({ page: "main", gsel: route.group, sel: null, tsel: null, panelStack: route.panel ? [route.panel] : [], scrollTarget: null });
     } else if (route.sel) {
-      change({ page: "main", sel: route.sel, gsel: null, tsel: route.topic ?? null, panelStack: route.panel ? [route.panel] : [] });
+      change({ page: "main", sel: route.sel, gsel: null, tsel: route.topic ?? null, panelStack: route.panel ? [route.panel] : [], scrollTarget: null });
     } else {
-      change({ page: "main", sel: null, gsel: null, tsel: null, panelStack: [] });
+      change({ page: "main", sel: null, gsel: null, tsel: null, panelStack: route.panel ? [route.panel] : [], scrollTarget: null });
     }
   },
   backPanel: () => undefined,
@@ -148,5 +155,46 @@ describe("桌面浏览器前进 / 后退历史同步", () => {
     await Promise.resolve();
     expect(app).toMatchObject({ page: "main", sel: "writer", tsel: "tp-1", panelStack: [{ kind: "job", id: "j-42" }] });
     expect(urls.length).toBe(lenBefore);
+  });
+
+  it("跳到某条消息后后退回到原来的对话，且插件/收藏/知识库/滚动不压多余历史", async () => {
+    // 回到主对话 #/chat/hob
+    change({ page: "main", sel: "hob", gsel: null, tsel: null, panelStack: [], scrollTarget: null });
+    await Promise.resolve();
+    const afterHob = urls.length;
+    expect(urls.at(-1)).toBe("/#/chat/hob");
+
+    // 仅变化 scrollTarget（同会话内滚动/定位）不压历史
+    change({ scrollTarget: { key: "hob", itemId: "m-1", ready: true, nonce: 1 } });
+    await Promise.resolve();
+    expect(urls.length).toBe(afterHob);
+
+    // 命令面板跳到另一对话的消息：压入新历史，再后退回到 #/chat/hob 并清除 scrollTarget
+    change({ sel: "book", tsel: null, scrollTarget: { key: "book", itemId: "i-bk-old-1", ready: true, nonce: 2 } });
+    await Promise.resolve();
+    expect(urls.at(-1)).toBe("/#/chat/book");
+
+    idx = urls.length - 2;
+    setLocFromUrl(urls[idx]!);
+    onPop({ state: { hobDepth: 0 } });
+    await Promise.resolve();
+    expect(app).toMatchObject({ page: "main", sel: "hob", tsel: null, scrollTarget: null });
+
+    // 插件、收藏、知识库都可前进/后退
+    change({ page: "plugins" });
+    await Promise.resolve();
+    expect(urls.at(-1)).toBe("/#/plugins");
+    change({ page: "stars" });
+    await Promise.resolve();
+    expect(urls.at(-1)).toBe("/#/stars");
+    change({ page: "knowledge" });
+    await Promise.resolve();
+    expect(urls.at(-1)).toBe("/#/knowledge");
+
+    idx = urls.length - 2;
+    setLocFromUrl(urls[idx]!);
+    onPop({ state: { hobDepth: 0 } });
+    await Promise.resolve();
+    expect(app.page).toBe("stars");
   });
 });

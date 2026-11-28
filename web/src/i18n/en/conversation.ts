@@ -27,6 +27,8 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "来自和 {name} 的对话": "From a conversation with {name}",
   "拖动调整云桌面宽度": "Drag to resize the cloud desktop",
   "拖动调整左栏宽度": "Drag to resize the sidebar",
+  "切换置顶对话": "Switch pinned conversation",
+  "跳转到第 1–9 个置顶对话": "Jump to pinned conversation 1–9",
   "任务记录": "Job history",
   "关": "Off",
   "无法读取这个任务。": "Couldn't read this job.",

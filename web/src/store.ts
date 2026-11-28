@@ -1996,9 +1996,19 @@ export function goHome() {
   set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [], sheet: false, viewer: null, mobile: "list", scrollTarget: null });
 }
 
+function loadRoutePanelData(panel: PanelPage | undefined, assistantId: string | null) {
+  if (!panel) return;
+  if (panel.kind === "job") void loadTranscript(panel.id);
+  else if (panel.kind === "jobs" && (!state.worklog || state.worklog.assistantId !== assistantId)) void loadWorklog({ assistantId, status: null });
+  else if (panel.kind === "member") void loadProfile(panel.id);
+}
+
 /** 桌面浏览器后退 / 前进时按地址 hash 还原页面状态。 */
 export function applyRoute(hash: string) {
   const route = parseRoute(hash);
+  scrollNonce += 1;
+  const keepLiveId = route.panel?.kind === "file" ? route.panel.liveId : undefined;
+  for (const page of state.panelStack) if (page.kind === "file" && page.liveId && page.liveId !== keepLiveId) closedLivePages.add(page.liveId);
   if (route.plugins) {
     set({
       page: "plugins",
@@ -2006,41 +2016,73 @@ export function applyRoute(hash: string) {
       pluginPage: route.pluginId ? "installed" : (route.pluginPage ?? "installed"),
       panelStack: [],
       sheet: false,
-      search: false,
       viewer: null,
+      scrollTarget: null,
+      newTopic: null,
+      newTopicBusy: false,
+      newTopicError: null,
     });
     return;
   }
   if (route.stars) {
+    set({ viewer: null, newTopic: null, newTopicBusy: false, newTopicError: null });
     openStars();
     return;
   }
   if (route.knowledge) {
+    set({ viewer: null, newTopic: null, newTopicBusy: false, newTopicError: null });
     openKnowledge();
     return;
   }
   if (route.settings) {
-    set({ page: "settings", section: route.section, sub: null, sheet: false, search: false, panelStack: [], viewer: null });
+    const panelStack = route.panel ? [route.panel] : [];
+    set({ page: "settings", section: route.section, sub: null, sheet: false, panelStack, viewer: null, scrollTarget: null, newTopic: null, newTopicBusy: false, newTopicError: null });
+    loadRoutePanelData(route.panel, null);
     return;
   }
-  if (route.group && state.groups.some((g) => g.id === route.group)) {
-    const panelStack = route.panel ? [route.panel] : [];
-    set({ page: "main", viewer: null, panelStack });
-    void selectGroup(route.group, true, true, true);
-    if (route.panel?.kind === "job") void loadTranscript(route.panel.id);
-    if (route.panel?.kind === "jobs" && !state.worklog) void loadWorklog();
-    return;
-  }
-  if (route.sel && state.assistants.some((a) => a.id === route.sel)) {
-    const panelStack = route.panel ? [route.panel] : [];
-    set({ page: "main", viewer: null, panelStack });
-    if (route.topic && state.assistantTopics.some((item) => item.id === route.topic && item.assistantId === route.sel)) {
-      void openAssistantTopic(route.sel, route.topic, true, true);
-    } else {
-      void select(route.sel, true, true, true);
+  if (route.group) {
+    const group = state.groups.find((g) => g.id === route.group);
+    if (group) {
+      const panelStack = route.panel ? [route.panel] : [];
+      const alreadyHere = state.gsel === route.group && state.groupItems[route.group] !== undefined;
+      if (alreadyHere) {
+        set({ page: "main", viewer: null, sheet: false, panelStack, scrollTarget: null, sideHome: false, newTopic: null, newTopicBusy: false, newTopicError: null });
+        if (group.unread > 0) {
+          set((s) => ({ groups: s.groups.map((x) => (x.id === route.group ? { ...x, unread: 0 } : x)) }));
+          void api.markGroupRead(route.group).catch(() => {});
+        }
+      } else {
+        set({ page: "main", viewer: null, sheet: false, panelStack, scrollTarget: null, newTopic: null, newTopicBusy: false, newTopicError: null });
+        void selectGroup(route.group, true, true, true);
+      }
+      loadRoutePanelData(route.panel, null);
+      return;
     }
-    if (route.panel?.kind === "job") void loadTranscript(route.panel.id);
-    if (route.panel?.kind === "jobs" && !state.worklog) void loadWorklog();
+  }
+  if (route.sel) {
+    const assistant = state.assistants.find((a) => a.id === route.sel);
+    if (assistant) {
+      const topic = route.topic ? state.assistantTopics.find((item) => item.id === route.topic && item.assistantId === route.sel) : undefined;
+      const topicId = topic?.id ?? null;
+      const key = assistantSessionKey(route.sel, topicId);
+      const panelStack = route.panel ? [route.panel] : [];
+      const alreadyHere = state.gsel === null && state.sel === route.sel && (state.tsel ?? null) === topicId && !state.newTopic && state.items[key] !== undefined;
+      if (alreadyHere) {
+        set({ page: "main", viewer: null, sheet: false, panelStack, scrollTarget: null, sideHome: topicId ? false : !assistant.topics });
+        if (topic && topic.unread > 0) markAssistantTopicRead(route.sel, topic.id);
+        else if (!topic && assistant.unread > 0) markAssistantRead(route.sel);
+      } else {
+        set({ page: "main", viewer: null, sheet: false, panelStack, scrollTarget: null, newTopic: null, newTopicBusy: false, newTopicError: null });
+        if (topic) void openAssistantTopic(route.sel, topic.id, true, true);
+        else void select(route.sel, true, true, true);
+      }
+      loadRoutePanelData(route.panel, route.sel);
+      return;
+    }
+  }
+  if (!route.group && !route.sel && route.panel) {
+    set({ page: "main", sel: null, gsel: null, tsel: null, newTopic: null, newTopicBusy: false, newTopicError: null, sideHome: true, panelStack: [route.panel], sheet: false, viewer: null, mobile: "list", scrollTarget: null });
+    loadRoutePanelData(route.panel, null);
     return;
   }
   goHome();

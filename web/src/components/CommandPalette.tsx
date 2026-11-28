@@ -4,6 +4,7 @@ import { Fragment, useEffect, useMemo, useRef, useState, type ReactNode } from "
 import { createPortal } from "react-dom";
 import { t } from "../../../shared/i18n.ts";
 import type { HistoryMatch, Theme } from "../../../shared/types.ts";
+import { conversations, pinList } from "../home.ts";
 import { Icon } from "../icons.tsx";
 import { useLeave } from "../motion.ts";
 import { Avatar } from "../sprites.tsx";
@@ -25,6 +26,8 @@ import {
   select,
   selectGroup,
   setTheme,
+  togglePanel,
+  toggleSideCollapsed,
   useApp,
   type State,
 } from "../store.ts";
@@ -34,10 +37,12 @@ import { JOB_STATUS } from "./status-meta.tsx";
 
 export const CMDK_EVENT = "hob:open-cmdk";
 
+function isMacPlatform(): boolean {
+  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent);
+}
+
 export function cmdkShortcut(): string {
-  return typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/i.test(navigator.platform || navigator.userAgent)
-    ? "⌘K"
-    : "Ctrl K";
+  return isMacPlatform() ? "⌘K" : "Ctrl K";
 }
 
 export function triggerCommandPalette() {
@@ -78,7 +83,8 @@ function matchesWords(words: string[], label: string, keywords: string): boolean
 }
 
 export function buildLocalPaletteItems(
-  s: Pick<State, "assistants" | "assistantTopics" | "groups" | "jobs" | "routines" | "theme" | "page">,
+  s: Pick<State, "assistants" | "assistantTopics" | "groups" | "jobs" | "routines" | "theme" | "page">
+    & Partial<Pick<State, "sel" | "gsel" | "groupPrefs" | "approvals" | "sideCollapsed" | "collapsed">>,
   rawQuery: string,
 ): PaletteItem[] {
   const q = rawQuery.trim().toLocaleLowerCase();
@@ -89,6 +95,12 @@ export function buildLocalPaletteItems(
   const assistantTopics = s.assistantTopics ?? [];
   const jobs = Object.values(s.jobs ?? {});
   const routines = s.routines ?? [];
+  const mac = isMacPlatform();
+  const pins = pinList(conversations(assistants, groups, s.groupPrefs ?? {}, s.approvals ?? {}, assistantTopics), "");
+  const pinShortcut = new Map<string, string>();
+  pins.slice(0, 9).forEach((entry, index) => {
+    pinShortcut.set(`${entry.kind}:${entry.id}`, `Alt ${index + 1}`);
+  });
   const ensureMain = () => {
     if (s.page !== "main") goHome();
   };
@@ -104,6 +116,7 @@ export function buildLocalPaletteItems(
       group: assistantGroup,
       label: a.name,
       detail: a.duty,
+      meta: pinShortcut.get(`assistant:${a.id}`),
       keywords: `${a.duty} ${a.id}`,
       icon: <Avatar sprite={a.sprite} prop={a.prop} size={28} />,
       run: () => {
@@ -122,6 +135,7 @@ export function buildLocalPaletteItems(
       group: groupLabel,
       label: g.name,
       detail: g.purpose || t("{n} 位成员", { n: g.members.length }),
+      meta: pinShortcut.get(`group:${g.id}`),
       keywords: `${g.purpose} ${g.id}`,
       icon: <GroupCluster g={g} assistants={assistants} size={28} />,
       run: () => {
@@ -224,8 +238,52 @@ export function buildLocalPaletteItems(
     if (routineCount >= (searching ? 12 : 6)) break;
   }
 
+  const inChat = s.page === "main" && Boolean(s.sel || s.gsel);
   const commandGroup = t("命令");
   const commands: Omit<PaletteItem, "group">[] = [
+    {
+      id: "cmd:home",
+      label: t("返回首页"),
+      meta: mac ? "⇧⌘H" : "Ctrl Shift H",
+      keywords: "home index back",
+      icon: <span className="cmdk-ico"><Icon name="home" size={15} /></span>,
+      run: () => goHome(),
+    },
+    ...(inChat ? [
+      {
+        id: "cmd:toggle-side",
+        label: s.sideCollapsed ? t("展开左栏") : t("收起左栏"),
+        meta: mac ? "⌘\\" : "Ctrl \\",
+        keywords: "sidebar left toggle collapse expand",
+        icon: <span className="cmdk-ico"><Icon name="panel" size={15} style={{ transform: "scaleX(-1)" }} /></span>,
+        run: () => toggleSideCollapsed(),
+      },
+      {
+        id: "cmd:toggle-panel",
+        label: s.collapsed ? t("展开右栏") : t("收起右栏"),
+        meta: mac ? "⌘." : "Ctrl .",
+        keywords: "panel right toggle collapse expand",
+        icon: <span className="cmdk-ico"><Icon name="panel" size={15} /></span>,
+        run: () => togglePanel(),
+      },
+    ] : []),
+    ...(pins.length > 0 ? [
+      {
+        id: "cmd:pins",
+        label: t("切换置顶对话"),
+        detail: t("跳转到第 1–9 个置顶对话"),
+        meta: "Alt 1–9",
+        keywords: "pin pinned switch jump alt",
+        icon: <span className="cmdk-ico"><Icon name="pin" size={15} /></span>,
+        run: () => {
+          ensureMain();
+          const first = pins[0];
+          if (!first) return;
+          if (first.kind === "assistant") void openAssistant(first.id);
+          else void openGroup(first.id);
+        },
+      },
+    ] : []),
     {
       id: "cmd:new-assistant",
       label: t("新建助手"),
@@ -397,7 +455,7 @@ export function CommandPalette() {
 
   const localItems = useMemo(
     () => (leave.mounted ? buildLocalPaletteItems(s, query) : []),
-    [leave.mounted, s.assistants, s.assistantTopics, s.groups, s.jobs, s.routines, s.theme, s.page, query],
+    [leave.mounted, s.assistants, s.assistantTopics, s.groups, s.groupPrefs, s.approvals, s.jobs, s.routines, s.theme, s.page, s.sel, s.gsel, s.sideCollapsed, s.collapsed, query],
   );
 
   const messageItems = useMemo<PaletteItem[]>(() => {

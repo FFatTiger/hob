@@ -632,6 +632,9 @@ svg.i {
 
 /* app shell */
 .app {
+  --side-max: max(248px, calc(100vw - 420px));
+  --side-w: min(var(--side-width, 296px), var(--side-max));
+  --side-gap: var(--side-w);
   position: fixed;
   inset: 0;
   display: flex;
@@ -639,8 +642,11 @@ svg.i {
   background: var(--bg);
   color: var(--text);
 }
+.app:has(.panelwrap:not(.off):not(.full)) {
+  --side-max: max(248px, calc(100vw - 780px));
+}
 .side {
-  width: var(--side-width, 296px);
+  width: var(--side-w);
   flex: none;
   background: var(--side);
   border-right: 1px solid var(--line);
@@ -3994,7 +4000,7 @@ html:lang(en) .screen .v {
 .panelwrap.wide { width: min(640px, 48vw); }
 /* 专注画面给对话留 420px，并给标题和任务行预留高度。 */
 /* 云桌面展开：默认 720px，用户可以拖（--desk-w）；最宽给对话区留 420px，也不超过画面按 16:10 放满高度时的宽度 */
-.panelwrap.wide.focus { width: max(360px, min(var(--desk-w, 720px), calc(100vw - var(--side-width, 296px) - 420px), calc((100vh - 110px) * 1.6 + 32px))); }
+.panelwrap.wide.focus { width: max(360px, min(var(--desk-w, 720px), calc(100vw - var(--side-gap, 296px) - 420px), calc((100vh - 110px) * 1.6 + 32px))); }
 .panelwrap.resizing { transition: none; }
 .panelwrap.resizing * { user-select: none; }
 .panel-resize { position: absolute; top: 0; bottom: 0; left: -4px; z-index: 5; width: 8px; cursor: col-resize; touch-action: none; }
@@ -4016,8 +4022,8 @@ html:lang(en) .screen .v {
 .focus-job span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .focus-job small { white-space: nowrap; }
 .side-expand { position: absolute; left: 16px; top: 12px; pointer-events: auto; }
-/* 任务、文件打开时的宽度：给左栏（约 300）和对话区（至少 420）留够，剩下的给右栏，360 到 640 之间 */
-.panelwrap.wide.page { width: clamp(360px, calc(100vw - 720px), 640px); }
+/* 任务、文件打开时的宽度：给左栏和对话区（至少 420）留够，剩下的给右栏，360 到 640 之间 */
+.panelwrap.wide.page { width: clamp(360px, calc(100vw - var(--side-gap, 296px) - 420px), 640px); }
 .panelwrap.full { flex: 1; width: auto; min-width: 0; }
 .app.preview-full > .chat { display: none; }
 /* 右栏的页一层层盖上去：只有新页从右边滑进来，下面那页不动、不隐藏；退出时这一页滑出去。
@@ -4027,7 +4033,10 @@ html:lang(en) .screen .v {
 .panel-layer.instant:not(.leaving) { animation: none; }
 .panelwrap.off .panel-layer { box-shadow: -18px 0 48px rgba(0, 0, 0, 0.1); }
 /* 回首页时右栏宽度收到 0，滑出去的任务、文件页保持原来的宽度：跟着变窄的话，长任务的全文每帧都要重新排版 */
-.panelwrap.off .panel-layer.wide { width: clamp(360px, calc(100vw - 720px), 640px); }
+.panelwrap.off .panel-layer.wide { width: clamp(360px, calc(100vw - var(--side-gap, 296px) - 420px), 640px); }
+@media (min-width: 768px) and (max-width: 1040px) {
+  .panelwrap:not(.off):not(.full):not(.wide) { width: clamp(280px, 34vw, 360px); }
+}
 .panel-layer.leaving, .mlayer.leaving { animation: layer-out var(--t-mid) var(--ease-out) forwards; }
 /* 滑出去的层不接点击：盖一层透明的，不用 pointer-events（它会往下继承，长任务几千个节点都得重算样式） */
 .panel-layer.leaving::after, .mlayer.leaving::after { content: ""; position: absolute; inset: 0; z-index: 10; }
@@ -8256,7 +8265,7 @@ button.screen,
 /* 桌面左栏：点进群，群的二级页从右边推进来、首页往左退；返回时二级页滑出 */
 .sidestack {
   position: relative;
-  width: var(--side-width, 296px);
+  width: var(--side-w);
   transition: width var(--t-slow) var(--ease-in);
   flex: none;
   display: flex;
@@ -8283,20 +8292,21 @@ button.screen,
 .side-resize::after {
   content: "";
   position: absolute;
-  top: 12px;
-  bottom: 12px;
-  right: 2px;
+  top: 0;
+  bottom: 0;
+  right: 0;
   width: 2px;
-  border-radius: 2px;
   background: transparent;
   transition: background var(--t-fast);
 }
-.side-resize:hover::after,
+.side-resize:hover::after {
+  background: color-mix(in srgb, var(--text) 20%, transparent);
+}
 .side-resize:focus-visible::after,
 .sidestack.resizing .side-resize::after {
-  background: color-mix(in srgb, var(--accent) 65%, transparent);
+  background: color-mix(in srgb, var(--text) 34%, transparent);
 }
-.app.side-collapsed { --side-width: 0px; }
+.app.side-collapsed { --side-gap: 0px; }
 .app.side-collapsed .sidestack { width: 0; }
 .sidepane {
   display: flex;
@@ -8322,7 +8332,7 @@ button.screen,
   from { transform: translateX(100%); }
 }
 .sidepane.grp > .side {
-  width: 100%;
+  width: var(--side-w);
 }
 .sidepane.grp.still {
   animation: none;

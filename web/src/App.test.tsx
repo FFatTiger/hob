@@ -11,6 +11,8 @@ const state = vi.hoisted(() => ({
 vi.mock("./store.ts", () => ({
   loadDesktopWidth: () => undefined,
   saveDesktopWidth: vi.fn(),
+  loadSideWidth: () => undefined,
+  saveSideWidth: vi.fn(),
   useApp: () => state,
   backPanel: () => { state.panelStack.pop(); }, closePanelPages: vi.fn(), closeSheet: vi.fn(), collapsePanel: vi.fn(),
   fileUrl: (path: string) => path,

@@ -48,6 +48,13 @@ describe("命令面板与消息定位端到端", () => {
     const dialog = page.getByRole("dialog", { name: "快速跳转" });
     await expect.poll(() => dialog.isVisible()).toBe(true);
 
+    // 命令面板打开时，全局快捷键不触发（不折叠左栏、不回首页）
+    const beforeHash = await page.evaluate(() => location.hash);
+    await page.keyboard.press("Control+Backslash");
+    await page.keyboard.press("Control+Shift+H");
+    expect(await page.locator(".app.side-collapsed").count()).toBe(0);
+    expect(await page.evaluate(() => location.hash)).toBe(beforeHash);
+
     // Esc 关闭
     await page.keyboard.press("Escape");
     await expect.poll(() => dialog.isVisible()).toBe(false);
@@ -93,6 +100,12 @@ describe("命令面板与消息定位端到端", () => {
     });
     expect(pos.inVisibleMiddle).toBe(true);
     expect(pos.scrollTop).toBeLessThan(pos.maxTop - 200);
+
+    // 跳到某条消息后，浏览器后退回到原来的对话
+    const jumpedHash = await page.evaluate(() => location.hash);
+    expect(jumpedHash).not.toBe(beforeHash);
+    await page.goBack();
+    await expect.poll(() => page.evaluate(() => location.hash)).toBe(beforeHash);
   }, TIMEOUT);
 
   it("手机：首页搜索入口全屏打开命令面板并能定位较早消息", async () => {

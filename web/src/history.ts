@@ -125,7 +125,10 @@ export function startHistory(narrow: () => boolean = isNarrow) {
     if (!narrow()) {
       popping = true;
       applyRoute?.(location.hash);
-      lastDesktopUrl = location.pathname + location.search + location.hash;
+      const resolved = url();
+      const raw = location.pathname + location.search + location.hash;
+      if (resolved !== raw) history.replaceState({ hobDepth: 0 }, "", resolved);
+      lastDesktopUrl = resolved;
       popping = false;
       return;
     }

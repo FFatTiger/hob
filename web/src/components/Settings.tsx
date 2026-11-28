@@ -118,6 +118,13 @@ import {
 } from "../store.ts";
 import { PageHead, Group, PalettePicker, Seg, LinkRow, SetNavHead, UpdateDot, availableVersion } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
+import {
+  PROVIDER_CHECK_CONCURRENCY,
+  providerFingerprint,
+  reconcileProviderConns,
+  runWithConcurrency,
+  type ProviderConn,
+} from "../provider-check.ts";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
 /** 保存行。lead 放在最左边（测试连接这类），和保存按钮同一行。 */
@@ -888,6 +895,8 @@ function importKeyLabel(key: ProviderImportItem["key"]): string {
   return t("无 Key");
 }
 
+let cachedProviderConns: Record<string, ProviderConn> = {};
+
 /** 设置 → 服务商：三层。服务商列表 → 服务商详情 / 添加服务商 / 从本机导入。 */
 function ProvidersSection() {
   const s = useApp();
@@ -895,8 +904,25 @@ function ProvidersSection() {
   const [view, setView] = useState<ProvidersView | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<Record<string, "connected" | "failed">>({});
-  const connectionSaved = (id: string, status: "connected" | "failed") => setConnectionStatus((current) => ({ ...current, [id]: status }));
+  const [connectionStatus, setConnectionStatus] = useState<Record<string, ProviderConn>>(() => cachedProviderConns);
+  const [testingAll, setTestingAll] = useState(false);
+  const latestProvidersRef = useRef<ProviderView[]>([]);
+
+  const setConn = (updater: (current: Record<string, ProviderConn>) => Record<string, ProviderConn>) => {
+    setConnectionStatus((current) => {
+      const next = updater(current);
+      cachedProviderConns = next;
+      return next;
+    });
+  };
+  const connectionSaved = (id: string, status: "connected" | "failed", ms?: number, providerOverride?: ProviderView) => {
+    const target = providerOverride ?? latestProvidersRef.current.find((provider) => provider.id === id);
+    if (!target) return;
+    setConn((current) => ({
+      ...current,
+      [id]: { status, ...(ms !== undefined ? { ms } : {}), fingerprint: providerFingerprint(target) },
+    }));
+  };
 
   useEffect(() => {
     void loadProviders().then((result) => (result.ok ? setView(result.view) : setLoadError(result.error)));
@@ -907,18 +933,61 @@ function ProvidersSection() {
   }, [sub]);
   useEffect(() => {
     if (!view) return;
-    setConnectionStatus((current) => Object.fromEntries(Object.entries(current).filter(([id]) => view.providers.some((provider) => provider.id === id))));
+    latestProvidersRef.current = view.providers;
+    setConn((current) => reconcileProviderConns(current, view.providers));
   }, [view]);
 
   if (loadError) return <div className="note">{loadError}</div>;
   if (!view) return <Empty>{t("正在读取服务商…")}</Empty>;
 
-  /** 改完回到列表，并给一行提示。 */
-  const done = (next: ProvidersView, message: string) => {
-    if (message.startsWith(t("已导入"))) setConnectionStatus({});
+  /** 改完回到列表，并给一行提示；凭据或配置变动时使旧缓存失效。 */
+  const done = (next: ProvidersView, message: string, verifiedId?: string) => {
+    latestProvidersRef.current = next.providers;
+    if (message.startsWith(t("已导入"))) {
+      setConn(() => ({}));
+    } else {
+      const savedTarget = verifiedId ? next.providers.find((provider) => provider.id === verifiedId) : undefined;
+      setConn((current) => {
+        const reconciled = reconcileProviderConns(current, next.providers, verifiedId ? [verifiedId] : []);
+        if (savedTarget) {
+          reconciled[savedTarget.id] = { status: "connected", fingerprint: providerFingerprint(savedTarget) };
+        }
+        return reconciled;
+      });
+    }
     setView(next);
     setNotice(message);
     closeSub();
+  };
+
+  /** 限并发检测所有已填 Key 的服务商连通性与延迟。 */
+  const testAll = async () => {
+    const targets = view.providers.filter((provider) => provider.keyConfigured);
+    if (testingAll || !targets.length) return;
+    setTestingAll(true);
+    setConn((current) => {
+      const next = { ...current };
+      for (const provider of targets) {
+        next[provider.id] = { status: "testing", fingerprint: providerFingerprint(provider) };
+      }
+      return next;
+    });
+    try {
+      await runWithConcurrency(targets, PROVIDER_CHECK_CONCURRENCY, async (provider) => {
+        const expectedFingerprint = providerFingerprint(provider);
+        const started = performance.now();
+        const body = provider.kind === "builtin"
+          ? { kind: "builtin" as const, id: provider.id }
+          : { kind: "custom" as const, id: provider.id, api: provider.api, baseUrl: provider.baseUrl };
+        const error = await testProviderConnection(body);
+        const ms = Math.max(1, Math.round(performance.now() - started));
+        const latest = latestProvidersRef.current.find((item) => item.id === provider.id);
+        if (!latest || providerFingerprint(latest) !== expectedFingerprint) return;
+        connectionSaved(provider.id, error ? "failed" : "connected", error ? undefined : ms, latest);
+      });
+    } finally {
+      setTestingAll(false);
+    }
   };
 
   /** 改了一个模型的思考档：整份设置换新的（新 revision），这个模型的思考档就地更新。 */
@@ -939,13 +1008,22 @@ function ProvidersSection() {
     );
   };
 
+  const detailConn = sub?.kind === "provider" ? connectionStatus[sub.id]?.status : undefined;
   if (sub?.kind === "provider")
     return (
-      <ProviderDetail id={sub.id} view={view} onView={setView} onSaved={done} onThinking={thinkingSaved} onConnection={connectionSaved} connectionStatus={connectionStatus[sub.id]} />
+      <ProviderDetail
+        id={sub.id}
+        view={view}
+        onView={setView}
+        onSaved={done}
+        onThinking={thinkingSaved}
+        onConnection={connectionSaved}
+        connectionStatus={detailConn === "connected" || detailConn === "failed" ? detailConn : undefined}
+      />
     );
   if (sub?.kind === "addProvider") return <AddProvider view={view} onSaved={done} onConnection={connectionSaved} />;
   if (sub?.kind === "importProviders") return <ImportProviders onSaved={done} />;
-  return <ProvidersHome view={view} notice={notice} connectionStatus={connectionStatus} />;
+  return <ProvidersHome view={view} notice={notice} connectionStatus={connectionStatus} testingAll={testingAll} onTestAll={() => void testAll()} />;
 }
 
 function PluginProviderIcon({ provider, models, size = 32 }: { provider: PluginProviderSummary; models?: readonly { id: string; name?: string }[]; size?: number }) {
@@ -965,24 +1043,38 @@ function PluginProviderIcon({ provider, models, size = 32 }: { provider: PluginP
 }
 
 function pluginProviderStatus(provider: PluginProviderSummary): { cls: string; text: string } {
-  if (!provider.enabled) return { cls: "note", text: t("已停用") };
+  if (!provider.enabled) return { cls: "status-pill provider-status-muted", text: t("已停用") };
   if (provider.error && !provider.loggedIn) {
     return /过期|重新登录|失效|expired|relogin/i.test(provider.error)
-      ? { cls: "provider-status-warn", text: t("需要重新登录") }
-      : { cls: "badline", text: t("出错") };
+      ? { cls: "status-pill provider-status-warn", text: t("需要重新登录") }
+      : { cls: "status-pill provider-status-bad", text: t("出错") };
   }
   if (provider.loggedIn) {
     const isKeyless = provider.pluginId === "zen-free" || provider.activeAccount?.toLowerCase() === "public";
-    return { cls: "provider-status-ok", text: isKeyless ? t("已启用") : t("已登录") };
+    return { cls: "status-pill provider-status-ok", text: isKeyless ? t("已启用") : t("已登录") };
   }
-  return { cls: "provider-status-warn", text: t("需要登录") };
+  return { cls: "status-pill provider-status-warn", text: t("需要登录") };
 }
 
 /** 服务商页：已配置的服务商（整行点进详情）、来自插件的服务商（点进插件页）、添加服务商、从本机导入。 */
-function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView; notice: string | null; connectionStatus: Record<string, "connected" | "failed"> }) {
+function ProvidersHome({
+  view,
+  notice,
+  connectionStatus,
+  testingAll,
+  onTestAll,
+}: {
+  view: ProvidersView;
+  notice: string | null;
+  connectionStatus: Record<string, ProviderConn>;
+  testingAll: boolean;
+  onTestAll: () => void;
+}) {
   const builtinName = (id: string) => view.builtin.find((item) => item.id === id)?.name ?? id;
   const label = (provider: ProviderView) => (provider.kind === "builtin" ? builtinName(provider.id) : provider.name);
   const pluginProviders = view.pluginProviders ?? [];
+  const testableProviders = view.providers.filter((provider) => provider.keyConfigured);
+  const hasBuiltinTestable = testableProviders.some((provider) => provider.kind === "builtin");
 
   return (
     <>
@@ -993,25 +1085,53 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
 
       <ClaudeProviderCard />
       <Group>
-        <div className="lbl">{t("已配置的服务商")}</div>
-        <div className="group-card settings-card providers-list">
-          {view.providers.map((provider) => (
+        <div className="lbl-row">
+          <div className="lbl">{t("已配置的服务商")}</div>
+          {testableProviders.length > 0 ? (
             <button
-              className="list-row setting-row"
-              key={provider.id}
-              onClick={() => openSub({ kind: "provider", id: provider.id, title: label(provider) })}
+              type="button"
+              className="more"
+              disabled={testingAll}
+              title={t("逐个检测已配置 Key 的服务商连通性（内置服务商将发送一次轻量测试请求，可能产生少量费用）")}
+              onClick={onTestAll}
             >
-              <BrandIcon brand={providerBrand(provider.id, label(provider), view.models[provider.id])} />
-              <div className="rmain">
-                <div className="rname">{label(provider)}</div>
-                <div className="rprov">{provider.kind === "builtin" ? t("内置服务商") : t("兼容接口")} · {t("{n} 个模型", { n: view.models[provider.id]?.length ?? 0 })}</div>
-              </div>
-              <span className={provider.keyConfigured && connectionStatus[provider.id] !== "failed" ? (connectionStatus[provider.id] === "connected" ? "provider-status-ok" : "note") : "badline"}>
-                {provider.keyConfigured ? (connectionStatus[provider.id] === "connected" ? t("已连接") : connectionStatus[provider.id] === "failed" ? t("连接失败") : t("未验证")) : t("未填 Key")}
-              </span>
-              <Icon name="chev" size={15} className="rgo" />
+              {testingAll ? t("检测中…") : t("全部检测")}
             </button>
-          ))}
+          ) : null}
+        </div>
+        <div className="group-card settings-card providers-list">
+          {view.providers.map((provider) => {
+            const conn = connectionStatus[provider.id];
+            const pillCls = !provider.keyConfigured || conn?.status === "failed"
+              ? "status-pill provider-status-bad"
+              : conn?.status === "connected"
+                ? "status-pill provider-status-ok"
+                : "status-pill provider-status-muted";
+            const pillText = !provider.keyConfigured
+              ? t("未填 Key")
+              : conn?.status === "testing"
+                ? t("检测中…")
+                : conn?.status === "connected"
+                  ? conn.ms !== undefined ? `${t("已连接")} · ${conn.ms}ms` : t("已连接")
+                  : conn?.status === "failed"
+                    ? t("连接失败")
+                    : t("未验证");
+            return (
+              <button
+                className="list-row setting-row"
+                key={provider.id}
+                onClick={() => openSub({ kind: "provider", id: provider.id, title: label(provider) })}
+              >
+                <BrandIcon brand={providerBrand(provider.id, label(provider), view.models[provider.id])} />
+                <div className="rmain">
+                  <div className="rname">{label(provider)}</div>
+                  <div className="rprov">{provider.kind === "builtin" ? t("内置服务商") : t("兼容接口")} · {t("{n} 个模型", { n: view.models[provider.id]?.length ?? 0 })}</div>
+                </div>
+                <span className={pillCls}>{pillText}</span>
+                <Icon name="chev" size={15} className="rgo" />
+              </button>
+            );
+          })}
           {pluginProviders.map((provider) => {
             const st = pluginProviderStatus(provider);
             return (
@@ -1041,6 +1161,9 @@ function ProvidersHome({ view, notice, connectionStatus }: { view: ProvidersView
             {t("从本机导入")}
           </button>
         </div>
+        {hasBuiltinTestable ? (
+          <div className="note">{t("点击「全部检测」会向已配置 Key 的内置服务商发送一次轻量测试请求，可能产生少量费用。")}</div>
+        ) : null}
         {view.providers.length || pluginProviders.length ? null : (
           <Empty>{t("尚未添加其他服务商。")}</Empty>
         )}
@@ -1130,7 +1253,7 @@ function ProviderDetail({
   id: string;
   view: ProvidersView;
   onView: (view: ProvidersView) => void;
-  onSaved: (view: ProvidersView, message: string) => void;
+  onSaved: (view: ProvidersView, message: string, verifiedId?: string) => void;
   onThinking: (providerId: string, thinking: ModelThinkingView, settings: SettingsFile) => void;
   onConnection: (id: string, status: "connected" | "failed") => void;
   connectionStatus?: "connected" | "failed";
@@ -1185,7 +1308,7 @@ function AddProvider({
   onConnection,
 }: {
   view: ProvidersView;
-  onSaved: (view: ProvidersView, message: string) => void;
+  onSaved: (view: ProvidersView, message: string, verifiedId?: string) => void;
   onConnection: (id: string, status: "connected" | "failed") => void;
 }) {
   const [kind, setKind] = useState<"builtin" | "custom" | null>(null);
@@ -1401,7 +1524,7 @@ function ProviderForm({
 }: {
   view: ProvidersView;
   initial: ProviderDraft;
-  onSaved: (view: ProvidersView, message: string) => void;
+  onSaved: (view: ProvidersView, message: string, verifiedId?: string) => void;
   onView?: (view: ProvidersView) => void;
   onConnection: (id: string, status: "connected" | "failed") => void;
   onThinking: (thinking: ModelThinkingView, settings: SettingsFile) => void;
@@ -1606,8 +1729,7 @@ function ProviderForm({
       setError(result.error);
       return;
     }
-    onConnection(id, "connected");
-    onSaved(result.view, t("已保存"));
+    onSaved(result.view, t("已保存"), id);
   };
 
   const title =

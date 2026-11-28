@@ -8405,3 +8405,51 @@ button.screen,
   color: var(--text2);
 }
 
+/* 设置 → 服务商：分组行标题操作与状态胶囊 */
+.lbl-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 8px;
+}
+.lbl-row .lbl {
+  margin: 0;
+}
+.lbl-row .more {
+  font-size: 13px;
+  color: var(--accent);
+}
+.lbl-row .more:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+.status-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 1.3;
+  white-space: nowrap;
+  flex: none;
+}
+.status-pill.provider-status-ok {
+  background: color-mix(in srgb, var(--ok) 14%, transparent);
+  color: var(--ok);
+}
+.status-pill.provider-status-warn {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+.status-pill.provider-status-bad {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+.status-pill.provider-status-muted {
+  background: color-mix(in srgb, var(--text) 8%, transparent);
+  color: var(--text2);
+}
+

@@ -90,4 +90,8 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "本话题": "This topic",
   "创建时已绑定，不可修改。": "Bound at creation and cannot be changed.",
   "创建时已绑定，群内及所有话题共用此目录，不可修改。": "Bound at creation. Shared by the group and all its topics, and cannot be changed.",
+  "全部检测": "Test all",
+  "检测中…": "Testing…",
+  "逐个检测已配置 Key 的服务商连通性（内置服务商将发送一次轻量测试请求，可能产生少量费用）": "Test connectivity for all providers with a configured key (built-in providers send a lightweight test request and may incur a small charge).",
+  "点击「全部检测」会向已配置 Key 的内置服务商发送一次轻量测试请求，可能产生少量费用。": "Clicking “Test all” sends a lightweight test request to configured built-in providers and may incur a small charge.",
 };

@@ -21,9 +21,10 @@ import { assistantSidebarFor, groupSidebarFor } from "./topics.ts";
 import { useLeave } from "./motion.ts";
 import { applyUpdate } from "./pwa.ts";
 import { gonePages, layerList, pageKey, panelAssistant, panelDesk, type GonePage } from "./panel-stack.ts";
-import { backPanel, answer, clearNotice, closeLoginDesktop, goHome, loadDesktopWidth, openAssistant, saveDesktopWidth, selectGroup, start, tick, togglePanel, toggleSideCollapsed, useApp, type PanelPage } from "./store.ts";
+import { backPanel, answer, clearNotice, closeLoginDesktop, goHome, loadDesktopWidth, loadSideWidth, openAssistant, saveDesktopWidth, saveSideWidth, selectGroup, start, tick, togglePanel, toggleSideCollapsed, useApp, type PanelPage } from "./store.ts";
 import { conversations, pinList } from "./home.ts";
 import { isEditableElement, resolveDesktopShortcut } from "./shortcuts.ts";
+import { clampSideWidth, SIDE_WIDTH_DEFAULT, SIDE_WIDTH_MAX, SIDE_WIDTH_MIN, sideWidthForKey } from "./sidebar-resize.ts";
 import { isNarrow, updateStatusColor } from "./theme.ts";
 import { useDesktopScreens } from "./desktop-screens.ts";
 import { Avatar } from "./sprites.tsx";
@@ -178,9 +179,45 @@ export function App() {
     return () => window.removeEventListener("keydown", onKey);
   }, [s.phase, s.page, s.sel, s.gsel, s.assistants, s.assistantTopics, s.groups, s.groupPrefs, s.approvals, narrow]);
 
-  // 云桌面展开时右栏的宽度可以拖：往左拖变宽，最宽到样式里算出的上限（对话区留 420px、画面放得下高度）
+  // 桌面左栏与云桌面右栏都支持拖拽调宽，双击拖拽线恢复默认
+  const sidestack = useRef<HTMLDivElement>(null);
   const panelwrap = useRef<HTMLDivElement>(null);
   const [desktopWidth, setDesktopWidth] = useState(loadDesktopWidth);
+  const [sideWidth, setSideWidth] = useState(loadSideWidth);
+  const startSideResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    const stack = sidestack.current;
+    const appEl = stack?.parentElement;
+    if (!stack || !appEl || event.button !== 0) return;
+    event.preventDefault();
+    const handle = event.currentTarget;
+    handle.setPointerCapture(event.pointerId);
+    const startX = event.clientX;
+    const startWidth = stack.getBoundingClientRect().width;
+    stack.classList.add("resizing");
+    const move = (e: PointerEvent) => {
+      const next = clampSideWidth(startWidth + e.clientX - startX);
+      appEl.style.setProperty("--side-width", `${next}px`);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      stack.classList.remove("resizing");
+      const width = clampSideWidth(stack.getBoundingClientRect().width);
+      setSideWidth(width);
+      saveSideWidth(width);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
+  const onSideResizeKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = sideWidthForKey(sideWidth, event.key);
+    if (next === undefined) return;
+    event.preventDefault();
+    setSideWidth(next ?? undefined);
+    saveSideWidth(next);
+  };
   const startResize = (event: React.PointerEvent<HTMLDivElement>) => {
     const wrap = panelwrap.current;
     if (!wrap || event.button !== 0) return;
@@ -319,8 +356,11 @@ export function App() {
   }
 
   return (
-    <div className={`app${fullPage ? " preview-full" : ""}${sideHidden ? " side-collapsed" : ""}`}>
-      <div className="sidestack" inert={sideHidden}>
+    <div
+      className={`app${fullPage ? " preview-full" : ""}${sideHidden ? " side-collapsed" : ""}`}
+      style={!sideHidden && sideWidth ? { ["--side-width" as string]: `${sideWidth}px` } : undefined}
+    >
+      <div ref={sidestack} className="sidestack" inert={sideHidden}>
         <div className={`sidepane home${hasSecondarySide ? " away" : ""}`} aria-hidden={hasSecondarySide ? true : undefined}>
           <Sidebar />
         </div>
@@ -330,6 +370,24 @@ export function App() {
               ? <GroupSidebar groupId={sideTarget.current.id} />
               : <AssistantSidebar assistantId={sideTarget.current.id} />}
           </div>
+        ) : null}
+        {!sideHidden ? (
+          <div
+            className="side-resize"
+            role="separator"
+            tabIndex={0}
+            aria-orientation="vertical"
+            aria-label={t("拖动调整左栏宽度")}
+            aria-valuemin={SIDE_WIDTH_MIN}
+            aria-valuemax={SIDE_WIDTH_MAX}
+            aria-valuenow={sideWidth ?? SIDE_WIDTH_DEFAULT}
+            onPointerDown={startSideResize}
+            onKeyDown={onSideResizeKeyDown}
+            onDoubleClick={() => {
+              setSideWidth(undefined);
+              saveSideWidth(null);
+            }}
+          />
         ) : null}
       </div>
       {home ? <Home /> : <Chat />}

@@ -230,11 +230,44 @@ function sectionIcon(id: SettingsSection): IconName {
   }
 }
 
-function sectionGroups(): { id: string; label: string; items: { id: SettingsSection; label: string; icon: IconName }[] }[] {
+function sectionKeywords(id: SettingsSection): string {
+  switch (id) {
+    case "general":
+      return `${t("主题")} ${t("配色")} ${t("界面语言")} ${t("时区")} ${t("网络代理")} ${t("登录密码")} ${t("个人信息")} theme palette color language timezone proxy password`;
+    case "rules":
+      return `${t("全局规则")} ${t("添加规则")} rules policy`;
+    case "push":
+      return `${t("本机推送")} ${t("已订阅的设备")} push notification`;
+    case "providers":
+      return `${t("内置服务商")} ${t("兼容接口")} provider api key claude openai anthropic`;
+    case "models":
+      return `${t("默认模型")} ${t("可用模型")} ${t("思考强度")} model roster thinking`;
+    case "memory":
+      return `${t("本地记忆")} memory lore`;
+    case "image":
+      return `${t("生成方式")} image openai`;
+    case "knowledge":
+      return `${t("向量模型")} knowledge embedding vector`;
+    case "search":
+      return `${t("联网搜索")} search web searxng exa tavily brave`;
+    case "skills":
+      return `${t("导入技能")} skills claude codex`;
+    case "desktop":
+      return `${t("云桌面")} desktop vnc browser`;
+    case "work":
+      return `${t("最大并行任务数")} ${t("无响应判定时间")} ${t("任务记录")} jobs work timeout`;
+    case "usage":
+      return `${t("花费")} ${t("单价")} usage token cost`;
+    case "about":
+      return `${t("Hob 版本")} ${t("数据目录")} about version github`;
+  }
+}
+
+function sectionGroups(): { id: string; label: string; items: { id: SettingsSection; label: string; icon: IconName; keywords: string }[] }[] {
   return SECTION_GROUPS.map((group) => ({
     id: group.id,
     label: sectionGroupLabel(group.id),
-    items: group.items.map((id) => ({ id, label: sectionLabel(id), icon: sectionIcon(id) })),
+    items: group.items.map((id) => ({ id, label: sectionLabel(id), icon: sectionIcon(id), keywords: sectionKeywords(id) })),
   }));
 }
 
@@ -280,8 +313,20 @@ function maskProxy(value: string): string {
 
 export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: boolean }) {
   const s = useApp();
+  const [navQuery, setNavQuery] = useState("");
   const groups = sectionGroups();
   const sections = groups.flatMap((group) => group.items);
+  const needle = navQuery.trim().toLowerCase();
+  const visibleGroups = needle
+    ? groups
+        .map((group) => ({
+          ...group,
+          items: group.items.filter((item) =>
+            `${group.label} ${item.label} ${item.keywords}`.toLowerCase().includes(needle),
+          ),
+        }))
+        .filter((group) => group.items.length > 0)
+    : groups;
   const current = s.section ?? (narrow ? null : "general");
   const updateVersion = availableVersion(s.update);
   // 换分栏、进出子页都从顶上看起
@@ -289,6 +334,48 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
   useEffect(() => {
     main.current?.scrollTo(0, 0);
   }, [current, s.sub]);
+  useEffect(() => {
+    if (s.page !== "settings" || s.panelStack?.length) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.defaultPrevented) return;
+      const target = event.target as HTMLElement | null;
+      if (target?.matches("input, textarea, select, [contenteditable=true]") || target?.closest("[role=dialog], .amenu")) return;
+      if (s.sub) closeSub();
+      else if (narrow && s.section) setSection(null);
+      else closeSettings();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [s.page, s.panelStack?.length, s.sub, s.section, narrow]);
+
+  const searchBox = (
+    <div className="setnav-search">
+      <Icon name="search" size={14} className="setnav-search-ic" />
+      <input
+        value={navQuery}
+        placeholder={t("搜索设置…")}
+        aria-label={t("搜索设置…")}
+        onChange={(e) => setNavQuery(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape" && navQuery) {
+            e.stopPropagation();
+            setNavQuery("");
+          }
+        }}
+      />
+      {navQuery ? (
+        <button
+          type="button"
+          className="setnav-search-clear"
+          title={t("清除搜索")}
+          aria-label={t("清除搜索")}
+          onClick={() => setNavQuery("")}
+        >
+          <Icon name="close" size={12} />
+        </button>
+      ) : null}
+    </div>
+  );
 
   if (narrow && current === null) {
     return (
@@ -300,7 +387,8 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
           <span className="t">{t("设置")}</span>
         </div>
         <div className="setbody">
-          {groups.map((group) => (
+          <div className="set-msearch">{searchBox}</div>
+          {visibleGroups.length ? visibleGroups.map((group) => (
             <section className="set-mgroup" key={group.id}>
               <div className="set-mgroup-title">{group.label}</div>
               <div className="set-mgroup-card">
@@ -316,7 +404,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
                 ))}
               </div>
             </section>
-          ))}
+          )) : <div className="setnav-empty">{t("没有匹配的设置项")}</div>}
         </div>
       </div>
     );
@@ -334,8 +422,9 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
       ) : (
         <nav className="setnav" aria-label={t("设置")}>
           <SetNavHead title={t("设置")} onBack={closeSettings} />
+          <div className="setnav-search-wrap">{searchBox}</div>
           <div className="setnav-scroll">
-            {groups.map((group) => (
+            {visibleGroups.length ? visibleGroups.map((group) => (
               <div className="setnav-group" key={group.id}>
                 <div className="setnav-group-title">{group.label}</div>
                 <div className="setnav-group-list">
@@ -347,6 +436,7 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
                       aria-current={current === item.id ? "page" : undefined}
                       onClick={() => setSection(item.id)}
                     >
+                      {current === item.id ? <span className="setnav-pill" aria-hidden="true" /> : null}
                       <Icon name={item.icon} size={16} className="navrow-ic" />
                       <span className="navrow-label">
                         {item.label}
@@ -356,40 +446,42 @@ export function SettingsPage({ narrow, leaving }: { narrow: boolean; leaving: bo
                   ))}
                 </div>
               </div>
-            ))}
+            )) : <div className="setnav-empty">{t("没有匹配的设置项")}</div>}
           </div>
         </nav>
       )}
       <div className="setmain" ref={main}>
-        {current === "rules" ? (
-          <RulesSection />
-        ) : current === "providers" ? (
-          <ProvidersSection />
-        ) : current === "models" ? (
-          <ModelsSection />
-        ) : current === "memory" ? (
-          <MemorySection />
-        ) : current === "image" ? (
-          <ImageSection />
-        ) : current === "knowledge" ? (
-          <KnowledgeSection />
-        ) : current === "search" ? (
-          <SearchSection />
-        ) : current === "skills" ? (
-          <SkillsSection />
-        ) : current === "desktop" ? (
-          <DesktopSection />
-        ) : current === "work" ? (
-          <WorkSection />
-        ) : current === "usage" ? (
-          <UsageSection />
-        ) : current === "push" ? (
-          <PushSection />
-        ) : current === "about" ? (
-          <AboutSection />
-        ) : (
-          <GeneralSection />
-        )}
+        <div className="setmain-view" key={`${current}:${s.sub?.kind ?? ""}`}>
+          {current === "rules" ? (
+            <RulesSection />
+          ) : current === "providers" ? (
+            <ProvidersSection />
+          ) : current === "models" ? (
+            <ModelsSection />
+          ) : current === "memory" ? (
+            <MemorySection />
+          ) : current === "image" ? (
+            <ImageSection />
+          ) : current === "knowledge" ? (
+            <KnowledgeSection />
+          ) : current === "search" ? (
+            <SearchSection />
+          ) : current === "skills" ? (
+            <SkillsSection />
+          ) : current === "desktop" ? (
+            <DesktopSection />
+          ) : current === "work" ? (
+            <WorkSection />
+          ) : current === "usage" ? (
+            <UsageSection />
+          ) : current === "push" ? (
+            <PushSection />
+          ) : current === "about" ? (
+            <AboutSection />
+          ) : (
+            <GeneralSection />
+          )}
+        </div>
       </div>
     </div>
   );

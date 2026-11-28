@@ -790,6 +790,30 @@ export function AssistantTopicCard({ topicId, fresh, itemId }: { topicId: string
   );
 }
 
+type GroupPos = "solo" | "first" | "mid" | "last";
+
+function isTextBubble(item: Item | undefined): boolean {
+  return item?.kind === "user" || item?.kind === "assistant";
+}
+
+function sameBubbleRun(a: Item | undefined, b: Item | undefined): boolean {
+  if (!a || !b || !isTextBubble(a) || !isTextBubble(b)) return false;
+  if (a.kind !== b.kind) return false;
+  if (b.lead || needDivider(a.at, b.at)) return false;
+  if (a.kind === "assistant" && (a.routine || (b.kind === "assistant" && b.routine))) return false;
+  if ("speaker" in a && "speaker" in b && (a as GroupItem).speaker !== (b as GroupItem).speaker) return false;
+  return true;
+}
+
+function bubbleGroupPos(prev: Item | undefined, cur: Item, next: Item | undefined): GroupPos {
+  const withPrev = sameBubbleRun(prev, cur);
+  const withNext = sameBubbleRun(cur, next);
+  if (withPrev && withNext) return "mid";
+  if (withPrev) return "last";
+  if (withNext) return "first";
+  return "solo";
+}
+
 function ItemView({
   item,
   inlineDraft,
@@ -798,6 +822,7 @@ function ItemView({
   mentions,
   quoteWho,
   forwarded,
+  groupPos = "solo",
 }: {
   item: Item;
   inlineDraft?: Draft;
@@ -809,6 +834,8 @@ function ItemView({
   quoteWho?: (itemId: string) => string | undefined;
   /** 从综合转进话题的用户消息：气泡上方加一行小字 */
   forwarded?: GroupItem["forwardedFrom"];
+  /** 连续同侧气泡在分组中的位置，用于 IM 级紧凑间距与圆角过渡 */
+  groupPos?: GroupPos;
 }) {
   const s = useApp();
   const enter = fresh ? " enter" : "";
@@ -841,8 +868,9 @@ function ItemView({
       </button>
     );
     const fileRow = (f: string) => <button className="ufile" onClick={() => open(f)}><span className="fi"><Icon name={fileIcon(f)} size={16} /></span><span className="fn">{attachmentName(f)}</span></button>;
+    const grpCls = groupPos !== "solo" ? ` grp-${groupPos}` : "";
     return (
-      <div className="message-row right" id={item.from ? `forward-${item.from.delegationId}` : undefined} data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
+      <div className={`message-row right${grpCls}`} id={item.from ? `forward-${item.from.delegationId}` : undefined} data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
         {swipeIcon}
         {/* iMessage：没发出去时气泡左边一个红色感叹号，点了重试；有附件在传时那里转圈 */}
         {pend?.status === "failed" ? (
@@ -900,6 +928,7 @@ function ItemView({
   }
 
   if (item.kind === "assistant") {
+    const grpCls = groupPos !== "solo" ? ` grp-${groupPos}` : "";
     return (
       <>
         {item.routine ? (
@@ -909,7 +938,7 @@ function ItemView({
             ) : <><Icon name="clock" size={13} />{item.routine.name}</>}
           </div>
         ) : null}
-        <div className="message-row" data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
+        <div className={`message-row${grpCls}`} data-item-id={item.id} onPointerDown={tools.start} onContextMenu={preventMenu}>
           {swipeIcon}
           <div className={`hov msg${enter}`}>
           {/* 表格单独成卡片（框内左右滑），前后的文字照旧是气泡；第一块接住滑动回复和菜单定位 */}
@@ -1217,7 +1246,7 @@ export function ItemList({ items: all }: { items: Item[] }) {
         ) : opensGroup(prev, item) ? (
           <div className="g" />
         ) : null}
-        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} forwarded={item.kind === "user" ? item.forwardedFrom : undefined} /></GestureCard>
+        <GestureCard item={item} tools={toolsFor(item)}><ItemView item={item} inlineDraft={inline} fresh={fresh} tools={toolsFor(item)} forwarded={item.kind === "user" ? item.forwardedFrom : undefined} groupPos={bubbleGroupPos(prev, item, inline ? undefined : next)} /></GestureCard>
       </Fragment>,
     );
   }
@@ -1280,8 +1309,8 @@ export function GroupItemList({ g, items: all }: { g: GroupSummary; items: Group
               {item.speaker === g.ownerId ? <span className="owner">{t("群主")}</span> : null}
               <small>{fmtList(item.at)}</small>
             </div>
-            {run.map((entry) => (
-              <GestureCard key={entry.id} item={entry} tools={toolsFor(entry)}><ItemView item={entry} fresh={isFresh(entry.id)} tools={toolsFor(entry)} mentions={names} quoteWho={quoteWho} /></GestureCard>
+            {run.map((entry, idx) => (
+              <GestureCard key={entry.id} item={entry} tools={toolsFor(entry)}><ItemView item={entry} fresh={isFresh(entry.id)} tools={toolsFor(entry)} mentions={names} quoteWho={quoteWho} groupPos={bubbleGroupPos(run[idx - 1], entry, run[idx + 1])} /></GestureCard>
             ))}
           </div>
         </div>

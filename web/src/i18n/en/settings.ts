@@ -90,4 +90,7 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "本话题": "This topic",
   "创建时已绑定，不可修改。": "Bound at creation and cannot be changed.",
   "创建时已绑定，群内及所有话题共用此目录，不可修改。": "Bound at creation. Shared by the group and all its topics, and cannot be changed.",
+  "搜索设置…": "Search settings…",
+  "清除搜索": "Clear search",
+  "没有匹配的设置项": "No matching settings",
 };

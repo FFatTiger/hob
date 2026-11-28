@@ -21,6 +21,8 @@ export const FOLLOW_UP_SYSTEM_PROMPT = `你在给一段对话想「用户接下�
 export interface FollowUpTurn {
   role: "user" | "assistant";
   text: string;
+  /** 群聊里显式携带的发言人名称；单聊省略时按 role 回退为「用户 / 助手」。 */
+  speaker?: string;
 }
 
 type SessionEntryLike = {
@@ -88,45 +90,57 @@ function speakerName(speaker: string, nameOf: (speaker: string) => string): stri
   return nameOf(speaker);
 }
 
-/** 把群时间线中的一条消息写成一句稳定事实。 */
-export function groupLine(item: GroupItem, nameOf: (speaker: string) => string = (speaker) => speaker === "user" ? "用户" : speaker): string {
-  const who = speakerName(item.speaker, nameOf);
+function groupBody(item: GroupItem): string {
   switch (item.kind) {
-    case "user": {
-      const text = [item.text, ...(item.files ?? []).map((file) => isImagePath(file) ? "（图片）" : `（文件：${attachmentName(basename(file))}）`), item.quote ? `（引用：「${item.quote.text}」）` : ""].filter(Boolean).join("\n");
-      return text ? `${who}：${text}` : "";
-    }
+    case "user":
+      return [item.text, ...(item.files ?? []).map((file) => isImagePath(file) ? "（图片）" : `（文件：${attachmentName(basename(file))}）`), item.quote ? `（引用：「${item.quote.text}」）` : ""].filter(Boolean).join("\n");
     case "assistant":
     case "note":
-      return item.text ? `${who}：${item.text}` : "";
+      return item.text || "";
     case "job":
-      return `${who}：（调用了 start_job）`;
+      return "（调用了 start_job）";
     case "question":
-      return `${who}：（调用了 ask_user）`;
+      return "（调用了 ask_user）";
     case "file":
-      return `${who}：（调用了 send_file）`;
+      return "（调用了 send_file）";
     case "image":
-      return `${who}：（调用了 generate_image）`;
+      return "（调用了 generate_image）";
     case "draft":
-      return `${who}：（调用了 create_assistant）`;
+      return "（调用了 create_assistant）";
     case "delegation":
-      return `${who}：（调用了 message_assistant）`;
+      return "（调用了 message_assistant）";
     case "topic":
-      return `${who}：（调用了 open_topic）`;
+      return "（调用了 open_topic）";
     case "card":
-      return `${who}：（调用了 send_card）`;
+      return "（调用了 send_card）";
     case "todos":
       return "";
   }
 }
 
-/** 把群时间线中的消息转换成推荐模型看到的固定文字。 */
+/** 把群时间线中的一条消息写成一句稳定事实。 */
+export function groupLine(item: GroupItem, nameOf: (speaker: string) => string = (speaker) => speaker === "user" ? "用户" : speaker): string {
+  const body = groupBody(item);
+  return body ? `${speakerName(item.speaker, nameOf)}：${body}` : "";
+}
+
+/** 把群时间线中的消息转换成推荐模型看到的固定文字：按发言人区分 user / assistant 并显式保留发言人名称。 */
 export function groupHistory(items: readonly GroupItem[], nameOf: (speaker: string) => string = (speaker) => speaker === "user" ? "用户" : speaker): FollowUpTurn[] {
-  return items.map((item) => groupLine(item, nameOf)).filter(Boolean).map((text) => ({ role: "user" as const, text }));
+  return items.flatMap((item) => {
+    const text = groupBody(item);
+    if (!text) return [];
+    const role = item.speaker === "user" ? ("user" as const) : ("assistant" as const);
+    return [{ role, speaker: speakerName(item.speaker, nameOf), text }];
+  });
+}
+
+function formatTurn(turn: FollowUpTurn): string {
+  const label = turn.speaker ?? (turn.role === "user" ? "用户" : "助手");
+  return `${label}：${turn.text}`;
 }
 
 export function historyText(turns: readonly FollowUpTurn[]): string {
-  return turns.map((turn) => `${turn.role === "user" ? "用户" : "助手"}：${turn.text}`).join("\n");
+  return turns.map(formatTurn).join("\n");
 }
 
 function estimatedTokens(text: string): number {
@@ -167,8 +181,8 @@ export function followUpContext(systemPrompt: string, turns: readonly FollowUpTu
     systemPrompt,
     messages: [
       ...trimmed.map((turn) => turn.role === "user"
-        ? { role: "user" as const, content: `用户：${turn.text}`, timestamp: 0 }
-        : assistantMessage(`助手：${turn.text}`, model)),
+        ? { role: "user" as const, content: formatTurn(turn), timestamp: 0 }
+        : assistantMessage(formatTurn(turn), model)),
       { role: "user", content: closingRequest(trimmed), timestamp: 0 },
     ],
   };

@@ -830,7 +830,6 @@ export async function createFromDraft(runtime: HobRuntime, draftId: string, opti
   ];
 
   const splitNote = `${monthDayText(runtime.settings.settings.general.timezone)} ${t("由 Hob 创建")}`;
-  await router.ensure(assistant.id);
   await router.addItem(assistant.id, { kind: "note", icon: "split", text: splitNote });
   // 新助手自己的开场：固定模板，不过模型
   await router.addItem(assistant.id, {

@@ -8405,3 +8405,47 @@ button.screen,
   color: var(--text2);
 }
 
+/* 输入框内直达的模型切换胶囊 */
+.comp-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 30px;
+  max-width: 150px;
+  padding: 0 9px;
+  border-radius: 999px;
+  background: var(--hover);
+  color: var(--text2);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.comp-pill > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.comp-pill-chev {
+  flex: none;
+  color: var(--text3);
+  transition: transform var(--t-fast);
+}
+.comp-pill.open {
+  background: var(--sel);
+  color: var(--text);
+}
+.comp-pill.open .comp-pill-chev {
+  transform: rotate(180deg);
+}
+@media (hover: hover) {
+  .comp-pill:hover {
+    background: var(--sel);
+    color: var(--text);
+  }
+}
+.comp-pill-menu {
+  min-width: 220px;
+}
+

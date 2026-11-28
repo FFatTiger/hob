@@ -212,6 +212,7 @@ export interface State {
   menu: { id: string; x: number; y: number } | null; // 助手右键 / 长按菜单（视口坐标）
   tick: number; // 定时刷新“进行中 · N 分钟”
   update: UpdateCheck | null; // 服务端 npm 版本检查结果
+  composerModelPicker: boolean; // 输入框内是否直接显示对话模型切换胶囊
   updateReady: boolean; // 新版本装好了，等用户点「刷新」
   loggingIn: boolean;
   desktopLogin: { approvalId: string; assistantId: string } | null;
@@ -225,6 +226,7 @@ const THEME_KEY = "hob.theme";
 const LOCALE_KEY = "hob.locale";
 const HOME_FILTER_KEY = "hob.home.filter";
 const HOME_ORDER_KEY = "hob.home.order";
+const COMPOSER_MODEL_KEY = "hob.composer.model";
 const UI_KEY = "hob.ui";
 
 function loadUi(): Record<string, unknown> {
@@ -266,6 +268,10 @@ function storedHomeFilter(): "all" | "assistants" | "jobs" | "routines" {
 
 function storedHomeOrder(): "recent" | "custom" {
   return localStorage.getItem(HOME_ORDER_KEY) === "custom" ? "custom" : "recent";
+}
+
+function storedComposerModelPicker(): boolean {
+  return localStorage.getItem(COMPOSER_MODEL_KEY) !== "0";
 }
 
 function storedTheme(): Theme | null {
@@ -388,6 +394,7 @@ function initial(): State {
     menu: null,
     tick: 0,
     update: null,
+    composerModelPicker: storedComposerModelPicker(),
     updateReady: false,
     loggingIn: false,
     desktopLogin: null,
@@ -3499,6 +3506,11 @@ export function setHomeFilter(homeFilter: State["homeFilter"]) {
 export function setHomeOrder(homeOrder: State["homeOrder"]) {
   localStorage.setItem(HOME_ORDER_KEY, homeOrder);
   set({ homeOrder });
+}
+
+export function setComposerModelPicker(composerModelPicker: boolean) {
+  localStorage.setItem(COMPOSER_MODEL_KEY, composerModelPicker ? "1" : "0");
+  set({ composerModelPicker });
 }
 
 export function setMobile(page: MobilePage) {

@@ -52,7 +52,7 @@ import { GroupCluster, membersOf } from "./Groups.tsx";
 import { ClosedTopic, TopicClose } from "./Topics.tsx";
 import { TodoStrip, type RunningJob } from "./Todos.tsx";
 import { DelayedText } from "./Empty.tsx";
-import { ComposerPlus } from "./ComposerPlus.tsx";
+import { ComposerModelPill, ComposerPlus } from "./ComposerPlus.tsx";
 import { Disclosure } from "./Disclosure.tsx";
 
 export function conversationState(s: ReturnType<typeof useApp>) {
@@ -726,6 +726,7 @@ export function Composer({ variant = "desktop", todos, jobs }: { variant?: "desk
       ) : null}
       <div className="comp-main">
         <ComposerPlus g={g} a={a} topic={topic} onFiles={attach} />
+        <ComposerModelPill g={g} a={a} topic={topic} />
         <textarea
           ref={ta}
           className="ta"

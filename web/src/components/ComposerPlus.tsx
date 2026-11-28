@@ -218,3 +218,89 @@ export function ComposerPlus({
     </>
   );
 }
+
+/** 输入框内直达的对话模型胶囊：复用 composerModelHelper，区分单聊/群/群话题/助手话题。 */
+export function ComposerModelPill({
+  g,
+  a,
+  topic,
+}: {
+  g?: GroupSummary;
+  a?: AssistantSummary;
+  topic?: AssistantTopicSummary;
+}) {
+  const s = useApp();
+  const menu = useMenu("left");
+  const [models, setModels] = useState<ModelInfo[] | null>(null);
+  const settings = s.settings.settings.models;
+  const rosterKey = settings.roster.map((entry) => entry.ref).join(",");
+  useEffect(() => {
+    void loadModels().then((view) => setModels(view?.models ?? null));
+  }, [rosterKey]);
+  const isGroupTopic = Boolean(g?.parentId);
+  const isAssistantTopic = Boolean(!g && a && topic);
+  const topicKey = isAssistantTopic ? assistantSessionKey(a!.id, topic!.id) : "";
+  const topicConfig = topicKey ? s.assistantTopicConfigs?.[topicKey]?.value : undefined;
+  useEffect(() => {
+    if (a && topic && !g) void loadAssistantTopicConfig(a.id, topic.id);
+  }, [a?.id, topic?.id, g?.id]);
+
+  if (!s.composerModelPicker) return null;
+  const roster = settings.roster.filter((entry) => models?.some((model) => model.ref === entry.ref));
+  const switchable = Boolean(models && roster.length > 1 && (g || a));
+  if (!switchable) return null;
+
+  const parentGroup = isGroupTopic ? s.groups.find((item) => item.id === g!.parentId) : undefined;
+  const { nameOf, own, inheritedRef, follow, current, currentRef, save } = composerModelHelper({
+    g,
+    a,
+    topic,
+    parentGroup,
+    topicConfig,
+    models,
+    settings,
+  });
+
+  const choose = async (ref: string) => {
+    menu.close();
+    await save("conversation", ref, { patchGroup, patchAssistantTopicConfig, patchAssistant, loadGroupProfile, setNotice });
+  };
+
+  const open = menu.menu !== null;
+  const label = current("conversation");
+  return (
+    <>
+      <button
+        type="button"
+        className={`comp-pill${open ? " open" : ""}`}
+        title={t("对话模型")}
+        aria-label={t("对话模型")}
+        aria-expanded={open}
+        onClick={(event) => menu.toggle("model-pill", event.currentTarget)}
+      >
+        <BrandIcon plain size={14} brand={brandForRef(currentRef("conversation"), models ?? [], s.settings.settings.providers)} />
+        <span>{label}</span>
+        <Icon name="down" size={12} className="comp-pill-chev" />
+      </button>
+      {open ? createPortal(
+        <div className="plus-menu comp-pill-menu" ref={menu.box} role="menu" aria-label={t("对话模型")}>
+          <div className="pm-list">
+            {[{ value: "", label: follow("conversation") }, ...rosterOptions(roster, own("conversation")?.ref, nameOf)].map((option) => (
+              <button
+                key={option.value || "follow"}
+                role="menuitemradio"
+                aria-checked={option.value === (own("conversation")?.ref ?? "")}
+                onClick={() => void choose(option.value)}
+              >
+                <BrandIcon size={28} brand={brandForRef(option.value || inheritedRef("conversation"), models ?? [], s.settings.settings.providers)} />
+                <span>{option.label}</span>
+                {option.value === (own("conversation")?.ref ?? "") ? <Icon name="check" size={17} /> : null}
+              </button>
+            ))}
+          </div>
+        </div>,
+        document.body,
+      ) : null}
+    </>
+  );
+}

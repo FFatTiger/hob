@@ -1,8 +1,9 @@
 // 手机上的返回：每次打开页面（对话、助手信息、设置的各级、任务、文件预览）压一条浏览器历史。
 // iPhone 侧滑、安卓返回键、浏览器后退都走 popstate，关到上一条历史那时的样子；
-// 点页面里的返回按钮关掉的，同步退掉多出来的历史，免得之后侧滑多退一次。桌面不压历史。
-// 地址 hash 跟着当前页面走（#/chat/<助手>、#/settings/<分栏>），桌面手机都一样，刷新回到原来那页。
+// 点页面里的返回按钮关掉的，同步退掉多出来的历史，免得之后侧滑多退一次。
+// 桌面端同样支持浏览器后退 / 前进：页面地址变化时压一条历史，popstate 时按 hash 还原对应页面。
 import {
+  applyRoute,
   backPanel,
   closeImageViewer,
   closeKnowledge,
@@ -71,12 +72,30 @@ export function startHistory(narrow: () => boolean = isNarrow) {
   const entries = [0];
   let skipPops = 0;
   let popping = false;
+  let lastDesktopUrl = location.pathname + location.search + location.hash;
+  let desktopPrimed = false;
   const url = () => location.pathname + location.search + routeHash(getState(), narrow());
   history.replaceState({ hobDepth: 0 }, "", url());
+  lastDesktopUrl = url();
 
   const sync = () => {
     // 退历史（history.go）是异步的，等它落地再改地址，免得改到正要离开的那条
     if (popping || skipPops > 0) return;
+    if (!narrow()) {
+      const next = url();
+      const ready = getState().phase === "ready";
+      if (!desktopPrimed) {
+        if (next !== lastDesktopUrl) history.replaceState({ hobDepth: 0 }, "", next);
+        lastDesktopUrl = next;
+        if (ready) desktopPrimed = true;
+        return;
+      }
+      if (next !== lastDesktopUrl) {
+        lastDesktopUrl = next;
+        history.pushState({ hobDepth: 0 }, "", next);
+      }
+      return;
+    }
     const n = layers(getState(), narrow()).length;
     let back = 0;
     while (entries.length - back > 1 && entries[entries.length - back - 2]! >= n) back++;
@@ -101,6 +120,13 @@ export function startHistory(narrow: () => boolean = isNarrow) {
     if (skipPops > 0) {
       skipPops--;
       sync();
+      return;
+    }
+    if (!narrow()) {
+      popping = true;
+      applyRoute?.(location.hash);
+      lastDesktopUrl = location.pathname + location.search + location.hash;
+      popping = false;
       return;
     }
     const depth = Number((event.state as { hobDepth?: number } | null)?.hobDepth ?? 0);

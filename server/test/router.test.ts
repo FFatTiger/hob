@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
 import { readFileSync } from "node:fs";
 import type { Item, Job } from "../../shared/types.ts";
-import { answerApproval } from "../src/actions.ts";
+import { answerApproval, createFromDraft } from "../src/actions.ts";
+import { seedModels } from "../src/settings.ts";
 import { createRuntime } from "../src/runtime.ts";
 import { createApp } from "../src/http.ts";
 import { PiHost } from "../src/pi.ts";
@@ -665,6 +666,53 @@ describe("Router", () => {
         kind: "assistant",
         text: "我是写作，负责周报和文章。\n定时任务：周报 · 每周五 17:00",
       });
+      // 开场白与来源说明已立即落盘，释放内存会话后仍可读回
+      hob.runtime.router.forget(id);
+      expect(hob.runtime.router.items(id).items).toEqual(items);
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("未配置模型时创建助手仍落盘开场白，配好模型后从原记录接着聊", async () => {
+    const hob = makeHob({}, { memory: "off", settings: { models: seedModels() } });
+    try {
+      const draft = {
+        id: "d-nomodel",
+        assistantId: "hob",
+        status: "pending" as const,
+        name: "周报助手",
+        sprite: "page" as const,
+        duty: "周报",
+        dutyLong: "每周整理周报",
+        routines: [],
+        routinesText: "",
+        askFirst: [],
+        createdAt: new Date().toISOString(),
+      };
+      hob.runtime.store.saveDraft(draft);
+      const res = await createFromDraft(hob.runtime, draft.id);
+      expect(res.status).toBe(200);
+      const id = (res.body as { assistant: { id: string } }).assistant.id;
+      hob.runtime.router.forget(id);
+      const opening = hob.runtime.router.items(id).items;
+      expect(opening).toEqual([
+        expect.objectContaining({ kind: "note", icon: "split", text: expect.stringContaining("由 Hob 创建") }),
+        expect.objectContaining({ kind: "assistant", text: "我是周报助手，负责周报。" }),
+      ]);
+      expect(hob.faux.state.callCount).toBe(0);
+
+      // 配好模型后直接发消息，接着原有开场白继续对话
+      hob.runtime.settings.patch(hob.runtime.settings.get().revision, { models: seedModels({ conversation: "hob-faux/faux-1" }) });
+      hob.faux.setResponses([text("收到，马上写周报")]);
+      await hob.runtime.router.send(id, { text: "帮我写本周周报" });
+      await hob.runtime.router.waitIdle(id);
+      hob.runtime.router.forget(id);
+      expect(hob.runtime.router.items(id).items).toEqual([
+        ...opening,
+        expect.objectContaining({ kind: "user", text: "帮我写本周周报" }),
+        expect.objectContaining({ kind: "assistant", text: "收到，马上写周报" }),
+      ]);
     } finally {
       hob.close();
     }

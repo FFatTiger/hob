@@ -1307,6 +1307,14 @@ export class RouterManager {
     return group;
   }
 
+  /** SDK 只在文件已存在时立即落盘自定义条目，否则会等到模型首次回复。 */
+  private prepareTimelineFile(assistantId: string, place?: Place): string {
+    const file = this.sessionFile(assistantId, place);
+    mkdirSync(dirname(file), { recursive: true });
+    writeFileSync(file, "", { flag: "a" });
+    return file;
+  }
+
   /**
    * 卡片进对话：在群里就进群的时间线（speaker 是这个助手），否则照旧进单聊。
    * 群已归档、成员已被移出时落回单聊，前端照常能看到，东西不丢。
@@ -1318,11 +1326,35 @@ export class RouterManager {
       full = this.runtime.groups.appendItem(group.id, assistantId, item);
     } else {
       const fallback = place?.groupId ? undefined : place;
-      const state = await this.ensure(assistantId, fallback);
-      const lead = this.derived(assistantId, fallback).result.lead;
-      const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
-      full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
-      this.emitItem(assistantId, full, fallback);
+      const normalized = placeOf(fallback);
+      const key = sessionKey(assistantId, normalized);
+      let state = this.routers.get(key);
+      if (state?.opening && !state.manager) {
+        await state.opening.catch(() => undefined);
+        state = this.routers.get(key);
+      }
+      const lead = this.derived(assistantId, normalized).result.lead;
+      if (!state?.manager) {
+        const assistant = this.assistant(assistantId);
+        const file = this.prepareTimelineFile(assistantId, normalized);
+        if (await this.modelGap(assistantId, normalized)) {
+          const manager = SessionManagerImpl.open(file, dirname(file), assistant.cwd ?? assistantWorkDir(this.runtime.home, assistantId));
+          const id = manager.appendCustomEntry(ITEM_TYPE, item);
+          const at = manager.getEntry(id)?.timestamp ?? new Date().toISOString();
+          full = { ...item, ...(lead ? { lead: true } : {}), id, at } as Item;
+          this.itemCache.delete(key);
+          this.emitItem(assistantId, full, normalized);
+        } else {
+          state = await this.ensure(assistantId, normalized);
+          const id = state.manager!.appendCustomEntry(ITEM_TYPE, item);
+          full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
+          this.emitItem(assistantId, full, normalized);
+        }
+      } else {
+        const id = state.manager.appendCustomEntry(ITEM_TYPE, item);
+        full = { ...item, ...(lead ? { lead: true } : {}), id, at: this.entryAt(state, id) } as Item;
+        this.emitItem(assistantId, full, normalized);
+      }
     }
     if (full.kind === "file") {
       const page = isInPagesDir(relative(this.runtime.home, resolve(full.path)));

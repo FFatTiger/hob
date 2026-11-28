@@ -1,6 +1,7 @@
 // 群里 @ 点名：认出输入框里正在写的 @，按名字筛成员，选中后把 @名字 填回去。
 // 纯函数，界面在 components/Chat.tsx 的输入框里用。
 import type { GroupReplyMode } from "../../shared/types.ts";
+import { isMentionPrefixBoundary } from "../../shared/mention.ts";
 
 export interface MentionAt {
   start: number; // @ 在文本里的位置
@@ -21,8 +22,8 @@ export function isImeCompositionEvent(event: Pick<KeyboardEvent, "isComposing" |
  */
 export function mentionAt(text: string, caret: number, names: string[]): MentionAt | null {
   const head = text.slice(0, caret);
-  const at = head.lastIndexOf("@");
-  if (at < 0) return null;
+  const at = Math.max(head.lastIndexOf("@"), head.lastIndexOf("＠"));
+  if (at < 0 || !isMentionPrefixBoundary(head[at - 1])) return null;
   const query = head.slice(at + 1);
   if (query.includes("\n") || query.length > MAX_QUERY) return null;
   if (names.some((name) => query.startsWith(`${name} `))) return null;

@@ -1,5 +1,6 @@
 // 对话里的 markdown 渲染；原始 HTML 不进入 DOM。
 import { t } from "../../shared/i18n.ts";
+import { isMentionNameContinuation, isMentionPrefixBoundary } from "../../shared/mention.ts";
 import { Marked } from "marked";
 import markedCjkFriendly from "marked-cjk-friendly";
 import type katex from "katex";
@@ -173,9 +174,9 @@ function markMentions(html: string, mentions: string[]): string {
       const tag = html.slice(i, close + 1);
       out.push(tag);
       i = close + 1;
-      const code = /^<(code|pre)[\s>]/i.exec(tag);
-      if (code) {
-        const end = html.indexOf(`</${code[1]}`, i);
+      const skip = /^<(code|pre|a)[\s>]/i.exec(tag);
+      if (skip) {
+        const end = html.indexOf(`</${skip[1]}`, i);
         const stop = end < 0 ? html.length : end;
         out.push(html.slice(i, stop));
         i = stop;
@@ -194,10 +195,17 @@ function markedText(text: string, names: string[]): string {
   let out = "";
   let i = 0;
   while (i < text.length) {
-    const name = text[i] === "@" ? names.find((candidate) => text.startsWith(escapeHtml(candidate), i + 1)) : undefined;
+    const ch = text[i];
+    const name = (ch === "@" || ch === "＠") && isMentionPrefixBoundary(text[i - 1])
+      ? names.find((candidate) => {
+          const escaped = escapeHtml(candidate);
+          return text.startsWith(escaped, i + 1) && !isMentionNameContinuation(candidate, text[i + 1 + escaped.length]);
+        })
+      : undefined;
     if (name) {
-      out += `<span class="at">@${escapeHtml(name)}</span>`;
-      i += 1 + escapeHtml(name).length;
+      const escaped = escapeHtml(name);
+      out += `<span class="at">${ch}${escaped}</span>`;
+      i += 1 + escaped.length;
       continue;
     }
     out += text[i++];

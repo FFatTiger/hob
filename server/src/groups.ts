@@ -17,6 +17,7 @@ import { filterSafeFiles } from "./files.ts";
 import { reactionsList } from "./store.ts";
 import { patchOverrides } from "./topic-config.ts";
 import { mayBeNoReply, saysNoReply, stripNoReply } from "../../shared/no-reply.ts";
+import { extractMentions } from "../../shared/mention.ts";
 import { clearTodos, readTodos, todosBusy } from "./todos.ts";
 import { groupTodosPath } from "./config.ts";
 import { nowBlock } from "./now.ts";
@@ -817,20 +818,13 @@ export class GroupManager {
     return out.length ? out : [group.ownerId];
   }
 
-  /** @ 名字：按成员名字精确匹配，长名字优先（「家里 NAS」这种带空格的也认）。 */
+  /** @ 名字：按成员名字精确匹配，长名字优先，忽略代码块、链接地址与邮箱里的 @。 */
   private mentions(text: string, group: Group, exclude?: string): string[] {
     const members = group.members
       .filter((id) => id !== exclude)
       .map((id) => ({ id, name: this.nameOf(id) }))
-      .filter((member) => member.name)
-      .sort((a, b) => b.name.length - a.name.length);
-    const out: string[] = [];
-    for (let at = text.indexOf("@"); at !== -1; at = text.indexOf("@", at + 1)) {
-      const rest = text.slice(at + 1);
-      const hit = members.find((member) => rest.startsWith(member.name));
-      if (hit && !out.includes(hit.id)) out.push(hit.id);
-    }
-    return out;
+      .filter((member) => member.name);
+    return extractMentions(text, members);
   }
 
   /** 给一个成员排一轮：同一成员同时被叫两次时排队，第二次的输入包含第一次之后的新条目。 */

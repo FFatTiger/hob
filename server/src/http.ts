@@ -303,17 +303,17 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     let loreError: string | undefined;
     try { if (memory.provider === "lore" && !runtime.pi.loreSkillPaths.length) await runtime.pi.discoverLoreSkills(); }
     catch (error) { loreError = error instanceof Error ? error.message : String(error); }
-    return c.json({ skills: skillViews(options.home, runtime.settings.settings.skills?.disabled ?? [], memory.provider === "lore" ? runtime.pi.loreSkillPaths : []), loreActive: memory.provider === "lore", loreUrl: memory.lore.baseUrl, loreError });
+    return c.json({ skills: skillViews(options.home, runtime.settings.settings.skills?.disabled ?? [], memory.provider === "lore" ? runtime.pi.loreSkillPaths : [], runtime.userHome), loreActive: memory.provider === "lore", loreUrl: memory.lore.baseUrl, loreError });
   });
   app.get("/api/skills/import/:source", (c) => {
-    try { return c.json(listImportSkills(options.home, c.req.param("source") as SkillImportSource)); }
+    try { return c.json(listImportSkills(options.home, c.req.param("source") as SkillImportSource, runtime.userHome)); }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : String(error) }, 400); }
   });
   app.post("/api/skills/import/:source", async (c) => {
     const body = await c.req.json().catch(() => ({})) as { ids?: unknown; overwrite?: unknown };
     if (!Array.isArray(body.ids) || !body.ids.every((id) => typeof id === "string") || typeof body.overwrite !== "boolean") return c.json({ error: "导入参数无效" }, 400);
     try {
-      const result = importSkills(options.home, c.req.param("source") as SkillImportSource, body.ids, body.overwrite);
+      const result = importSkills(options.home, c.req.param("source") as SkillImportSource, body.ids, body.overwrite, runtime.userHome);
       // 通用技能变了：所有助手看得到的清单都变了
       if (result.imported.length) bus.emit({ type: "skills", assistantId: "hob" });
       return c.json(result);

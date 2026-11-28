@@ -105,13 +105,10 @@ describe("Router 技能工具", () => {
   });
   it("通用技能可改可删；定时任务不绑定技能，只读技能仍拦住", async () => {
     const hob = makeHob();
-    const previous = process.env.HOME;
-    const temp = join(hob.home, "fake-home");
     try {
       mkdirSync(join(hob.home, "skills", "table-summary"), { recursive: true });
       writeFileSync(join(hob.home, "skills", "table-summary", "SKILL.md"), "---\nname: table-summary\ndescription: 汇总表格时使用\n---\n\n正文");
-      process.env.HOME = temp;
-      const local = join(temp, ".agents", "skills", "local-only");
+      const local = join(hob.runtime.userHome, ".agents", "skills", "local-only");
       mkdirSync(local, { recursive: true });
       writeFileSync(join(local, "SKILL.md"), "---\nname: local-only\ndescription: 本机别的工具也用\n---\n正文\n");
       const tools = buildRouterTools(hob.runtime, "hob");
@@ -126,7 +123,6 @@ describe("Router 技能工具", () => {
       expect(await run("save_skill", { name: "local-only", edits: [{ old: "正文", new: "新" }] })).toBe("local-only 是只读的技能，不能改；换个名字另存一份。");
       expect(await run("delete_skill", { name: "table-summary" })).toBe("已删除技能「table-summary」，移到了归档。");
     } finally {
-      if (previous === undefined) delete process.env.HOME; else process.env.HOME = previous;
       hob.close();
     }
   });

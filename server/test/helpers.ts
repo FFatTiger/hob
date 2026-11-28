@@ -120,6 +120,7 @@ export function makeHob(overrides: Partial<HobConfig> = {}, options: MakeHobOpti
   });
   const runtime = createRuntime({
     home,
+    userHome: join(home, "user-home"),
     config,
     pi,
     ...(options.pushSender ? { pushSender: options.pushSender } : {}),

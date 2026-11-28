@@ -16,6 +16,7 @@ export const conversationEn: Record<string, TranslationEntry> = {
   "来自任务 {name}": "From job {name}",
   "来自和 {name} 的对话": "From a conversation with {name}",
   "拖动调整云桌面宽度": "Drag to resize the cloud desktop",
+  "拖动调整左栏宽度": "Drag to resize the sidebar",
   "任务记录": "Job history",
   "关": "Off",
   "无法读取这个任务。": "Couldn't read this job.",

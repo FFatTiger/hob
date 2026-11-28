@@ -640,7 +640,7 @@ svg.i {
   color: var(--text);
 }
 .side {
-  width: 296px;
+  width: var(--side-width, 296px);
   flex: none;
   background: var(--side);
   border-right: 1px solid var(--line);
@@ -8173,11 +8173,45 @@ button.screen,
 /* 桌面左栏：点进群，群的二级页从右边推进来、首页往左退；返回时二级页滑出 */
 .sidestack {
   position: relative;
-  width: 296px;
+  width: var(--side-width, 296px);
   transition: width var(--t-slow) var(--ease-in);
   flex: none;
   display: flex;
   overflow: hidden;
+}
+.sidestack.resizing,
+.sidestack.resizing .side {
+  transition: none;
+}
+.sidestack.resizing * {
+  user-select: none;
+}
+.side-resize {
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  right: 0;
+  z-index: 6;
+  width: 7px;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.side-resize::after {
+  content: "";
+  position: absolute;
+  top: 12px;
+  bottom: 12px;
+  right: 2px;
+  width: 2px;
+  border-radius: 2px;
+  background: transparent;
+  transition: background var(--t-fast);
+}
+.side-resize:hover::after,
+.side-resize:focus-visible::after,
+.sidestack.resizing .side-resize::after {
+  background: color-mix(in srgb, var(--accent) 65%, transparent);
 }
 .app.side-collapsed { --side-width: 0px; }
 .app.side-collapsed .sidestack { width: 0; }

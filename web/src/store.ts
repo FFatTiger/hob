@@ -1,6 +1,7 @@
 // 一个小的外部 store：bootstrap + 当前对话 + jobs/approvals/drafts 按 id 存，SSE 事件合并进来。
 import "./i18n/en/index.ts";
 import { parseRoute, type SettingsSection } from "./route.ts";
+import { clampSideWidth, SIDE_WIDTH_MAX, SIDE_WIDTH_MIN } from "./sidebar-resize.ts";
 import { useRef, useSyncExternalStore } from "react";
 import { currentLocale, localeFromBrowser, setLocale as setSharedLocale, t, type Locale } from "../../shared/i18n.ts";
 import { conversationTarget } from "../../shared/push-target.ts";
@@ -248,6 +249,17 @@ export function loadDesktopWidth(): number | undefined {
 
 export function saveDesktopWidth(width: number) {
   saveUi({ desktopWidth: Math.round(width) });
+}
+
+export function loadSideWidth(): number | undefined {
+  const width = loadUi().sideWidth;
+  return typeof width === "number" && Number.isFinite(width) && width >= SIDE_WIDTH_MIN && width <= SIDE_WIDTH_MAX
+    ? Math.round(width)
+    : undefined;
+}
+
+export function saveSideWidth(width: number | null) {
+  saveUi({ sideWidth: width === null ? null : clampSideWidth(width) });
 }
 /** 这台页面客户端的标识：上报可见性；SSE 断了服务端就把这台当不可见。 */
 const CLIENT_ID = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;

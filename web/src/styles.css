@@ -8405,3 +8405,200 @@ button.screen,
   color: var(--text2);
 }
 
+/* ==========================================================================
+   GrokBot 极简果冻宠物头像与 5×4 图形化换装台
+   Attribution: Adapted from zhulin025/LaoA-GrokBot (MIT License)
+   ========================================================================== */
+.av.av-alive {
+  position: relative;
+}
+.av.av-alive::before {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 50%;
+  border: 1.5px solid color-mix(in srgb, var(--accent) 46%, transparent);
+  pointer-events: none;
+  animation: av-aura 2.2s ease-in-out infinite;
+}
+@keyframes av-aura {
+  0%, 100% {
+    transform: scale(0.96);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scale(1.07);
+    opacity: 0.22;
+  }
+}
+.av.av-pet {
+  background: transparent;
+  border-radius: 0;
+  overflow: visible;
+}
+.av.av-pet .pet-host {
+  width: 100%;
+  height: 100%;
+  display: grid;
+  place-items: center;
+}
+.av.av-pet .pet-svg {
+  width: 100%;
+  height: 100%;
+  display: block;
+  overflow: visible;
+}
+.av.av-pet.av-free .pet-svg,
+.av.av-pet.av-live .pet-svg {
+  filter: drop-shadow(0 8px 18px rgba(0, 0, 0, 0.12));
+}
+.dark .av.av-pet.av-free .pet-svg,
+.dark .av.av-pet.av-live .pet-svg {
+  filter: drop-shadow(0 10px 22px rgba(0, 0, 0, 0.42));
+}
+.av.av-pet .pet-body {
+  transition: fill 200ms var(--ease-in), stroke 200ms var(--ease-in);
+}
+.av.av-pet .pet-eyes path {
+  transition: fill 200ms var(--ease-in);
+}
+.av.av-pet .pet-halo {
+  pointer-events: none;
+  transition: opacity 320ms var(--ease-in);
+}
+.av.av-pet .pet-interactive {
+  cursor: grab;
+  touch-action: none;
+}
+.av.av-pet .pet-interactive.pet-dragging {
+  cursor: grabbing;
+}
+/* 深色模式下低亮度纯黑本体（曜石黑）自动加一圈细腻亮边，防止融进黑底 */
+.dark .pet-svg.pet-obsidian .pet-body {
+  stroke: rgba(255, 255, 255, 0.36);
+  stroke-width: 7;
+  paint-order: stroke fill;
+}
+.dark .pet-svg.pet-static.pet-obsidian .pet-body {
+  stroke: rgba(255, 255, 255, 0.42);
+  stroke-width: 9.5;
+}
+/* 群叠放小头像里的宠物去掉固定圆环，改用贴合剪影轮廓的柔和分隔描边 */
+.gav-one:has(.av-pet) {
+  border-radius: 0;
+  box-shadow: none;
+  filter: drop-shadow(0 0 1.4px var(--gav-ring, var(--bg)));
+}
+/* 右栏 5×4 图形化宠物造型网格 & 11 色圆点色板 */
+.sprite-pick.pet-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 48px);
+  justify-content: center;
+  gap: 8px;
+  max-width: 288px;
+  margin: 12px auto 0;
+}
+.sprite-pick.pet-grid button {
+  width: 48px;
+  height: 48px;
+  display: grid;
+  place-items: center;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--field) 65%, transparent);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+  transition: transform var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), outline-color var(--t-fast) var(--ease-in);
+}
+@media (hover: hover) {
+  .sprite-pick.pet-grid button:hover {
+    transform: scale(1.08);
+    background: color-mix(in srgb, var(--text) 6%, transparent);
+    outline-color: var(--line);
+  }
+}
+.sprite-pick.pet-grid button:active {
+  transform: scale(0.95);
+}
+.sprite-pick.pet-grid button.on {
+  background: var(--sel);
+  outline-color: var(--accent);
+}
+.sprite-colors.pet-swatches {
+  flex-wrap: wrap;
+  max-width: 280px;
+  margin: 14px auto 0;
+  gap: 10px;
+}
+.sprite-colors.pet-swatches button:not(.hob-btn) {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.12);
+}
+.dark .sprite-colors.pet-swatches button:not(.hob-btn) {
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.2);
+}
+.sprite-colors.pet-swatches .pet-color-custom {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  cursor: pointer;
+  position: relative;
+  overflow: hidden;
+  background: conic-gradient(#ff3347, #ff6a00, #f59e0b, #08c77a, #08b9a9, #2684ff, #8656f6, #ff2d8b, #ff3347);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.14);
+  outline: 2px solid transparent;
+  outline-offset: 2px;
+}
+.sprite-colors.pet-swatches .pet-color-custom.on {
+  outline-color: var(--accent);
+}
+.sprite-colors.pet-swatches .pet-color-custom input[type="color"] {
+  position: absolute;
+  inset: -6px;
+  width: 36px;
+  height: 36px;
+  opacity: 0;
+  cursor: pointer;
+}
+.sprite-colors-foot {
+  display: flex;
+  justify-content: center;
+  margin-top: 12px;
+}
+.pet-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px;
+  max-width: 280px;
+  margin: 12px auto 0;
+}
+.pet-act-pill {
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--field);
+  box-shadow: inset 0 0 0 0.5px var(--line);
+  color: var(--text2);
+  font-size: 12px;
+  font-weight: 500;
+  transition: transform var(--t-fast) var(--ease-in), background-color var(--t-fast) var(--ease-in), color var(--t-fast) var(--ease-in);
+}
+@media (hover: hover) {
+  .pet-act-pill:hover {
+    background: var(--sel);
+    color: var(--text);
+    transform: translateY(-1px);
+  }
+}
+.pet-act-pill:active {
+  transform: scale(0.94);
+}
+@media (prefers-reduced-motion: reduce) {
+  .av.av-alive::before {
+    animation: none !important;
+  }
+}
+

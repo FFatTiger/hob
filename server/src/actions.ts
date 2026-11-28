@@ -1,5 +1,6 @@
 import { t } from "../../shared/i18n.ts";
 import { distinctSprite, parseSprite } from "../../shared/sprites.ts";
+import { parsePetDirect } from "../../shared/pet.ts";
 import type { AnswerApprovalBody, Approval, ApprovalAnswer, ApprovalQuestion, Assistant, CardActionRequest, CardActionResult, CardElement, CardRecord, Draft, LoginEntryApproval } from "../../shared/types.ts";
 import { newId, slugify } from "./ids.ts";
 import { placeOf } from "./place.ts";
@@ -683,9 +684,10 @@ export async function updateAssistant(runtime: HobRuntime, id: string, body: Ass
     if (body.knowledge.some((item) => !collections.some((collection) => collection.id === item))) return { status: 400, body: { error: "知识库不存在。" } };
   }
   if (typeof body.sprite === "string" && body.sprite !== assistant.sprite) {
-    const parsed = parseSprite(body.sprite);
+    const pet = parsePetDirect(body.sprite);
+    const parsed = pet ? undefined : parseSprite(body.sprite);
     // custom 要有画法数据才收（画法在 prop 字段上，这里不改它）；否则渲染成空手火苗，不如拒绝
-    if (!parsed || (parsed.prop === "custom" && !assistant.prop)) return { status: 400, body: { error: "头像无效。" } };
+    if (!pet && (!parsed || (parsed.prop === "custom" && !assistant.prop))) return { status: 400, body: { error: "头像无效。" } };
   }
   let models;
   let abilities;

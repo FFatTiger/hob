@@ -10,6 +10,7 @@ import { fileIcon } from "../file-icons.ts";
 import { Icon } from "../icons.tsx";
 import { fmtWhen } from "../util.ts";
 import { Avatar } from "../sprites.tsx";
+import { deriveChatMood, typingLook, useJustFinished, useTypingPulse } from "../pet/pet-mood.ts";
 import { applyMention, filterMembers, isImeCompositionEvent, mentionAt, stepPick } from "../mention.ts";
 import {
   assistantSessionKey,
@@ -325,7 +326,30 @@ function ChatHead({
   const s = useApp();
   const size = mobile ? 56 : 48;
   const owner = g && parent ? s.assistants.find((x) => x.id === g.ownerId) : undefined;
-  const face = owner ? <Avatar sprite={owner.sprite} prop={owner.prop} size={size} /> : g ? <GroupCluster g={g} assistants={s.assistants} size={size} /> : a ? <Avatar sprite={a.sprite} prop={a.prop} size={size} /> : null;
+  const busy = g ? g.busy.length > 0 : topic ? topic.busy : Boolean(!isNewTopic && a?.busy);
+  const draftText = composerDraft(s).text;
+  const typing = useTypingPulse(draftText);
+  const scopeKey = g ? `g:${g.id}` : `a:${a?.id ?? ""}${topic ? `@${topic.id}` : ""}`;
+  const finished = useJustFinished(busy, scopeKey);
+  const hasPendingAsk = a ? Object.values(s.approvals).some((ap) => ap.assistantId === a.id && ap.status === "pending") : false;
+  const hasError = Boolean(s.notice && /失败|出错|错误|异常|error|failed/i.test(s.notice));
+  const headMood = deriveChatMood({
+    thinking: busy,
+    busy,
+    hasPendingAsk,
+    hasError,
+    typing,
+    justFinished: finished.justFinished,
+  });
+  const headLook = typing ? typingLook(draftText) : undefined;
+  const headAction = finished.justFinished ? ("bounce" as const) : undefined;
+  const face = owner ? (
+    <Avatar sprite={owner.sprite} prop={owner.prop} size={size} live follow interactive={false} petState={headMood} focusLook={headLook} action={headAction} actionSeq={finished.seq} />
+  ) : g ? (
+    <GroupCluster g={g} assistants={s.assistants} size={size} />
+  ) : a ? (
+    <Avatar sprite={a.sprite} prop={a.prop} size={size} live follow interactive={false} petState={headMood} focusLook={headLook} action={headAction} actionSeq={finished.seq} />
+  ) : null;
   const sub = g && !parent
     ? <span className="ccap-sub">{t("综合 · {n} 位成员", { n: g.members.length })}</span>
     : isNewTopic
@@ -357,7 +381,7 @@ function EmptyChat({ a }: { a: AssistantSummary }) {
   const ready = models.roster.length > 0 && models.conversation.ref !== "";
   return (
     <div className="hello">
-      <Avatar sprite={a.sprite} prop={a.prop} size={88} free motion="home" />
+      <Avatar sprite={a.sprite} prop={a.prop} size={108} free live interactive follow ambient motion="home" />
       <div className="t">{a.primary ? t("我是{assistant}，你的主助手", { assistant: sendName(a.name, false) }) : t("我是{assistant}", { assistant: sendName(a.name, false) })}</div>
       <div className="d">
         {a.primary

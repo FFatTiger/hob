@@ -1,9 +1,10 @@
 // 桌面首页：没打开对话时中间这一块。一条竖线居中：主助手、问候、一句概况、跟主助手说话的输入框。
 // 等你确认、进行中、对话、最近任务、定时任务照旧在左栏，这里不重复列。
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { t } from "../../../shared/i18n.ts";
 import { homeGroups } from "../home.ts";
 import { Icon } from "../icons.tsx";
+import { deriveHomeMood, typingLook, useIdleSleep, useTypingPulse } from "../pet/pet-mood.ts";
 import { Avatar } from "../sprites.tsx";
 import { select, send, useApp } from "../store.ts";
 import { sendName } from "./Chat.tsx";
@@ -19,6 +20,9 @@ function greeting(hour = new Date().getHours()): string {
 export function Home() {
   const s = useApp();
   const [text, setDraft] = useState("");
+  const [focused, setFocused] = useState(false);
+  const [caret, setCaret] = useState(0);
+  const ta = useRef<HTMLTextAreaElement>(null);
   const primary = s.assistants.find((a) => a.primary) ?? s.assistants[0];
   const g = homeGroups(s);
   const waiting = g.asks.length;
@@ -32,20 +36,58 @@ export function Home() {
     void send(body);
   };
 
+  const hour = new Date().getHours();
+  const isLateNight = hour < 6;
+  const typing = useTypingPulse(text);
+  const watchingInput = focused || typing;
+  const idleAsleep = useIdleSleep(!watchingInput && waiting === 0 && g.live.length === 0, isLateNight ? 20000 : 60000, isLateNight);
+  const heroState = deriveHomeMood({ waitingCount: waiting, liveCount: g.live.length, typing: watchingInput, idleAsleep });
+  const taEl = ta.current;
+  const taStyle = taEl && typeof getComputedStyle === "function" ? getComputedStyle(taEl) : null;
+  const taFont = taStyle ? `${taStyle.fontWeight} ${taStyle.fontSize} ${taStyle.fontFamily}` : undefined;
+  const taWidth = taEl ? Math.max(180, taEl.clientWidth - (parseFloat(taStyle?.paddingLeft || "0") + parseFloat(taStyle?.paddingRight || "0"))) : 480;
+  const heroFocusLook = watchingInput ? typingLook(text, caret, taWidth, taFont) : undefined;
+
   return (
     <main className="home">
       <div className="home-in">
-        {primary ? <Avatar sprite={primary.sprite} prop={primary.prop} size={72} motion="home" /> : null}
-        <h1>{greeting()}</h1>
+        {primary ? (
+          <Avatar
+            sprite={primary.sprite}
+            prop={primary.prop}
+            size={112}
+            free
+            live
+            interactive
+            follow
+            ambient
+            petState={heroState}
+            focusLook={heroFocusLook}
+            glow={watchingInput || waiting > 0 || g.live.length > 0}
+          />
+        ) : null}
+        <h1>{greeting(hour)}</h1>
         <p className="home-sum">{summary}</p>
         <div className="comp home-ask">
           <div className="comp-main">
             <textarea
+              ref={ta}
               className="ta"
               rows={1}
               value={text}
               placeholder={t("有事跟{assistant}说，它来安排", { assistant: sendName(primary?.name ?? "Hob") })}
-              onChange={(e) => setDraft(e.target.value)}
+              onFocus={(e) => {
+                setFocused(true);
+                setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length);
+              }}
+              onBlur={() => setFocused(false)}
+              onChange={(e) => {
+                setDraft(e.target.value);
+                setCaret(e.currentTarget.selectionStart ?? e.target.value.length);
+              }}
+              onCompositionUpdate={(e) => setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
+              onKeyUp={(e) => setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
+              onSelect={(e) => setCaret(e.currentTarget.selectionStart ?? e.currentTarget.value.length)}
               onKeyDown={(e) => {
                 if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
                   e.preventDefault();

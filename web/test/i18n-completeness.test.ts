@@ -75,7 +75,7 @@ function isTCall(node: ts.Node | undefined): node is ts.CallExpression {
  * 中文写在表里、显示时再用 t(变量) 翻的文件（状态名、阶段名、默认内容），以及中文分支直接拼格式的 util。
  * 这些文件的中文字面量算词条（要有英文），不按「必须在 t() 里」查。
  */
-const DYNAMIC_FILES = ["server/src/store.ts", "server/src/dev-team.ts", "shared/thinking.ts", "shared/model-note.ts", "web/src/components/status-meta.tsx", "web/src/components/Todos.tsx", "web/src/sprites.tsx", "server/src/cron-text.ts", "web/src/util.ts", "server/src/user-facing.ts"];
+const DYNAMIC_FILES = ["shared/pet.ts", "server/src/store.ts", "server/src/dev-team.ts", "shared/thinking.ts", "shared/model-note.ts", "web/src/components/status-meta.tsx", "web/src/components/Todos.tsx", "web/src/sprites.tsx", "server/src/cron-text.ts", "web/src/util.ts", "server/src/user-facing.ts"];
 
 /** 不该翻的中文：逐条写原因。 */
 const KEEP_CHINESE: Record<string, string> = {

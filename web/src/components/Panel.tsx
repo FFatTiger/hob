@@ -11,15 +11,17 @@ import { useMenu } from "./use-menu.ts";
 import { skillUsage } from "../skill-usage.ts";
 import { skillOriginText } from "../skill-origin.ts";
 import { commandSummary } from "../../../shared/command.ts";
-import type { PluginView, ActivityLine, Assistant, AssistantTopicSummary, CustomProp, EffectiveRule, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
+import type { PluginView, ActivityLine, Assistant, AssistantTopicSummary, EffectiveRule, GroupSummary, ModelInfo, ModelsView, Routine, Rule, ThinkingLevel } from "../../../shared/types.ts";
 import { Icon } from "../icons.tsx";
 import { BrandIcon, brandForRef } from "../brand-icons.tsx";
 import { assistantStatus, followingModel, formatNext, nextRoutine, sidebarJobs } from "../sidebar-data.ts";
 import { PanelRootDetails } from "./PanelRootDetails.tsx";
 import { PluginIcon } from "./Plugins.tsx";
 import { fitThinking, rosterOptions } from "../model-list.ts";
-import { COLOR_IDS, COLORS, customSprite, parseSprite, PROP_IDS, PROPS, spriteId } from "../../../shared/sprites.ts";
+import { PetPicker } from "./PetPicker.tsx";
+import type { PetActionId } from "../../../shared/pet.ts";
 import { Avatar } from "../sprites.tsx";
+import { deriveChatMood, useJustFinished, useTypingPulse } from "../pet/pet-mood.ts";
 import { useLeave } from "../motion.ts";
 import { useDesktopScreens } from "../desktop-screens.ts";
 import {
@@ -29,6 +31,7 @@ import {
   assistantSessionKey,
   backPanel,
   changeAssistantSkill,
+  composerDraft,
   createRoutine,
   deleteAssistantTopicRule,
   deleteRule,
@@ -552,6 +555,11 @@ function PanelNow({ mobile, focus, deskOnly = false, topic, children }: { mobile
       {desktop.error ? <div className="badline">{t("云桌面状态读取失败：{error}", { error: desktop.error })}</div> : null}
     </>;
 
+  const draftText = !deskOnly && s.sel === aid && !s.gsel ? composerDraft(s).text : "";
+  const typing = useTypingPulse(draftText);
+  const activeWork = Boolean(topic ? topic.busy : assistant?.busy) || status === "执行中" || status === "排队中";
+  const finished = useJustFinished(activeWork, `panel:${aid}${topic ? `@${topic.id}` : ""}`);
+
   // 群信息页：只放屏幕在跑的那个成员的小屏，身份和任务由群信息自己讲；非本会话占用时通过 children 放进信息卡
   if (deskOnly) return <>{desk ? <div className="group-card sidebar-card">{deskBlock}</div> : deskBlock}{children?.(desktopRow)}</>;
 
@@ -567,10 +575,41 @@ function PanelNow({ mobile, focus, deskOnly = false, topic, children }: { mobile
     {screen && screenId ? <Suspense fallback={null}><DesktopScreen initialScreen={screenId} takeOver={screen === "take"} onClose={() => setScreen(null)} /></Suspense> : null}
   </div>;
 
+  const hasError = Boolean(
+    last && (last.status === "failed" || last.status === "stuck") && (!assistant?.readAt || (last.endedAt ?? "") > assistant.readAt),
+  );
+  const panelMood = deriveChatMood({
+    thinking: Boolean(topic ? topic.busy : assistant?.busy),
+    busy: activeWork,
+    hasPendingAsk: status === "等你确认",
+    hasError,
+    typing,
+    justFinished: finished.justFinished,
+  });
+
   return (
     <>
     <div className="group-card sidebar-card">
-      {assistant ? <div className="sidebar-identity"><Avatar sprite={assistant.sprite} prop={assistant.prop} size={44} /><span><strong>{assistant.name}</strong><small>{topic ? topic.name : assistant.duty}</small></span><em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em></div> : null}
+      {assistant ? (
+        <div className="sidebar-identity">
+          <Avatar
+            sprite={assistant.sprite}
+            prop={assistant.prop}
+            size={54}
+            free
+            live
+            interactive
+            follow
+            glow={panelMood !== "idle"}
+            petState={panelMood}
+            focusLook={typing ? ([-28, 28] as const) : undefined}
+            action={finished.justFinished ? "bounce" : undefined}
+            actionSeq={finished.seq}
+          />
+          <span><strong>{assistant.name}</strong><small>{topic ? topic.name : assistant.duty}</small></span>
+          <em className={status !== "空闲" ? "active" : ""}><span key={status}>{t(status)}</span></em>
+        </div>
+      ) : null}
       {topic ? (
         assistant?.cwd ? (
           <div className="gpanel-origin"><small>{t("工作目录")} · {t("跟随助手")}</small>{assistant.cwd}</div>
@@ -1394,48 +1433,54 @@ function AssistantSkills({ aid }: { aid: string }) {
   </>;
 }
 
-/** 换头像：自画的道具（有就排第一个）+ 内置道具，都按当前颜色预览，下面一排换颜色。 */
-function SpritePicker({ aid, sprite, prop, onDone }: { aid: string; sprite: string; prop?: CustomProp; onDone: () => void }) {
+/** 换头像：5×4 图形化果冻宠物造型 + 11 色官方色板 / 自定义颜色 + 6 种果冻动作试玩。 */
+function SpritePicker({
+  aid,
+  sprite,
+  onPreview,
+  onAction,
+  onDone,
+}: {
+  aid: string;
+  sprite: string;
+  onPreview: (next: string) => void;
+  onAction: (action: PetActionId) => void;
+  onDone: () => void;
+}) {
   const feedback = useAssistantSave(aid);
-  const parsed = parseSprite(sprite) ?? { prop: "hob" as const, color: "slate" as const };
-  const pick = (next: string) => {
-    if (next !== sprite) void feedback.save({ sprite: next });
+  const colorTimer = useRef(0);
+  useEffect(() => () => window.clearTimeout(colorTimer.current), []);
+  const pick = (next: string, debounced = false) => {
+    onPreview(next);
+    if (next === sprite) return;
+    window.clearTimeout(colorTimer.current);
+    if (debounced) {
+      colorTimer.current = window.setTimeout(() => { void feedback.save({ sprite: next }); }, 250);
+    } else {
+      void feedback.save({ sprite: next });
+    }
   };
+  const actions: [PetActionId, string][] = [
+    ["bounce", t("弹跳")],
+    ["shake", t("摇头")],
+    ["peek", t("探头")],
+    ["pinch", t("捏脸")],
+    ["squish", t("压扁")],
+    ["celebrate", t("庆祝")],
+  ];
   return (
     <>
       <PanelSaveStatus message={feedback.message} />
-      <div className="sprite-pick">
-        {prop ? (
-          <button
-            className={parsed.prop === "custom" ? "on" : undefined}
-            title={t("自画道具")}
-            onClick={() => pick(customSprite(parsed.color))}
-          >
-            <Avatar sprite={customSprite(parsed.color)} prop={prop} size={34} />
-          </button>
-        ) : null}
-        {PROP_IDS.map((p) => (
-          <button
-            key={p}
-            className={p === parsed.prop ? "on" : undefined}
-            title={PROPS[p].label}
-            onClick={() => pick(spriteId(p, parsed.color))}
-          >
-            <Avatar sprite={spriteId(p, parsed.color)} size={34} />
+      <PetPicker sprite={sprite} onChange={pick} />
+      <div className="pet-actions">
+        {actions.map(([act, label]) => (
+          <button key={act} type="button" className="pet-act-pill" onClick={() => onAction(act)}>
+            {label}
           </button>
         ))}
       </div>
-      <div className="sprite-colors">
-        {COLOR_IDS.map((c) => (
-          <button
-            key={c}
-            className={c === parsed.color ? "on" : undefined}
-            title={COLORS[c].name}
-            style={{ background: COLORS[c].o }}
-            onClick={() => pick(parsed.prop === "custom" ? customSprite(c) : spriteId(parsed.prop, c))}
-          />
-        ))}
-        <button className="hob-btn" onClick={onDone}>
+      <div className="sprite-colors-foot">
+        <button type="button" className="hob-btn" onClick={onDone}>
           {t("完成")}
         </button>
       </div>
@@ -1557,13 +1602,19 @@ function AssistantSettings() {
   const aid = panelAssistant(s.panelStack, s.sel);
   const profile = s.profiles[aid];
   const [picking, setPicking] = useState(false);
+  const [previewSprite, setPreviewSprite] = useState<string | null>(null);
+  const [petAct, setPetAct] = useState<{ action: PetActionId; seq: number }>({ action: "bounce", seq: 0 });
   const [archiving, setArchiving] = useState(false);
   const [confirmTopics, setConfirmTopics] = useState(false);
   const [topicModeBusy, setTopicModeBusy] = useState(false);
   const [topicModeError, setTopicModeError] = useState("");
   const feedback = useAssistantSave(aid);
+  useEffect(() => {
+    setPreviewSprite(null);
+  }, [aid, profile?.assistant.sprite]);
   if (!profile) return <Empty><DelayedText text={t("正在读取档案…")} /></Empty>;
   const a = profile.assistant;
+  const shownSprite = previewSprite ?? a.sprite;
   const switchTopics = async () => {
     if (topicModeBusy) return;
     setTopicModeBusy(true);
@@ -1578,10 +1629,32 @@ function AssistantSettings() {
     <>
       <div className="pgroup">
         <div className="bigav">
-          <Avatar sprite={a.sprite} prop={a.prop} size={96} motion="home" onClick={() => setPicking((v) => !v)} title={t("更换头像")} />
+          <Avatar
+            sprite={shownSprite}
+            prop={a.prop}
+            size={112}
+            free
+            live
+            interactive
+            follow
+            glow={picking}
+            morphBounce
+            action={petAct.action}
+            actionSeq={petAct.seq}
+            onClick={() => { if (!picking) setPicking(true); }}
+            title={picking ? t("点按或拖动互动") : t("更换头像")}
+          />
         </div>
-        <div className="avatar-hint">{t("点击头像更换")}</div>
-        {picking ? <SpritePicker aid={aid} sprite={a.sprite} prop={a.prop} onDone={() => setPicking(false)} /> : null}
+        <div className="avatar-hint">{picking ? t("点按或拖动试玩果冻手感") : t("点击头像更换")}</div>
+        {picking ? (
+          <SpritePicker
+            aid={aid}
+            sprite={shownSprite}
+            onPreview={setPreviewSprite}
+            onAction={(action) => setPetAct((prev) => ({ action, seq: prev.seq + 1 }))}
+            onDone={() => setPicking(false)}
+          />
+        ) : null}
 
         <PanelSaveStatus message={feedback.message} />
         <div className="sech"><span>{t("基本信息")}</span></div>

@@ -9,9 +9,13 @@ import { createApp } from "../src/http.ts";
 import { makeHob } from "./helpers.ts";
 
 describe("Markdown 导出格式化工具", () => {
-  it("safeExportFilename 过滤非法字符并附加日期后缀", () => {
+  it("safeExportFilename 过滤非法字符、保留中文、限制超长文件名并附加日期后缀", () => {
     expect(safeExportFilename("技术/方案:v1.2", "2026-11-26")).toBe("技术-方案-v1-2-2026-11-26.md");
     expect(safeExportFilename("   ", "2026-11-26")).toBe("conversation-2026-11-26.md");
+    const longTitle = "仓储盘点与季度对账协作专项讨论记录".repeat(4);
+    const longName = safeExportFilename(longTitle, "2026-11-26");
+    expect(longName).toMatch(/-2026-11-26\.md$/);
+    expect(Array.from(longName.replace(/-2026-11-26\.md$/, "")).length).toBeLessThanOrEqual(40);
   });
 
   it("formatConversationMarkdown 格式化标题、元信息、引用、附件并保留缩进代码块", () => {
@@ -52,8 +56,19 @@ describe("完整对话导出 HTTP 接口", () => {
     });
     const cookie = response.headers.get("set-cookie")?.split(";")[0] ?? "";
     const get = (url: string) => app.request(url, { headers: { cookie } });
-    return { get };
+    return { app, get };
   }
+
+  it("未登录调用导出接口返回 401", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const app = createApp(hob.runtime, { home: hob.home });
+      expect((await app.request("/api/assistants/hob/export")).status).toBe(401);
+      expect((await app.request("/api/groups/g-1/export")).status).toBe(401);
+    } finally {
+      hob.close();
+    }
+  });
 
   it("GET /api/assistants/:id/export 导出超过 50 条的完整历史并在缺失时返回 404", async () => {
     const hob = makeHob({}, { memory: "off" });
@@ -239,7 +254,17 @@ describe("完整对话导出 HTTP 接口", () => {
 
       const group = hob.runtime.groups.create({ name: "研发组", purpose: "技术评审", ownerId: "hob", members: ["hob"] });
       const topic = hob.runtime.groups.createTopic(group.id, "内存优化", "user");
+      await hob.runtime.router.addItem("hob", { kind: "topic", topicId: topic.id }, { groupId: group.id });
 
+      for (let i = 1; i <= 55; i++) {
+        hob.runtime.store.appendGroupItem(topic.id, {
+          kind: "user",
+          id: `g-bulk-${i}`,
+          at: new Date(Date.UTC(2026, 10, 26, 7, i, 0)).toISOString(),
+          speaker: "user",
+          text: `批量消息 ${i}`,
+        });
+      }
       hob.runtime.store.appendGroupItem(topic.id, {
         kind: "user",
         id: "g-1",
@@ -269,10 +294,111 @@ describe("完整对话导出 HTTP 接口", () => {
       const data = (await res.json()) as { filename: string; content: string };
       expect(data.filename).toMatch(/^研发组-内存优化-\d{4}-\d{2}-\d{2}\.md$/);
       expect(data.content).toContain("# 研发组 · 内存优化");
+      expect(data.content).toContain("批量消息 1");
+      expect(data.content).toContain("批量消息 55");
       expect(data.content).toContain("### 用户 · ");
       expect(data.content).toContain("### Hob · ");
       expect(data.content).toContain("> 引用：我们来排查内存占用");
       expect(data.content).not.toContain("系统提示不应作为普通消息混入");
+
+      const generalRes = await get(`/api/groups/${group.id}/export`);
+      expect(generalRes.status).toBe(200);
+      const generalData = (await generalRes.json()) as { filename: string; content: string };
+      expect(generalData.content).toContain("# 研发组");
+      expect(generalData.content).toContain("创建了话题「内存优化」");
+    } finally {
+      hob.close();
+    }
+  });
+
+  it("导出包含待办历史、转交、助手草稿、多轮任务与内部备注过滤", async () => {
+    const hob = makeHob({}, { memory: "off" });
+    try {
+      const { get } = await signedIn(hob);
+      const createdAt = new Date().toISOString();
+      hob.runtime.store.saveAssistant({
+        id: "reviewer",
+        name: "审校",
+        duty: "文稿审校",
+        sprite: "page",
+        primary: false,
+        pinned: false,
+        hidden: false,
+        notify: false,
+        createdAt,
+      });
+      const specPath = join(hob.home, "u-abc123-排版规范.md");
+      writeFileSync(specPath, "spec", "utf8");
+      hob.runtime.store.saveDelegation({
+        id: "dg-export",
+        from: "hob",
+        to: "reviewer",
+        text: "请核对最终版目录和术语",
+        files: [specPath],
+        createdAt,
+        status: "done",
+        jobIds: [],
+        reply: "术语已统一，目录页码无误。",
+      });
+      hob.runtime.store.saveDraft({
+        id: "dr-export",
+        assistantId: "hob",
+        status: "created",
+        name: "排版助手",
+        sprite: "doc",
+        duty: "处理排版",
+        dutyLong: "负责技术文档的版式与目录校准",
+        routines: [],
+        routinesText: "",
+        askFirst: [],
+        createdAssistantId: "reviewer",
+        createdAt,
+      });
+      hob.runtime.store.saveJob({
+        id: "t-multi",
+        assistantId: "hob",
+        title: "整理交付清单",
+        instruction: "整理",
+        status: "done",
+        summary: "第 2 轮已补全验收项",
+        createdAt,
+        stats: { reads: 0, commands: 0, edits: 0 },
+        activity: [],
+        rounds: [
+          { status: "done", summary: "第 1 轮初稿完成", startedAt: createdAt, endedAt: createdAt },
+          { status: "done", summary: "第 2 轮已补全验收项", startedAt: createdAt, endedAt: createdAt },
+        ],
+      });
+
+      await hob.runtime.router.addItem("hob", { kind: "note", icon: "info", text: "内部备注不应该出现在导出里" });
+      await hob.runtime.router.addItem("hob", {
+        kind: "todos",
+        why: "done",
+        items: [
+          { text: "核对章节编号", status: "done" },
+          { text: "确认图表说明", status: "doing" },
+          { text: "导出归档", status: "todo" },
+        ],
+      });
+      await hob.runtime.router.addItem("hob", { kind: "delegation", delegationId: "dg-export" });
+      await hob.runtime.router.addItem("hob", { kind: "draft", draftId: "dr-export" });
+      await hob.runtime.router.addItem("hob", { kind: "job", jobId: "t-multi", round: 0 });
+
+      const res = await get("/api/assistants/hob/export");
+      expect(res.status).toBe(200);
+      const { content } = (await res.json()) as { content: string };
+      expect(content).not.toContain("内部备注不应该出现在导出里");
+      expect(content).toContain("待办已完成");
+      expect(content).toContain("- [x] 核对章节编号");
+      expect(content).toContain("- [ ] 确认图表说明（进行中）");
+      expect(content).toContain("- [ ] 导出归档");
+      expect(content).toContain("转交给「审校」（已完成）");
+      expect(content).toContain("请核对最终版目录和术语");
+      expect(content).toContain("回复：术语已统一，目录页码无误。");
+      expect(content).toContain("_附件：排版规范.md_");
+      expect(content).toContain("排版助手（新助手 · 已创建）");
+      expect(content).toContain("负责技术文档的版式与目录校准");
+      expect(content).toContain("整理交付清单\n\n第 1 轮初稿完成");
     } finally {
       hob.close();
     }

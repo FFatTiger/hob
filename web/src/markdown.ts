@@ -13,10 +13,25 @@ function escapeHtml(s: string): string {
 type Katex = typeof katex;
 let math: Katex | undefined;
 let loading: Promise<void> | undefined;
+let highlightFn: ((code: string, lang: string) => string | null) | undefined;
+let highlightLoading: Promise<void> | undefined;
 
 /** 只有遇到公式定界符时加载公式引擎和本地字体。 */
 export function loadMath(): Promise<void> {
   return loading ??= import("./math.ts").then((module) => { math = module.default; });
+}
+
+/** 只有遇到带语言标记的代码块时异步加载高亮引擎，不影响首屏。 */
+export function loadHighlight(): Promise<void> {
+  return highlightLoading ??= import("./highlight.ts").then((module) => { highlightFn = module.highlightCode; });
+}
+
+export function hasCode(text: string): boolean {
+  let found = false;
+  markdown.walkTokens(markdown.lexer(text, { gfm: true }), (token) => {
+    if (token.type === "code" && typeof token.lang === "string" && token.lang.trim()) found = true;
+  });
+  return found;
 }
 
 export function hasMath(text: string): boolean {
@@ -99,7 +114,8 @@ const markdown = new Marked({
     code(token) {
       const lang = token.lang?.trim().split(/\s+/)[0] ?? "";
       const head = lang ? `<div class="code-head">${escapeHtml(lang)}</div>` : "";
-      return `<div class="code-block">${head}<button type="button" class="code-copy" aria-label="${t("复制代码")}" title="${t("复制代码")}">${iconSvg("copy", 15)}</button><pre><code>${escapeHtml(token.text)}\n</code></pre></div>`;
+      const body = lang && highlightFn ? (highlightFn(token.text, lang) ?? escapeHtml(token.text)) : escapeHtml(token.text);
+      return `<div class="code-block">${head}<button type="button" class="code-copy" aria-label="${t("复制代码")}" title="${t("复制代码")}">${iconSvg("copy", 15)}</button><pre><code${lang ? ` class="hljs language-${escapeHtml(lang)}"` : ""}>${body}\n</code></pre></div>`;
     },
   },
 });

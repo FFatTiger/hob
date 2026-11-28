@@ -8405,3 +8405,50 @@ button.screen,
   color: var(--text2);
 }
 
+/* 语法高亮配色：同时适配浅色与深色模式 */
+.hljs-comment,
+.hljs-quote { color: var(--text3); font-style: italic; }
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-subst { color: #b43e8f; font-weight: 500; }
+.hljs-string,
+.hljs-doctag,
+.hljs-regexp,
+.hljs-addition { color: #198754; }
+.hljs-number,
+.hljs-literal,
+.hljs-variable,
+.hljs-template-variable,
+.hljs-attr { color: #c45d16; }
+.hljs-title,
+.hljs-section,
+.hljs-name,
+.hljs-selector-id,
+.hljs-selector-class { color: #2468c5; font-weight: 500; }
+.hljs-type,
+.hljs-built_in,
+.hljs-builtin-name,
+.hljs-class .hljs-title { color: #8c54d0; }
+.hljs-deletion { color: var(--danger); }
+.dark .hljs-keyword,
+.dark .hljs-selector-tag,
+.dark .hljs-subst { color: #e28ad4; }
+.dark .hljs-string,
+.dark .hljs-doctag,
+.dark .hljs-regexp,
+.dark .hljs-addition { color: #6ee7a8; }
+.dark .hljs-number,
+.dark .hljs-literal,
+.dark .hljs-variable,
+.dark .hljs-template-variable,
+.dark .hljs-attr { color: #f6ad72; }
+.dark .hljs-title,
+.dark .hljs-section,
+.dark .hljs-name,
+.dark .hljs-selector-id,
+.dark .hljs-selector-class { color: #79b8ff; }
+.dark .hljs-type,
+.dark .hljs-built_in,
+.dark .hljs-builtin-name,
+.dark .hljs-class .hljs-title { color: #c3a6ff; }
+

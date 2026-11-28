@@ -34,6 +34,7 @@ import type {
   JobsPage,
   JobStatus,
   JobStep,
+  LocalMemoryView,
   LoreImportView,
   ModelsView,
   MemoryConfig,
@@ -937,6 +938,18 @@ export async function loadMemory(): Promise<MemoryResult> {
     return { ok: true, config: await api.memory() };
   } catch (e) {
     return { ok: false, error: t("无法读取记忆设置：{error}", { error: errText(e) }) };
+  }
+}
+
+export type LocalMemoryResult =
+  | { ok: true; view: LocalMemoryView }
+  | { ok: false; error: string };
+
+export async function loadLocalMemory(date?: string): Promise<LocalMemoryResult> {
+  try {
+    return { ok: true, view: await api.localMemory(date) };
+  } catch (e) {
+    return { ok: false, error: t("无法读取本地记忆：{error}", { error: errText(e) }) };
   }
 }
 

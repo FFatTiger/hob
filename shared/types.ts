@@ -1193,6 +1193,31 @@ export interface Profile {
 
 export type MemoryProvider = "local" | "lore" | "off";
 
+/** 本地记忆（MEMORY.md / daily/YYYY-MM-DD.md）中的一条记录。 */
+export interface LocalMemoryEntry {
+  id: string;
+  text: string;
+  updatedAt?: string;
+  source?: string;
+}
+
+/** 本地备忘清单（SCRATCHPAD.md）中的一项。 */
+export interface ScratchpadEntry {
+  id: string;
+  text: string;
+  done: boolean;
+  updatedAt?: string;
+}
+
+/** GET /api/memory/entries 返回的只读本地记忆视图。 */
+export interface LocalMemoryView {
+  longTerm: LocalMemoryEntry[];
+  scratchpad: ScratchpadEntry[];
+  dailyDates: string[];
+  dailyDate?: string;
+  daily: LocalMemoryEntry[];
+}
+
 /** Lore 连接信息（永远不带 Token，只有 "配没配"）。 */
 export interface LoreConnectionInfo {
   configured: boolean; // 地址和 Token 都有

@@ -48,6 +48,7 @@ import { checkEmbeddingSettings, embed, embeddingKey, embeddingModel, EMBEDDING_
 import { groupDefaultModelPick, groupModelPick, checkModelsPatch } from "./models.ts";
 import { deleteTopicRule, hiddenRules as topicHiddenRules, resetTopicRule, setTopicRule } from "./topic-config.ts";
 import { saveLoreConnection, testLoreConnection } from "./memory.ts";
+import { readLocalMemory } from "./local-memory.ts";
 import { verifyPassword } from "./password.ts";
 import type { HobRuntime } from "./runtime.ts";
 import { readSecrets, writeSecret } from "./secrets.ts";
@@ -972,6 +973,16 @@ export function createApp(runtime: HobRuntime, options: { webDir?: string; home:
     // 新会话立即用新提供者：空闲的 Router 释放，在回复的等这一轮跑完再释放
     router.releaseSessions();
     return c.json(next);
+  });
+
+  // 本地记忆只读查看（MEMORY.md / SCRATCHPAD.md / daily/YYYY-MM-DD.md）
+  app.get("/api/memory/entries", (c) => {
+    const date = c.req.query("date");
+    try {
+      return c.json(readLocalMemory(runtime.home, date || undefined));
+    } catch (error) {
+      return c.json({ error: error instanceof Error ? error.message : String(error) }, 400);
+    }
   });
 
   app.get("/api/search", (c) => {

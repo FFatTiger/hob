@@ -104,6 +104,7 @@ import {
   saveProvider,
   saveSettings,
   sendTestPush,
+  setComposerModelPicker,
   setLocale,
   setPalette,
   setSection,
@@ -642,6 +643,18 @@ function GeneralSection() {
         <button className={`tog${s.settings.settings.general.showPage === false ? " off" : ""}`} aria-label={t("展示页面")} aria-pressed={s.settings.settings.general.showPage !== false} disabled={feedback.busy} onClick={() => void feedback.save({ general: { showPage: s.settings.settings.general.showPage === false } })} />
         <SaveFeedback message={feedback.message} />
         <div className="note">{t("允许助手把适合可视化的内容展示为页面。")}</div>
+      </Group>
+
+      <Group>
+        <div className="lbl">{t("对话框显示模型选择")}</div>
+        <button
+          type="button"
+          className={`tog${s.composerModelPicker ? "" : " off"}`}
+          aria-label={t("对话框显示模型选择")}
+          aria-pressed={s.composerModelPicker}
+          onClick={() => setComposerModelPicker(!s.composerModelPicker)}
+        />
+        <div className="note">{t("开启后在聊天输入框中直接显示对话模型切换按钮；关闭时仍可在「+」菜单中切换。")}</div>
       </Group>
 
       <Group>

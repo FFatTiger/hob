@@ -90,4 +90,6 @@ export const settingsEn: Record<string, TranslationEntry> = {
   "本话题": "This topic",
   "创建时已绑定，不可修改。": "Bound at creation and cannot be changed.",
   "创建时已绑定，群内及所有话题共用此目录，不可修改。": "Bound at creation. Shared by the group and all its topics, and cannot be changed.",
+  "对话框显示模型选择": "Show model picker in composer",
+  "开启后在聊天输入框中直接显示对话模型切换按钮；关闭时仍可在「+」菜单中切换。": "Show the conversation model switcher directly in the composer; when off, you can still switch models in the “+” menu.",
 };

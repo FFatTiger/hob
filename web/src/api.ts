@@ -42,6 +42,7 @@ import type {
   ModelsView,
   LoreImportView,
   LoreTestResult,
+  LocalMemoryView,
   MemoryConfig,
   MemoryProvider,
   ModelPick,
@@ -237,6 +238,7 @@ export interface HobApi {
   loreTest(body: { baseUrl?: string; token?: string }): Promise<LoreTestResult>;
   loreImport(): Promise<LoreImportView>;
   importLore(): Promise<MemoryConfig>;
+  localMemory(date?: string): Promise<LocalMemoryView>;
   items(assistantId: string, before?: string): Promise<ItemsPage>;
   profile(assistantId: string): Promise<Profile>;
   sendMessage(assistantId: string, body: SendMessageBody): Promise<{ item: Item }>;
@@ -451,6 +453,8 @@ export const realApi: HobApi = {
   loreTest: (body) => req<LoreTestResult>("/api/memory/lore-test", json(body)),
   loreImport: () => req<LoreImportView>("/api/memory/lore/import"),
   importLore: () => req<MemoryConfig>("/api/memory/lore/import", { method: "POST" }),
+  localMemory: (date) =>
+    req<LocalMemoryView>(`/api/memory/entries${date ? `?date=${encodeURIComponent(date)}` : ""}`),
   items: (assistantId, before) =>
     req<ItemsPage>(
       `/api/assistants/${encodeURIComponent(assistantId)}/items?limit=60${

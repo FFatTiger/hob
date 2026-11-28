@@ -4218,6 +4218,19 @@ export function createMock(scene: SceneId = "s1"): HobApi {
       };
       return clone({ ...memory, revision: db.settings.revision });
     },
+    localMemory: async (date) => ({
+      longTerm: [
+        { id: "lt-0-mock", text: "回复尽量精简，使用 24 小时制", updatedAt: "2026-11-26 09:00:00", source: "user" },
+      ],
+      scratchpad: [
+        { id: "sp-0-mock", text: "确认本周发布窗口", done: false, updatedAt: "2026-11-26 10:00:00" },
+      ],
+      dailyDates: ["2026-11-26"],
+      dailyDate: date ?? "2026-11-26",
+      daily: [
+        { id: "dy-0-mock", text: "整理了本季度里程碑", updatedAt: "2026-11-26 14:00:00", source: "hob" },
+      ],
+    }),
     items: async (assistantId) => ({
       items: clone(db.items[assistantId] ?? []),
       approvals: clone(Object.values(db.approvals)),

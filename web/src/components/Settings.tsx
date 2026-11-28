@@ -118,6 +118,7 @@ import {
 } from "../store.ts";
 import { PageHead, Group, PalettePicker, Seg, LinkRow, SetNavHead, UpdateDot, availableVersion } from "./SettingsParts.tsx";
 import { UsageSection } from "./Usage.tsx";
+import { MemoryInspector } from "./MemoryInspector.tsx";
 
 /** 保存行的提示：成功和失败跟按钮同一行，各页一个样子。 */
 /** 保存行。lead 放在最左边（测试连接这类），和保存按钮同一行。 */
@@ -2684,6 +2685,8 @@ function MemorySection() {
           </Group>
         </>
       ) : null}
+
+      <MemoryInspector provider={shown} loreUrl={config.lore.baseUrl} />
 
     </>
   );
